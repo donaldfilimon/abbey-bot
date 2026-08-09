@@ -1,0 +1,5 @@
+# Abbey Bot — Rust nightly (edition 2024), matching the sibling projects here.
+[toolchain]
+channel = "nightly"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

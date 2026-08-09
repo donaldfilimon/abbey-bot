@@ -1,0 +1,11 @@
+[package]
+name = "abbey-bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+poise = "0.6.2"
+serenity = "0.12.5"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
