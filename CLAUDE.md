@@ -19,13 +19,15 @@ cargo run           # needs DISCORD_TOKEN; see README
 and no `--workspace` — this is a single binary crate. Note that means test
 targets are inside the `bin`, so `--lib` matches nothing.
 
-**CI is weaker than the gate — green CI does not mean green `./check.sh`.**
-`.github/workflows/rust.yml` runs `cargo build` and `cargo test` on push and PR
-to `main`, and nothing else. `fmt --check` and `clippy -D warnings` exist only in
-`check.sh`, so a formatting drift or a clippy regression merges without CI ever
-objecting. Run the gate locally; do not treat a green check mark as having run
-it. The workflow pins no toolchain, so it resolves `rust-toolchain.toml` —
-nightly, with `rustfmt` and `clippy` — the same channel used here.
+**CI runs the real gate — since PR #4.** `.github/workflows/rust.yml` executes
+`./check.sh` itself (fmt --check, clippy `-D warnings`, tests) on push and PR to
+`main`, and the runner's rustup honours `rust-toolchain.toml`, so CI and local
+runs share the pinned nightly. Two caveats keep the local habit load-bearing:
+green check marks older than PR #4 vouch only for `cargo build && cargo test`
+(the workflow's original, weaker shape), and while the account-level Actions
+billing lock persists, runs cannot start at all — so "run `./check.sh` locally
+before trusting a merge" remains the rule, now for availability rather than
+coverage.
 
 ## Architecture: a pure core with a thin Discord shell
 
