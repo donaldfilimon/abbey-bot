@@ -35,8 +35,9 @@ pub enum Target {
         parent_label: String,
         thread_id: u64,
     },
-    /// A forum channel. Executes must create a post (`thread_name`) or target
-    /// an existing one (`?thread_id=`).
+    /// A forum-style channel — forum or media (type 16), which share execute
+    /// semantics. Executes must create a post (`thread_name`) or target an
+    /// existing one (`?thread_id=`).
     Forum { label: String },
 }
 
@@ -100,10 +101,11 @@ pub fn guide(target: &Target) -> String {
              thread as pasted."
         ),
         Target::Forum { label } => format!(
-            "\n\n{label} is a forum channel, which has no plain message stream — every webhook \
-             execute must either create a post (the `thread_name` field in the payload above) or \
-             target an existing one by appending `?thread_id=<post id>` to the URL and dropping \
-             `thread_name`. A plain-channel curl is rejected by Discord."
+            "\n\n{label} is a forum-style channel (forum and media channels work identically \
+             here), which has no plain message stream — every webhook execute must either create \
+             a post (the `thread_name` field in the payload above) or target an existing one by \
+             appending `?thread_id=<post id>` to the URL and dropping `thread_name`. A \
+             plain-channel curl is rejected by Discord."
         ),
     };
 

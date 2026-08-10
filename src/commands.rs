@@ -527,8 +527,10 @@ pub async fn webhook(
         }
         // A forum has no plain message stream: every execute must create a
         // post (thread_name) or target one (?thread_id=). The plain-channel
-        // guide's curl is rejected outright there.
-        ChannelType::Forum => webhook::Target::Forum {
+        // guide's curl is rejected outright there. Media channels (type 16)
+        // share forum execute semantics but postdate this serenity version's
+        // ChannelType, so they arrive as Unknown(16).
+        ChannelType::Forum | ChannelType::Unknown(16) => webhook::Target::Forum {
             label: format!("#{}", channel.name),
         },
         ChannelType::Voice | ChannelType::Stage => webhook::Target::Channel {
