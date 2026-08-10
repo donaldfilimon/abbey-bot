@@ -10,7 +10,7 @@ this project has already hit.
 ## Commands
 
 ```bash
-./check.sh          # the gate: fmt --check, clippy --all-targets -D warnings, test
+./check.sh          # the gate: fmt --check, clippy --locked -D warnings, test --locked
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
 ```
@@ -18,6 +18,11 @@ cargo run           # needs DISCORD_TOKEN; see README
 `cargo test moderation::` runs one module's tests. There is no `-p`
 and no `--workspace` — this is a single binary crate. Note that means test
 targets are inside the `bin`, so `--lib` matches nothing.
+
+The gate runs `--locked` on purpose: the Dockerfile builds `--locked`, and
+before the gate did too, a Cargo.toml bump without a regenerated lock kept CI
+green while every deploy build died. The gate proves the property the deploy
+depends on — do not remove the flag to "fix" a lock error; regenerate the lock.
 
 **CI runs the real gate — since PR #4.** `.github/workflows/rust.yml` executes
 `./check.sh` itself (fmt --check, clippy `-D warnings`, tests) on push and PR to
@@ -183,6 +188,16 @@ forum names are lowercased with whitespace hyphenated, so a blueprint saying
 voice channel. `server::render` normalizes per channel kind, and a test asserts
 the voice exemption is actually exercised so the asymmetry cannot rot into an
 untested claim.
+
+**Docker base images float between Debian releases.** `rust:slim` re-aliases
+to each new stable (it moved to trixie/glibc 2.41 while the runtime stage was
+bookworm/2.36 — a combination that builds green and dies at `docker run` with
+"GLIBC_2.xx not found"). Build and runtime stages must name the same release
+(`rust:slim-bookworm` + `debian:bookworm-slim`); never pair a floating builder
+with a pinned runtime. Remember also that this host has neither Docker nor
+systemd, so `Dockerfile` and `deploy/abbey-bot.service` can only ever be
+source-reviewed here, never artifact-verified — the README's honesty note says
+exactly what is and is not verified; keep it true when touching either file.
 
 **A passing property test is not evidence that output reads well.** The `/server`
 blueprints passed every invariant while rendering `🗂help` with the glyph jammed
