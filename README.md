@@ -108,8 +108,10 @@ optional `ABBEY_GUILD_ID` and `RUST_LOG`):
 
 Honesty note: this host has neither Docker nor systemd, so both artifacts are
 **unverified as artifacts** — what is verified is that `cargo build --release
---locked` produces the binary they both wrap, and that CI runs the same gate as
-a local checkout.
+--locked` produces the binary they both wrap. CI is *configured* to run the
+same gate as a local checkout, but no workflow on this repository has ever
+executed (account-level Actions lock), so that alignment is unverified until
+the first green run.
 
 ## Gate
 
@@ -120,5 +122,5 @@ a local checkout.
 CI (`.github/workflows/rust.yml`) runs exactly this script, so a green check
 means fmt, clippy `-D warnings`, and the test suite — not merely "it built".
 
-`cargo fmt --all -- --check`, then `cargo clippy --all-targets -D warnings`, then
+`cargo fmt --all -- --check`, then `cargo clippy --all-targets -- -D warnings`, then
 `cargo test`.
