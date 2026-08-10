@@ -20,7 +20,9 @@ EnvironmentFile=/etc/abbey-bot/env
 # No state on disk, so no real user either: systemd fabricates one per run.
 DynamicUser=yes
 Restart=on-failure
-RestartSec=5
+# 30s, not 5: a bad token exits 1 forever, and a 5-second loop re-auths
+# against Discord fast enough to draw IP-level rate limiting.
+RestartSec=30
 # Hardening: the bot needs outbound network and nothing else.
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -29,7 +31,9 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+# AF_UNIX included: on hosts where nsswitch delegates entirely to
+# nss-resolve with no dns fallback, blocking unix sockets hard-fails DNS.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=yes
 # Rust does not JIT; nothing here needs writable+executable memory.
 MemoryDenyWriteExecute=yes
