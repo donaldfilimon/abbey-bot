@@ -257,10 +257,15 @@ pub async fn route(
 pub async fn ask(
     ctx: Context<'_>,
     #[description = "What you want to know"] question: String,
+    #[description = "Force a persona instead of routing"] r#as: Option<PersonaChoice>,
 ) -> Result<(), Error> {
     ctx.defer().await?;
 
-    let routed = persona::route(&question, None).persona;
+    // Same override `route` offers, and it matters more here: `route` only
+    // explains a choice, while this one decides who actually answers. Hardcoding
+    // None made the override available on the explanation and unavailable on the
+    // answer, which is backwards.
+    let routed = persona::route(&question, r#as.map(Into::into)).persona;
     let reply = match llm::Backend::from_env() {
         None => ask::degraded_reply(routed),
         Some(backend) => {

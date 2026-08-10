@@ -201,18 +201,17 @@ pub fn extract_text(backend: &Backend, raw: &str) -> Result<String, LlmError> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|e| LlmError(format!("the response was not JSON: {e}")))?;
     let text = match backend {
-        Backend::Anthropic { .. } => {
-            value
-                .get("content")
-                .and_then(Value::as_array)
-                .and_then(|blocks| {
-                    blocks.iter().find_map(|block| {
-                        (block.get("type").and_then(Value::as_str) == Some("text"))
-                            .then(|| block.get("text").and_then(Value::as_str))
-                            .flatten()
-                    })
-                })
-        }
+        // Find the first text block, then read its text. The bool-to-Option
+        // dance this replaced (`.then(...).flatten()` inside a `find_map`
+        // inside an `and_then`) expressed the same two steps in a shape that
+        // had to be decoded rather than read.
+        Backend::Anthropic { .. } => value
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .and_then(|block| block.get("text").and_then(Value::as_str)),
         Backend::OpenAiCompatible { .. } => value
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str),
