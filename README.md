@@ -12,7 +12,8 @@ to this crate and shares no code with it.
 
 | Command | What it does |
 |---|---|
-| `/persona <request> [as]` | Shows which persona takes a request and why. `as` is a dropdown that forces one. |
+| `/persona route <request> [as]` | Shows which persona takes a request and why. `as` is a dropdown that forces one. |
+| `/persona ask <question>` | Routes the question to a persona and answers it via the configured generation backend (see "Configured backends"). With none configured, it says so. |
 | `/whois <user>` | Profile read: identity, standing, roles, join date. |
 | `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. Threads are redirected to their parent, which owns the overwrites they inherit. |
 | `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out — both the permission bit and role hierarchy (owner-target, admin-timeout, top-role comparison). |
@@ -31,6 +32,21 @@ cargo run
 immediately. Leave it unset and commands register globally, where propagation can
 take up to an hour — fine once the command set is stable, miserable while
 iterating. See `.env.example`.
+
+## Configured backends
+
+`/persona ask` answers come from an external or local model, never from the
+bot itself — this crate contains no inference engine. Which backend answers is
+selected from the environment, first match wins:
+
+| Env var | Backend |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. A secret with `DISCORD_TOKEN`'s exact handling: env only, never in a commit or an image layer. |
+| `ABBEY_BOT_LLM_ENDPOINT` | An OpenAI-compatible server, usually loopback (llama-server / ollama / mlx). Base URL only, e.g. `http://127.0.0.1:8080` — the bot POSTs to `<endpoint>/v1/chat/completions`, and the server's own model choice is what answers. |
+
+With neither set, `/persona ask` replies that no generation backend is
+configured. No test requires either variable, a network, or a key — the gate
+runs fully offline.
 
 ## Design notes
 

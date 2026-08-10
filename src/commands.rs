@@ -23,6 +23,8 @@ use serenity::all::{
     User,
 };
 
+use crate::ask;
+use crate::llm;
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::{self, Persona};
@@ -215,12 +217,22 @@ fn hierarchy_blocker(
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Abbey's persona surface: `/persona route` and `/persona ask`.
+///
+/// Discord never invokes the parent of a subcommand group — the client forces
+/// picking a subcommand — so this body is unreachable framework wiring.
+#[poise::command(slash_command, guild_only, subcommands("route", "ask"))]
+pub async fn persona(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
 /// Show which persona takes a request, and why.
 ///
 /// Pure routing — no network call — but it still defers, because a command that
 /// sometimes defers and sometimes does not is a command that eventually races.
+/// This is the pre-split `/persona` behaviour, unchanged.
 #[poise::command(slash_command, guild_only)]
-pub async fn persona(
+pub async fn route(
     ctx: Context<'_>,
     #[description = "What you want help with"] request: String,
     #[description = "Force a persona instead of routing"] r#as: Option<PersonaChoice>,
@@ -229,6 +241,43 @@ pub async fn persona(
 
     let route = persona::route(&request, r#as.map(Into::into));
     ctx.say(clamp_message(persona::describe(&route))).await?;
+    Ok(())
+}
+
+/// Ask a question; the routed persona answers via the configured backend.
+///
+/// The answer comes from an external or local model selected by the
+/// environment ([`llm::Backend::from_env`]) — never from the bot itself, and
+/// with no backend configured the reply says exactly that instead of dressing
+/// a template echo up as AI. The defer is unconditional like everywhere else,
+/// and more load-bearing here: an LLM round-trip exceeds Discord's 3-second
+/// interaction token by design. Non-ephemeral on purpose — an answer is not an
+/// accusation, unlike `/modcall`'s recommendation.
+#[poise::command(slash_command, guild_only)]
+pub async fn ask(
+    ctx: Context<'_>,
+    #[description = "What you want to know"] question: String,
+) -> Result<(), Error> {
+    ctx.defer().await?;
+
+    let routed = persona::route(&question, None).persona;
+    let reply = match llm::Backend::from_env() {
+        None => ask::degraded_reply(routed),
+        Some(backend) => {
+            let outcome = llm::ask_backend(
+                &llm::HttpTransport::default(),
+                &backend,
+                &ask::system_prompt(routed),
+                &question,
+            )
+            .await;
+            match outcome {
+                Ok(answer) => ask::render_answer(routed, backend.label(), &answer),
+                Err(error) => ask::render_failure(routed, backend.label(), &error.0),
+            }
+        }
+    };
+    ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
 
@@ -658,6 +707,42 @@ mod tests {
         assert!(out.chars().count() <= 2000, "{}", out.chars().count());
         assert!(
             out.ends_with("limit)"),
+            "truncation must be stated, not silent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_five_thousand_char_backend_answer_clamps_to_discords_limit() {
+        // The ask pipeline end to end with a recording fake: a 5,000-character
+        // response comes back ≤ 2,000 codepoints through the existing clamp —
+        // the same `clamp_message` every reply already routes through.
+        // Multibyte input, because the limit is codepoints, not bytes.
+        let backend = llm::Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:8080".into(),
+        };
+        let long_answer = "é".repeat(5000);
+        let canned =
+            serde_json::json!({"choices": [{"message": {"content": long_answer}}]}).to_string();
+        let transport = llm::RecordingTransport::returning(&canned);
+
+        let answer = llm::ask_backend(
+            &transport,
+            &backend,
+            &ask::system_prompt(Persona::Abbey),
+            "a question",
+        )
+        .await
+        .expect("the canned response parses");
+        assert_eq!(
+            answer.chars().count(),
+            5000,
+            "the fake answer arrives whole"
+        );
+
+        let reply = clamp_message(ask::render_answer(Persona::Abbey, backend.label(), &answer));
+        assert!(reply.chars().count() <= 2000, "{}", reply.chars().count());
+        assert!(
+            reply.ends_with("limit)"),
             "truncation must be stated, not silent"
         );
     }

@@ -8,6 +8,11 @@
 //!   Guild-scoped registration is instant; global registration can take up to an
 //!   hour to propagate, which makes it useless during development. Unset means
 //!   global, which is what you want once the command set has settled.
+//! - `ANTHROPIC_API_KEY` (optional, secret) — makes `/persona ask` answer via
+//!   the external Anthropic API. Same handling as `DISCORD_TOKEN`: env only.
+//! - `ABBEY_BOT_LLM_ENDPOINT` (optional) — makes `/persona ask` answer via an
+//!   OpenAI-compatible server, usually loopback. With neither this nor the key
+//!   set, `/persona ask` replies that no generation backend is configured.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents are deliberately `non_privileged()`. Nothing here reads message
@@ -17,7 +22,9 @@
 //! [`profile::summarize`] states that presence is unavailable rather than
 //! guessing at it.
 
+mod ask;
 mod commands;
+mod llm;
 mod moderation;
 mod perms;
 mod persona;
