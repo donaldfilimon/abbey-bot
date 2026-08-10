@@ -93,7 +93,10 @@ pub const MAX_CHANNELS_PER_CATEGORY: usize = 50;
 #[cfg(test)]
 pub const NEVER_FOR_EVERYONE: &[&str] = &[
     "Administrator",
-    "Manage Server",
+    // serenity emits "Manage Guild"; the Discord client labels it
+    // "Manage Server". Match what get_permission_names actually returns,
+    // or the entry can never fire.
+    "Manage Guild",
     "Manage Roles",
     "Manage Channels",
     "Manage Webhooks",
@@ -398,18 +401,16 @@ mod tests {
 
     #[test]
     fn voice_channels_are_exempt_from_the_text_naming_rule() {
-        // The asymmetry is real and deliberate — "Squad 1" is a legal voice name.
-        let has_capitalised_voice = Archetype::ALL.iter().any(|a| {
-            blueprint(*a).categories.iter().any(|c| {
-                c.channels.iter().any(|ch| {
-                    ch.kind == ChannelKind::Voice && ch.name != normalize_text_name(ch.name)
-                })
-            })
-        });
-        assert!(
-            has_capitalised_voice,
-            "no voice channel exercises the exemption; the rule above is untested"
-        );
+        // Asserted through render(), not the blueprint tables. A mutation check
+        // showed the old version — which only compared table entries against
+        // their own normalized form — stayed green when render's voice arm was
+        // changed to normalize, i.e. when the exemption was actually broken.
+        let out = render(Archetype::Gaming);
+        assert!(out.contains("Squad 1"), "voice name was rewritten: {out}");
+        assert!(!out.contains("squad-1"), "voice name was normalized: {out}");
+        // The text rule still applies in the same render, so this pins the
+        // asymmetry rather than just one half of it.
+        assert!(out.contains("#general"), "{out}");
     }
 
     #[test]

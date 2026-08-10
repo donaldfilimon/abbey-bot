@@ -6,6 +6,10 @@
 //! guess: when a request pulls toward two personas at once, it falls back to Abbey
 //! rather than picking a winner on a tiebreak nobody specified.
 //!
+//! Known limit, not a bug to paper over: scoring counts distinct cue hits and
+//! the two lists are different lengths, so a request touching several Aviva
+//! topics can outscore a clearer Abi intent. `as` exists to override it.
+//!
 //! Routing is deliberately deterministic and model-free. Discord kills an
 //! interaction token after 3 seconds, so the path that decides *who answers* must
 //! not itself be the thing that blows the budget.
@@ -108,7 +112,7 @@ const ABI_CUES: &[&str] = &[
     "onboard",
     "de-escalate",
     "deescalate",
-    "calm ",
+    "calm",
     "defuse",
     "icebreaker",
     "tone-setting",

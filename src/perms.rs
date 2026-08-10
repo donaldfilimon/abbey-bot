@@ -121,9 +121,14 @@ pub fn explain(channel: &str, overwrites: &[Overwrite], subject: &Subject) -> St
         out.push_str(&format!("{}. {} {}\n", i + 1, label(&ow.scope), body));
     }
 
-    if chain.iter().any(|o| matches!(o.scope, Scope::Member(_))) {
+    // Say only what the chain actually contains. The role rule was previously
+    // appended whenever no member overwrite applied — including chains holding
+    // nothing but @everyone, where there is no role step to have a rule about.
+    let has_member = chain.iter().any(|o| matches!(o.scope, Scope::Member(_)));
+    let has_role = chain.iter().any(|o| matches!(o.scope, Scope::Role(_)));
+    if has_member {
         out.push_str("\nA member overwrite is present, and it is applied last — it overrides every role result above it.");
-    } else {
+    } else if has_role {
         out.push_str("\nNo member overwrite, so the role denies union before the role allows do. Role position is irrelevant at this step.");
     }
 
@@ -223,8 +228,28 @@ mod tests {
 
     #[test]
     fn without_a_member_overwrite_the_role_rule_is_explained() {
-        let out = explain("general", &[everyone_denies_view()], &subject());
+        // Must actually contain a role overwrite: the previous version of this
+        // test passed a lone @everyone deny, so it asserted a rule about a step
+        // the chain never reached.
+        let ows = [
+            everyone_denies_view(),
+            Overwrite {
+                scope: Scope::Role("Member".to_string()),
+                allow: vec!["View Channel".to_string()],
+                deny: vec![],
+            },
+        ];
+        let out = explain("general", &ows, &subject());
         assert!(out.contains("Role position is irrelevant"), "{out}");
+    }
+
+    #[test]
+    fn the_role_rule_is_omitted_when_no_role_overwrite_applies() {
+        let out = explain("general", &[everyone_denies_view()], &subject());
+        assert!(
+            !out.contains("Role position is irrelevant"),
+            "no role overwrite is in this chain: {out}"
+        );
     }
 
     #[test]

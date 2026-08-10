@@ -107,15 +107,32 @@ fn base_permissions(
     roles: &HashMap<RoleId, Role>,
     guild_id: GuildId,
 ) -> Permissions {
-    let everyone = roles
-        .get(&RoleId::new(guild_id.get()))
-        .map_or_else(Permissions::empty, |role| role.permissions);
+    resolve_base_permissions(RoleId::new(guild_id.get()), &member.roles, |id| {
+        roles.get(&id).map(|role| role.permissions)
+    })
+}
 
-    member
-        .roles
+/// The resolution itself, over a lookup closure rather than serenity's types.
+///
+/// Split this way on purpose. serenity's `Member` and `Role` have private
+/// fields and no public constructor, so `base_permissions` cannot be called
+/// from a unit test — and a test that only restates bitflag algebra guards
+/// nothing. A mutation check proved that: the first attempt at this test stayed
+/// green when the `@everyone` seed was reverted, because the seed *lookup* was
+/// the part that had been wrong and the test never exercised it. Everything
+/// that can be wrong now lives here, where a test reaches it.
+fn resolve_base_permissions(
+    everyone_id: RoleId,
+    member_role_ids: &[RoleId],
+    lookup: impl Fn(RoleId) -> Option<Permissions>,
+) -> Permissions {
+    // Seeded from @everyone, which `member_role_ids` never contains.
+    let everyone = lookup(everyone_id).unwrap_or_else(Permissions::empty);
+
+    member_role_ids
         .iter()
-        .filter_map(|id| roles.get(id))
-        .fold(everyone, |acc, role| acc | role.permissions)
+        .filter_map(|id| lookup(*id))
+        .fold(everyone, |acc, perms| acc | perms)
 }
 
 /// Show which persona takes a request, and why.
@@ -356,34 +373,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn base_permissions_includes_what_everyone_grants() {
-        // Regression, verified against serenity's own user_permissions_in_,
-        // which takes everyone_permissions as an input SEPARATE from the
-        // member's role permissions: Member.roles excludes @everyone, so a fold
-        // over it alone drops whatever @everyone grants. The old code did
-        // exactly that, and the error direction was "you have fewer permissions
-        // than you really do" — /modcall telling a moderator they cannot act.
-        //
-        // Asserted on the permission algebra rather than by constructing
-        // serenity's Member and Role, which have private fields and no public
-        // constructor. The bug was the missing union, and this is that union.
-        let everyone = Permissions::MODERATE_MEMBERS;
-        let member_roles = Permissions::SEND_MESSAGES;
+    fn base_permissions_seeds_from_everyone_which_member_roles_never_contains() {
+        // Exercises the seed LOOKUP, which is where the bug was. Dropping the
+        // `lookup(everyone_id)` seed makes this fail — verified by mutation,
+        // unlike the first version of this test, which called the union helper
+        // directly and stayed green when the seed was reverted to empty.
+        let everyone_id = RoleId::new(99);
+        let member_role = RoleId::new(7);
 
-        let folded_without_everyone = member_roles;
-        let folded_with_everyone = member_roles | everyone;
+        let held = resolve_base_permissions(everyone_id, &[member_role], |id| {
+            if id == everyone_id {
+                Some(Permissions::MODERATE_MEMBERS)
+            } else if id == member_role {
+                Some(Permissions::SEND_MESSAGES)
+            } else {
+                None
+            }
+        });
 
         assert!(
-            !folded_without_everyone.contains(Permissions::MODERATE_MEMBERS),
-            "sanity: the old shape genuinely misses it"
+            held.contains(Permissions::MODERATE_MEMBERS),
+            "@everyone's grant must be seeded in; member.roles never lists it"
         );
-        assert!(folded_with_everyone.contains(Permissions::MODERATE_MEMBERS));
-        assert!(
-            permission_names(folded_with_everyone)
-                .iter()
-                .any(|n| n == "Moderate Members"),
-            "the name /modcall compares against must survive the union"
-        );
+        assert!(held.contains(Permissions::SEND_MESSAGES));
+
+        // A member with no roles at all still inherits @everyone.
+        let bare = resolve_base_permissions(everyone_id, &[], |id| {
+            (id == everyone_id).then_some(Permissions::MODERATE_MEMBERS)
+        });
+        assert!(bare.contains(Permissions::MODERATE_MEMBERS));
+
+        // An unknown role id contributes nothing rather than panicking.
+        let missing = resolve_base_permissions(everyone_id, &[RoleId::new(1234)], |_| None);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn the_ladders_permission_strings_all_exist_in_serenity() {
+        // Iterates the real Action values rather than restating three literals.
+        // A mutation check showed the old version passed even when the ladder
+        // and its expectation were renamed in lockstep to a permission serenity
+        // does not define.
+        let vocabulary = permission_names(Permissions::all());
+        for action in [
+            moderation::Action::Timeout(10),
+            moderation::Action::Kick,
+            moderation::Action::Ban,
+        ] {
+            let name = action
+                .required_permission()
+                .expect("these three all require a permission");
+            assert!(
+                vocabulary.iter().any(|known| known == name),
+                "{action} names {name:?}, which serenity does not define"
+            );
+        }
     }
 
     #[test]

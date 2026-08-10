@@ -33,8 +33,12 @@ pub struct History {
     pub timeouts: u8,
 }
 
-/// Discord refuses a timeout longer than 28 days. Encoded so a future ladder
-/// extension fails a test here rather than an API call in production.
+/// Discord refuses a timeout longer than 28 days.
+///
+/// Note precisely what this buys: `timeout()` *clamps* to it, so an over-long
+/// rung is silently capped rather than caught. The ladder sweep test therefore
+/// cannot fail; `timeout_clamps_beyond_discords_ceiling` is what actually
+/// exercises the constant.
 pub const MAX_TIMEOUT_MINUTES: u32 = 28 * 24 * 60;
 
 /// What to do about it.
@@ -135,10 +139,20 @@ pub fn recommend(severity: Severity, history: History) -> Recommendation {
             reason: "severe incident; severity decides this regardless of record".to_string(),
         },
 
+        // Keyed on timeouts, but warnings are still consulted: telling a
+        // moderator "first serious incident" when they just typed warnings:7
+        // contradicts their own input.
         Severity::Serious => match history.timeouts {
-            0 => Recommendation {
+            0 if history.warnings == 0 => Recommendation {
                 action: timeout(60),
                 reason: "first serious incident".to_string(),
+            },
+            0 => Recommendation {
+                action: timeout(60),
+                reason: format!(
+                    "first serious incident, though {} prior warning(s) precede it",
+                    history.warnings
+                ),
             },
             1 => Recommendation {
                 action: timeout(24 * 60),
@@ -154,10 +168,19 @@ pub fn recommend(severity: Severity, history: History) -> Recommendation {
             },
         },
 
+        // Same rule the other way: prior timeouts mean the record is not empty,
+        // whatever the warning count says.
         Severity::Minor => match history.warnings {
-            0 => Recommendation {
+            0 if history.timeouts == 0 => Recommendation {
                 action: Action::Note,
                 reason: "first minor incident; nothing on record yet".to_string(),
+            },
+            0 => Recommendation {
+                action: Action::Warn,
+                reason: format!(
+                    "minor, but {} prior timeout(s) are on record",
+                    history.timeouts
+                ),
             },
             1 => Recommendation {
                 action: Action::Warn,
@@ -239,6 +262,47 @@ mod tests {
         assert_eq!(at(1), Action::Timeout(24 * 60));
         assert_eq!(at(2), Action::Timeout(7 * 24 * 60));
         assert_eq!(at(3), Action::Ban);
+    }
+
+    #[test]
+    fn neither_counter_is_ignored() {
+        // Regression: each ladder read one counter and implicitly asserted the
+        // other was empty, so Minor with 5 prior timeouts still reported
+        // "nothing on record yet" -- contradicting the moderator's own input.
+        // The monotonicity test could not see it because it varied both
+        // counters in lockstep.
+        let minor = recommend(
+            Severity::Minor,
+            History {
+                warnings: 0,
+                timeouts: 5,
+            },
+        );
+        assert_ne!(minor.action, Action::Note);
+        assert!(
+            !minor.reason.contains("nothing on record"),
+            "{}",
+            minor.reason
+        );
+
+        let serious = recommend(
+            Severity::Serious,
+            History {
+                warnings: 7,
+                timeouts: 0,
+            },
+        );
+        assert!(
+            serious.reason.contains("prior warning"),
+            "{}",
+            serious.reason
+        );
+    }
+
+    #[test]
+    fn timeout_clamps_beyond_discords_ceiling() {
+        assert_eq!(timeout(60 * 24 * 60), Action::Timeout(MAX_TIMEOUT_MINUTES));
+        assert_eq!(timeout(10), Action::Timeout(10));
     }
 
     #[test]

@@ -65,10 +65,13 @@ pub fn summarize(facts: &ProfileFacts) -> String {
         out.push_str(&format!(" — {s}"));
     }
 
-    match facts.roles.len() {
-        0 => out.push_str(", no roles"),
-        1 => {}
-        n => out.push_str(&format!(" of {n} roles")),
+    // "of N roles" reads as a qualifier on "top role X" but is ungrammatical
+    // after "owns this server", which is a different kind of clause.
+    match (facts.is_owner, facts.roles.len()) {
+        (_, 0) => out.push_str(", no roles"),
+        (_, 1) => {}
+        (true, n) => out.push_str(&format!(", {n} roles")),
+        (false, n) => out.push_str(&format!(" of {n} roles")),
     }
 
     if let Some(joined) = &facts.joined {
@@ -132,9 +135,14 @@ mod tests {
     fn never_claims_a_presence_it_cannot_see() {
         let out = summarize(&base());
         assert!(out.contains("Presence and activity unavailable"), "{out}");
-        for invented in ["online", "idle", "offline", "Do Not Disturb"] {
+        // Lowercased first: Discord's own status names are capitalised (Online,
+        // Idle, Do Not Disturb), so a case-sensitive check tests the spellings
+        // a realistic bug would NOT use. Mutation-confirmed: injecting
+        // " Status: Online." passed the old version of this assertion.
+        let lowered = out.to_lowercase();
+        for invented in ["online", "idle", "offline", "do not disturb"] {
             assert!(
-                !out.contains(invented),
+                !lowered.contains(invented),
                 "invented presence {invented}: {out}"
             );
         }
@@ -147,6 +155,30 @@ mod tests {
             ..base()
         };
         assert!(!summarize(&facts).contains("server nick"));
+    }
+
+    #[test]
+    fn a_nickname_differing_from_the_display_name_is_shown() {
+        // The positive branch had no test at all: deleting the whole `if let`
+        // block left the suite green.
+        let facts = ProfileFacts {
+            nickname: Some("frank".to_string()),
+            ..base()
+        };
+        let out = summarize(&facts);
+        assert!(out.contains("server nick *frank*"), "{out}");
+    }
+
+    #[test]
+    fn an_owner_with_several_roles_reads_grammatically() {
+        let facts = ProfileFacts {
+            is_owner: true,
+            roles: vec!["Admin".to_string(), "Booster".to_string()],
+            ..base()
+        };
+        let out = summarize(&facts);
+        assert!(!out.contains("server of 2 roles"), "ungrammatical: {out}");
+        assert!(out.contains("owns this server, 2 roles"), "{out}");
     }
 
     #[test]

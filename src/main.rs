@@ -49,9 +49,19 @@ async fn main() -> Result<(), Error> {
         .map_err(|_| "DISCORD_TOKEN is not set. Export the bot token; never hardcode it.")?;
 
     let guild_id = match std::env::var("ABBEY_GUILD_ID") {
-        Ok(raw) => Some(GuildId::new(raw.trim().parse::<u64>().map_err(|_| {
-            format!("ABBEY_GUILD_ID must be a numeric snowflake, got {raw:?}")
-        })?)),
+        Ok(raw) => {
+            let parsed = raw
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| format!("ABBEY_GUILD_ID must be a numeric snowflake, got {raw:?}"))?;
+            // GuildId::new PANICS on zero rather than returning an error, so a
+            // literal "0" parses fine and then aborts the process -- the exact
+            // opposite of failing with a sentence you can act on.
+            if parsed == 0 {
+                return Err("ABBEY_GUILD_ID must not be 0; that is not a valid snowflake".into());
+            }
+            Some(GuildId::new(parsed))
+        }
         Err(_) => None,
     };
 
