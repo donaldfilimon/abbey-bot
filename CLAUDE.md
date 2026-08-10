@@ -19,6 +19,14 @@ cargo run           # needs DISCORD_TOKEN; see README
 and no `--workspace` — this is a single binary crate. Note that means test
 targets are inside the `bin`, so `--lib` matches nothing.
 
+**CI is weaker than the gate — green CI does not mean green `./check.sh`.**
+`.github/workflows/rust.yml` runs `cargo build` and `cargo test` on push and PR
+to `main`, and nothing else. `fmt --check` and `clippy -D warnings` exist only in
+`check.sh`, so a formatting drift or a clippy regression merges without CI ever
+objecting. Run the gate locally; do not treat a green check mark as having run
+it. The workflow pins no toolchain, so it resolves `rust-toolchain.toml` —
+nightly, with `rustfmt` and `clippy` — the same channel used here.
+
 ## Architecture: a pure core with a thin Discord shell
 
 Five modules hold every decision the bot makes, and **none of them import
@@ -32,9 +40,12 @@ serenity or poise**:
 | `moderation.rs` | Which action an incident warrants, given severity and history |
 | `server.rs` | Role hierarchy, channel structure, and setup steps per archetype |
 
-`commands.rs` is the *only* file that touches Discord types, and its job is
-translation: fetch over REST, build the plain struct, hand it to a pure function,
-post the string back. `main.rs` is just env parsing and framework wiring.
+`commands.rs` is the only file that translates *Discord data* into those plain
+structs, and that is its whole job: fetch over REST, build the struct, hand it to
+a pure function, post the string back. `main.rs` also imports serenity — for
+`GatewayIntents`, `GuildId`, and the `Client` builder — but it reads no guild
+data; it is env parsing and framework wiring only. Those two files are the entire
+Discord surface.
 
 **This split is the reason the entire decision suite runs with no gateway
 connection** (a count is deliberately not written here — it rots), and it is
@@ -74,11 +85,16 @@ deferring, the way `/perms` does. Guild fetches go through
 `PartialGuild` already carries `roles` and `owner_id`, so do not add a separate
 `guild_id.roles()` call.
 
-**Every reply passes through `clamp_message`.** Discord rejects messages over
-2,000 codepoints after the defer has already succeeded, which surfaces as a raw
-"Message too large." error instead of an answer. A legitimate `/perms`
-walkthrough measures past the limit, so the clamp is not theoretical. New
-commands must route their `ctx.say` through it.
+**Every rendered answer passes through `clamp_message`.** Discord rejects
+messages over 2,000 codepoints after the defer has already succeeded, which
+surfaces as a raw "Message too large." error instead of an answer. A legitimate
+`/perms` walkthrough measures past the limit, so the clamp is not theoretical.
+Every call that posts the output of a pure module is wrapped. The deliberate
+exception is the handful of fixed guard strings ("This one only works inside a
+server.", the thread-redirect line) — literals of known length, plus one that
+interpolates a channel *id*, so all are bounded far below the limit by
+construction. That exception is not a precedent: anything whose length depends on
+guild data goes through the clamp.
 
 **Intents stay `non_privileged()`.** Nothing reads message content, presence, or
 the member list off the gateway; `/whois`, `/perms`, and `/modcall` fetch over
@@ -106,6 +122,13 @@ over `member.roles` is how this codebase once told moderators they could not
 act when they could; the hand-rolled version is deleted, do not reintroduce
 one.
 
+**Whether a moderator may act goes through `hierarchy_blocker`.** It encodes
+Discord's refusal rules in one place — the owner cannot be actioned,
+administrators cannot be timed out, and the actor's top role must sit *strictly*
+above the target's — and returns the sentence explaining a refusal rather than a
+bool, so the answer stays actionable. Any acting command added later must consult
+it, not re-derive the rules at the call site.
+
 ## Traps this repository has already hit
 
 **`Permissions` does not `Debug` into flag names.** It prints `Permissions(3072)`
@@ -114,6 +137,30 @@ would have rendered numbers into chat. Use `get_permission_names()`, which
 returns the client-facing strings (`"View Channel"`, `"Ban Members"`). Two tests
 pin the strings this codebase hardcodes against that vocabulary, because a typo
 there fails silently — `/modcall` would tell every moderator they cannot act.
+
+**Match overwrites on snowflake id, never on name.** Discord permits two roles in
+one guild to share a display name — divider roles routinely do — so a name-based
+match pulls a stranger's overwrite into the chain and produces a confidently
+wrong walkthrough. `perms::Scope` therefore carries the id alongside the name:
+match on the id, render the name. The neighbouring shape rule is that
+`perms::explain` takes a *pre-formatted* `channel_label` (`#general`,
+`🔊 Lobby`), because only the caller knows the channel kind — a hardcoded `#`
+here misrendered voice channels and categories.
+
+**`GuildId::new` panics on zero.** It does not return an error, so a literal
+`ABBEY_GUILD_ID=0` parses as a valid `u64` and then aborts the process — the
+opposite of the fail-fast-with-a-sentence startup path the rest of `main.rs`
+maintains. The explicit zero check before the call is that guard; do not fold it
+away as redundant with the parse.
+
+**A test can be structurally incapable of failing.** `MAX_TIMEOUT_MINUTES` is
+enforced by a clamp that *every* `Action::Timeout` is constructed through, which
+means the ladder sweep asserting no rung exceeds the ceiling can never fail no
+matter what a future rung asks for — the clamp has already capped it. Only
+`timeout_clamps_beyond_discords_ceiling`, which calls the constructor directly
+with an over-long value, actually exercises the constant. When a constant becomes
+load-bearing to silence a dead-code lint, check whether the test that justified it
+still tests anything.
 
 **Dead-code lints: this is a binary crate, so `pub` exempts nothing.** Clippy
 runs with `-D warnings`, and a `pub` constant used only by tests is an error.
@@ -125,7 +172,7 @@ moves, never `#[allow]`:
   inside `server::render`. Both are better code than before the lint fired.
 - *Mark it `#[cfg(test)]`* if it is genuinely a specification constant the
   property tests enforce — `Archetype::ALL`, `NEVER_FOR_EVERYONE`,
-  `Action::severity_rank`.
+  `MAX_CHANNELS_PER_CATEGORY`, `Action::severity_rank`.
 
 **Discord rewrites text channel names and leaves voice names alone.** Text and
 forum names are lowercased with whitespace hyphenated, so a blueprint saying
