@@ -30,7 +30,13 @@ const ANTHROPIC_MODEL: &str = "claude-sonnet-5";
 const MAX_TOKENS: u32 = 1024;
 
 /// Which generation backend the environment selected.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` is hand-written, not derived: this type holds an API key, and a
+/// derived `Debug` prints it in full. That matters because `{:?}` reaches
+/// output through paths nobody plans — a `tracing` field, a panic message, a
+/// failing `assert_eq!` in CI logs. Redacting at the type keeps the secret out
+/// of every one of them at once.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Backend {
     /// `ANTHROPIC_API_KEY`: the external Anthropic Messages API.
     Anthropic { api_key: String },
@@ -84,13 +90,54 @@ impl Backend {
 
 /// A fully assembled backend request: exactly what the live transport sends,
 /// and exactly what the recording fake captures for assertion.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `Debug` is hand-written for the same reason as [`Backend`]: `headers`
+/// carries `x-api-key`, so a derived `Debug` would print the credential.
+#[derive(Clone, PartialEq)]
 pub struct LlmRequest {
     pub url: String,
     /// Header name/value pairs in send order. `content-type: application/json`
     /// is implied by the JSON body and set by the live transport.
     pub headers: Vec<(&'static str, String)>,
     pub body: Value,
+}
+
+/// Header names whose values are credentials and must never be printed.
+const SECRET_HEADERS: &[&str] = &["x-api-key", "authorization"];
+
+impl std::fmt::Debug for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // The key is replaced, not shortened: a prefix of a secret is still
+            // a piece of a secret, and it is enough to identify the account.
+            Self::Anthropic { .. } => f.write_str("Anthropic { api_key: <redacted> }"),
+            Self::OpenAiCompatible { endpoint } => {
+                write!(f, "OpenAiCompatible {{ endpoint: {endpoint:?} }}")
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for LlmRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let headers: Vec<(&str, &str)> = self
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let shown = if SECRET_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
+                    "<redacted>"
+                } else {
+                    value.as_str()
+                };
+                (*name, shown)
+            })
+            .collect();
+        f.debug_struct("LlmRequest")
+            .field("url", &self.url)
+            .field("headers", &headers)
+            .field("body", &self.body)
+            .finish()
+    }
 }
 
 /// Build the request a backend call would send. Pure, so the exact wire shape
@@ -284,6 +331,41 @@ impl Transport for RecordingTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_never_prints_the_api_key() {
+        // A derived Debug on either type prints the credential in full. These
+        // assertions fail the moment someone re-derives it — which is the only
+        // way this protection stays real, since the leak paths (tracing fields,
+        // panic messages, CI assertion output) are all invisible until they fire.
+        const SECRET: &str = "sk-ant-super-secret-value";
+
+        let backend = Backend::Anthropic {
+            api_key: SECRET.to_string(),
+        };
+        let shown = format!("{backend:?}");
+        assert!(!shown.contains(SECRET), "backend leaked the key: {shown}");
+        assert!(shown.contains("<redacted>"), "{shown}");
+
+        let request = build_request(&backend, "system", "question");
+        let shown = format!("{request:?}");
+        assert!(!shown.contains(SECRET), "request leaked the key: {shown}");
+        assert!(shown.contains("<redacted>"), "{shown}");
+        // Non-secret fields must still be legible, or the redaction has made
+        // the type useless for the debugging it exists to serve.
+        assert!(shown.contains("api.anthropic.com"), "{shown}");
+    }
+
+    #[test]
+    fn a_key_bearing_backend_is_not_confused_with_a_loopback_one() {
+        let local = Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:8080".to_string(),
+        };
+        let shown = format!("{local:?}");
+        // The loopback endpoint is not a secret and stays visible.
+        assert!(shown.contains("127.0.0.1:8080"), "{shown}");
+        assert!(!shown.contains("<redacted>"), "{shown}");
+    }
 
     #[test]
     fn no_env_values_selects_no_backend_so_the_suite_needs_no_network() {
