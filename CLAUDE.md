@@ -31,8 +31,8 @@ coverage.
 
 ## Architecture: a pure core with a thin Discord shell
 
-Five modules hold every decision the bot makes, and **none of them import
-serenity or poise**:
+The pure modules hold every decision the bot makes, and **none of them import
+serenity or poise** (no count here — it rots; the table is the list):
 
 | Module | Decides |
 |---|---|
@@ -41,6 +41,7 @@ serenity or poise**:
 | `perms.rs` | How a channel's overwrites resolve, in Discord's evaluation order |
 | `moderation.rs` | Which action an incident warrants, given severity and history |
 | `server.rs` | Role hierarchy, channel structure, and setup steps per archetype |
+| `webhook.rs` | The incoming-webhook guide: steps, curl, payloads, thread/forum semantics |
 
 `commands.rs` is the only file that translates *Discord data* into those plain
 structs, and that is its whole job: fetch over REST, build the struct, hand it to
