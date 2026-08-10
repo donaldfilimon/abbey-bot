@@ -10,9 +10,10 @@
 //! Take `ChannelId` (resolved fetch-free from interaction data) and fetch after
 //! deferring, as `/perms` does.
 //!
-//! The decision logic these commands render lives in [`crate::persona`],
-//! [`crate::profile`], [`crate::perms`], [`crate::moderation`], and
-//! [`crate::server`], which know nothing about Discord. That split is what lets
+//! The decision logic these commands render lives in the pure modules —
+//! [`crate::persona`], [`crate::profile`], [`crate::perms`],
+//! [`crate::moderation`], [`crate::server`], [`crate::webhook`] — which know
+//! nothing about Discord. That split is what lets
 //! the decision suite run without a gateway. This file is the only one that
 //! touches Discord types, and its job is translation: fetch over REST, build
 //! the plain struct, hand it to a pure function, post the string back.
@@ -487,7 +488,12 @@ pub async fn server(
 /// Emit-only, like `/server`: creating the webhook is one click in a settings
 /// screen the user is already looking at, and a URL minted by the bot would be
 /// a credential the bot then knows. Ephemeral because it is setup chatter.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MANAGE_WEBHOOKS"
+)]
 pub async fn webhook(
     ctx: Context<'_>,
     #[description = "Where the webhook should post"] channel: ChannelId,
@@ -514,8 +520,17 @@ pub async fn webhook(
                     .parent_id
                     .map(|id| format!("<#{id}>"))
                     .unwrap_or_else(|| "the parent channel".to_string()),
+                // The curl in the guide carries this id, so it works as pasted
+                // instead of silently posting to the parent.
+                thread_id: channel.id.get(),
             }
         }
+        // A forum has no plain message stream: every execute must create a
+        // post (thread_name) or target one (?thread_id=). The plain-channel
+        // guide's curl is rejected outright there.
+        ChannelType::Forum => webhook::Target::Forum {
+            label: format!("#{}", channel.name),
+        },
         ChannelType::Voice | ChannelType::Stage => webhook::Target::Channel {
             label: format!("🔊 {}", channel.name),
         },
