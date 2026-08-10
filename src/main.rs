@@ -22,6 +22,7 @@ mod moderation;
 mod perms;
 mod persona;
 mod profile;
+mod server;
 
 use serenity::all::{GatewayIntents, GuildId};
 
@@ -61,6 +62,7 @@ async fn main() -> Result<(), Error> {
                 commands::whois(),
                 commands::perms(),
                 commands::modcall(),
+                commands::server(),
             ],
             on_error: |error| {
                 Box::pin(async move {

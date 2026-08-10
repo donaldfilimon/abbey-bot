@@ -16,6 +16,7 @@ to this crate and shares no code with it.
 | `/whois <user>` | Profile read: identity, standing, roles, join date. |
 | `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. |
 | `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out. |
+| `/server <kind>` | Emits a role hierarchy, channel structure, and numbered setup steps. |
 
 ## Running
 
@@ -49,11 +50,24 @@ spend that alone. The deferral is unconditional; a command that defers only
 sometimes is one that races eventually.
 
 **Decision logic is separated from Discord.** `persona.rs`, `profile.rs`,
-`perms.rs`, and `moderation.rs` are plain Rust over plain structs and know
-nothing about serenity, which is why the interesting behaviour has 37 unit tests
-and needs no gateway connection to run them. `commands.rs` is the only file that
-translates between Discord types and those structs — including the
-`SeverityChoice` mirror that keeps poise's derive out of the escalation ladder.
+`perms.rs`, `moderation.rs`, and `server.rs` are plain Rust over plain structs
+and know nothing about serenity, which is why the interesting behaviour has 48
+unit tests and needs no gateway connection to run them. `commands.rs` is the only
+file that translates between Discord types and those structs — including the
+`SeverityChoice` and `ArchetypeChoice` mirrors that keep poise's derive out of
+the escalation ladder and the blueprints.
+
+**`/server` emits a plan and creates nothing.** Building a server is a run of
+structural changes, and those stay with a human who can see what already exists.
+The blueprints are property-tested rather than eyeballed, because the mistakes
+here are quiet ones: every gated channel must name a role the same blueprint
+creates (otherwise the steps are unfollowable), every permission string must be
+one serenity actually defines (a typo yields a step nobody can perform), and
+every text-channel name must already be in the form Discord will store it —
+Discord lowercases text names and hyphenates whitespace, so a blueprint saying
+`General Chat` describes a server you do not get. Voice channels are exempt from
+that rule, which is exactly the asymmetry that trips people, so `render` applies
+the normalization per channel kind.
 
 **`/modcall` recommends and never acts.** It does not time out, kick, or ban
 anyone; the decision stays with the moderator. It is ephemeral for the same

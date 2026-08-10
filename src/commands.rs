@@ -16,7 +16,33 @@ use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::{self, Persona};
 use crate::profile::{self, ProfileFacts};
+use crate::server::{self, Archetype};
 use crate::{Context, Error};
+
+/// Discord-facing mirror of [`Archetype`], for the same reason as
+/// [`SeverityChoice`]: it keeps poise's derive out of `server.rs`.
+#[derive(Debug, poise::ChoiceParameter)]
+pub enum ArchetypeChoice {
+    /// Public, open-join — rules gate and moderation depth
+    Community,
+    /// Voice-first gaming group
+    Gaming,
+    /// Work or project server — structured, low noise
+    Project,
+    /// Small friend group — deliberately flat
+    FriendGroup,
+}
+
+impl From<ArchetypeChoice> for Archetype {
+    fn from(choice: ArchetypeChoice) -> Self {
+        match choice {
+            ArchetypeChoice::Community => Self::Community,
+            ArchetypeChoice::Gaming => Self::Gaming,
+            ArchetypeChoice::Project => Self::Project,
+            ArchetypeChoice::FriendGroup => Self::FriendGroup,
+        }
+    }
+}
 
 /// Discord-facing mirror of [`Severity`].
 ///
@@ -269,9 +295,60 @@ pub async fn modcall(
     Ok(())
 }
 
+/// Produce a server blueprint: role hierarchy, channel structure, numbered steps.
+///
+/// Emits a plan; it creates nothing. Building the server is a sequence of
+/// destructive-ish structural changes, and those stay with a human who can see
+/// what already exists.
+#[poise::command(slash_command, ephemeral)]
+pub async fn server(
+    ctx: Context<'_>,
+    #[description = "What kind of server"] kind: ArchetypeChoice,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    ctx.say(server::render(kind.into())).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archetype_choice_maps_onto_the_pure_blueprints() {
+        assert_eq!(
+            Archetype::from(ArchetypeChoice::Community),
+            Archetype::Community
+        );
+        assert_eq!(Archetype::from(ArchetypeChoice::Gaming), Archetype::Gaming);
+        assert_eq!(
+            Archetype::from(ArchetypeChoice::Project),
+            Archetype::Project
+        );
+        assert_eq!(
+            Archetype::from(ArchetypeChoice::FriendGroup),
+            Archetype::FriendGroup
+        );
+    }
+
+    #[test]
+    fn every_permission_a_blueprint_names_exists_in_serenity() {
+        // Blueprints hand out permission names as prose. A name serenity does not
+        // recognise means a step nobody can follow, so pin them against the real
+        // vocabulary rather than trusting the strings.
+        let vocabulary: Vec<String> = permission_names(Permissions::all());
+        for archetype in Archetype::ALL {
+            for role in server::blueprint(archetype).roles {
+                for permission in role.permissions {
+                    assert!(
+                        vocabulary.iter().any(|known| known == permission),
+                        "{archetype:?}/{} names {permission:?}, which serenity does not define",
+                        role.name
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn severity_choice_maps_onto_the_pure_ladder() {
