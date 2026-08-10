@@ -19,6 +19,12 @@ pub enum Scope {
     Everyone,
     Role(String),
     Member(String),
+    /// An overwrite whose target kind this build does not recognise.
+    /// `PermissionOverwriteType` is `#[non_exhaustive]`, so Discord can add
+    /// kinds we have never seen. Carrying them explicitly means an unknown
+    /// overwrite is reported as unknown, rather than being folded into
+    /// `Everyone` and silently claiming the highest-precedence slot.
+    Unrecognized,
 }
 
 /// One channel permission overwrite, reduced to what the walkthrough needs.
@@ -58,6 +64,11 @@ pub fn applicable<'a>(overwrites: &'a [Overwrite], subject: &Subject) -> Vec<&'a
         _ => false,
     }));
 
+    // Last, and never ahead of a real overwrite: we cannot know where Discord
+    // would evaluate a kind we do not model, so the one thing we must not do is
+    // imply a position we have not established.
+    chain.extend(overwrites.iter().filter(|o| o.scope == Scope::Unrecognized));
+
     chain
 }
 
@@ -66,6 +77,7 @@ fn label(scope: &Scope) -> String {
         Scope::Everyone => "@everyone".to_string(),
         Scope::Role(name) => format!("role @{name}"),
         Scope::Member(name) => format!("member {name}"),
+        Scope::Unrecognized => "unrecognized overwrite type (not modelled here)".to_string(),
     }
 }
 
@@ -224,6 +236,32 @@ mod tests {
         }];
         let out = explain("general", &ows, &subject());
         assert!(out.contains("guild-level role permissions"), "{out}");
+    }
+
+    #[test]
+    fn an_unrecognized_overwrite_never_impersonates_everyone() {
+        // Regression: the command layer used to map serenity's non_exhaustive
+        // wildcard onto Scope::Everyone, which put an unknown overwrite at
+        // position 1 and printed it as literally "@everyone" — misattributed and
+        // promoted above the overwrites that actually decide the outcome.
+        let ows = [
+            Overwrite {
+                scope: Scope::Unrecognized,
+                allow: vec!["View Channel".to_string()],
+                deny: vec![],
+            },
+            everyone_denies_view(),
+        ];
+        let chain = applicable(&ows, &subject());
+        assert_eq!(
+            chain[0].scope,
+            Scope::Everyone,
+            "a real overwrite goes first"
+        );
+        assert_eq!(chain[1].scope, Scope::Unrecognized);
+
+        let out = explain("general", &ows, &subject());
+        assert!(out.contains("unrecognized overwrite type"), "{out}");
     }
 
     #[test]

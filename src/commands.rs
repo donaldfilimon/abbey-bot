@@ -10,7 +10,11 @@
 //! nothing about Discord. That split is what lets the interesting behaviour be
 //! unit-tested without a gateway.
 
-use serenity::all::{GuildChannel, PermissionOverwriteType, Permissions, RoleId, User};
+use std::collections::HashMap;
+
+use serenity::all::{
+    GuildChannel, GuildId, Member, PermissionOverwriteType, Permissions, Role, RoleId, User,
+};
 
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
@@ -81,6 +85,37 @@ fn permission_names(perms: Permissions) -> Vec<String> {
         .into_iter()
         .map(str::to_string)
         .collect()
+}
+
+/// A member's guild-level permissions.
+///
+/// **`Member.roles` never contains `@everyone`**, but `@everyone` is a real role
+/// whose permissions are part of every member's base set. Folding only
+/// `member.roles` therefore drops anything granted there — silently, and in the
+/// direction that reads as "you have fewer permissions than you do".
+///
+/// serenity's own `Guild::user_permissions_in_` treats the `@everyone`
+/// permissions as a *separate input* from the member's role permissions for
+/// exactly this reason; this mirrors that. `guild_id.roles()` returns
+/// `@everyone` keyed by the guild id, so no extra fetch is needed.
+///
+/// A guild missing its `@everyone` role is impossible, but if the map somehow
+/// lacks it we contribute nothing rather than failing — the caller's owner and
+/// Administrator checks still apply.
+fn base_permissions(
+    member: &Member,
+    roles: &HashMap<RoleId, Role>,
+    guild_id: GuildId,
+) -> Permissions {
+    let everyone = roles
+        .get(&RoleId::new(guild_id.get()))
+        .map_or_else(Permissions::empty, |role| role.permissions);
+
+    member
+        .roles
+        .iter()
+        .filter_map(|id| roles.get(id))
+        .fold(everyone, |acc, role| acc | role.permissions)
 }
 
 /// Show which persona takes a request, and why.
@@ -207,7 +242,13 @@ pub async fn perms(
                 } else {
                     format!("other member {id}")
                 }),
-                _ => Scope::Everyone,
+                // `PermissionOverwriteType` is `#[non_exhaustive]`, so this
+                // arm is compiler-required — but mapping it to `Everyone` was a
+                // real defect: `applicable` puts every Everyone overwrite at
+                // position 1 and `label` prints it as literally "@everyone", so
+                // an unknown kind was both misattributed and promoted above the
+                // overwrites that actually decide the outcome.
+                _ => Scope::Unrecognized,
             };
             Overwrite {
                 scope,
@@ -225,11 +266,11 @@ pub async fn perms(
             .filter_map(|id| roles.get(id))
             .map(|r| r.name.to_string())
             .collect(),
-        is_admin: member
-            .roles
-            .iter()
-            .filter_map(|id| roles.get(id))
-            .any(|r| r.permissions.contains(Permissions::ADMINISTRATOR)),
+        // Via base_permissions, so Administrator granted on @everyone is seen.
+        // Missing it would skip perms.rs's documented Administrator
+        // short-circuit and confidently walk an overwrite chain that does not
+        // decide the outcome.
+        is_admin: base_permissions(&member, &roles, guild_id).contains(Permissions::ADMINISTRATOR),
         is_owner: user.id == owner_id,
     };
 
@@ -274,11 +315,11 @@ pub async fn modcall(
             let roles = guild_id.roles(ctx.http()).await?;
             let owner_id = guild_id.to_partial_guild(ctx.http()).await?.owner_id;
 
-            let held = moderator
-                .roles
-                .iter()
-                .filter_map(|id| roles.get(id))
-                .fold(Permissions::empty(), |acc, role| acc | role.permissions);
+            // Includes @everyone's grants. Folding only `moderator.roles` would
+            // tell a moderator they cannot act whenever the permission is held
+            // at @everyone — a false negative, and the exact silent-wrong-answer
+            // failure the permission-name tests were written to guard against.
+            let held = base_permissions(&moderator, &roles, guild_id);
 
             // Owner and Administrator both bypass the individual bit.
             ctx.author().id == owner_id
@@ -313,6 +354,37 @@ pub async fn server(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_permissions_includes_what_everyone_grants() {
+        // Regression, verified against serenity's own user_permissions_in_,
+        // which takes everyone_permissions as an input SEPARATE from the
+        // member's role permissions: Member.roles excludes @everyone, so a fold
+        // over it alone drops whatever @everyone grants. The old code did
+        // exactly that, and the error direction was "you have fewer permissions
+        // than you really do" — /modcall telling a moderator they cannot act.
+        //
+        // Asserted on the permission algebra rather than by constructing
+        // serenity's Member and Role, which have private fields and no public
+        // constructor. The bug was the missing union, and this is that union.
+        let everyone = Permissions::MODERATE_MEMBERS;
+        let member_roles = Permissions::SEND_MESSAGES;
+
+        let folded_without_everyone = member_roles;
+        let folded_with_everyone = member_roles | everyone;
+
+        assert!(
+            !folded_without_everyone.contains(Permissions::MODERATE_MEMBERS),
+            "sanity: the old shape genuinely misses it"
+        );
+        assert!(folded_with_everyone.contains(Permissions::MODERATE_MEMBERS));
+        assert!(
+            permission_names(folded_with_everyone)
+                .iter()
+                .any(|n| n == "Moderate Members"),
+            "the name /modcall compares against must survive the union"
+        );
+    }
 
     #[test]
     fn archetype_choice_maps_onto_the_pure_blueprints() {
