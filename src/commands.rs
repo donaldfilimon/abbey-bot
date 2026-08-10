@@ -6,16 +6,42 @@
 //! so the deferral is unconditional rather than "when it looks slow".
 //!
 //! The decision logic these commands render lives in [`crate::persona`],
-//! [`crate::profile`], and [`crate::perms`], which know nothing about Discord.
-//! That split is what lets the interesting behaviour be unit-tested without a
-//! gateway.
+//! [`crate::profile`], [`crate::perms`], and [`crate::moderation`], which know
+//! nothing about Discord. That split is what lets the interesting behaviour be
+//! unit-tested without a gateway.
 
 use serenity::all::{GuildChannel, PermissionOverwriteType, Permissions, RoleId, User};
 
+use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::{self, Persona};
 use crate::profile::{self, ProfileFacts};
 use crate::{Context, Error};
+
+/// Discord-facing mirror of [`Severity`].
+///
+/// It exists so `moderation.rs` stays free of poise, which is what keeps the
+/// escalation ladder testable without a gateway. The descriptions are the
+/// dropdown text a moderator reads while choosing.
+#[derive(Debug, poise::ChoiceParameter)]
+pub enum SeverityChoice {
+    /// Rudeness, mild spam, off-topic derailing
+    Minor,
+    /// Harassment, slurs, deliberate disruption
+    Serious,
+    /// Threats, doxxing, raiding — bans on the first offence
+    Severe,
+}
+
+impl From<SeverityChoice> for Severity {
+    fn from(choice: SeverityChoice) -> Self {
+        match choice {
+            SeverityChoice::Minor => Self::Minor,
+            SeverityChoice::Serious => Self::Serious,
+            SeverityChoice::Severe => Self::Severe,
+        }
+    }
+}
 
 /// Render a permission bitfield as the names Discord's own UI uses.
 ///
@@ -186,9 +212,91 @@ pub async fn perms(
     Ok(())
 }
 
+/// Recommend a moderation action, and say whether you can actually take it.
+///
+/// Recommends only — this command never times out, kicks, or bans anyone. The
+/// decision stays with the moderator, which is also why it is ephemeral: a
+/// recommendation broadcast to the channel would be a public accusation.
+#[poise::command(slash_command, guild_only, ephemeral)]
+pub async fn modcall(
+    ctx: Context<'_>,
+    #[description = "Who the incident is about"] user: User,
+    #[description = "How bad it is"] severity: SeverityChoice,
+    #[description = "Prior warnings on record (default 0)"] warnings: Option<u8>,
+    #[description = "Prior timeouts on record (default 0)"] timeouts: Option<u8>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("This one only works inside a server.").await?;
+        return Ok(());
+    };
+
+    let history = History {
+        warnings: warnings.unwrap_or(0),
+        timeouts: timeouts.unwrap_or(0),
+    };
+    let recommendation = moderation::recommend(severity.into(), history);
+
+    // Whether *the moderator asking* can carry it out — not whether the bot can.
+    // The skill's rule is to check standing before recommending escalation, and
+    // advice someone cannot act on is worse than useless.
+    let can_act = match recommendation.action.required_permission() {
+        None => true,
+        Some(name) => {
+            let moderator = guild_id.member(ctx.http(), ctx.author().id).await?;
+            let roles = guild_id.roles(ctx.http()).await?;
+            let owner_id = guild_id.to_partial_guild(ctx.http()).await?.owner_id;
+
+            let held = moderator
+                .roles
+                .iter()
+                .filter_map(|id| roles.get(id))
+                .fold(Permissions::empty(), |acc, role| acc | role.permissions);
+
+            // Owner and Administrator both bypass the individual bit.
+            ctx.author().id == owner_id
+                || held.contains(Permissions::ADMINISTRATOR)
+                || held
+                    .get_permission_names()
+                    .into_iter()
+                    .any(|held_name| held_name == name)
+        }
+    };
+
+    ctx.say(moderation::render(&user.name, &recommendation, can_act))
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn severity_choice_maps_onto_the_pure_ladder() {
+        assert_eq!(Severity::from(SeverityChoice::Minor), Severity::Minor);
+        assert_eq!(Severity::from(SeverityChoice::Serious), Severity::Serious);
+        assert_eq!(Severity::from(SeverityChoice::Severe), Severity::Severe);
+    }
+
+    #[test]
+    fn every_permission_the_ladder_names_exists_in_serenity() {
+        // `can_act` compares the ladder's permission strings against
+        // `get_permission_names()`. A typo there would silently mean "you cannot
+        // act" for everyone, forever — so pin the names against serenity itself.
+        for (permission, expected) in [
+            (Permissions::MODERATE_MEMBERS, "Moderate Members"),
+            (Permissions::KICK_MEMBERS, "Kick Members"),
+            (Permissions::BAN_MEMBERS, "Ban Members"),
+        ] {
+            assert!(
+                permission_names(permission).iter().any(|n| n == expected),
+                "serenity does not call it {expected:?}: {:?}",
+                permission_names(permission)
+            );
+        }
+    }
 
     #[test]
     fn empty_permissions_render_as_nothing_not_as_a_placeholder() {

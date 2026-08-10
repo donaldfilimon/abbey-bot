@@ -15,6 +15,7 @@ to this crate and shares no code with it.
 | `/persona <request> [as]` | Shows which persona takes a request and why. `as` forces one. |
 | `/whois <user>` | Profile read: identity, standing, roles, join date. |
 | `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. |
+| `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out. |
 
 ## Running
 
@@ -47,11 +48,23 @@ interaction token 3 seconds after issuing it, and one cold REST round-trip can
 spend that alone. The deferral is unconditional; a command that defers only
 sometimes is one that races eventually.
 
-**Decision logic is separated from Discord.** `persona.rs`, `profile.rs`, and
-`perms.rs` are plain Rust over plain structs and know nothing about serenity,
-which is why the interesting behaviour has 25 unit tests and needs no gateway
-connection to run them. `commands.rs` is the only file that translates between
-Discord types and those structs.
+**Decision logic is separated from Discord.** `persona.rs`, `profile.rs`,
+`perms.rs`, and `moderation.rs` are plain Rust over plain structs and know
+nothing about serenity, which is why the interesting behaviour has 37 unit tests
+and needs no gateway connection to run them. `commands.rs` is the only file that
+translates between Discord types and those structs — including the
+`SeverityChoice` mirror that keeps poise's derive out of the escalation ladder.
+
+**`/modcall` recommends and never acts.** It does not time out, kick, or ban
+anyone; the decision stays with the moderator. It is ephemeral for the same
+reason — a recommendation posted to the channel would be a public accusation.
+Two properties of the ladder are deliberate and load-bearing: severity outranks
+history (a severe incident bans on the first offence, so a clean record cannot
+buy tolerance for a threat), and more history never yields a *lighter* action —
+both are pinned by property tests. Every timeout is constructed through a clamp
+at Discord's 28-day ceiling, so a future rung cannot produce a request the API
+rejects. The command also checks whether the *invoking* moderator holds the
+permission the recommendation needs, and says so when they do not.
 
 **Persona routing refuses to guess.** The skill's rule is to switch persona when
 the task type is *unambiguous*; a request that pulls toward two personas equally

@@ -18,6 +18,7 @@
 //! guessing at it.
 
 mod commands;
+mod moderation;
 mod perms;
 mod persona;
 mod profile;
@@ -55,7 +56,12 @@ async fn main() -> Result<(), Error> {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![commands::persona(), commands::whois(), commands::perms()],
+            commands: vec![
+                commands::persona(),
+                commands::whois(),
+                commands::perms(),
+                commands::modcall(),
+            ],
             on_error: |error| {
                 Box::pin(async move {
                     // Structured, not `println!` — and never swallowed: a command
