@@ -1,0 +1,39 @@
+# Abbey Bot systemd unit.
+#
+# Install:
+#   cp target/release/abbey-bot /usr/local/bin/abbey-bot
+#   mkdir -p /etc/abbey-bot && $EDITOR /etc/abbey-bot/env   # DISCORD_TOKEN=...
+#   chmod 600 /etc/abbey-bot/env
+#   cp deploy/abbey-bot.service /etc/systemd/system/
+#   systemctl enable --now abbey-bot
+#
+# The env file carries the token, so it — not this unit — is the secret.
+
+[Unit]
+Description=Abbey Bot — Discord operational layer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/abbey-bot
+EnvironmentFile=/etc/abbey-bot/env
+# No state on disk, so no real user either: systemd fabricates one per run.
+DynamicUser=yes
+Restart=on-failure
+RestartSec=5
+# Hardening: the bot needs outbound network and nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+# Rust does not JIT; nothing here needs writable+executable memory.
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
