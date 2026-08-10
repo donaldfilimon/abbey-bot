@@ -202,18 +202,18 @@ pub fn recommend(severity: Severity, history: History) -> Recommendation {
     }
 }
 
-/// Format for Discord. Action, reason, and — when the action needs a permission
-/// the moderator lacks — the fact that they cannot actually do it. That last part
-/// is the difference between advice and advice you can act on.
-pub fn render(subject: &str, rec: &Recommendation, moderator_can_act: bool) -> String {
+/// Format for Discord. Action, reason, and — when the caller has established
+/// the moderator cannot actually do it — the reason why. That last part is the
+/// difference between advice and advice you can act on.
+///
+/// The blocker is a caller-supplied sentence rather than a bool, because "you
+/// lack the permission" is only one of the ways Discord will refuse: role
+/// hierarchy and owner-targeting are others, and this module cannot know them.
+pub fn render(subject: &str, rec: &Recommendation, blocked: Option<&str>) -> String {
     let mut out = format!("**{}** — {}. {}", subject, rec.action, rec.reason);
 
-    if let Some(permission) = rec.action.required_permission()
-        && !moderator_can_act
-    {
-        out.push_str(&format!(
-            "\n\n⚠️ You do not have **{permission}**, so you cannot carry this out — hand it to someone who does."
-        ));
+    if let Some(reason) = blocked {
+        out.push_str(&format!("\n\n⚠️ {reason}"));
     }
 
     out
@@ -371,26 +371,26 @@ mod tests {
     }
 
     #[test]
-    fn render_warns_when_the_moderator_cannot_actually_act() {
+    fn render_appends_the_blocker_verbatim_and_only_when_present() {
         let rec = recommend(Severity::Serious, History::default());
-        let blocked = render("frankie", &rec, false);
-        assert!(blocked.contains("Moderate Members"), "{blocked}");
+        let blocked = render(
+            "frankie",
+            &rec,
+            Some("You do not have **Moderate Members**."),
+        );
+        assert!(
+            blocked.contains("⚠️ You do not have **Moderate Members**."),
+            "{blocked}"
+        );
 
-        let allowed = render("frankie", &rec, true);
+        let allowed = render("frankie", &rec, None);
         assert!(!allowed.contains("⚠️"), "{allowed}");
-    }
-
-    #[test]
-    fn render_never_appends_a_permission_note_to_a_social_action() {
-        // Note needs no permission, so `false` must not produce a warning.
-        let rec = recommend(Severity::Minor, History::default());
-        assert!(!render("frankie", &rec, false).contains("⚠️"));
     }
 
     #[test]
     fn output_carries_no_commentary_about_the_person() {
         for severity in [Severity::Minor, Severity::Serious, Severity::Severe] {
-            let out = render("frankie", &recommend(severity, History::default()), true);
+            let out = render("frankie", &recommend(severity, History::default()), None);
             for moralizing in ["unacceptable", "toxic", "should be ashamed", "disgusting"] {
                 assert!(!out.to_lowercase().contains(moralizing), "{out}");
             }

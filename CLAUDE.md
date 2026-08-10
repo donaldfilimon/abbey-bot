@@ -15,7 +15,7 @@ cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
 ```
 
-`cargo test moderation::` runs one module's tests (10 of 48). There is no `-p`
+`cargo test moderation::` runs one module's tests. There is no `-p`
 and no `--workspace` — this is a single binary crate. Note that means test
 targets are inside the `bin`, so `--lib` matches nothing.
 
@@ -36,8 +36,9 @@ serenity or poise**:
 translation: fetch over REST, build the plain struct, hand it to a pure function,
 post the string back. `main.rs` is just env parsing and framework wiring.
 
-**This split is the reason 48 unit tests exist with no gateway connection**, and
-it is load-bearing rather than stylistic. Putting decision logic into a command
+**This split is the reason the entire decision suite runs with no gateway
+connection** (a count is deliberately not written here — it rots), and it is
+load-bearing rather than stylistic. Putting decision logic into a command
 body makes it untestable in this repository, because there is no test harness for
 a Discord interaction here and no token to build one with. If you find yourself
 writing an `if` inside a `#[poise::command]` function that isn't about fetching
@@ -46,11 +47,14 @@ data, it belongs in a pure module.
 ### Adding a command
 
 1. Put the logic in a pure module with tests.
-2. If it needs a dropdown, add a `…Choice` enum **in `commands.rs`** with
-   `#[derive(poise::ChoiceParameter)]` plus a `From` impl to the pure type. See
-   `SeverityChoice` and `ArchetypeChoice`. The mirror exists so the pure module
-   never gains a poise dependency — that dependency is what would make it
-   un-unit-testable.
+2. If it takes a closed set of options, add a `…Choice` enum **in
+   `commands.rs`** with `#[derive(poise::ChoiceParameter)]` plus a `From` impl
+   to the pure type. See `SeverityChoice`, `ArchetypeChoice`, and
+   `PersonaChoice`. The mirror exists so the pure module never gains a poise
+   dependency — that dependency is what would make it un-unit-testable. Put the
+   user-facing wording in `#[name = "..."]` on each variant: **doc comments on
+   variants never reach Discord** (verified in the derive macro), so a bare
+   variant renders as its ident.
 3. Write the thin command; **defer first** (see below).
 4. Register it in the `commands: vec![…]` list in `main.rs`. Forgetting this
    compiles fine and silently ships nothing.
@@ -62,7 +66,19 @@ interaction token 3 seconds after issuing it, and one cold REST round-trip can
 spend that alone. Every command here calls `ctx.defer()` or
 `ctx.defer_ephemeral()` first — including `/persona`, which makes no network call
 at all. A command that defers only when it looks slow is a command that races
-eventually.
+eventually. The corollary that actually bit: **never declare a `GuildChannel`
+parameter** — poise resolves it with a REST fetch *during argument parsing*,
+before the body and its defer ever run. Take `ChannelId` and fetch after
+deferring, the way `/perms` does. Guild fetches go through
+`fetch_member_and_guild`, which runs the two independent requests concurrently;
+`PartialGuild` already carries `roles` and `owner_id`, so do not add a separate
+`guild_id.roles()` call.
+
+**Every reply passes through `clamp_message`.** Discord rejects messages over
+2,000 codepoints after the defer has already succeeded, which surfaces as a raw
+"Message too large." error instead of an answer. A legitimate `/perms`
+walkthrough measures past the limit, so the clamp is not theoretical. New
+commands must route their `ctx.say` through it.
 
 **Intents stay `non_privileged()`.** Nothing reads message content, presence, or
 the member list off the gateway; `/whois`, `/perms`, and `/modcall` fetch over
@@ -81,6 +97,14 @@ someone who can see the existing server.
 **Fetch over REST, not from the cache.** The cache is only as complete as the
 intents held, so a cache read produces a silently thinner answer instead of an
 error.
+
+**Permission math belongs to serenity, not to this crate.** Guild-level
+permissions come from `PartialGuild::member_permissions(&member)` — it seeds
+from `@everyone` (which `Member.roles` never contains), and returns
+`Permissions::all()` for the owner and for Administrator. A hand-rolled fold
+over `member.roles` is how this codebase once told moderators they could not
+act when they could; the hand-rolled version is deleted, do not reintroduce
+one.
 
 ## Traps this repository has already hit
 

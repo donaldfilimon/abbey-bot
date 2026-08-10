@@ -46,17 +46,6 @@ impl Persona {
             Self::Abi => "welcome messages, community tone-setting, de-escalation",
         }
     }
-
-    /// Parse an explicit persona name. Case-insensitive; leading `@` tolerated
-    /// because people type `@aviva` out of Discord habit.
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().trim_start_matches('@').to_lowercase().as_str() {
-            "abbey" => Some(Self::Abbey),
-            "aviva" => Some(Self::Aviva),
-            "abi" => Some(Self::Abi),
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Display for Persona {
@@ -244,14 +233,6 @@ mod tests {
     #[test]
     fn matching_is_case_insensitive() {
         assert_eq!(route("PERMISSION design", None).persona, Persona::Aviva);
-    }
-
-    #[test]
-    fn parses_names_leniently_but_not_loosely() {
-        assert_eq!(Persona::parse("  AVIVA "), Some(Persona::Aviva));
-        assert_eq!(Persona::parse("@abi"), Some(Persona::Abi));
-        assert_eq!(Persona::parse("abbey"), Some(Persona::Abbey));
-        assert_eq!(Persona::parse("clyde"), None);
     }
 
     #[test]
