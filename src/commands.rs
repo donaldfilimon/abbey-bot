@@ -27,6 +27,7 @@ use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::{self, Persona};
 use crate::profile::{self, ProfileFacts};
 use crate::server::{self, Archetype};
+use crate::webhook;
 use crate::{Context, Error};
 
 // ---------------------------------------------------------------------------
@@ -478,6 +479,52 @@ pub async fn server(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     ctx.say(clamp_message(server::render(kind.into()))).await?;
+    Ok(())
+}
+
+/// Emit the incoming-webhook setup guide for a channel.
+///
+/// Emit-only, like `/server`: creating the webhook is one click in a settings
+/// screen the user is already looking at, and a URL minted by the bot would be
+/// a credential the bot then knows. Ephemeral because it is setup chatter.
+#[poise::command(slash_command, guild_only, ephemeral)]
+pub async fn webhook(
+    ctx: Context<'_>,
+    #[description = "Where the webhook should post"] channel: ChannelId,
+) -> Result<(), Error> {
+    // ChannelId, never GuildChannel — see the module doc.
+    ctx.defer_ephemeral().await?;
+
+    let channel = channel.to_channel(ctx.http()).await?;
+    let Some(channel) = channel.guild() else {
+        ctx.say("That is not a server channel.").await?;
+        return Ok(());
+    };
+
+    let target = match channel.kind {
+        ChannelType::Category => {
+            ctx.say("Webhooks attach to channels, not categories — pick a channel inside it.")
+                .await?;
+            return Ok(());
+        }
+        ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::NewsThread => {
+            webhook::Target::Thread {
+                label: format!("\"{}\"", channel.name),
+                parent_label: channel
+                    .parent_id
+                    .map(|id| format!("<#{id}>"))
+                    .unwrap_or_else(|| "the parent channel".to_string()),
+            }
+        }
+        ChannelType::Voice | ChannelType::Stage => webhook::Target::Channel {
+            label: format!("🔊 {}", channel.name),
+        },
+        _ => webhook::Target::Channel {
+            label: format!("#{}", channel.name),
+        },
+    };
+
+    ctx.say(clamp_message(webhook::guide(&target))).await?;
     Ok(())
 }
 

@@ -23,6 +23,7 @@ mod perms;
 mod persona;
 mod profile;
 mod server;
+mod webhook;
 
 use serenity::all::{GatewayIntents, GuildId};
 
@@ -73,6 +74,7 @@ async fn main() -> Result<(), Error> {
                 commands::perms(),
                 commands::modcall(),
                 commands::server(),
+                commands::webhook(),
             ],
             on_error: |error| {
                 Box::pin(async move {
