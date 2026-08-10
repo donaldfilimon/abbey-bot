@@ -3,17 +3,23 @@
 //! Every command here defers before doing anything that touches the network.
 //! Discord invalidates an interaction token 3 seconds after it is issued, and a
 //! single REST round-trip on a cold connection can eat that budget on its own —
-//! so the deferral is unconditional rather than "when it looks slow".
+//! so the deferral is unconditional rather than "when it looks slow". That rule
+//! has one non-obvious corollary: **never take `GuildChannel` as a command
+//! parameter.** poise resolves that type with a REST fetch *during argument
+//! parsing*, before the command body — and therefore the defer — ever runs.
+//! Take `ChannelId` (resolved fetch-free from interaction data) and fetch after
+//! deferring, as `/perms` does.
 //!
 //! The decision logic these commands render lives in [`crate::persona`],
-//! [`crate::profile`], [`crate::perms`], and [`crate::moderation`], which know
-//! nothing about Discord. That split is what lets the interesting behaviour be
-//! unit-tested without a gateway.
-
-use std::collections::HashMap;
+//! [`crate::profile`], [`crate::perms`], [`crate::moderation`], and
+//! [`crate::server`], which know nothing about Discord. That split is what lets
+//! the decision suite run without a gateway. This file is the only one that
+//! touches Discord types, and its job is translation: fetch over REST, build
+//! the plain struct, hand it to a pure function, post the string back.
 
 use serenity::all::{
-    GuildChannel, GuildId, Member, PermissionOverwriteType, Permissions, Role, RoleId, User,
+    ChannelId, ChannelType, GuildId, Member, PartialGuild, PermissionOverwriteType, Permissions,
+    User,
 };
 
 use crate::moderation::{self, History, Severity};
@@ -23,17 +29,25 @@ use crate::profile::{self, ProfileFacts};
 use crate::server::{self, Archetype};
 use crate::{Context, Error};
 
-/// Discord-facing mirror of [`Archetype`], for the same reason as
-/// [`SeverityChoice`]: it keeps poise's derive out of `server.rs`.
+// ---------------------------------------------------------------------------
+// Choice mirrors
+//
+// These exist so the pure modules never gain a poise dependency. One quirk is
+// load-bearing and verified in the derive macro's source: doc comments on the
+// variants NEVER reach Discord — the dropdown shows `#[name = "..."]` or the
+// bare variant ident. Guidance for the person choosing goes in `#[name]`.
+// ---------------------------------------------------------------------------
+
+/// Discord-facing mirror of [`Archetype`].
 #[derive(Debug, poise::ChoiceParameter)]
 pub enum ArchetypeChoice {
-    /// Public, open-join — rules gate and moderation depth
+    #[name = "community — public and open-join, rules gate, moderation depth"]
     Community,
-    /// Voice-first gaming group
+    #[name = "gaming — voice-first group"]
     Gaming,
-    /// Work or project server — structured, low noise
+    #[name = "project — work server, structured and low noise"]
     Project,
-    /// Small friend group — deliberately flat
+    #[name = "friend group — small and deliberately flat"]
     FriendGroup,
 }
 
@@ -49,17 +63,13 @@ impl From<ArchetypeChoice> for Archetype {
 }
 
 /// Discord-facing mirror of [`Severity`].
-///
-/// It exists so `moderation.rs` stays free of poise, which is what keeps the
-/// escalation ladder testable without a gateway. The descriptions are the
-/// dropdown text a moderator reads while choosing.
 #[derive(Debug, poise::ChoiceParameter)]
 pub enum SeverityChoice {
-    /// Rudeness, mild spam, off-topic derailing
+    #[name = "minor — rudeness, mild spam, derailing"]
     Minor,
-    /// Harassment, slurs, deliberate disruption
+    #[name = "serious — harassment, slurs, deliberate disruption"]
     Serious,
-    /// Threats, doxxing, raiding — bans on the first offence
+    #[name = "severe — threats, doxxing, raiding; bans on the first offence"]
     Severe,
 }
 
@@ -73,12 +83,40 @@ impl From<SeverityChoice> for Severity {
     }
 }
 
+/// Discord-facing mirror of [`Persona`].
+///
+/// A dropdown, not a free-form string: the typo case ("no persona named
+/// `abbby`") is unrepresentable, which deleted both `Persona::parse` and the
+/// error branch that apologised for it.
+#[derive(Debug, poise::ChoiceParameter)]
+pub enum PersonaChoice {
+    #[name = "abbey — direct, reads people fast"]
+    Abbey,
+    #[name = "aviva — analytical system-builder"]
+    Aviva,
+    #[name = "abi — warm rapport-builder"]
+    Abi,
+}
+
+impl From<PersonaChoice> for Persona {
+    fn from(choice: PersonaChoice) -> Self {
+        match choice {
+            PersonaChoice::Abbey => Self::Abbey,
+            PersonaChoice::Aviva => Self::Aviva,
+            PersonaChoice::Abi => Self::Abi,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared shell helpers
+// ---------------------------------------------------------------------------
+
 /// Render a permission bitfield as the names Discord's own UI uses.
 ///
 /// Do not be tempted to derive these from `Debug`: serenity's `Permissions`
 /// prints as `Permissions(3072)`, a raw bitfield, so scraping it yields a number
-/// rather than flag names. `get_permission_names` is the supported accessor and
-/// returns exactly the client-facing strings ("View Channel", "Ban Members").
+/// rather than flag names. `get_permission_names` is the supported accessor.
 fn permission_names(perms: Permissions) -> Vec<String> {
     perms
         .get_permission_names()
@@ -87,53 +125,93 @@ fn permission_names(perms: Permissions) -> Vec<String> {
         .collect()
 }
 
-/// A member's guild-level permissions.
+/// Fetch a member together with the guild, concurrently.
 ///
-/// **`Member.roles` never contains `@everyone`**, but `@everyone` is a real role
-/// whose permissions are part of every member's base set. Folding only
-/// `member.roles` therefore drops anything granted there — silently, and in the
-/// direction that reads as "you have fewer permissions than you do".
+/// This is the whole preamble for every guild-reading command. `PartialGuild`
+/// already carries `roles` and `owner_id`, so the separate `guild_id.roles()`
+/// call the commands used to make was a third round-trip for data already in
+/// hand — and the two fetches that remain are independent, so they run in
+/// parallel rather than back to back inside the 3-second window.
 ///
-/// serenity's own `Guild::user_permissions_in_` treats the `@everyone`
-/// permissions as a *separate input* from the member's role permissions for
-/// exactly this reason; this mirrors that. `guild_id.roles()` returns
-/// `@everyone` keyed by the guild id, so no extra fetch is needed.
-///
-/// A guild missing its `@everyone` role is impossible, but if the map somehow
-/// lacks it we contribute nothing rather than failing — the caller's owner and
-/// Administrator checks still apply.
-fn base_permissions(
-    member: &Member,
-    roles: &HashMap<RoleId, Role>,
+/// Fetched over HTTP rather than read from cache: the cache is only as complete
+/// as the intents we hold, and a partial cache would silently produce a thinner
+/// answer rather than an error.
+async fn fetch_member_and_guild(
+    ctx: Context<'_>,
     guild_id: GuildId,
-) -> Permissions {
-    resolve_base_permissions(RoleId::new(guild_id.get()), &member.roles, |id| {
-        roles.get(&id).map(|role| role.permissions)
-    })
+    user_id: serenity::all::UserId,
+) -> Result<(Member, PartialGuild), Error> {
+    tokio::try_join!(
+        guild_id.member(ctx.http(), user_id),
+        guild_id.to_partial_guild(ctx.http()),
+    )
+    .map_err(Into::into)
 }
 
-/// The resolution itself, over a lookup closure rather than serenity's types.
-///
-/// Split this way on purpose. serenity's `Member` and `Role` have private
-/// fields and no public constructor, so `base_permissions` cannot be called
-/// from a unit test — and a test that only restates bitflag algebra guards
-/// nothing. A mutation check proved that: the first attempt at this test stayed
-/// green when the `@everyone` seed was reverted, because the seed *lookup* was
-/// the part that had been wrong and the test never exercised it. Everything
-/// that can be wrong now lives here, where a test reaches it.
-fn resolve_base_permissions(
-    everyone_id: RoleId,
-    member_role_ids: &[RoleId],
-    lookup: impl Fn(RoleId) -> Option<Permissions>,
-) -> Permissions {
-    // Seeded from @everyone, which `member_role_ids` never contains.
-    let everyone = lookup(everyone_id).unwrap_or_else(Permissions::empty);
-
-    member_role_ids
+/// A member's highest role position; 0 when they hold only `@everyone`.
+fn top_role_position(member: &Member, guild: &PartialGuild) -> u16 {
+    member
+        .roles
         .iter()
-        .filter_map(|id| lookup(*id))
-        .fold(everyone, |acc, perms| acc | perms)
+        .filter_map(|id| guild.roles.get(id))
+        .map(|role| role.position)
+        .max()
+        .unwrap_or(0)
 }
+
+/// Discord's hard ceiling on message length, in codepoints.
+///
+/// Every command reply passes through here. Without it, a long-but-legitimate
+/// answer (a channel where two overwrites each carry dozens of flags measures
+/// over 2,000) fails the followup outright and the user gets a raw
+/// "Message too large." instead of their walkthrough.
+fn clamp_message(text: String) -> String {
+    const LIMIT: usize = 2000;
+    const MARKER: &str = "\n… (truncated to fit Discord's 2,000-character limit)";
+    if text.chars().count() <= LIMIT {
+        return text;
+    }
+    let keep = LIMIT - MARKER.chars().count();
+    let mut clamped: String = text.chars().take(keep).collect();
+    clamped.push_str(MARKER);
+    clamped
+}
+
+/// Why Discord would refuse this moderation action for this actor and target,
+/// independent of whether the actor holds the permission bit.
+///
+/// Pure over primitives so it is testable; the command supplies the facts.
+/// Rules, in precedence order: the owner cannot be actioned; the owner can
+/// action anyone; administrators cannot be timed out; otherwise the actor's
+/// top role must sit strictly above the target's.
+fn hierarchy_blocker(
+    actor_is_owner: bool,
+    actor_top: u16,
+    target_is_owner: bool,
+    target_is_admin: bool,
+    target_top: u16,
+    is_timeout: bool,
+) -> Option<&'static str> {
+    if target_is_owner {
+        return Some("The server owner cannot be kicked, banned, or timed out.");
+    }
+    if actor_is_owner {
+        return None;
+    }
+    if is_timeout && target_is_admin {
+        return Some("Administrators cannot be timed out — Discord refuses it outright.");
+    }
+    if actor_top <= target_top {
+        return Some(
+            "Their top role is at or above yours, so Discord will refuse this — hand it to someone who outranks them.",
+        );
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
 
 /// Show which persona takes a request, and why.
 ///
@@ -143,29 +221,12 @@ fn resolve_base_permissions(
 pub async fn persona(
     ctx: Context<'_>,
     #[description = "What you want help with"] request: String,
-    #[description = "Force a persona instead of routing (abbey / aviva / abi)"] r#as: Option<
-        String,
-    >,
+    #[description = "Force a persona instead of routing"] r#as: Option<PersonaChoice>,
 ) -> Result<(), Error> {
     ctx.defer().await?;
 
-    let explicit = match r#as.as_deref() {
-        // An unrecognised name is a typo, not a silent fallback to Abbey — say so.
-        Some(raw) => match Persona::parse(raw) {
-            Some(p) => Some(p),
-            None => {
-                ctx.say(format!(
-                    "No persona named `{raw}`. Pick one of: abbey, aviva, abi — or omit it and I'll route."
-                ))
-                .await?;
-                return Ok(());
-            }
-        },
-        None => None,
-    };
-
-    let route = persona::route(&request, explicit);
-    ctx.say(persona::describe(&route)).await?;
+    let route = persona::route(&request, r#as.map(Into::into));
+    ctx.say(clamp_message(persona::describe(&route))).await?;
     Ok(())
 }
 
@@ -182,18 +243,13 @@ pub async fn whois(
         return Ok(());
     };
 
-    // Fetched over HTTP rather than read from cache: the cache is only as
-    // complete as the intents we hold, and a partial cache would silently
-    // produce a thinner read rather than an error.
-    let member = guild_id.member(ctx.http(), user.id).await?;
-    let roles = guild_id.roles(ctx.http()).await?;
-    let owner_id = guild_id.to_partial_guild(ctx.http()).await?.owner_id;
+    let (member, guild) = fetch_member_and_guild(ctx, guild_id, user.id).await?;
 
     // Highest-first, so `roles.first()` is the top role the summary reports.
     let mut named: Vec<(u16, String)> = member
         .roles
         .iter()
-        .filter_map(|id| roles.get(id))
+        .filter_map(|id| guild.roles.get(id))
         .map(|role| (role.position, role.name.to_string()))
         .collect();
     named.sort_by_key(|(position, _)| std::cmp::Reverse(*position));
@@ -212,10 +268,10 @@ pub async fn whois(
         joined: member
             .joined_at
             .map(|ts| format!("<t:{}:D>", ts.unix_timestamp())),
-        is_owner: user.id == owner_id,
+        is_owner: user.id == guild.owner_id,
     };
 
-    ctx.say(profile::summarize(&facts)).await?;
+    ctx.say(clamp_message(profile::summarize(&facts))).await?;
     Ok(())
 }
 
@@ -223,9 +279,11 @@ pub async fn whois(
 #[poise::command(slash_command, guild_only)]
 pub async fn perms(
     ctx: Context<'_>,
-    #[description = "Which channel"] channel: GuildChannel,
+    #[description = "Which channel"] channel: ChannelId,
     #[description = "Which member"] user: User,
 ) -> Result<(), Error> {
+    // ChannelId on purpose — see the module doc. A GuildChannel parameter is
+    // fetched by poise before this body runs, i.e. before this defer.
     ctx.defer().await?;
 
     let Some(guild_id) = ctx.guild_id() else {
@@ -233,38 +291,68 @@ pub async fn perms(
         return Ok(());
     };
 
-    let member = guild_id.member(ctx.http(), user.id).await?;
-    let roles = guild_id.roles(ctx.http()).await?;
-    let owner_id = guild_id.to_partial_guild(ctx.http()).await?.owner_id;
+    let (channel, (member, guild)) = tokio::try_join!(
+        async { channel.to_channel(ctx.http()).await.map_err(Error::from) },
+        fetch_member_and_guild(ctx, guild_id, user.id),
+    )?;
+    let Some(channel) = channel.guild() else {
+        ctx.say("That is not a server channel, so it has no overwrites to walk.")
+            .await?;
+        return Ok(());
+    };
 
-    // `@everyone` is the role whose id equals the guild id. Naming it that way in
-    // the chain would be technically right and useless to read.
-    let everyone = RoleId::new(guild_id.get());
+    // Threads carry no overwrites of their own — they inherit the parent's.
+    // Reading their empty list would produce "no overwrite touches them",
+    // which is confidently wrong rather than merely thin.
+    if matches!(
+        channel.kind,
+        ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::NewsThread
+    ) {
+        let parent = channel
+            .parent_id
+            .map(|id| format!(" Ask about <#{id}> instead."))
+            .unwrap_or_default();
+        ctx.say(format!(
+            "Threads don't carry their own permission overwrites — they inherit from the parent channel.{parent}"
+        ))
+        .await?;
+        return Ok(());
+    }
+
+    let channel_label = match channel.kind {
+        ChannelType::Voice | ChannelType::Stage => format!("🔊 {}", channel.name),
+        ChannelType::Category => format!("category \"{}\"", channel.name),
+        _ => format!("#{}", channel.name),
+    };
 
     let overwrites: Vec<Overwrite> = channel
         .permission_overwrites
         .iter()
         .map(|ow| {
             let scope = match ow.kind {
-                PermissionOverwriteType::Role(id) if id == everyone => Scope::Everyone,
-                PermissionOverwriteType::Role(id) => Scope::Role(
-                    roles
+                // `@everyone` is the role whose id equals the guild id.
+                PermissionOverwriteType::Role(id) if id.get() == guild_id.get() => Scope::Everyone,
+                PermissionOverwriteType::Role(id) => Scope::Role {
+                    id: id.get(),
+                    name: guild
+                        .roles
                         .get(&id)
                         .map(|r| r.name.to_string())
                         // A deleted role can still have a stale overwrite.
-                        .unwrap_or_else(|| format!("unknown role {id}")),
-                ),
-                PermissionOverwriteType::Member(id) => Scope::Member(if id == user.id {
-                    user.name.clone()
-                } else {
-                    format!("other member {id}")
-                }),
-                // `PermissionOverwriteType` is `#[non_exhaustive]`, so this
-                // arm is compiler-required — but mapping it to `Everyone` was a
-                // real defect: `applicable` puts every Everyone overwrite at
-                // position 1 and `label` prints it as literally "@everyone", so
-                // an unknown kind was both misattributed and promoted above the
-                // overwrites that actually decide the outcome.
+                        .unwrap_or_else(|| format!("deleted role {id}")),
+                },
+                PermissionOverwriteType::Member(id) => Scope::Member {
+                    id: id.get(),
+                    name: if id == user.id {
+                        user.name.clone()
+                    } else {
+                        format!("<@{id}>")
+                    },
+                },
+                // Compiler-required: the enum is #[non_exhaustive]. Carried as
+                // its own scope because mapping unknowns onto Everyone once
+                // promoted them to the top of the chain under a name they do
+                // not have.
                 _ => Scope::Unrecognized,
             };
             Overwrite {
@@ -277,22 +365,23 @@ pub async fn perms(
 
     let subject = Subject {
         name: user.name.clone(),
-        role_names: member
-            .roles
-            .iter()
-            .filter_map(|id| roles.get(id))
-            .map(|r| r.name.to_string())
-            .collect(),
-        // Via base_permissions, so Administrator granted on @everyone is seen.
-        // Missing it would skip perms.rs's documented Administrator
-        // short-circuit and confidently walk an overwrite chain that does not
-        // decide the outcome.
-        is_admin: base_permissions(&member, &roles, guild_id).contains(Permissions::ADMINISTRATOR),
-        is_owner: user.id == owner_id,
+        user_id: user.id.get(),
+        role_ids: member.roles.iter().map(|id| id.get()).collect(),
+        // The canonical guild-level calculation — includes @everyone, returns
+        // all() for the owner. Hand-rolling this is how the @everyone bug
+        // happened; serenity already ships it on the guild we fetched.
+        is_admin: guild
+            .member_permissions(&member)
+            .contains(Permissions::ADMINISTRATOR),
+        is_owner: user.id == guild.owner_id,
     };
 
-    ctx.say(perms::explain(&channel.name, &overwrites, &subject))
-        .await?;
+    ctx.say(clamp_message(perms::explain(
+        &channel_label,
+        &overwrites,
+        &subject,
+    )))
+    .await?;
     Ok(())
 }
 
@@ -301,7 +390,12 @@ pub async fn perms(
 /// Recommends only — this command never times out, kicks, or bans anyone. The
 /// decision stays with the moderator, which is also why it is ephemeral: a
 /// recommendation broadcast to the channel would be a public accusation.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MODERATE_MEMBERS"
+)]
 pub async fn modcall(
     ctx: Context<'_>,
     #[description = "Who the incident is about"] user: User,
@@ -322,34 +416,53 @@ pub async fn modcall(
     };
     let recommendation = moderation::recommend(severity.into(), history);
 
-    // Whether *the moderator asking* can carry it out — not whether the bot can.
-    // The skill's rule is to check standing before recommending escalation, and
-    // advice someone cannot act on is worse than useless.
-    let can_act = match recommendation.action.required_permission() {
-        None => true,
-        Some(name) => {
-            let moderator = guild_id.member(ctx.http(), ctx.author().id).await?;
-            let roles = guild_id.roles(ctx.http()).await?;
-            let owner_id = guild_id.to_partial_guild(ctx.http()).await?.owner_id;
+    // Whether *the moderator asking* can carry it out — not whether the bot
+    // can. Two independent ways Discord refuses: the permission bit, and role
+    // hierarchy. Report the first that applies.
+    let blocker: Option<String> = match recommendation.action.required_permission() {
+        None => None,
+        Some(required) => {
+            let ((moderator, guild), target) = tokio::try_join!(
+                fetch_member_and_guild(ctx, guild_id, ctx.author().id),
+                async {
+                    guild_id
+                        .member(ctx.http(), user.id)
+                        .await
+                        .map_err(Error::from)
+                },
+            )?;
 
-            // Includes @everyone's grants. Folding only `moderator.roles` would
-            // tell a moderator they cannot act whenever the permission is held
-            // at @everyone — a false negative, and the exact silent-wrong-answer
-            // failure the permission-name tests were written to guard against.
-            let held = base_permissions(&moderator, &roles, guild_id);
+            // The canonical calculation: includes @everyone's grants and
+            // returns all() for the owner and for Administrator, which is why
+            // no separate owner/admin check exists here any more.
+            let held = guild.member_permissions(&moderator);
 
-            // Owner and Administrator both bypass the individual bit.
-            ctx.author().id == owner_id
-                || held.contains(Permissions::ADMINISTRATOR)
-                || held
-                    .get_permission_names()
-                    .into_iter()
-                    .any(|held_name| held_name == name)
+            if !held.get_permission_names().contains(&required) {
+                Some(format!(
+                    "You do not have **{required}**, so you cannot carry this out — hand it to someone who does."
+                ))
+            } else {
+                hierarchy_blocker(
+                    ctx.author().id == guild.owner_id,
+                    top_role_position(&moderator, &guild),
+                    user.id == guild.owner_id,
+                    guild
+                        .member_permissions(&target)
+                        .contains(Permissions::ADMINISTRATOR),
+                    top_role_position(&target, &guild),
+                    matches!(recommendation.action, moderation::Action::Timeout(_)),
+                )
+                .map(str::to_string)
+            }
         }
     };
 
-    ctx.say(moderation::render(&user.name, &recommendation, can_act))
-        .await?;
+    ctx.say(clamp_message(moderation::render(
+        &user.name,
+        &recommendation,
+        blocker.as_deref(),
+    )))
+    .await?;
     Ok(())
 }
 
@@ -364,7 +477,7 @@ pub async fn server(
     #[description = "What kind of server"] kind: ArchetypeChoice,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    ctx.say(server::render(kind.into())).await?;
+    ctx.say(clamp_message(server::render(kind.into()))).await?;
     Ok(())
 }
 
@@ -373,47 +486,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn base_permissions_seeds_from_everyone_which_member_roles_never_contains() {
-        // Exercises the seed LOOKUP, which is where the bug was. Dropping the
-        // `lookup(everyone_id)` seed makes this fail — verified by mutation,
-        // unlike the first version of this test, which called the union helper
-        // directly and stayed green when the seed was reverted to empty.
-        let everyone_id = RoleId::new(99);
-        let member_role = RoleId::new(7);
-
-        let held = resolve_base_permissions(everyone_id, &[member_role], |id| {
-            if id == everyone_id {
-                Some(Permissions::MODERATE_MEMBERS)
-            } else if id == member_role {
-                Some(Permissions::SEND_MESSAGES)
-            } else {
-                None
-            }
-        });
-
-        assert!(
-            held.contains(Permissions::MODERATE_MEMBERS),
-            "@everyone's grant must be seeded in; member.roles never lists it"
+    fn choice_mirrors_map_onto_their_pure_types() {
+        assert_eq!(
+            Archetype::from(ArchetypeChoice::Community),
+            Archetype::Community
         );
-        assert!(held.contains(Permissions::SEND_MESSAGES));
-
-        // A member with no roles at all still inherits @everyone.
-        let bare = resolve_base_permissions(everyone_id, &[], |id| {
-            (id == everyone_id).then_some(Permissions::MODERATE_MEMBERS)
-        });
-        assert!(bare.contains(Permissions::MODERATE_MEMBERS));
-
-        // An unknown role id contributes nothing rather than panicking.
-        let missing = resolve_base_permissions(everyone_id, &[RoleId::new(1234)], |_| None);
-        assert!(missing.is_empty());
+        assert_eq!(Archetype::from(ArchetypeChoice::Gaming), Archetype::Gaming);
+        assert_eq!(
+            Archetype::from(ArchetypeChoice::Project),
+            Archetype::Project
+        );
+        assert_eq!(
+            Archetype::from(ArchetypeChoice::FriendGroup),
+            Archetype::FriendGroup
+        );
+        assert_eq!(Severity::from(SeverityChoice::Minor), Severity::Minor);
+        assert_eq!(Severity::from(SeverityChoice::Serious), Severity::Serious);
+        assert_eq!(Severity::from(SeverityChoice::Severe), Severity::Severe);
+        assert_eq!(Persona::from(PersonaChoice::Abbey), Persona::Abbey);
+        assert_eq!(Persona::from(PersonaChoice::Aviva), Persona::Aviva);
+        assert_eq!(Persona::from(PersonaChoice::Abi), Persona::Abi);
     }
 
     #[test]
     fn the_ladders_permission_strings_all_exist_in_serenity() {
-        // Iterates the real Action values rather than restating three literals.
-        // A mutation check showed the old version passed even when the ladder
-        // and its expectation were renamed in lockstep to a permission serenity
-        // does not define.
+        // Iterates the real Action values rather than restating literals; a
+        // mutation check showed a literal-pinning version passed even when the
+        // ladder and the expectation were renamed in lockstep.
         let vocabulary = permission_names(Permissions::all());
         for action in [
             moderation::Action::Timeout(10),
@@ -431,64 +530,72 @@ mod tests {
     }
 
     #[test]
-    fn archetype_choice_maps_onto_the_pure_blueprints() {
-        assert_eq!(
-            Archetype::from(ArchetypeChoice::Community),
-            Archetype::Community
-        );
-        assert_eq!(Archetype::from(ArchetypeChoice::Gaming), Archetype::Gaming);
-        assert_eq!(
-            Archetype::from(ArchetypeChoice::Project),
-            Archetype::Project
-        );
-        assert_eq!(
-            Archetype::from(ArchetypeChoice::FriendGroup),
-            Archetype::FriendGroup
-        );
-    }
-
-    #[test]
     fn every_permission_a_blueprint_names_exists_in_serenity() {
-        // Blueprints hand out permission names as prose. A name serenity does not
-        // recognise means a step nobody can follow, so pin them against the real
-        // vocabulary rather than trusting the strings.
+        // Blueprints hand out permission names as prose — now including the
+        // per-archetype @everyone grants. A name serenity does not recognise
+        // means a step nobody can follow.
         let vocabulary: Vec<String> = permission_names(Permissions::all());
         for archetype in Archetype::ALL {
-            for role in server::blueprint(archetype).roles {
-                for permission in role.permissions {
-                    assert!(
-                        vocabulary.iter().any(|known| known == permission),
-                        "{archetype:?}/{} names {permission:?}, which serenity does not define",
-                        role.name
-                    );
-                }
+            let bp = server::blueprint(archetype);
+            let named = bp
+                .roles
+                .iter()
+                .flat_map(|role| role.permissions.iter())
+                .chain(bp.everyone.iter());
+            for permission in named {
+                assert!(
+                    vocabulary.iter().any(|known| known == permission),
+                    "{archetype:?} names {permission:?}, which serenity does not define"
+                );
             }
         }
     }
 
     #[test]
-    fn severity_choice_maps_onto_the_pure_ladder() {
-        assert_eq!(Severity::from(SeverityChoice::Minor), Severity::Minor);
-        assert_eq!(Severity::from(SeverityChoice::Serious), Severity::Serious);
-        assert_eq!(Severity::from(SeverityChoice::Severe), Severity::Severe);
+    fn hierarchy_owner_target_beats_everything() {
+        // Even the owner asking about the owner: the target rule wins.
+        assert!(hierarchy_blocker(true, 99, true, true, 99, false).is_some());
     }
 
     #[test]
-    fn every_permission_the_ladder_names_exists_in_serenity() {
-        // `can_act` compares the ladder's permission strings against
-        // `get_permission_names()`. A typo there would silently mean "you cannot
-        // act" for everyone, forever — so pin the names against serenity itself.
-        for (permission, expected) in [
-            (Permissions::MODERATE_MEMBERS, "Moderate Members"),
-            (Permissions::KICK_MEMBERS, "Kick Members"),
-            (Permissions::BAN_MEMBERS, "Ban Members"),
-        ] {
-            assert!(
-                permission_names(permission).iter().any(|n| n == expected),
-                "serenity does not call it {expected:?}: {:?}",
-                permission_names(permission)
-            );
-        }
+    fn hierarchy_owner_actor_outranks_all_non_owners() {
+        assert_eq!(hierarchy_blocker(true, 0, false, true, 99, false), None);
+    }
+
+    #[test]
+    fn hierarchy_admins_cannot_be_timed_out_but_can_be_banned() {
+        let timeout = hierarchy_blocker(false, 50, false, true, 10, true);
+        assert!(
+            timeout.is_some_and(|b| b.contains("timed out")),
+            "{timeout:?}"
+        );
+        // Same shape, ban instead of timeout: hierarchy alone decides.
+        assert_eq!(hierarchy_blocker(false, 50, false, true, 10, false), None);
+    }
+
+    #[test]
+    fn hierarchy_requires_strictly_outranking_the_target() {
+        assert!(hierarchy_blocker(false, 10, false, false, 10, false).is_some());
+        assert!(hierarchy_blocker(false, 9, false, false, 10, false).is_some());
+        assert_eq!(hierarchy_blocker(false, 11, false, false, 10, false), None);
+    }
+
+    #[test]
+    fn clamp_passes_short_messages_untouched() {
+        let short = "fits".to_string();
+        assert_eq!(clamp_message(short.clone()), short);
+    }
+
+    #[test]
+    fn clamp_bounds_long_messages_at_discords_limit() {
+        // Multibyte input, because the limit is codepoints, not bytes.
+        let long: String = "é".repeat(2500);
+        let out = clamp_message(long);
+        assert!(out.chars().count() <= 2000, "{}", out.chars().count());
+        assert!(
+            out.ends_with("limit)"),
+            "truncation must be stated, not silent"
+        );
     }
 
     #[test]

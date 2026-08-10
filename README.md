@@ -12,10 +12,10 @@ to this crate and shares no code with it.
 
 | Command | What it does |
 |---|---|
-| `/persona <request> [as]` | Shows which persona takes a request and why. `as` forces one. |
+| `/persona <request> [as]` | Shows which persona takes a request and why. `as` is a dropdown that forces one. |
 | `/whois <user>` | Profile read: identity, standing, roles, join date. |
-| `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. |
-| `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out. |
+| `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. Threads are redirected to their parent, which owns the overwrites they inherit. |
+| `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out — both the permission bit and role hierarchy (owner-target, admin-timeout, top-role comparison). |
 | `/server <kind>` | Emits a role hierarchy, channel structure, and numbered setup steps. |
 
 ## Running
@@ -51,11 +51,11 @@ sometimes is one that races eventually.
 
 **Decision logic is separated from Discord.** `persona.rs`, `profile.rs`,
 `perms.rs`, `moderation.rs`, and `server.rs` are plain Rust over plain structs
-and know nothing about serenity, which is why the interesting behaviour has 48
-unit tests and needs no gateway connection to run them. `commands.rs` is the only
+and know nothing about serenity, which is why the interesting behaviour is unit-tested
+with no gateway connection at all. `commands.rs` is the only
 file that translates between Discord types and those structs — including the
-`SeverityChoice` and `ArchetypeChoice` mirrors that keep poise's derive out of
-the escalation ladder and the blueprints.
+`SeverityChoice`, `ArchetypeChoice`, and `PersonaChoice` mirrors that keep
+poise's derive out of the pure modules.
 
 **`/server` emits a plan and creates nothing.** Building a server is a run of
 structural changes, and those stay with a human who can see what already exists.
@@ -67,7 +67,13 @@ every text-channel name must already be in the form Discord will store it —
 Discord lowercases text names and hyphenates whitespace, so a blueprint saying
 `General Chat` describes a server you do not get. Voice channels are exempt from
 that rule, which is exactly the asymmetry that trips people, so `render` applies
-the normalization per channel kind.
+the normalization per channel kind. `@everyone`'s grants are per-archetype
+blueprint *data*, not a fixed line: gated archetypes strip it to read-only,
+while the flat friend-group archetype grants Send/Connect/Speak there — because
+with no gates and no granting role, `@everyone` is the only place speech can
+come from. Two usability properties are pinned: every blueprint gives a
+roleless joiner at least one visible channel, and a flat blueprint's base role
+can actually speak.
 
 **`/modcall` recommends and never acts.** It does not time out, kick, or ban
 anyone; the decision stays with the moderator. It is ephemeral for the same
@@ -77,8 +83,11 @@ history (a severe incident bans on the first offence, so a clean record cannot
 buy tolerance for a threat), and more history never yields a *lighter* action —
 both are pinned by property tests. Every timeout is constructed through a clamp
 at Discord's 28-day ceiling, so a future rung cannot produce a request the API
-rejects. The command also checks whether the *invoking* moderator holds the
-permission the recommendation needs, and says so when they do not.
+rejects. The command also checks whether the *invoking* moderator can actually
+carry the recommendation out — the permission bit via serenity's canonical
+`member_permissions` (which sees grants on `@everyone`), and Discord's refusal
+rules: the owner cannot be actioned, administrators cannot be timed out, and
+the actor's top role must sit strictly above the target's.
 
 **Persona routing refuses to guess.** The skill's rule is to switch persona when
 the task type is *unambiguous*; a request that pulls toward two personas equally

@@ -80,6 +80,12 @@ pub struct Category {
 pub struct Blueprint {
     pub roles: &'static [RoleSpec],
     pub categories: &'static [Category],
+    /// What `@everyone` is set to. Data, not a hardcoded render line: the
+    /// baseline differs per archetype — a gated community strips it to
+    /// view-only, while a flat friend server *is* its `@everyone` grants —
+    /// and making it data is what lets the dangerous-permission property test
+    /// check something that can actually vary.
+    pub everyone: &'static [&'static str],
 }
 
 /// Discord caps a category at 50 channels. A specification constant: the
@@ -104,6 +110,9 @@ pub const NEVER_FOR_EVERYONE: &[&str] = &[
     "Kick Members",
     "Mention Everyone",
 ];
+
+/// The gated archetypes strip `@everyone` to read-only; roles grant the rest.
+const EVERYONE_READ_ONLY: &[&str] = &["View Channel", "Read Message History"];
 
 /// Apply Discord's text-channel naming rule: lowercase, whitespace to hyphens.
 ///
@@ -203,6 +212,10 @@ const GAMING_CATEGORIES: &[Category] = &[
     Category {
         name: "Text",
         channels: &[
+            // Ungated on purpose: the landing channel. Without one, a new
+            // joiner holding only @everyone sees an empty server and has no
+            // way to find out how Member is granted.
+            text("welcome", None),
             text("general", Some("Member")),
             text("lfg", Some("Member")),
             text("clips", Some("Member")),
@@ -233,11 +246,6 @@ const PROJECT_ROLES: &[RoleSpec] = &[
         name: "Contributor",
         permissions: &["Send Messages", "Connect", "Speak", "Create Public Threads"],
         note: "Threads keep long discussions out of the main channel.",
-    },
-    RoleSpec {
-        name: "Guest",
-        permissions: &["Read Message History"],
-        note: "Read-only. Give this to anyone you have not decided about yet.",
     },
 ];
 
@@ -281,18 +289,32 @@ pub const fn blueprint(archetype: Archetype) -> Blueprint {
         Archetype::Community => Blueprint {
             roles: COMMUNITY_ROLES,
             categories: COMMUNITY_CATEGORIES,
+            everyone: EVERYONE_READ_ONLY,
         },
         Archetype::Gaming => Blueprint {
             roles: GAMING_ROLES,
             categories: GAMING_CATEGORIES,
+            everyone: EVERYONE_READ_ONLY,
         },
         Archetype::Project => Blueprint {
             roles: PROJECT_ROLES,
             categories: PROJECT_CATEGORIES,
+            everyone: EVERYONE_READ_ONLY,
         },
         Archetype::FriendGroup => Blueprint {
             roles: FRIEND_ROLES,
             categories: FRIEND_CATEGORIES,
+            // Flat is the design: nothing is gated, so members must be able to
+            // talk on the base role alone. Stripping @everyone to read-only
+            // here — the old hardcoded render line — described a server where
+            // every friend could see the channels and nobody could speak.
+            everyone: &[
+                "View Channel",
+                "Read Message History",
+                "Send Messages",
+                "Connect",
+                "Speak",
+            ],
         },
     }
 }
@@ -322,7 +344,10 @@ pub fn render(archetype: Archetype) -> String {
             role.note
         ));
     }
-    out.push_str("- **@everyone** — View Channel, Read Message History\n  Everything else is granted by a role, never here.\n");
+    out.push_str(&format!(
+        "- **@everyone** — {}\n  Everything else is granted by a role, never here.\n",
+        bp.everyone.join(", ")
+    ));
 
     out.push_str("\n**Channels**\n");
     for category in bp.categories {
@@ -350,7 +375,10 @@ pub fn render(archetype: Archetype) -> String {
 
     out.push_str("\n**Steps**\n");
     out.push_str("1. Create the roles top-down, in the order above — a role can only manage roles below its own position.\n");
-    out.push_str("2. Strip `@everyone` down to View Channel and Read Message History. Everything else comes from a role.\n");
+    out.push_str(&format!(
+        "2. Set `@everyone` to exactly: {}. Everything else comes from a role.\n",
+        bp.everyone.join(", ")
+    ));
     out.push_str("3. Create the categories, then the channels inside them. Channels inherit category overwrites, so set the gate on the category where every child shares it.\n");
     out.push_str("4. For each gated channel: deny `@everyone` View Channel, allow the named role. Do not grant the role Administrator as a shortcut — it bypasses every overwrite you just set.\n");
     out.push_str("5. Verify with `/perms` on a test account before inviting anyone.\n");
@@ -414,22 +442,50 @@ mod tests {
     }
 
     #[test]
-    fn no_role_hands_everyone_a_dangerous_permission() {
-        // `@everyone` is rendered by `render`, not stored in `roles` — so this
-        // asserts the rendered line, which is what a reader would actually apply.
+    fn no_blueprint_hands_everyone_a_dangerous_permission() {
+        // Checks the blueprint DATA, not a rendered literal. The old version
+        // read a hardcoded render line that was byte-identical across all four
+        // archetypes, so no blueprint edit could ever trip it.
         for archetype in Archetype::ALL {
-            let out = render(archetype);
-            let everyone_line = out
-                .lines()
-                .find(|l| l.contains("@everyone"))
-                .expect("render always emits an @everyone line");
-            for dangerous in NEVER_FOR_EVERYONE {
+            for granted in blueprint(archetype).everyone {
                 assert!(
-                    !everyone_line.contains(dangerous),
-                    "{archetype:?} grants @everyone {dangerous}"
+                    !NEVER_FOR_EVERYONE.contains(granted),
+                    "{archetype:?} grants @everyone {granted}"
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_blueprint_gives_a_roleless_joiner_somewhere_to_land() {
+        // A member holding only @everyone must be able to see at least one
+        // channel, or the setup steps produce a server that looks empty to
+        // every new joiner. Gaming shipped exactly that until this test.
+        for archetype in Archetype::ALL {
+            let ungated = blueprint(archetype)
+                .categories
+                .iter()
+                .flat_map(|c| c.channels)
+                .any(|ch| ch.gated_to.is_none());
+            assert!(ungated, "{archetype:?} gates every channel");
+        }
+    }
+
+    #[test]
+    fn a_flat_blueprint_lets_the_base_role_speak() {
+        // FriendGroup gates nothing and creates no granting role, so if
+        // @everyone cannot send, nobody but the Admin can talk at all.
+        let bp = blueprint(Archetype::FriendGroup);
+        assert!(bp.everyone.contains(&"Send Messages"), "{:?}", bp.everyone);
+        let no_gates = bp
+            .categories
+            .iter()
+            .flat_map(|c| c.channels)
+            .all(|ch| ch.gated_to.is_none());
+        assert!(
+            no_gates,
+            "a gate would need a granting role this blueprint lacks"
+        );
     }
 
     #[test]

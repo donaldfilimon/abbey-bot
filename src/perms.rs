@@ -14,11 +14,22 @@
 //! rather than folded into the walkthrough.
 
 /// Who an overwrite targets.
+///
+/// Roles and members carry their snowflake id alongside the display name:
+/// matching happens on the id, rendering on the name. Discord permits two
+/// roles with the same name in one guild (divider roles routinely are), so
+/// name-based matching would pull a stranger's overwrite into the chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope {
     Everyone,
-    Role(String),
-    Member(String),
+    Role {
+        id: u64,
+        name: String,
+    },
+    Member {
+        id: u64,
+        name: String,
+    },
     /// An overwrite whose target kind this build does not recognise.
     /// `PermissionOverwriteType` is `#[non_exhaustive]`, so Discord can add
     /// kinds we have never seen. Carrying them explicitly means an unknown
@@ -35,11 +46,13 @@ pub struct Overwrite {
     pub deny: Vec<String>,
 }
 
-/// The member we are evaluating for.
+/// The member we are evaluating for. Roles are ids for the same reason
+/// [`Scope`] carries them: names are not unique.
 #[derive(Debug, Clone, Default)]
 pub struct Subject {
     pub name: String,
-    pub role_names: Vec<String>,
+    pub user_id: u64,
+    pub role_ids: Vec<u64>,
     pub is_admin: bool,
     pub is_owner: bool,
 }
@@ -55,12 +68,12 @@ pub fn applicable<'a>(overwrites: &'a [Overwrite], subject: &Subject) -> Vec<&'a
     chain.extend(overwrites.iter().filter(|o| o.scope == Scope::Everyone));
 
     chain.extend(overwrites.iter().filter(|o| match &o.scope {
-        Scope::Role(name) => subject.role_names.iter().any(|r| r == name),
+        Scope::Role { id, .. } => subject.role_ids.contains(id),
         _ => false,
     }));
 
     chain.extend(overwrites.iter().filter(|o| match &o.scope {
-        Scope::Member(name) => name == &subject.name,
+        Scope::Member { id, .. } => *id == subject.user_id,
         _ => false,
     }));
 
@@ -75,23 +88,26 @@ pub fn applicable<'a>(overwrites: &'a [Overwrite], subject: &Subject) -> Vec<&'a
 fn label(scope: &Scope) -> String {
     match scope {
         Scope::Everyone => "@everyone".to_string(),
-        Scope::Role(name) => format!("role @{name}"),
-        Scope::Member(name) => format!("member {name}"),
+        Scope::Role { name, .. } => format!("role @{name}"),
+        Scope::Member { name, .. } => format!("member {name}"),
         Scope::Unrecognized => "unrecognized overwrite type (not modelled here)".to_string(),
     }
 }
 
 /// Render the walkthrough for a channel.
-pub fn explain(channel: &str, overwrites: &[Overwrite], subject: &Subject) -> String {
+/// `channel_label` arrives pre-formatted ("#general", "🔊 Lobby", …) because
+/// only the caller knows the channel kind; a hardcoded `#` here misrendered
+/// voice channels and categories.
+pub fn explain(channel_label: &str, overwrites: &[Overwrite], subject: &Subject) -> String {
     if subject.is_owner {
         return format!(
-            "**{}** in #{channel}: owner. Overwrites do not apply — ownership bypasses every check.",
+            "**{}** in {channel_label}: owner. Overwrites do not apply — ownership bypasses every check.",
             subject.name
         );
     }
     if subject.is_admin {
         return format!(
-            "**{}** in #{channel}: has Administrator. That bypasses all channel overwrites, so nothing below would change the outcome.",
+            "**{}** in {channel_label}: has Administrator. That bypasses all channel overwrites, so nothing below would change the outcome.",
             subject.name
         );
     }
@@ -99,12 +115,15 @@ pub fn explain(channel: &str, overwrites: &[Overwrite], subject: &Subject) -> St
     let chain = applicable(overwrites, subject);
     if chain.is_empty() {
         return format!(
-            "**{}** in #{channel}: no overwrite touches them. Whatever they can or cannot do here comes from guild-level role permissions, not from this channel.",
+            "**{}** in {channel_label}: no overwrite touches them. Whatever they can or cannot do here comes from guild-level role permissions, not from this channel.",
             subject.name
         );
     }
 
-    let mut out = format!("**{}** in #{channel} — evaluation order:\n", subject.name);
+    let mut out = format!(
+        "**{}** in {channel_label} — evaluation order:\n",
+        subject.name
+    );
     for (i, ow) in chain.iter().enumerate() {
         let mut parts = Vec::new();
         if !ow.deny.is_empty() {
@@ -124,8 +143,10 @@ pub fn explain(channel: &str, overwrites: &[Overwrite], subject: &Subject) -> St
     // Say only what the chain actually contains. The role rule was previously
     // appended whenever no member overwrite applied — including chains holding
     // nothing but @everyone, where there is no role step to have a rule about.
-    let has_member = chain.iter().any(|o| matches!(o.scope, Scope::Member(_)));
-    let has_role = chain.iter().any(|o| matches!(o.scope, Scope::Role(_)));
+    let has_member = chain
+        .iter()
+        .any(|o| matches!(o.scope, Scope::Member { .. }));
+    let has_role = chain.iter().any(|o| matches!(o.scope, Scope::Role { .. }));
     if has_member {
         out.push_str("\nA member overwrite is present, and it is applied last — it overrides every role result above it.");
     } else if has_role {
@@ -139,11 +160,26 @@ pub fn explain(channel: &str, overwrites: &[Overwrite], subject: &Subject) -> St
 mod tests {
     use super::*;
 
+    const MEMBER_ROLE: u64 = 1;
+    const FRANKIE: u64 = 42;
+
     fn subject() -> Subject {
         Subject {
             name: "frankie".to_string(),
-            role_names: vec!["Member".to_string()],
+            user_id: FRANKIE,
+            role_ids: vec![MEMBER_ROLE],
             ..Default::default()
+        }
+    }
+
+    fn role(id: u64, name: &str, allow: &[&str], deny: &[&str]) -> Overwrite {
+        Overwrite {
+            scope: Scope::Role {
+                id,
+                name: name.to_string(),
+            },
+            allow: allow.iter().map(|s| s.to_string()).collect(),
+            deny: deny.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -162,13 +198,13 @@ mod tests {
             is_owner: true,
             ..subject()
         };
-        assert!(explain("general", &ows, &owner).contains("bypasses every check"));
+        assert!(explain("#general", &ows, &owner).contains("bypasses every check"));
 
         let admin = Subject {
             is_admin: true,
             ..subject()
         };
-        let out = explain("general", &ows, &admin);
+        let out = explain("#general", &ows, &admin);
         assert!(out.contains("Administrator"), "{out}");
         assert!(
             !out.contains("1."),
@@ -180,14 +216,15 @@ mod tests {
     fn unrelated_role_overwrites_are_excluded() {
         let ows = [
             everyone_denies_view(),
-            Overwrite {
-                scope: Scope::Role("Moderator".to_string()),
-                allow: vec!["View Channel".to_string()],
-                deny: vec![],
-            },
+            role(9, "Moderator", &["View Channel"], &[]),
         ];
         let chain = applicable(&ows, &subject());
         assert_eq!(chain.len(), 1, "only @everyone applies to a plain Member");
+        assert_eq!(
+            chain[0].scope,
+            Scope::Everyone,
+            "and it is the @everyone one"
+        );
     }
 
     #[test]
@@ -195,21 +232,26 @@ mod tests {
         // Stored member-first, everyone-last — the reverse of evaluation order.
         let ows = [
             Overwrite {
-                scope: Scope::Member("frankie".to_string()),
+                scope: Scope::Member {
+                    id: FRANKIE,
+                    name: "frankie".to_string(),
+                },
                 allow: vec!["View Channel".to_string()],
                 deny: vec![],
             },
-            Overwrite {
-                scope: Scope::Role("Member".to_string()),
-                allow: vec![],
-                deny: vec!["Send Messages".to_string()],
-            },
+            role(MEMBER_ROLE, "Member", &[], &["Send Messages"]),
             everyone_denies_view(),
         ];
         let chain = applicable(&ows, &subject());
         assert_eq!(chain[0].scope, Scope::Everyone);
-        assert_eq!(chain[1].scope, Scope::Role("Member".to_string()));
-        assert_eq!(chain[2].scope, Scope::Member("frankie".to_string()));
+        assert!(matches!(
+            chain[1].scope,
+            Scope::Role {
+                id: MEMBER_ROLE,
+                ..
+            }
+        ));
+        assert!(matches!(chain[2].scope, Scope::Member { id: FRANKIE, .. }));
     }
 
     #[test]
@@ -217,7 +259,10 @@ mod tests {
         let ows = [
             everyone_denies_view(),
             Overwrite {
-                scope: Scope::Member("frankie".to_string()),
+                scope: Scope::Member {
+                    id: FRANKIE,
+                    name: "frankie".to_string(),
+                },
                 allow: vec!["View Channel".to_string()],
                 deny: vec![],
             },
@@ -233,19 +278,15 @@ mod tests {
         // the chain never reached.
         let ows = [
             everyone_denies_view(),
-            Overwrite {
-                scope: Scope::Role("Member".to_string()),
-                allow: vec!["View Channel".to_string()],
-                deny: vec![],
-            },
+            role(MEMBER_ROLE, "Member", &["View Channel"], &[]),
         ];
-        let out = explain("general", &ows, &subject());
+        let out = explain("#general", &ows, &subject());
         assert!(out.contains("Role position is irrelevant"), "{out}");
     }
 
     #[test]
     fn the_role_rule_is_omitted_when_no_role_overwrite_applies() {
-        let out = explain("general", &[everyone_denies_view()], &subject());
+        let out = explain("#general", &[everyone_denies_view()], &subject());
         assert!(
             !out.contains("Role position is irrelevant"),
             "no role overwrite is in this chain: {out}"
@@ -253,13 +294,25 @@ mod tests {
     }
 
     #[test]
+    fn a_duplicate_role_name_cannot_smuggle_in_a_strangers_overwrite() {
+        // Discord permits two roles named identically. The subject holds role
+        // id 2; this overwrite belongs to role id 7 with the same display name.
+        // Matching by name — the previous implementation — pulled it in.
+        let ows = [role(7, "Muted", &[], &["Send Messages"])];
+        let holder_of_other_muted = Subject {
+            name: "frankie".to_string(),
+            user_id: FRANKIE,
+            role_ids: vec![2],
+            ..Default::default()
+        };
+        let chain = applicable(&ows, &holder_of_other_muted);
+        assert!(chain.is_empty(), "id 7 does not apply to a holder of id 2");
+    }
+
+    #[test]
     fn no_applicable_overwrite_points_at_guild_level_instead() {
-        let ows = [Overwrite {
-            scope: Scope::Role("Moderator".to_string()),
-            allow: vec!["View Channel".to_string()],
-            deny: vec![],
-        }];
-        let out = explain("general", &ows, &subject());
+        let ows = [role(9, "Moderator", &["View Channel"], &[])];
+        let out = explain("#general", &ows, &subject());
         assert!(out.contains("guild-level role permissions"), "{out}");
     }
 
@@ -285,7 +338,7 @@ mod tests {
         );
         assert_eq!(chain[1].scope, Scope::Unrecognized);
 
-        let out = explain("general", &ows, &subject());
+        let out = explain("#general", &ows, &subject());
         assert!(out.contains("unrecognized overwrite type"), "{out}");
     }
 
@@ -296,6 +349,6 @@ mod tests {
             allow: vec![],
             deny: vec![],
         }];
-        assert!(explain("general", &ows, &subject()).contains("cosmetic"));
+        assert!(explain("#general", &ows, &subject()).contains("cosmetic"));
     }
 }

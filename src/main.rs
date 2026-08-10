@@ -11,8 +11,8 @@
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents are deliberately `non_privileged()`. Nothing here reads message
-//! content, presence, or the member list off the gateway; the two commands that
-//! need member data fetch it over REST instead. That keeps the bot deployable
+//! content, presence, or the member list off the gateway; commands that need
+//! guild data fetch it over REST instead. That keeps the bot deployable
 //! without requesting privileged intents in the Dev Portal — and it is why
 //! [`profile::summarize`] states that presence is unavailable rather than
 //! guessing at it.
