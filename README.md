@@ -119,5 +119,5 @@ a local checkout.
 CI (`.github/workflows/rust.yml`) runs exactly this script, so a green check
 means fmt, clippy `-D warnings`, and the test suite — not merely "it built".
 
-`cargo fmt --all -- --check`, then `cargo clippy --all-targets -D warnings`, then
+`cargo fmt --all -- --check`, then `cargo clippy --all-targets -- -D warnings`, then
 `cargo test`.
