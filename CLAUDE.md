@@ -10,7 +10,7 @@ this project has already hit.
 ## Commands
 
 ```bash
-./check.sh          # the gate: fmt --check, clippy --locked -D warnings, test --locked
+./check.sh          # the gate: fmt --check, clippy --all-targets --locked -D warnings, test --locked
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
 ```
@@ -25,7 +25,7 @@ green while every deploy build died. The gate proves the property the deploy
 depends on — do not remove the flag to "fix" a lock error; regenerate the lock.
 
 **CI runs the real gate — since PR #4.** `.github/workflows/rust.yml` executes
-`./check.sh` itself (fmt --check, clippy `-D warnings`, tests) on push and PR to
+`./check.sh` itself (fmt --check, clippy --all-targets --locked `-D warnings`, tests --locked) on push and PR to
 `main`, and the runner's rustup honours `rust-toolchain.toml`, so CI and local
 runs share the pinned nightly. Two caveats keep the local habit load-bearing:
 green check marks older than PR #4 vouch only for `cargo build && cargo test`
