@@ -1,13 +1,13 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 `README.md` is written for a human running the bot — commands, env vars, and the
 per-feature design notes. Read it first. This file holds what the README leaves
 out: the shape of the codebase, the rules that keep it that shape, and the traps
 this project has already hit.
 
-`AGENTS.md` is a verbatim mirror of this file for non-Claude agents — only the
+`CLAUDE.md` is a verbatim mirror of this file for Claude Code — only the
 header line differs. Apply any edit to both, or they drift.
 
 ## Commands
