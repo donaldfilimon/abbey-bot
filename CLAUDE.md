@@ -334,29 +334,33 @@ them away:
 
 ## What has and has not been verified
 
-**Verified live on 2026-08-19 (commit after PR #10, this clone, token from
-`.env`):** the gateway handshake, `Ready`, and global command registration —
-16 commands listed by `GET /applications/{id}/commands` (our 15 plus the app's
-Entry Point), bot present in 58 guilds, process stable for the observation
-window. That is the *first* live connection this bot has made; the earlier
-attempt died in the ready callback on exactly the Entry Point trap below.
+**Verified live on 2026-08-19 (this clone, token from `.env`, Donald's own
+Discord client plus AppleScript-driven keystrokes into the Discord app, bot on
+`main` with ollama `gemma4:12b`, `ABBEY_QUIET=1`):**
+- gateway handshake, `Ready`, global registration — 16 commands (our 15 +
+  the app's preserved Entry Point), 58 guilds;
+- slash commands answering: `/admin export`, `/recall` ×4 (interaction log
+  `succeeded=true`);
+- the DM pipeline: "hey abbey, what toolchain…" → generated reply-to in 54 s;
+  "and what did I just ask you?" → reply in 17 s that referenced the first
+  (per-DM transcript); typing keepalive visible; a backend timeout posted the
+  honest failure line instead of silence;
+- guild mentions (`@Abbey …`) → `mentions_bot=true outcome=Replied` ×2; the
+  quiet guard held for every non-mention guild message;
+- a reaction on an Abbey message → `reaction handled … outcome=Rewarded`.
 
-**Verified against a real model, not through Discord:** the DM path
-end-to-end (`cargo test live_dm -- --ignored` with `ABBEY_BOT_LLM_ENDPOINT`
-pointing at ollama `gemma4:12b`): three DM turns replied, transcript carried
-the toolchain fact into turn three, ~35 s/reply. Note `gemma4:26b` wedged the
-runner (HTTP 000 after 100 s, 15% CPU split); `ollama stop` + the 12b model
-recovered it.
+**Not yet observed:** a settled reward landing in a replay buffer (needs a 👍
+on a reply made *after* the last restart — pending rewards are in-memory — then
+150 s; the settle now logs `reward settled into the replay buffer`), Telegram,
+Slack, vision, `/see` `/ocr`, persistence under real traffic beyond the
+5-minute tick. Do not describe those as working until seen.
 
-**Not verified live from a Discord client:** any interaction answered, a
-pipeline reply landing in a channel or DM, a reaction reward settling,
-Telegram, Slack, vision, persistence under real traffic. The browser-driven
-test was blocked on 2026-08-19 because the Claude Chrome extension was not
-connected on this machine. The gate proves those paths behind recording transports, and the
-binary is confirmed to fail fast on a missing `DISCORD_TOKEN`, a non-numeric
-or zero `ABBEY_GUILD_ID`, and a corrupt state file, and to write + reload its
-data dir. Do not describe the commands as answering or the loop as learning
-until someone has watched it happen.
+**Operational facts learned live:** `gemma4:26b` wedged its ollama runner
+(HTTP 000 after 100 s); `gemma4:12b` is healthy at ~10–50 s/reply. A
+"research …" DM exceeded 120 s under concurrent generation → the default
+backend timeout is now 300 s (`ABBEY_BOT_LLM_TIMEOUT_SECS`). Pending rewards do
+not survive a restart. Keystroke-driven testing must check Discord is
+frontmost first — the operator may be typing elsewhere.
 
 **Discord's Entry Point command breaks poise's global registration.** Apps
 with Activities enabled carry an auto-created `PrimaryEntryPoint` command

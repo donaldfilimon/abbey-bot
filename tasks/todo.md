@@ -27,6 +27,7 @@
 - [x] ABBEY_QUIET + learning-off gate before policy
 - [x] Live DM round-trip via pipeline against ollama gemma4:12b
 - [x] Live Discord test via desktop control: DM ×2, guild mention ×2, commands answered (docs/live-test-protocol.md A1–A2, C1)
-- [ ] C3–C4: 👍 on an Abbey reply → `reaction handled … Rewarded` → 150 s → `reward settled` log + `/admin brain` buffer 1
+- [x] C3–C4: 👍 on an Abbey reply → `Rewarded` → `reward settled into the replay buffer … loaded=true` (17:16Z)
 - [x] ABBEY_VISION_ENDPOINT=off sentinel
 - [ ] ABBEY_BOT_LLM_MAX_TOKENS / TIMEOUT tunables (Proposed)
+- [ ] Exercise `/reputation`, `/stats`, `/remember`, `/see` individually once the DM slash picker shows them; Telegram/Slack adapters need their tokens
