@@ -24,9 +24,14 @@ const NO_GUILD: &str = "This one only works inside a server.";
 
 const PLATFORM: &str = "discord";
 
-fn scoped_guild(ctx: Context<'_>) -> Option<String> {
-    ctx.guild_id()
-        .map(|g| guild::scoped_guild_id(PLATFORM, Some(&g.get().to_string())))
+/// The namespace a command's data lives in: the guild, or — in a DM — the
+/// invoker's own one-person DM guild, matching `SocialEvent::scoped_guild_id`
+/// so `/remember` in a DM and a DM conversation see the same facts.
+fn scoped_guild(ctx: Context<'_>) -> String {
+    match ctx.guild_id() {
+        Some(g) => guild::scoped_guild_id(PLATFORM, Some(&g.get().to_string())),
+        None => format!("{PLATFORM}:dm:{}", ctx.author().id.get()),
+    }
 }
 
 fn scoped_user(user: &User) -> String {
@@ -60,17 +65,14 @@ impl OnOff {
 // ---------------------------------------------------------------------------
 
 /// Store a durable fact about a member (yourself by default).
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(slash_command, ephemeral)]
 pub async fn remember(
     ctx: Context<'_>,
     #[description = "A single concise fact, stated in third person"] fact: String,
     #[description = "Who it is about (default: you)"] user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(g) = scoped_guild(ctx) else {
-        ctx.say(NO_GUILD).await?;
-        return Ok(());
-    };
+    let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
     let u = scoped_user(subject);
     let state = &ctx.data().state;
@@ -89,9 +91,7 @@ pub async fn remember(
 }
 
 async fn autocomplete_fact(ctx: Context<'_>, partial: &str) -> Vec<String> {
-    let Some(g) = scoped_guild(ctx) else {
-        return Vec::new();
-    };
+    let g = scoped_guild(ctx);
     let u = scoped_user(ctx.author());
     let stores = AppState::lock(&ctx.data().state.stores);
     memory::autocomplete_facts(stores.memory.facts(&g, &u), partial)
@@ -103,7 +103,6 @@ async fn autocomplete_fact(ctx: Context<'_>, partial: &str) -> Vec<String> {
 /// Forget one of your stored facts.
 #[poise::command(
     slash_command,
-    guild_only,
     ephemeral,
     default_member_permissions = "MANAGE_MESSAGES"
 )]
@@ -114,10 +113,7 @@ pub async fn forget(
     fact: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(g) = scoped_guild(ctx) else {
-        ctx.say(NO_GUILD).await?;
-        return Ok(());
-    };
+    let g = scoped_guild(ctx);
     let u = scoped_user(ctx.author());
     let state = &ctx.data().state;
     let removed = AppState::lock(&state.stores).memory.forget(&g, &u, &fact);
@@ -143,16 +139,13 @@ pub async fn forget(
 }
 
 /// What Abbey remembers about a member, and their standing.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(slash_command, ephemeral)]
 pub async fn recall(
     ctx: Context<'_>,
     #[description = "Who to look up (default: you)"] user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(g) = scoped_guild(ctx) else {
-        ctx.say(NO_GUILD).await?;
-        return Ok(());
-    };
+    let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
     let u = scoped_user(subject);
     let state = &ctx.data().state;
@@ -186,10 +179,7 @@ pub async fn reputation(
     #[description = "Who to look up (default: you)"] user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer().await?;
-    let Some(g) = scoped_guild(ctx) else {
-        ctx.say(NO_GUILD).await?;
-        return Ok(());
-    };
+    let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
     let u = scoped_user(subject);
     let state = &ctx.data().state;
@@ -344,11 +334,11 @@ pub async fn ocr(
 // ---------------------------------------------------------------------------
 
 /// Command usage and learning statistics.
-#[poise::command(slash_command, guild_only, ephemeral)]
+#[poise::command(slash_command, ephemeral)]
 pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let g = scoped_guild(ctx).unwrap_or_default();
+    let g = scoped_guild(ctx);
     let (interaction_text, seen) = {
         let stores = AppState::lock(&state.stores);
         (
@@ -407,7 +397,8 @@ fn update_settings(
     ctx: Context<'_>,
     mutate: impl FnOnce(&mut GuildSettings),
 ) -> Option<(String, GuildSettings)> {
-    let g = scoped_guild(ctx)?;
+    ctx.guild_id()?;
+    let g = scoped_guild(ctx);
     let state = &ctx.data().state;
     let mut stores = AppState::lock(&state.stores);
     let settings = AppState::lock(&state.guilds).update(&g, &mut *stores, mutate);
@@ -510,10 +501,7 @@ pub async fn admin_brain(
     #[description = "Override exploration ε (0–1); omit to show"] epsilon: Option<f64>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(g) = scoped_guild(ctx) else {
-        ctx.say(NO_GUILD).await?;
-        return Ok(());
-    };
+    let g = scoped_guild(ctx);
     let state = &ctx.data().state;
     #[expect(
         clippy::cast_possible_truncation,
@@ -568,10 +556,7 @@ pub async fn admin_flush(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, guild_only, ephemeral, rename = "export")]
 pub async fn admin_export(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(g) = scoped_guild(ctx) else {
-        ctx.say(NO_GUILD).await?;
-        return Ok(());
-    };
+    let g = scoped_guild(ctx);
     let state = &ctx.data().state;
     let json = {
         let mut brains = AppState::lock(&state.brains);

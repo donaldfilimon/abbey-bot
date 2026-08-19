@@ -90,15 +90,18 @@ pub struct SocialEvent {
 }
 
 impl SocialEvent {
-    /// `"{network}:{guild}"`, or `"{network}:dm"` when there is no guild.
-    /// Everything downstream stores and looks up by these, so two networks
-    /// with colliding native ids never share a row.
+    /// `"{network}:{guild}"`, or `"{network}:dm:{user}"` when there is no
+    /// guild. Everything downstream stores and looks up by these, so two
+    /// networks with colliding native ids never share a row — and two people
+    /// DMing the bot never share a namespace either: a DM is its own
+    /// one-person guild for config, reputation, facts, and recall. A shared
+    /// `"{network}:dm"` would let semantic recall surface one user's facts to
+    /// another, which is the one thing the isolation invariant must never do.
     pub fn scoped_guild_id(&self) -> String {
-        format!(
-            "{}:{}",
-            self.network.as_str(),
-            self.native_guild_id.as_deref().unwrap_or("dm")
-        )
+        match self.native_guild_id.as_deref() {
+            Some(guild) => format!("{}:{guild}", self.network.as_str()),
+            None => format!("{}:dm:{}", self.network.as_str(), self.native_user_id),
+        }
     }
 
     pub fn scoped_channel_id(&self) -> String {
@@ -548,7 +551,11 @@ mod tests {
         assert_eq!(e.scoped_user_id(), "telegram:u1");
 
         let dm = event(SocialNetwork::Discord, None);
-        assert_eq!(dm.scoped_guild_id(), "discord:dm");
+        assert_eq!(
+            dm.scoped_guild_id(),
+            "discord:dm:u1",
+            "a DM is a one-person guild"
+        );
     }
 
     #[test]
@@ -674,7 +681,7 @@ mod tests {
         let update: TgUpdate = serde_json::from_str(raw).expect("parses");
         let e = translate_telegram(&update).expect("translates");
         assert_eq!(e.native_guild_id, None);
-        assert_eq!(e.scoped_guild_id(), "telegram:dm");
+        assert!(e.scoped_guild_id().starts_with("telegram:dm:"));
         assert_eq!(e.user_display_name, "Bot");
         assert!(e.is_bot);
         assert!(matches!(

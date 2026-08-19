@@ -25,9 +25,19 @@ const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// The model `/persona ask` requests on the Anthropic path.
 const ANTHROPIC_MODEL: &str = "claude-sonnet-5";
-/// Output budget on both paths. Replies are clamped to 2,000 Discord
+/// Output budget on the Anthropic path. Replies are clamped to 2,000 Discord
 /// codepoints anyway, so a small ceiling wastes neither tokens nor money.
 const MAX_TOKENS: u32 = 1024;
+/// Output budget on the OpenAI-compatible path. Larger, because local
+/// reasoning models (gemma4, qwen3 on ollama) spend tokens in a `reasoning`
+/// field *before* the answer, and a budget sized for the answer alone returns
+/// an empty `content` — observed live 2026-08-19: "Say hi in three words"
+/// cost 739 tokens of reasoning for a four-word reply.
+const LOCAL_MAX_TOKENS: u32 = 4096;
+/// The model name sent when `ABBEY_BOT_LLM_MODEL` is unset. llama-server and
+/// mlx serve whatever they were started with and ignore the field; ollama
+/// resolves it and rejects an unknown name, which is why it is configurable.
+pub const DEFAULT_LOCAL_MODEL: &str = "default";
 
 /// Which generation backend the environment selected.
 ///
@@ -40,8 +50,10 @@ const MAX_TOKENS: u32 = 1024;
 pub enum Backend {
     /// `ANTHROPIC_API_KEY`: the external Anthropic Messages API.
     Anthropic { api_key: String },
-    /// `ABBEY_BOT_LLM_ENDPOINT`: an OpenAI-compatible server, usually loopback.
-    OpenAiCompatible { endpoint: String },
+    /// `ABBEY_BOT_LLM_ENDPOINT`: an OpenAI-compatible server, usually loopback,
+    /// with `ABBEY_BOT_LLM_MODEL` naming the model (default
+    /// [`DEFAULT_LOCAL_MODEL`]).
+    OpenAiCompatible { endpoint: String, model: String },
 }
 
 impl Backend {
@@ -56,6 +68,7 @@ impl Backend {
     pub fn from_values(
         anthropic_api_key: Option<String>,
         endpoint: Option<String>,
+        model: Option<String>,
     ) -> Option<Self> {
         let non_blank = |value: Option<String>| {
             value
@@ -65,7 +78,10 @@ impl Backend {
         if let Some(api_key) = non_blank(anthropic_api_key) {
             return Some(Self::Anthropic { api_key });
         }
-        non_blank(endpoint).map(|endpoint| Self::OpenAiCompatible { endpoint })
+        non_blank(endpoint).map(|endpoint| Self::OpenAiCompatible {
+            endpoint,
+            model: non_blank(model).unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string()),
+        })
     }
 
     /// Selection from the real environment — the runtime path. Tests go
@@ -74,6 +90,7 @@ impl Backend {
         Self::from_values(
             std::env::var("ANTHROPIC_API_KEY").ok(),
             std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
+            std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
         )
     }
 
@@ -111,8 +128,11 @@ impl std::fmt::Debug for Backend {
             // The key is replaced, not shortened: a prefix of a secret is still
             // a piece of a secret, and it is enough to identify the account.
             Self::Anthropic { .. } => f.write_str("Anthropic { api_key: <redacted> }"),
-            Self::OpenAiCompatible { endpoint } => {
-                write!(f, "OpenAiCompatible {{ endpoint: {endpoint:?} }}")
+            Self::OpenAiCompatible { endpoint, model } => {
+                write!(
+                    f,
+                    "OpenAiCompatible {{ endpoint: {endpoint:?}, model: {model:?} }}"
+                )
             }
         }
     }
@@ -216,7 +236,7 @@ pub fn build_chat_request(
                 "messages": messages,
             }),
         },
-        Backend::OpenAiCompatible { endpoint } => {
+        Backend::OpenAiCompatible { endpoint, model } => {
             let mut all = Vec::with_capacity(messages.len() + 1);
             all.push(json!({"role": "system", "content": system_prompt}));
             all.extend(messages);
@@ -224,11 +244,8 @@ pub fn build_chat_request(
                 url: format!("{}/v1/chat/completions", endpoint.trim_end_matches('/')),
                 headers: Vec::new(),
                 body: json!({
-                    // llama-server and mlx serve whatever model they were started
-                    // with and ignore this field; it exists because the schema
-                    // requires one.
-                    "model": "default",
-                    "max_tokens": MAX_TOKENS,
+                    "model": model,
+                    "max_tokens": LOCAL_MAX_TOKENS,
                     "messages": all,
                 }),
             }
@@ -279,8 +296,21 @@ pub fn extract_text(backend: &Backend, raw: &str) -> Result<String, LlmError> {
     match text {
         Some(t) if !t.trim().is_empty() => Ok(t.to_string()),
         // An empty content array is a real outcome (e.g. a refusal); saying so
-        // beats presenting an empty string as an answer.
-        _ => Err(LlmError("the response carried no answer text".to_string())),
+        // beats presenting an empty string as an answer. One cause is worth
+        // naming: a reasoning model that spent the whole budget in
+        // `reasoning` (ollama's field) and never reached the answer.
+        _ => {
+            let reasoned = value
+                .pointer("/choices/0/message/reasoning")
+                .and_then(Value::as_str)
+                .map_or(0, |r| r.chars().count());
+            if reasoned > 0 {
+                return Err(LlmError(format!(
+                    "the model spent its whole budget reasoning ({reasoned} chars) and produced no answer — try a smaller model or a larger budget"
+                )));
+            }
+            Err(LlmError("the response carried no answer text".to_string()))
+        }
     }
 }
 
@@ -429,9 +459,55 @@ mod tests {
     }
 
     #[test]
+    fn the_local_model_name_comes_from_the_env_and_defaults_honestly() {
+        let named = Backend::from_values(
+            None,
+            Some("http://127.0.0.1:11434".into()),
+            Some(" gemma4:26b ".into()),
+        )
+        .expect("selected");
+        assert_eq!(
+            named,
+            Backend::OpenAiCompatible {
+                endpoint: "http://127.0.0.1:11434".into(),
+                model: "gemma4:26b".into()
+            }
+        );
+        let unnamed = Backend::from_values(
+            None,
+            Some("http://127.0.0.1:8080".into()),
+            Some("  ".into()),
+        )
+        .expect("selected");
+        assert!(
+            matches!(unnamed, Backend::OpenAiCompatible { model, .. } if model == DEFAULT_LOCAL_MODEL)
+        );
+        let request = build_request(&named, "S", "Q");
+        assert_eq!(request.body["model"], "gemma4:26b");
+        assert_eq!(request.body["max_tokens"], LOCAL_MAX_TOKENS);
+    }
+
+    #[test]
+    fn a_reasoning_only_response_is_named_as_such() {
+        let backend = Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:11434".into(),
+            model: "gemma4:26b".into(),
+        };
+        let raw = r#"{"choices":[{"message":{"role":"assistant","content":"","reasoning":"thinking hard"}}]}"#;
+        let err = extract_text(&backend, raw).expect_err("no answer");
+        assert!(err.0.contains("reasoning"), "{}", err.0);
+        let plain = r#"{"choices":[{"message":{"role":"assistant","content":""}}]}"#;
+        assert_eq!(
+            extract_text(&backend, plain).expect_err("no answer").0,
+            "the response carried no answer text"
+        );
+    }
+
+    #[test]
     fn a_key_bearing_backend_is_not_confused_with_a_loopback_one() {
         let local = Backend::OpenAiCompatible {
             endpoint: "http://127.0.0.1:8080".to_string(),
+            model: "gemma4:26b".to_string(),
         };
         let shown = format!("{local:?}");
         // The loopback endpoint is not a secret and stays visible.
@@ -446,7 +522,7 @@ mod tests {
         // `/persona ask` resolves to the degradation reply without any
         // transport existing at all — there is no code path from "no env" to
         // the network.
-        assert_eq!(Backend::from_values(None, None), None);
+        assert_eq!(Backend::from_values(None, None, None), None);
     }
 
     #[test]
@@ -454,16 +530,19 @@ mod tests {
         // `.env.example` ships blank assignments; copying it unfilled must not
         // select a backend that cannot work.
         assert_eq!(
-            Backend::from_values(Some("  ".into()), Some(String::new())),
+            Backend::from_values(Some("  ".into()), Some(String::new()), None),
             None
         );
     }
 
     #[test]
     fn anthropic_wins_when_both_backends_are_configured() {
-        let backend =
-            Backend::from_values(Some("key".into()), Some("http://127.0.0.1:8080".into()))
-                .expect("a backend is selected");
+        let backend = Backend::from_values(
+            Some("key".into()),
+            Some("http://127.0.0.1:8080".into()),
+            None,
+        )
+        .expect("a backend is selected");
         assert!(matches!(backend, Backend::Anthropic { .. }));
     }
 
@@ -508,6 +587,7 @@ mod tests {
         let backend = Backend::OpenAiCompatible {
             // Trailing slash on purpose: the join must not produce `//v1`.
             endpoint: "http://127.0.0.1:8080/".into(),
+            model: "default".into(),
         };
         let transport = RecordingTransport::returning(
             r#"{"choices":[{"message":{"content":"local answer"}}]}"#,
@@ -525,7 +605,7 @@ mod tests {
             request.body,
             json!({
                 "model": "default",
-                "max_tokens": 1024,
+                "max_tokens": 4096,
                 "messages": [
                     {"role": "system", "content": "SYSTEM PROMPT"},
                     {"role": "user", "content": "the question"},
@@ -581,6 +661,7 @@ mod tests {
     fn chat_request_puts_system_first_on_openai_compatible() {
         let backend = Backend::OpenAiCompatible {
             endpoint: "http://127.0.0.1:8080".into(),
+            model: "default".into(),
         };
         let turns = [
             ChatTurn::user("q1"),
@@ -608,6 +689,7 @@ mod tests {
             },
             Backend::OpenAiCompatible {
                 endpoint: "http://127.0.0.1:1".into(),
+                model: "default".into(),
             },
         ] {
             assert_eq!(

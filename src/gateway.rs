@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::all::{
-    ChannelId, CreateMessage, FullEvent, Http, Message, MessageId, Reaction, ReactionType,
+    ChannelId, CreateMessage, FullEvent, Http, Message, MessageId, MessageReference, Reaction,
+    ReactionType,
 };
 
 use crate::persist::Stores;
@@ -59,7 +60,12 @@ impl Outbound for DiscordOutbound {
         let channel = ChannelId::new(parse_id(native_channel_id)?);
         let mut builder = CreateMessage::new().content(clamp(&message.text, DISCORD_MESSAGE_CAP));
         if let Some(reply) = &message.reply_to_native_message_id {
-            builder = builder.reference_message((channel, MessageId::new(parse_id(reply)?)));
+            // A message deleted mid-generation must not turn a good reply into
+            // a 400: reference it if it still exists, post plainly otherwise.
+            let mut reference: MessageReference =
+                (channel, MessageId::new(parse_id(reply)?)).into();
+            reference.fail_if_not_exists = Some(false);
+            builder = builder.reference_message(reference);
         }
         channel
             .send_message(&self.http, builder)
@@ -206,14 +212,31 @@ pub async fn on_discord_event(
                         .and_then(|r| r.message_id)
                         .map(|m| m.get().to_string())
                 });
-            let event = discord_message_event(new_message);
+            let mut event = discord_message_event(new_message);
+            // The model should see the words, not `<@1234>`; strip our own
+            // mention (shell knowledge — the pipeline never learns our id).
+            if mentions_bot && let EventKind::Message { text, .. } = &mut event.kind {
+                let stripped = text
+                    .replace(&format!("<@{me}>"), "")
+                    .replace(&format!("<@!{me}>"), "")
+                    .trim()
+                    .to_string();
+                *text = stripped;
+            }
+            let channel = new_message.channel_id.get();
+            let guild = new_message.guild_id.map(|g| g.get());
             let outcome =
                 pipeline::handle(state, &out, event, mentions_bot, reply_to.as_deref()).await;
-            tracing::debug!(?outcome, "message handled");
+            tracing::info!(channel, ?guild, mentions_bot, ?outcome, "message handled");
         }
         FullEvent::ReactionAdd { add_reaction } => {
             let event = discord_reaction_event(add_reaction, true);
-            pipeline::handle(state, &out, event, false, None).await;
+            let outcome = pipeline::handle(state, &out, event, false, None).await;
+            tracing::info!(
+                message = add_reaction.message_id.get(),
+                ?outcome,
+                "reaction handled"
+            );
         }
         FullEvent::ReactionRemove { removed_reaction } => {
             let event = discord_reaction_event(removed_reaction, false);

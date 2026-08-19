@@ -147,6 +147,28 @@ it, Discord delivers empty bodies for anything but mentions and DMs, and the
 pipeline deliberately does not consult the policy on a blank (`Ignored("no
 content available")`) — training on noise would bias `stay`.
 
+**Two hard gates on unsolicited speech, checked before the policy.**
+`ABBEY_QUIET=1` (operator; the token sits in 58 guilds and the policy is
+untrained) and the guild's `/admin learning off` both short-circuit to
+`Ignored(..)` *before* the brain is consulted, so nothing is learned from a
+message Abbey was never allowed to answer. Mentions, DMs, and commands bypass
+both. Until 2026-08-19 `learning_enabled` only gated `learn_all`, so the docs'
+"pins a server to mentions and commands" claim was false — it is true now and
+tested.
+
+**DMs are one-person guilds.** `SocialEvent::scoped_guild_id` returns
+`"{network}:dm:{user}"` when there is no guild, and `commands_brain` scopes the
+same way, so a DM's facts, WDBX recall, reputation, and brain never touch
+another DM user's. A shared `"discord:dm"` would have let semantic recall
+surface one person's facts to another — the pipeline test
+`two_dm_users_never_share_recall_or_facts` pins this.
+
+**The forced path (mention/DM) loads the guild's brain before replying.**
+`BrainRegistry::remember` drops experiences for unloaded guilds; without the
+touch, every mention reply's reward settled into nothing. Also: a forced reply
+that fails at the backend posts `ask::render_failure` instead of dead air, and
+the typing indicator is re-broadcast every 8 s while a local model thinks.
+
 **Abbey never speaks unsolicited without a backend, and never from a template.**
 The policy may choose `reply`, but with no backend configured the pipeline
 treats that as silence; a mention or DM gets `ask::degraded_reply`. Welcomes and
@@ -319,9 +341,18 @@ Entry Point), bot present in 58 guilds, process stable for the observation
 window. That is the *first* live connection this bot has made; the earlier
 attempt died in the ready callback on exactly the Entry Point trap below.
 
-**Not verified live:** any interaction answered, any pipeline reply or
-reaction, any reward settling, Telegram, Slack, vision, persistence under real
-traffic. The gate proves those paths behind recording transports, and the
+**Verified against a real model, not through Discord:** the DM path
+end-to-end (`cargo test live_dm -- --ignored` with `ABBEY_BOT_LLM_ENDPOINT`
+pointing at ollama `gemma4:12b`): three DM turns replied, transcript carried
+the toolchain fact into turn three, ~35 s/reply. Note `gemma4:26b` wedged the
+runner (HTTP 000 after 100 s, 15% CPU split); `ollama stop` + the 12b model
+recovered it.
+
+**Not verified live from a Discord client:** any interaction answered, a
+pipeline reply landing in a channel or DM, a reaction reward settling,
+Telegram, Slack, vision, persistence under real traffic. The browser-driven
+test was blocked on 2026-08-19 because the Claude Chrome extension was not
+connected on this machine. The gate proves those paths behind recording transports, and the
 binary is confirmed to fail fast on a missing `DISCORD_TOKEN`, a non-numeric
 or zero `ABBEY_GUILD_ID`, and a corrupt state file, and to write + reload its
 data dir. Do not describe the commands as answering or the loop as learning
