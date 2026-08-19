@@ -256,6 +256,14 @@ impl AppState {
         }
         let mut brains = Self::lock(&self.brains);
         for (guild, exp) in settled {
+            let loaded = brains.get(&guild).is_some();
+            tracing::info!(
+                guild = %guild,
+                reward = exp.reward,
+                action = exp.action,
+                loaded,
+                "reward settled into the replay buffer"
+            );
             brains.remember(&guild, exp);
         }
     }
