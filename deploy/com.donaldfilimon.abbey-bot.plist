@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Abbey Bot as a macOS user agent (launchd). This Mac has no systemd; this is
+  the equivalent of deploy/abbey-bot.service for the machine the bot actually
+  runs on. Install with deploy/install-launchd.sh, which substitutes __HOME__
+  and copies the release binary. Secrets live in ~/.config/abbey-bot/env
+  (chmod 600), read by the wrapper below — never in this file.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.donaldfilimon.abbey-bot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; . "$HOME/.config/abbey-bot/env"; set +a; exec "$HOME/.local/libexec/abbey-bot/abbey-bot"</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__HOME__/.local/share/abbey-bot</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ABBEY_DATA_DIR</key>
+    <string>__HOME__/.local/share/abbey-bot/data</string>
+    <key>RUST_LOG</key>
+    <string>info</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <!-- Restart on crash, but not after a clean exit (e.g. a bad token). -->
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <!-- 30 s, mirroring RestartSec in the systemd unit: a bad token must not
+       re-auth against Discord fast enough to draw IP-level rate limiting. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/abbey-bot/abbey-bot.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/abbey-bot/abbey-bot.log</string>
+</dict>
+</plist>

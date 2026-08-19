@@ -86,7 +86,7 @@ runs fully offline.
 | `ABBEY_BOT_LLM_TOOLS` | `off` disables model tool calls; default on (auto-degrades on a 4xx). |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
-| `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`. |
+| `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`; `off` stops that. Measured 2026-08-19: `http://127.0.0.1:11434/v1` + `gemma4:e4b` describes a screenshot correctly in ~4–15 s (budget raised to 1,024 tokens because the model reasons before it answers). |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -193,6 +193,13 @@ restart:
   `ProtectSystem=strict`, empty capability set) whose install steps are in the
   unit file's own header. The token lives in `/etc/abbey-bot/env`, not in the
   unit.
+- **launchd (this Mac)** — `deploy/install-launchd.sh` builds `--release
+  --locked`, installs the binary under `~/.local/libexec/abbey-bot`, the data
+  dir under `~/.local/share/abbey-bot/data`, logs under `~/Library/Logs/abbey-bot`,
+  and loads `deploy/com.donaldfilimon.abbey-bot.plist` as a user agent (restart
+  on crash with a 30 s throttle, not after a clean exit). Secrets come from
+  `~/.config/abbey-bot/env` (chmod 600), never from the plist.
+  `--uninstall` reverses it.
 - **Docker** — the multi-stage `Dockerfile`. Pass secrets with
   `docker run --env-file`; never bake a token into an image layer.
 
