@@ -574,8 +574,8 @@ pub async fn admin_brain(
                 AppState::lock(&state.budget).tokens_left(&g, settings.unsolicited_per_hour, now);
             (settings, tokens_left)
         };
-        let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
+        let mut brains = AppState::lock(&state.brains);
         let brain = brains.brain(&g, &*stores, now);
         if let Some(eps) = override_eps {
             brain.set_epsilon(eps);
@@ -625,8 +625,8 @@ pub async fn admin_export(ctx: Context<'_>) -> Result<(), Error> {
     let g = scoped_guild(ctx);
     let state = &ctx.data().state;
     let json = {
-        let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
+        let mut brains = AppState::lock(&state.brains);
         let brain = brains.brain(&g, &*stores, runtime::now());
         serde_json::to_vec_pretty(&brain.export_weights()).unwrap_or_default()
     };

@@ -129,6 +129,13 @@ impl VisionTransport for HttpVisionTransport {
 }
 
 /// Everything the shells share. Construct once in `main`, clone the `Arc`.
+///
+/// **Lock order.** When more than one of these mutexes is held at once, take
+/// them in field order: `stores` → `guilds` → `brains` → `social` → `rewards`
+/// → `cooldown` → `budget` → `recall` → `engine`. The 5-minute persist tick
+/// holds `stores` then `brains`; a message handler that took `brains` first
+/// would deadlock against it (reported on PR #10, fixed after #16). `engine`
+/// and `recall` are only ever taken alone or last.
 pub struct AppState {
     pub stores: Mutex<Stores>,
     pub guilds: Mutex<GuildRegistry>,
@@ -279,8 +286,8 @@ impl AppState {
     /// One learning step on every loaded brain whose guild has learning on.
     pub fn learn_all(&self) {
         let enabled: Vec<String> = {
-            let mut guilds = Self::lock(&self.guilds);
             let mut stores = Self::lock(&self.stores);
+            let mut guilds = Self::lock(&self.guilds);
             Self::lock(&self.brains)
                 .loaded_guilds()
                 .into_iter()
@@ -373,8 +380,8 @@ mod tests {
     fn settled_rewards_reach_the_guild_stats() {
         let state = AppState::in_memory();
         {
-            let mut brains = AppState::lock(&state.brains);
             let stores = AppState::lock(&state.stores);
+            let mut brains = AppState::lock(&state.brains);
             brains.brain("discord:g", &*stores, 0);
         }
         AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "m1", "discord:g", 0);

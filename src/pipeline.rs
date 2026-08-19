@@ -174,8 +174,8 @@ pub async fn handle<O: Outbound + Sync>(
         // Load the guild's brain even on the forced path: the reward for a
         // mention/DM reply settles 150 s later into `BrainRegistry::remember`,
         // which drops experiences for guilds that are not loaded.
-        let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
+        let mut brains = AppState::lock(&state.brains);
         let brain = brains.brain(&scoped_guild, &*stores, now);
         if let Some(eps) = settings.epsilon_override {
             brain.set_epsilon(eps);
@@ -217,25 +217,42 @@ pub async fn handle<O: Outbound + Sync>(
     // and DMs bypass both. Over budget, the decision is not acted on and not
     // learned — silence was not the policy's choice.
     if !forced {
-        let permitted = AppState::lock(&state.cooldown).permitted(
+        // Budget is only *checked* here; the token is spent at the point of
+        // acting (below), so a reply the bot cannot make — no backend — or a
+        // failed react never burns quota a later action could use.
+        let within_budget = AppState::lock(&state.budget).tokens_left(
+            &scoped_guild,
+            settings.unsolicited_per_hour,
+            now,
+        ) >= 1.0;
+        if !within_budget {
+            return Outcome::OverBudget;
+        }
+        // The cooldown is reserved atomically (check + record in one lock), so
+        // two messages in the same channel handled concurrently cannot both
+        // pass. Reserved before the budget is spent and before any network
+        // call; a reservation that then fails to send still counts — quiet is
+        // the safe direction.
+        let reserved = AppState::lock(&state.cooldown).try_reserve(
             &scoped_channel,
             settings.reply_cooldown_seconds,
             now,
         );
-        if !permitted {
+        if !reserved {
             return Outcome::CooledDown;
-        }
-        let within_budget = AppState::lock(&state.budget).try_take(
-            &scoped_guild,
-            settings.unsolicited_per_hour,
-            now,
-        );
-        if !within_budget {
-            return Outcome::OverBudget;
         }
     }
 
     if action == BotAction::React {
+        if !forced
+            && !AppState::lock(&state.budget).try_take(
+                &scoped_guild,
+                settings.unsolicited_per_hour,
+                now,
+            )
+        {
+            return Outcome::OverBudget;
+        }
         if let Err(e) = out
             .react(
                 &event.native_channel_id,
@@ -254,7 +271,6 @@ pub async fn handle<O: Outbound + Sync>(
             scoped_guild.clone(),
             now,
         );
-        AppState::lock(&state.cooldown).record_reply(&scoped_channel, now);
         return Outcome::Reacted;
     }
 
@@ -281,6 +297,15 @@ pub async fn handle<O: Outbound + Sync>(
     // ~25 s, so one broadcast reads as "dead" mid-generation. Keep it alive
     // until the answer is in hand; the keepalive task is dropped with the
     // guard below.
+    if !forced
+        && !AppState::lock(&state.budget).try_take(
+            &scoped_guild,
+            settings.unsolicited_per_hour,
+            now,
+        )
+    {
+        return Outcome::OverBudget;
+    }
     out.typing(&event.native_channel_id).await;
     let context = assemble_context(
         state,
@@ -338,9 +363,6 @@ pub async fn handle<O: Outbound + Sync>(
         scoped_guild.clone(),
         now,
     );
-    if !forced {
-        AppState::lock(&state.cooldown).record_reply(&scoped_channel, now);
-    }
     {
         let mut stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).record_interaction(
@@ -832,6 +854,32 @@ mod tests {
         let stats = brains.stats("discord:g").unwrap();
         let stays = stats.action_counts[BotAction::Stay.index()];
         assert_eq!(brains.get("discord:g").unwrap().buffer_len() as u64, stays);
+    }
+
+    #[tokio::test]
+    async fn a_reply_the_bot_cannot_make_does_not_burn_budget() {
+        let state = AppState::in_memory();
+        opt_in(&state, "discord:g", 6);
+        let out = FakeOut::default();
+        // Walk the policy until it picks Reply at least a few times; with no
+        // backend each one degrades to Stayed — and must leave the budget full
+        // minus only the reacts that actually went out.
+        let mut reacted = 0u32;
+        for i in 0..60 {
+            let mut m = message("lol nice", Some("g"), "u1");
+            m.native_message_id = format!("m{i}");
+            match handle(&state, &out, m, false, None).await {
+                Outcome::Reacted => reacted += 1,
+                Outcome::Stayed | Outcome::OverBudget => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        let left = AppState::lock(&state.budget).tokens_left("discord:g", 6, runtime::now());
+        assert!(
+            (6.0 - left - reacted as f32).abs() < 0.05,
+            "tokens spent ({}) should equal reacts sent ({reacted}); phantom replies must not cost quota",
+            6.0 - left
+        );
     }
 
     #[test]
