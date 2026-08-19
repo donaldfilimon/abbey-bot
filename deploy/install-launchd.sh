@@ -32,7 +32,15 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "missing $ENV_FILE — create it (chmod 600) with at least DISCORD_TOKEN=...; see .env.example" >&2
+  cat >&2 <<MSG
+missing $ENV_FILE — create it (chmod 600) from .env.example. At least:
+  DISCORD_TOKEN=...
+and for a bot that answers (not the honest 'no backend' line):
+  ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434  ABBEY_BOT_LLM_MODEL=gpt-oss:20b
+optional, as you ran it by hand: ABBEY_VISION_ENDPOINT/ABBEY_VISION_MODEL,
+  ABBEY_GUILD_ID, ABBEY_MESSAGE_CONTENT, ABBEY_QUIET, RUST_LOG
+(ABBEY_DATA_DIR is set by the plist; a line here overrides it.)
+MSG
   exit 1
 fi
 

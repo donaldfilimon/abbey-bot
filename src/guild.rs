@@ -23,6 +23,10 @@ pub const DEFAULT_BUDGET_PER_HOUR: u32 = 6;
 /// Ceiling for `/admin budget`.
 pub const MAX_BUDGET_PER_HOUR: u32 = 60;
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_budget_per_hour() -> u32 {
     DEFAULT_BUDGET_PER_HOUR
 }
@@ -72,6 +76,9 @@ pub struct GuildSettings {
     pub default_persona: Persona,
     /// DQN on/off for this guild.
     pub learning_enabled: bool,
+    /// Kept for the spec's row shape and old documents; voice is out of
+    /// scope (no `voice.md` was supplied), so nothing reads or renders it.
+    #[serde(default = "default_true")]
     pub voice_enabled: bool,
     pub vision_enabled: bool,
     /// Minimum gap between unsolicited replies in one channel.
@@ -265,10 +272,9 @@ fn on_off(flag: bool) -> &'static str {
 /// The `/admin show` text.
 pub fn render_settings(scoped_guild_id: &str, settings: &GuildSettings) -> String {
     format!(
-        "**Abbey — {scoped_guild_id}**\npersona: {} · learning: {} · voice: {} · vision: {} · cooldown: {}s · act: {} · budget: {}/h",
+        "**Abbey — {scoped_guild_id}**\npersona: {} · learning: {} · vision: {} · cooldown: {}s · act: {} · budget: {}/h",
         persona_name(settings.default_persona),
         on_off(settings.learning_enabled),
-        on_off(settings.voice_enabled),
         on_off(settings.vision_enabled),
         settings.reply_cooldown_seconds,
         on_off(settings.unsolicited),
@@ -430,7 +436,7 @@ mod tests {
         };
         assert_eq!(
             render_settings("discord:42", &s),
-            "**Abbey — discord:42**\npersona: abbey · learning: on · voice: on · vision: off · cooldown: 20s · act: off · budget: 6/h"
+            "**Abbey — discord:42**\npersona: abbey · learning: on · vision: off · cooldown: 20s · act: off · budget: 6/h"
         );
     }
 

@@ -1,7 +1,7 @@
-# Live test protocol — Discord web client (written 2026-08-19, not yet executed)
+# Live test protocol — Discord client (written 2026-08-19; A1–A2, C1–C4 and most of D executed that day, see `tasks/goals.md`)
 
 Operator drives Discord in Chrome as Donald; the bot runs from this clone with
-`ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gemma4:12b
+`ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gpt-oss:20b
 ABBEY_QUIET=1 ABBEY_DATA_DIR=<dir> RUST_LOG=info,abbey_bot=debug`. Every
 pipeline outcome is one `info` line: `message handled … outcome=…` /
 `reaction handled … outcome=…`. Deadlines: 5 s for non-model commands, 90 s for
@@ -19,7 +19,7 @@ anything through the model. Anything not seen by its deadline is recorded as
 
 ## B — guild slash commands
 1. `/stats` → record `messages seen`, brain line, `pending rewards`, backend/vision.
-2. `/admin show` → `persona: abbey · learning: on · voice: on · vision: on · cooldown: 20s`.
+2. `/admin show` → `persona: abbey · learning: on · vision: on · cooldown: 20s · act: off · budget: 6/h`.
 3. `/admin vision off` (vision falls back to the LLM endpoint and gemma has no vision).
 4. `/admin brain` → `ε 0.100 · learn steps 0 · replay buffer 0/10000 · experiences 0`.
 5. `/remember` / `/recall` / `/forget` in the guild; the fact must not appear in the DM's `/recall`.

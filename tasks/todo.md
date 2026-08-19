@@ -16,8 +16,8 @@
 - [x] README + CLAUDE.md/AGENTS.md updates, .env.example, gate green via ./check.sh
 
 ## Open (after this pass)
-- [ ] Live smoke test: token + `ABBEY_GUILD_ID` + `ABBEY_MESSAGE_CONTENT=1` + a backend; confirm command registration, a mention reply, a reaction reward settling, `/admin brain` moving
-- [ ] Model-initiated tools (spec `appleintelligence.md` `Tool` conformances) on the Anthropic path — design decision first
+- [x] Live smoke test: registration, mention reply, reaction reward settling all observed 2026-08-19 (`/admin brain` read still pending)
+- [x] Model-initiated tools — shipped PR #19 (both wire shapes)
 - [ ] voice.md was not supplied — voice remains out of scope
 
 ## DM / live (2026-08-19)
@@ -29,7 +29,7 @@
 - [x] Live Discord test via desktop control: DM ×2, guild mention ×2, commands answered (docs/live-test-protocol.md A1–A2, C1)
 - [x] C3–C4: 👍 on an Abbey reply → `Rewarded` → `reward settled into the replay buffer … loaded=true` (17:16Z)
 - [x] ABBEY_VISION_ENDPOINT=off sentinel
-- [ ] ABBEY_BOT_LLM_MAX_TOKENS / TIMEOUT tunables (Proposed)
+- [x] ABBEY_BOT_LLM_TIMEOUT_SECS shipped; ABBEY_BOT_LLM_MAX_TOKENS deliberately not added (budget is per path: 1,024 Anthropic / 4,096 local)
 - [ ] Exercise `/reputation`, `/stats`, `/remember`, `/see` individually once the DM slash picker shows them; Telegram/Slack adapters need their tokens
 
 ## Guild learning loop (plan 2026-08-19)
@@ -41,7 +41,7 @@
 - [x] T6 pipeline gates/budget/telemetry
 - [x] T7 /admin act, /admin budget, /admin brain, /stats
 - [x] T8 docs + PR
-- [ ] T9 live acceptance — intent is on, act-off gate observed in other guilds; pending `/admin act on` in #bot-ops (MLAI Community) + policy decisions
+- [ ] T9 live acceptance — `/admin act on`, policy decisions, reacts, cooldown, settle all observed; residual: an `OverBudget` refusal and a `/admin brain` read
 
 ## Reply quality & speed (2026-08-19)
 - [x] benchmark 5 local models with Abbey's prompt
