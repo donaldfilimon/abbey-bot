@@ -173,9 +173,11 @@ restart:
 - **Docker** — the multi-stage `Dockerfile`. Pass secrets with
   `docker run --env-file`; never bake a token into an image layer.
 
-Honesty note: **no part of this bot has been verified against a live Discord,
-Telegram, or Slack connection** — the gate proves the decision logic, the
-pipeline behind a recording transport, persistence round-trips, and the
+Honesty note: **verified live so far: gateway connect and global command
+registration (2026-08-19; 16 commands including the app's preserved Entry
+Point, 58 guilds). Not yet verified live: any command answering, the pipeline
+replying or learning, Telegram, Slack, vision.** The gate proves those paths
+behind recording transports, persistence round-trips, and the
 startup/fail-fast paths. This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
 --locked` produces the binary they both wrap. CI is *configured* to run the

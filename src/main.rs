@@ -176,7 +176,7 @@ async fn main() -> Result<(), Error> {
                         tracing::info!(guild = %id, "registered guild-scoped commands (instant)");
                     }
                     None => {
-                        poise::builtins::register_globally(ctx, &framework.options().commands)
+                        register_globally_keeping_entry_point(ctx, &framework.options().commands)
                             .await?;
                         tracing::info!(
                             "registered global commands — propagation can take up to an hour"
@@ -211,6 +211,45 @@ async fn main() -> Result<(), Error> {
     let result = client.start().await;
     gateway::shutdown(&state);
     result?;
+    Ok(())
+}
+
+/// Global registration that survives Discord's Entry Point command.
+///
+/// Apps with Activities enabled get an auto-created command of type
+/// `PrimaryEntryPoint`, and a bulk overwrite that omits it is rejected with
+/// "You cannot remove this app's Entry Point command in a bulk update
+/// operation" — which is exactly what `poise::builtins::register_globally`
+/// sends, and what killed the first live connection in the ready callback.
+/// Deleting the Entry Point would disable the app's Activity, which is not
+/// this bot's call to make; instead it is read back and re-sent alongside
+/// ours, unchanged.
+async fn register_globally_keeping_entry_point(
+    ctx: &serenity::all::Context,
+    commands: &[poise::Command<Data, Error>],
+) -> Result<(), Error> {
+    use serenity::all::{Command, CommandType, CreateCommand};
+
+    let mut create = poise::builtins::create_application_commands(commands);
+    let existing = Command::get_global_commands(&ctx.http).await?;
+    for cmd in existing
+        .into_iter()
+        .filter(|c| c.kind == CommandType::PrimaryEntryPoint)
+    {
+        let mut keep = CreateCommand::new(cmd.name.clone())
+            .kind(CommandType::PrimaryEntryPoint)
+            .description(cmd.description.clone())
+            .integration_types(cmd.integration_types.clone());
+        if let Some(contexts) = cmd.contexts.clone() {
+            keep = keep.contexts(contexts);
+        }
+        if let Some(handler) = cmd.handler {
+            keep = keep.handler(handler);
+        }
+        tracing::info!(name = %cmd.name, "preserving the app's Entry Point command");
+        create.push(keep);
+    }
+    Command::set_global_commands(&ctx.http, create).await?;
     Ok(())
 }
 

@@ -310,19 +310,33 @@ them away:
 - **`AF_UNIX` stays in `RestrictAddressFamilies`.** On hosts where nsswitch
   delegates entirely to nss-resolve, blocking unix sockets hard-fails DNS.
 
-## What has never been verified
+## What has and has not been verified
 
-**No part of this bot has been verified against a live Discord, Telegram, or
-Slack connection.** (A session note from 2026-08-18/19 records a first gateway
-connection that crashed inside the ready callback while registering commands;
-it is not recorded in git, so treat it as unconfirmed.) The gate proves the
-decision logic, the pipeline behind a recording `Outbound`, persistence
-round-trips, and the startup path; the binary is confirmed to start and fail
-fast on a missing `DISCORD_TOKEN`, a non-numeric or zero `ABBEY_GUILD_ID`, and a
-corrupt state file, and to write + reload its data dir. That is the whole of the
-evidence — do not describe the bot as working, tested against Discord, or
-deployed. A live run needs a token, and creating one is Dev Portal
-authentication that belongs to the user.
+**Verified live on 2026-08-19 (commit after PR #10, this clone, token from
+`.env`):** the gateway handshake, `Ready`, and global command registration —
+16 commands listed by `GET /applications/{id}/commands` (our 15 plus the app's
+Entry Point), bot present in 58 guilds, process stable for the observation
+window. That is the *first* live connection this bot has made; the earlier
+attempt died in the ready callback on exactly the Entry Point trap below.
+
+**Not verified live:** any interaction answered, any pipeline reply or
+reaction, any reward settling, Telegram, Slack, vision, persistence under real
+traffic. The gate proves those paths behind recording transports, and the
+binary is confirmed to fail fast on a missing `DISCORD_TOKEN`, a non-numeric
+or zero `ABBEY_GUILD_ID`, and a corrupt state file, and to write + reload its
+data dir. Do not describe the commands as answering or the loop as learning
+until someone has watched it happen.
+
+**Discord's Entry Point command breaks poise's global registration.** Apps
+with Activities enabled carry an auto-created `PrimaryEntryPoint` command
+(`launch`), and `poise::builtins::register_globally` does a bulk overwrite
+that omits it — Discord rejects the whole request ("You cannot remove this
+app's Entry Point command in a bulk update operation") and the setup callback
+errors out with a live gateway and no commands. `main.rs`'s
+`register_globally_keeping_entry_point` reads the existing Entry Point back
+and re-sends it alongside ours. Deleting it would be the easy fix and would
+disable the app's Activity — not this bot's call. Guild-scoped registration
+(`ABBEY_GUILD_ID`) never hits this, which is why the trap hides during dev.
 
 **The spec suite (`docs/spec/`) is implemented in Rust with these residuals,
 all recorded as Proposed in `tasks/goals.md`:** the Swift companion app and
