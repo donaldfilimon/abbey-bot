@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use crate::brain::telemetry::BrainStats;
+
 /// Idle brains unload after this long; their snapshot persists.
 pub const DEFAULT_EVICT_AFTER_SECS: u64 = 6 * 3600;
 
@@ -67,6 +69,7 @@ struct Loaded<B> {
     brain: B,
     experience_count: u64,
     last_touched: u64,
+    stats: BrainStats,
 }
 
 /// Lazily-loaded, per-guild brains with snapshot persistence and idle eviction.
@@ -104,6 +107,7 @@ impl<B: Brain> BrainRegistry<B> {
                     brain,
                     experience_count,
                     last_touched: now,
+                    stats: BrainStats::default(),
                 }
             });
         entry.last_touched = now;
@@ -167,6 +171,16 @@ impl<B: Brain> BrainRegistry<B> {
     }
 
     /// Read-only view for `/admin` observability; does not touch the idle clock.
+    /// The guild's telemetry, if its brain is loaded.
+    pub fn stats(&self, scoped_guild_id: &str) -> Option<&BrainStats> {
+        self.brains.get(scoped_guild_id).map(|l| &l.stats)
+    }
+
+    /// Mutable telemetry, if loaded. Does not touch the idle clock.
+    pub fn stats_mut(&mut self, scoped_guild_id: &str) -> Option<&mut BrainStats> {
+        self.brains.get_mut(scoped_guild_id).map(|l| &mut l.stats)
+    }
+
     pub fn get(&self, scoped_guild_id: &str) -> Option<&B> {
         self.brains.get(scoped_guild_id).map(|loaded| &loaded.brain)
     }
@@ -320,4 +334,16 @@ mod tests {
         reg.persist_all(&mut store, DEFAULT_EVICT_AFTER_SECS + 1);
         assert!(reg.get(A).is_none());
     }
+    #[test]
+    fn stats_appear_with_the_brain_and_leave_with_it() {
+        let mut reg = BrainRegistry::new(Counter::default, 3600);
+        let mut store = InMemoryBrainStore::new();
+        assert!(reg.stats("discord:g").is_none(), "unloaded → no stats");
+        reg.brain("discord:g", &store, 0);
+        reg.stats_mut("discord:g").unwrap().record_forced();
+        assert_eq!(reg.stats("discord:g").unwrap().forced_replies, 1);
+        reg.persist_and_evict("discord:g", &mut store);
+        assert!(reg.stats("discord:g").is_none(), "evicted with the brain");
+    }
+
 }
