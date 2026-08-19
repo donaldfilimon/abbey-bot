@@ -123,6 +123,14 @@ pub async fn handle<O: Outbound + Sync>(
             return Outcome::Rewarded;
         }
         RouteDecision::Welcome { display_name } => {
+            // A welcome is unsolicited speech: the operator's QUIET and the
+            // guild's `/admin act on` gate it exactly like a policy reply.
+            if state.quiet {
+                return Outcome::Ignored("quiet");
+            }
+            if !settings.unsolicited {
+                return Outcome::Ignored("act off");
+            }
             return welcome(state, out, &event.native_channel_id, &display_name).await;
         }
         RouteDecision::Consider { text, attachments } => (text, attachments),
@@ -1451,6 +1459,35 @@ mod tests {
             edited.last().is_some_and(|e| e.2.contains("upstream died")),
             "{edited:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_member_join_welcome_is_gated_like_any_unsolicited_speech() {
+        let out = FakeOut::default();
+        let join = |guild: &str| SocialEvent {
+            kind: EventKind::MemberJoined,
+            ..message("", Some(guild), "newbie")
+        };
+        // Quiet wins.
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().quiet = true;
+        assert_eq!(
+            handle(&state, &out, join("g"), false, None).await,
+            Outcome::Ignored("quiet")
+        );
+        // Not opted in.
+        let state = AppState::in_memory();
+        assert_eq!(
+            handle(&state, &out, join("g"), false, None).await,
+            Outcome::Ignored("act off")
+        );
+        // Opted in, no backend → honest silence, nothing sent.
+        opt_in(&state, "discord:g", 6);
+        assert_eq!(
+            handle(&state, &out, join("g"), false, None).await,
+            Outcome::Ignored("welcome needs a backend")
+        );
+        assert!(out.sent.lock().unwrap().is_empty());
     }
 
     #[test]

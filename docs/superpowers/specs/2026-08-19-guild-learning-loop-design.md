@@ -15,7 +15,7 @@ Let the per-guild DQN act unsolicited (reply / react / stay) in guilds that opt 
 
 ## Pipeline order (non-forced message)
 
-`ABBEY_QUIET` → `settings.unsolicited` (else `Ignored("act off")`) → `settings.learning_enabled` (else `Ignored("learning off")`) → blank-content guard → encode state → policy (`select_action`, record decision) → Stay ⇒ silence experience → else cooldown (`CooledDown`) → budget (`OverBudget`, unrecorded) → act → register reward.
+blank-content guard (first — nothing to learn from) → `ABBEY_QUIET` → `settings.unsolicited` (else `Ignored("act off")`) → `settings.learning_enabled` (else `Ignored("learning off")`) → encode state → policy (`select_action`, record decision) → Stay ⇒ silence experience → else cooldown (`CooledDown`) → budget (`OverBudget`, unrecorded) → act → register reward.
 
 ## Modules
 
