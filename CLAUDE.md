@@ -73,6 +73,7 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `persist.rs` | The one JSON document the registries' store traits read and write, atomically |
 | `tools.rs` | The model-callable tool vocabulary, both wire shapes, both response parsers, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
 | `pipeline.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
+| `generation.rs` | How a reply is produced once the pipeline decides to speak: the bounded tool loop (`generate`), local-path streaming (`stream_reply`: post/edit pacing), typing re-broadcast, `Delivery`/`Ask`/`Round` |
 
 `llm.rs` is pure in the same sense — it imports neither serenity nor poise —
 but it is the one module that touches a network other than Discord: the single
@@ -182,7 +183,7 @@ touch, every mention reply's reward settled into nothing. Also: a forced reply
 that fails at the backend posts `ask::render_failure` instead of dead air, and
 the typing indicator is re-broadcast every 8 s while a local model thinks.
 
-**Tools run through one loop, `pipeline::generate`.** Mentions, DMs, and
+**Tools run through one loop, `generation::generate`.** Mentions, DMs, and
 `/persona ask` offer `tools::abbey_tools()`; unsolicited policy replies and
 `/summarize` do not. The loop is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
 local path (`StreamEnd::Calls` means "run the tools and stream again"), retries
@@ -198,7 +199,7 @@ generated reply passes `ask::tidy_reply` (persona-echo/heading strip,
 sentence-boundary cut at 1,900 chars) before the clamp; every generation takes
 a slot from `AppState.generation` (1 for a local endpoint — ollama wedged under
 concurrent requests — 4 for Anthropic) or gets the honest "busy" line after
-`ABBEY_BOT_LLM_QUEUE_SECS`; the local path streams (`pipeline::stream_reply`:
+`ABBEY_BOT_LLM_QUEUE_SECS`; the local path streams (`generation::stream_reply`:
 post after 60 chars / 4 s, edit every 2 s, final edit with the tidied text, a
 stream that dies after posting edits in the failure line). Model choice is
 measured, not guessed — `docs/benchmarks/2026-08-19-local-models.md`; the

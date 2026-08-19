@@ -37,6 +37,7 @@ mod commands_brain;
 mod embedding;
 mod engine;
 mod gateway;
+mod generation;
 mod guild;
 mod llm;
 mod memory;
