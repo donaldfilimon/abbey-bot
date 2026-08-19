@@ -24,6 +24,7 @@ use serenity::all::{
 };
 
 use crate::ask;
+use crate::generation;
 use crate::llm;
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
@@ -305,10 +306,10 @@ pub async fn ask(
             let outcome = match state.acquire_generation().await {
                 Err(busy) => Err(llm::LlmError(busy)),
                 Ok(_slot) => {
-                    pipeline::generate::<pipeline::NoDelivery>(
+                    generation::generate::<generation::NoDelivery>(
                         state,
                         &mut host,
-                        &pipeline::Ask {
+                        &generation::Ask {
                             scope: &scope,
                             context: &context,
                             user_input: &question,
