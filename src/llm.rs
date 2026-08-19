@@ -165,14 +165,18 @@ impl std::fmt::Debug for LlmRequest {
 pub enum Role {
     User,
     Assistant,
+    /// A tool result (OpenAI `role: "tool"`; Anthropic folds it into a user
+    /// message of `tool_result` blocks — the builder handles the difference).
+    Tool,
 }
 
 impl Role {
-    /// The wire name — identical on both backends.
+    /// The wire name on the OpenAI side (Anthropic has no `tool` role).
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",
             Self::Assistant => "assistant",
+            Self::Tool => "tool",
         }
     }
 }
@@ -183,6 +187,10 @@ impl Role {
 pub struct ChatTurn {
     pub role: Role,
     pub text: String,
+    /// Calls the assistant made in this turn (empty for plain text).
+    pub tool_calls: Vec<crate::tools::ToolCall>,
+    /// For `Role::Tool`: which call this result answers.
+    pub tool_call_id: Option<String>,
 }
 
 impl ChatTurn {
@@ -190,6 +198,8 @@ impl ChatTurn {
         Self {
             role: Role::User,
             text: text.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         }
     }
 
@@ -197,8 +207,37 @@ impl ChatTurn {
         Self {
             role: Role::Assistant,
             text: text.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         }
     }
+
+    /// An assistant turn that asked for tools (possibly with some text).
+    pub fn assistant_calls(text: impl Into<String>, calls: Vec<crate::tools::ToolCall>) -> Self {
+        Self {
+            role: Role::Assistant,
+            text: text.into(),
+            tool_calls: calls,
+            tool_call_id: None,
+        }
+    }
+
+    /// The result of one call, keyed back to it.
+    pub fn tool_result(result: &crate::tools::ToolResult) -> Self {
+        Self {
+            role: Role::Tool,
+            text: result.content.clone(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some(result.call_id.clone()),
+        }
+    }
+}
+
+/// A parsed model turn: text, tool calls, or both.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelTurn {
+    pub text: String,
+    pub calls: Vec<crate::tools::ToolCall>,
 }
 
 /// Build the request a backend call would send for a single question. Pure,
@@ -217,40 +256,160 @@ pub fn build_chat_request(
     system_prompt: &str,
     turns: &[ChatTurn],
 ) -> LlmRequest {
-    let messages: Vec<Value> = turns
-        .iter()
-        .map(|turn| json!({"role": turn.role.as_str(), "content": turn.text}))
-        .collect();
+    build_chat_request_with_tools(backend, system_prompt, turns, &[])
+}
+
+/// [`build_chat_request`] plus a tool vocabulary. With `tools` empty the body
+/// is byte-identical to the untooled request (pinned by test), so callers
+/// that never offer tools pay nothing. Assistant turns that carried calls and
+/// `Role::Tool` results are serialized in each backend's own shape.
+pub fn build_chat_request_with_tools(
+    backend: &Backend,
+    system_prompt: &str,
+    turns: &[ChatTurn],
+    tools: &[crate::tools::ToolSpec],
+) -> LlmRequest {
     match backend {
-        Backend::Anthropic { api_key } => LlmRequest {
-            url: ANTHROPIC_URL.to_string(),
-            // The ecosystem's pinned header pair for this API.
-            headers: vec![
-                ("x-api-key", api_key.clone()),
-                ("anthropic-version", ANTHROPIC_VERSION.to_string()),
-            ],
-            body: json!({
+        Backend::Anthropic { api_key } => {
+            let mut messages: Vec<Value> = Vec::with_capacity(turns.len());
+            for turn in turns {
+                match turn.role {
+                    Role::User => messages.push(json!({"role": "user", "content": turn.text})),
+                    Role::Assistant if turn.tool_calls.is_empty() => {
+                        messages.push(json!({"role": "assistant", "content": turn.text}));
+                    }
+                    Role::Assistant => {
+                        let mut blocks = Vec::new();
+                        if !turn.text.is_empty() {
+                            blocks.push(json!({"type": "text", "text": turn.text}));
+                        }
+                        for c in &turn.tool_calls {
+                            blocks.push(json!({"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}));
+                        }
+                        messages.push(json!({"role": "assistant", "content": blocks}));
+                    }
+                    Role::Tool => {
+                        let block = json!({
+                            "type": "tool_result",
+                            "tool_use_id": turn.tool_call_id.clone().unwrap_or_default(),
+                            "content": turn.text,
+                        });
+                        // Consecutive tool results share one user message.
+                        if let Some(last) = messages.last_mut()
+                            && last["role"] == "user"
+                            && last["content"].is_array()
+                        {
+                            last["content"].as_array_mut().expect("array").push(block);
+                        } else {
+                            messages.push(json!({"role": "user", "content": [block]}));
+                        }
+                    }
+                }
+            }
+            let mut body = json!({
                 "model": ANTHROPIC_MODEL,
                 "max_tokens": MAX_TOKENS,
                 "system": system_prompt,
                 "messages": messages,
-            }),
-        },
+            });
+            if !tools.is_empty() {
+                body["tools"] = crate::tools::anthropic_tools_json(tools);
+            }
+            LlmRequest {
+                url: ANTHROPIC_URL.to_string(),
+                // The ecosystem's pinned header pair for this API.
+                headers: vec![
+                    ("x-api-key", api_key.clone()),
+                    ("anthropic-version", ANTHROPIC_VERSION.to_string()),
+                ],
+                body,
+            }
+        }
         Backend::OpenAiCompatible { endpoint, model } => {
-            let mut all = Vec::with_capacity(messages.len() + 1);
+            let mut all = Vec::with_capacity(turns.len() + 1);
             all.push(json!({"role": "system", "content": system_prompt}));
-            all.extend(messages);
+            for turn in turns {
+                let mut m = json!({"role": turn.role.as_str(), "content": turn.text});
+                if !turn.tool_calls.is_empty() {
+                    m["tool_calls"] = Value::Array(
+                        turn.tool_calls
+                            .iter()
+                            .map(|c| {
+                                json!({
+                                    "id": c.id,
+                                    "type": "function",
+                                    "function": { "name": c.name, "arguments": c.arguments.to_string() }
+                                })
+                            })
+                            .collect(),
+                    );
+                }
+                if let Some(id) = &turn.tool_call_id {
+                    m["tool_call_id"] = json!(id);
+                }
+                all.push(m);
+            }
+            let mut body = json!({
+                "model": model,
+                "max_tokens": LOCAL_MAX_TOKENS,
+                "messages": all,
+            });
+            if !tools.is_empty() {
+                body["tools"] = crate::tools::openai_tools_json(tools);
+            }
             LlmRequest {
                 url: format!("{}/v1/chat/completions", endpoint.trim_end_matches('/')),
                 headers: Vec::new(),
-                body: json!({
-                    "model": model,
-                    "max_tokens": LOCAL_MAX_TOKENS,
-                    "messages": all,
-                }),
+                body,
             }
         }
     }
+}
+
+/// Parse a non-streamed response into text and/or tool calls. Unlike
+/// [`extract_text`], an empty text with calls present is a normal outcome.
+pub fn extract_turn(backend: &Backend, raw: &str) -> Result<ModelTurn, LlmError> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|e| LlmError(format!("the response was not JSON: {e}")))?;
+    let turn = match backend {
+        Backend::Anthropic { .. } => {
+            let content = value.get("content").cloned().unwrap_or(Value::Null);
+            let text = content
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("");
+            ModelTurn {
+                text,
+                calls: crate::tools::parse_anthropic_tool_use(&content),
+            }
+        }
+        Backend::OpenAiCompatible { .. } => {
+            let message = value
+                .pointer("/choices/0/message")
+                .cloned()
+                .unwrap_or(Value::Null);
+            ModelTurn {
+                text: message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                calls: crate::tools::parse_openai_tool_calls(&message),
+            }
+        }
+    };
+    if turn.text.trim().is_empty() && turn.calls.is_empty() {
+        // Same honesty as extract_text, same reasoning-budget diagnosis.
+        return extract_text(backend, raw).map(|text| ModelTurn {
+            text,
+            calls: Vec::new(),
+        });
+    }
+    Ok(turn)
 }
 
 /// Why a backend call produced no answer. Carries no secrets by construction:
@@ -391,6 +550,20 @@ impl Transport for HttpTransport {
     }
 }
 
+/// Non-streamed generation with a tool vocabulary: the parsed [`ModelTurn`]
+/// (text and/or calls) out. `tools` empty = plain chat.
+pub async fn chat_turn<T: Transport>(
+    transport: &T,
+    backend: &Backend,
+    system_prompt: &str,
+    turns: &[ChatTurn],
+    tools: &[crate::tools::ToolSpec],
+) -> Result<ModelTurn, LlmError> {
+    let request = build_chat_request_with_tools(backend, system_prompt, turns, tools);
+    let raw = transport.post(&request).await?;
+    extract_turn(backend, &raw)
+}
+
 /// Multi-turn variant of [`ask_backend`]: the engine's prepared transcript in,
 /// the assistant's text out. Same seam, same extraction.
 pub async fn chat_backend<T: Transport>(
@@ -413,8 +586,9 @@ pub fn build_stream_request(
     backend: &Backend,
     system_prompt: &str,
     turns: &[ChatTurn],
+    tools: &[crate::tools::ToolSpec],
 ) -> LlmRequest {
-    let mut request = build_chat_request(backend, system_prompt, turns);
+    let mut request = build_chat_request_with_tools(backend, system_prompt, turns, tools);
     if matches!(backend, Backend::OpenAiCompatible { .. }) {
         request.body["stream"] = json!(true);
     }
@@ -429,6 +603,10 @@ pub fn build_stream_request(
 pub struct SseAccumulator {
     buffer: String,
     done: bool,
+    /// Streamed `delta.tool_calls`, merged by index: id/name when present,
+    /// `arguments` fragments concatenated (OpenAI fragments; ollama sends
+    /// each call whole in one delta — both land here).
+    calls: Vec<(String, String, String)>,
 }
 
 impl SseAccumulator {
@@ -447,16 +625,63 @@ impl SseAccumulator {
                 self.done = true;
                 continue;
             }
-            if let Some(text) = serde_json::from_str::<Value>(payload).ok().and_then(|v| {
-                v.pointer("/choices/0/delta/content")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            }) && !text.is_empty()
+            let Ok(value) = serde_json::from_str::<Value>(payload) else {
+                continue;
+            };
+            if let Some(text) = value
+                .pointer("/choices/0/delta/content")
+                .and_then(Value::as_str)
+                && !text.is_empty()
             {
-                deltas.push(text);
+                deltas.push(text.to_string());
+            }
+            if let Some(calls) = value
+                .pointer("/choices/0/delta/tool_calls")
+                .and_then(Value::as_array)
+            {
+                for c in calls {
+                    let index = c
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .and_then(|n| usize::try_from(n).ok())
+                        .unwrap_or(0);
+                    while self.calls.len() <= index {
+                        self.calls
+                            .push((String::new(), String::new(), String::new()));
+                    }
+                    let slot = &mut self.calls[index];
+                    if let Some(id) = c.get("id").and_then(Value::as_str) {
+                        slot.0 = id.to_string();
+                    }
+                    if let Some(name) = c.pointer("/function/name").and_then(Value::as_str) {
+                        slot.1 = name.to_string();
+                    }
+                    if let Some(args) = c.pointer("/function/arguments").and_then(Value::as_str) {
+                        slot.2.push_str(args);
+                    }
+                }
             }
         }
         deltas
+    }
+
+    /// The tool calls streamed so far, parsed. Fragments that never became
+    /// valid JSON yield `{}` arguments, like the non-streamed parser.
+    pub fn tool_calls(&self) -> Vec<crate::tools::ToolCall> {
+        self.calls
+            .iter()
+            .filter(|(_, name, _)| !name.is_empty())
+            .enumerate()
+            .map(|(i, (id, name, args))| crate::tools::ToolCall {
+                id: if id.is_empty() {
+                    format!("call_{i}")
+                } else {
+                    id.clone()
+                },
+                name: name.clone(),
+                arguments: serde_json::from_str(args).unwrap_or(json!({})),
+            })
+            .collect()
     }
 
     /// Whether `data: [DONE]` has been seen.
@@ -473,7 +698,7 @@ pub trait StreamTransport {
         &self,
         request: &LlmRequest,
         on_delta: tokio::sync::mpsc::UnboundedSender<String>,
-    ) -> impl Future<Output = Result<String, LlmError>> + Send;
+    ) -> impl Future<Output = Result<ModelTurn, LlmError>> + Send;
 }
 
 impl StreamTransport for HttpTransport {
@@ -481,7 +706,7 @@ impl StreamTransport for HttpTransport {
         &self,
         request: &LlmRequest,
         on_delta: tokio::sync::mpsc::UnboundedSender<String>,
-    ) -> impl Future<Output = Result<String, LlmError>> + Send {
+    ) -> impl Future<Output = Result<ModelTurn, LlmError>> + Send {
         let mut builder = self.client.post(&request.url).json(&request.body);
         for (name, value) in &request.headers {
             builder = builder.header(*name, value);
@@ -512,10 +737,11 @@ impl StreamTransport for HttpTransport {
                     break;
                 }
             }
-            if full.trim().is_empty() {
+            let calls = acc.tool_calls();
+            if full.trim().is_empty() && calls.is_empty() {
                 return Err(LlmError("the stream carried no answer text".to_string()));
             }
-            Ok(full)
+            Ok(ModelTurn { text: full, calls })
         }
     }
 }
@@ -623,18 +849,107 @@ mod tests {
             model: "gemma4:e4b".into(),
         };
         assert_eq!(
-            build_stream_request(&local, "S", &[ChatTurn::user("Q")]).body["stream"],
+            build_stream_request(&local, "S", &[ChatTurn::user("Q")], &[]).body["stream"],
             true
         );
         let anthropic = Backend::Anthropic {
             api_key: "k".into(),
         };
         assert!(
-            build_stream_request(&anthropic, "S", &[ChatTurn::user("Q")])
+            build_stream_request(&anthropic, "S", &[ChatTurn::user("Q")], &[])
                 .body
                 .get("stream")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn tooled_requests_serialize_both_shapes_and_untooled_is_byte_identical() {
+        let tools = crate::tools::abbey_tools();
+        let call = crate::tools::ToolCall {
+            id: "c1".into(),
+            name: "recall".into(),
+            arguments: json!({"query": "rust"}),
+        };
+        let result = crate::tools::ToolResult {
+            call_id: "c1".into(),
+            name: "recall".into(),
+            content: "• nightly".into(),
+        };
+        let turns = vec![
+            ChatTurn::user("what do you remember?"),
+            ChatTurn::assistant_calls("", vec![call]),
+            ChatTurn::tool_result(&result),
+        ];
+        let local = Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:11434".into(),
+            model: "gpt-oss:20b".into(),
+        };
+        let body = build_chat_request_with_tools(&local, "S", &turns, &tools).body;
+        assert_eq!(body["tools"].as_array().unwrap().len(), 5);
+        assert_eq!(
+            body["messages"][2]["tool_calls"][0]["function"]["name"],
+            "recall"
+        );
+        assert_eq!(
+            body["messages"][2]["tool_calls"][0]["function"]["arguments"],
+            "{\"query\":\"rust\"}"
+        );
+        assert_eq!(body["messages"][3]["role"], "tool");
+        assert_eq!(body["messages"][3]["tool_call_id"], "c1");
+        let anthropic = Backend::Anthropic {
+            api_key: "k".into(),
+        };
+        let body = build_chat_request_with_tools(&anthropic, "S", &turns, &tools).body;
+        assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(body["messages"][1]["content"][0]["type"], "tool_use");
+        assert_eq!(body["messages"][2]["role"], "user");
+        assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
+        assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "c1");
+        // No tools → the classic body, byte for byte.
+        let plain = [ChatTurn::user("Q")];
+        assert_eq!(
+            build_chat_request(&local, "S", &plain),
+            build_chat_request_with_tools(&local, "S", &plain, &[])
+        );
+        assert!(
+            build_chat_request(&local, "S", &plain)
+                .body
+                .get("tools")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn extract_turn_reads_calls_and_text_on_both_backends() {
+        let local = Backend::OpenAiCompatible {
+            endpoint: "e".into(),
+            model: "m".into(),
+        };
+        let raw = r#"{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"remember_fact","arguments":"{\"fact\":\"x\"}"}}]},"finish_reason":"tool_calls"}]}"#;
+        let turn = extract_turn(&local, raw).unwrap();
+        assert_eq!(turn.calls.len(), 1);
+        assert_eq!(turn.calls[0].arguments["fact"], "x");
+        let anthropic = Backend::Anthropic {
+            api_key: "k".into(),
+        };
+        let raw = r#"{"content":[{"type":"text","text":"Sure."},{"type":"tool_use","id":"t1","name":"recall","input":{"query":"q"}}]}"#;
+        let turn = extract_turn(&anthropic, raw).unwrap();
+        assert_eq!(turn.text, "Sure.");
+        assert_eq!(turn.calls[0].name, "recall");
+        // Empty both ways falls back to extract_text's honest error.
+        assert!(extract_turn(&local, r#"{"choices":[{"message":{"content":""}}]}"#).is_err());
+    }
+
+    #[test]
+    fn sse_accumulator_merges_streamed_tool_calls_whole_and_fragmented() {
+        let mut acc = SseAccumulator::default();
+        acc.feed("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"index\":0,\"function\":{\"name\":\"recall\",\"arguments\":\"{\\\"query\\\":\\\"ru\"}}]}}]}\n");
+        acc.feed("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"st\\\"}\"}}]}}]}\n");
+        let calls = acc.tool_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_a");
+        assert_eq!(calls[0].arguments["query"], "rust");
     }
 
     #[test]
