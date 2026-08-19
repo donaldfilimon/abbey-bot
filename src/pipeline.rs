@@ -58,6 +58,8 @@ pub enum Outcome {
     Welcomed,
     Stayed,
     CooledDown,
+    /// The guild's hourly budget is spent; nothing sent, nothing learned.
+    OverBudget,
     Reacted,
     Replied,
     ReplyFailed(String),
@@ -138,13 +140,15 @@ pub async fn handle<O: Outbound + Sync>(
     if text.trim().is_empty() && attachments.is_empty() && !forced {
         return Outcome::Ignored("no content available");
     }
-    // Two hard gates on unsolicited speech, checked before the policy so
-    // nothing is learned from a message Abbey was never allowed to answer:
-    // the operator's `ABBEY_QUIET=1` (a 58-guild token is not a playground),
-    // and the guild's `/admin learning off`, which pins it to mentions and
-    // commands exactly as the docs promise.
+    // Gates on unsolicited speech, checked before the policy so nothing is
+    // learned from a message Abbey was never allowed to answer — in order:
+    // the operator's `ABBEY_QUIET=1` (wins over any guild), the guild's own
+    // `/admin act on` (opt-in, default off), and `/admin learning off`.
     if !forced && state.quiet {
         return Outcome::Ignored("quiet");
+    }
+    if !forced && !settings.unsolicited {
+        return Outcome::Ignored("act off");
     }
     if !forced && !settings.learning_enabled {
         return Outcome::Ignored("learning off");
@@ -169,8 +173,7 @@ pub async fn handle<O: Outbound + Sync>(
     let action = {
         // Load the guild's brain even on the forced path: the reward for a
         // mention/DM reply settles 150 s later into `BrainRegistry::remember`,
-        // which drops experiences for guilds that are not loaded. Without this
-        // touch every forced reply's reward was silently lost.
+        // which drops experiences for guilds that are not loaded.
         let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
         let brain = brains.brain(&scoped_guild, &*stores, now);
@@ -178,9 +181,26 @@ pub async fn handle<O: Outbound + Sync>(
             brain.set_epsilon(eps);
         }
         if forced {
+            if let Some(stats) = brains.stats_mut(&scoped_guild) {
+                stats.record_forced();
+            }
             BotAction::Reply
         } else {
-            BotAction::from_index(brain.select_action(&encoded)).unwrap_or(BotAction::Stay)
+            let q = brain.q_values(&encoded);
+            let chosen =
+                BotAction::from_index(brain.select_action(&encoded)).unwrap_or(BotAction::Stay);
+            if let Some(stats) = brains.stats_mut(&scoped_guild) {
+                stats.record_decision(&encoded, &q, chosen);
+            }
+            tracing::info!(
+                guild = %scoped_guild,
+                action = crate::brain::telemetry::action_name(chosen),
+                q = ?q,
+                intent = ?intent,
+                heat,
+                "policy decision"
+            );
+            chosen
         }
     };
 
@@ -192,7 +212,10 @@ pub async fn handle<O: Outbound + Sync>(
         return Outcome::Stayed;
     }
 
-    // Unsolicited output is rate-limited per channel; mentions and DMs bypass.
+    // Unsolicited output is rate-limited twice: per channel (cooldown, the
+    // burst guard) and per guild (hourly budget, the volume guard). Mentions
+    // and DMs bypass both. Over budget, the decision is not acted on and not
+    // learned — silence was not the policy's choice.
     if !forced {
         let permitted = AppState::lock(&state.cooldown).permitted(
             &scoped_channel,
@@ -201,6 +224,14 @@ pub async fn handle<O: Outbound + Sync>(
         );
         if !permitted {
             return Outcome::CooledDown;
+        }
+        let within_budget = AppState::lock(&state.budget).try_take(
+            &scoped_guild,
+            settings.unsolicited_per_hour,
+            now,
+        );
+        if !within_budget {
+            return Outcome::OverBudget;
         }
     }
 
@@ -548,6 +579,7 @@ mod tests {
     #[tokio::test]
     async fn unsolicited_text_consults_the_policy_and_never_speaks_without_a_backend() {
         let state = AppState::in_memory();
+        opt_in(&state, "discord:g", 6);
         let out = FakeOut::default();
         for _ in 0..20 {
             let outcome = handle(
@@ -561,7 +593,7 @@ mod tests {
             assert!(
                 matches!(
                     outcome,
-                    Outcome::Stayed | Outcome::Reacted | Outcome::CooledDown
+                    Outcome::Stayed | Outcome::Reacted | Outcome::CooledDown | Outcome::OverBudget
                 ),
                 "{outcome:?}"
             );
@@ -664,8 +696,10 @@ mod tests {
         let state = AppState::in_memory();
         {
             let mut stores = AppState::lock(&state.stores);
-            AppState::lock(&state.guilds)
-                .update("discord:g", &mut *stores, |s| s.learning_enabled = false);
+            AppState::lock(&state.guilds).update("discord:g", &mut *stores, |s| {
+                s.unsolicited = true;
+                s.learning_enabled = false;
+            });
         }
         let outcome = handle(
             &state,
@@ -695,6 +729,109 @@ mod tests {
             brains.remember(&g, exp);
         }
         assert_eq!(brains.get("discord:g").map(|b| b.buffer_len()), Some(1));
+    }
+
+    fn opt_in(state: &AppState, guild: &str, per_hour: u32) {
+        let mut stores = AppState::lock(&state.stores);
+        AppState::lock(&state.guilds).update(guild, &mut *stores, |s| {
+            s.unsolicited = true;
+            s.unsolicited_per_hour = per_hour;
+            s.reply_cooldown_seconds = 0;
+        });
+    }
+
+    #[tokio::test]
+    async fn a_guild_that_has_not_opted_in_is_ignored_before_the_policy() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let outcome = handle(
+            &state,
+            &out,
+            message("lol nice", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Ignored("act off"));
+        assert!(
+            AppState::lock(&state.brains).loaded_guilds().is_empty(),
+            "no brain, no experience"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_opted_in_guild_consults_the_policy_and_records_the_decision() {
+        let state = AppState::in_memory();
+        opt_in(&state, "discord:g", 6);
+        let out = FakeOut::default();
+        let outcome = handle(
+            &state,
+            &out,
+            message("lol nice", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(
+                outcome,
+                Outcome::Stayed | Outcome::Reacted | Outcome::OverBudget
+            ),
+            "{outcome:?} (no backend → reply degrades to Stayed)"
+        );
+        let brains = AppState::lock(&state.brains);
+        let stats = brains
+            .stats("discord:g")
+            .expect("brain loaded by the decision");
+        assert_eq!(
+            stats.action_counts.iter().sum::<u64>(),
+            1,
+            "exactly one policy decision"
+        );
+        assert_eq!(stats.last_q.len(), 3);
+        assert_eq!(stats.forced_replies, 0);
+    }
+
+    #[tokio::test]
+    async fn a_mention_counts_as_forced_not_as_a_decision() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let _ = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
+        let brains = AppState::lock(&state.brains);
+        let stats = brains.stats("discord:g").unwrap();
+        assert_eq!(stats.forced_replies, 1);
+        assert_eq!(stats.action_counts, [0, 0, 0]);
+    }
+
+    #[tokio::test]
+    async fn over_budget_is_silent_and_unlearned() {
+        let state = AppState::in_memory();
+        opt_in(&state, "discord:g", 1);
+        assert!(AppState::lock(&state.budget).try_take("discord:g", 1, runtime::now()));
+        let out = FakeOut::default();
+        let mut saw_over_budget = false;
+        for i in 0..40 {
+            let mut m = message("lol nice", Some("g"), "u1");
+            m.native_message_id = format!("m{i}");
+            match handle(&state, &out, m, false, None).await {
+                Outcome::OverBudget => {
+                    saw_over_budget = true;
+                    break;
+                }
+                Outcome::Stayed => continue,
+                other => panic!("acted past the budget: {other:?}"),
+            }
+        }
+        assert!(
+            saw_over_budget,
+            "the policy never picked reply/react in 40 tries"
+        );
+        assert!(out.reacted.lock().unwrap().is_empty());
+        assert!(out.sent.lock().unwrap().is_empty());
+        let brains = AppState::lock(&state.brains);
+        let stats = brains.stats("discord:g").unwrap();
+        let stays = stats.action_counts[BotAction::Stay.index()];
+        assert_eq!(brains.get("discord:g").unwrap().buffer_len() as u64, stays);
     }
 
     #[test]

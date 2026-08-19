@@ -34,5 +34,14 @@ anything through the model. Anything not seen by its deadline is recorded as
 4. Wait ≥ 150 s (settle tick 30 s). `/admin brain` → `replay buffer 1/10000 · experiences 1`; `/stats` pending back down.
 5. `/admin brain epsilon:0.0`; `/admin flush` → files in the data dir; `/summarize`; `/admin reset`; `/admin export` → JSON attachment.
 
-## D — requires MESSAGE_CONTENT (Dev Portal toggle)
-Only with `ABBEY_QUIET=1` still on: a plain message → `outcome=Ignored("quiet")` proves content arrived and the guard held. Watching the policy itself on a 58-guild token is deliberately NOT run without a per-guild allow-list.
+## D — the policy acting (requires MESSAGE_CONTENT in the Dev Portal)
+Restart with `ABBEY_MESSAGE_CONTENT=1` and **without** `ABBEY_QUIET`. In the
+sandbox guild only: `/admin act on`, `/admin budget 6`, `/admin show` confirms.
+Send 5–10 ordinary messages (no mention) across a couple of minutes. Expect:
+one `policy decision … action=… q=[…]` log line per message; at least one
+`Reacted` or `Replied` (the reply references the message); `/admin brain`
+shows the last decision's Q-values and a non-zero histogram; `/stats` shows
+budget tokens decreasing; after 7+ actions in an hour `OverBudget` in the log
+and no further output; **every other guild's messages log `Ignored("act off")`**.
+React 👍/👎 on her unsolicited replies; after 150 s `reward settled` and the
+mean in `/admin brain` moves. Record what was and was not observed.

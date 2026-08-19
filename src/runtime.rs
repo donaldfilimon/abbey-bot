@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::brain::budget::Budget;
 use crate::brain::dqn::{BrainSnapshot, DqnAgent};
 use crate::brain::registry::{Brain, BrainRegistry, DEFAULT_EVICT_AFTER_SECS};
 use crate::brain::replay::Experience;
@@ -135,6 +136,8 @@ pub struct AppState {
     pub social: Mutex<SocialBrain>,
     pub rewards: Mutex<RewardCollector>,
     pub cooldown: Mutex<ReplyCooldown>,
+    /// Per-guild hourly budget for unsolicited actions.
+    pub budget: Mutex<Budget>,
     pub recall: Mutex<Recall>,
     pub engine: Mutex<Engine>,
     pub backend: Option<Backend>,
@@ -194,6 +197,7 @@ impl AppState {
             social: Mutex::new(SocialBrain::new()),
             rewards: Mutex::new(RewardCollector::new()),
             cooldown: Mutex::new(ReplyCooldown::new()),
+            budget: Mutex::new(Budget::default()),
             recall: Mutex::new(recall),
             engine: Mutex::new(Engine::new()),
             backend: Backend::from_env(),
@@ -216,6 +220,7 @@ impl AppState {
             social: Mutex::new(SocialBrain::new()),
             rewards: Mutex::new(RewardCollector::new()),
             cooldown: Mutex::new(ReplyCooldown::new()),
+            budget: Mutex::new(Budget::default()),
             recall: Mutex::new(Recall::new()),
             engine: Mutex::new(Engine::new()),
             backend: None,
@@ -264,6 +269,9 @@ impl AppState {
                 loaded,
                 "reward settled into the replay buffer"
             );
+            if let Some(stats) = brains.stats_mut(&guild) {
+                stats.record_reward(exp.reward);
+            }
             brains.remember(&guild, exp);
         }
     }
@@ -360,5 +368,25 @@ mod tests {
     #[test]
     fn topology_matches_the_spec() {
         assert_eq!(TOPOLOGY, [18, 64, 32, 3]);
+    }
+    #[test]
+    fn settled_rewards_reach_the_guild_stats() {
+        let state = AppState::in_memory();
+        {
+            let mut brains = AppState::lock(&state.brains);
+            let stores = AppState::lock(&state.stores);
+            brains.brain("discord:g", &*stores, 0);
+        }
+        AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "m1", "discord:g", 0);
+        AppState::lock(&state.rewards).reaction("👍", "m1", true);
+        // settle_rewards reads the real clock; the entry is 150 s+ old by any clock.
+        state.settle_rewards();
+        let brains = AppState::lock(&state.brains);
+        let stats = brains.stats("discord:g").expect("loaded");
+        assert_eq!(stats.settled_total, 1);
+        assert!((stats.mean_recent_reward().unwrap() - 0.8).abs() < 1e-6);
+        assert_eq!(brains.get("discord:g").unwrap().buffer_len(), 1);
+        drop(brains);
+        assert!(AppState::lock(&state.budget).try_take("discord:g", 6, 0));
     }
 }
