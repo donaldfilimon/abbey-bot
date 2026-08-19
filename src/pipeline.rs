@@ -48,7 +48,21 @@ pub trait Outbound {
     ) -> impl Future<Output = Result<(), String>> + Send;
     /// Fetch an attachment's bytes (capped by the caller's `max`).
     fn fetch(&self, url: &str, max: usize) -> impl Future<Output = Result<Vec<u8>, String>> + Send;
+    /// Replace the text of a message this bot sent (progressive replies).
+    fn edit(
+        &self,
+        native_channel_id: &str,
+        native_message_id: &str,
+        text: &str,
+    ) -> impl Future<Output = Result<(), String>> + Send;
 }
+
+/// Progressive-reply pacing: post once this many characters have arrived…
+pub const STREAM_FIRST_POST_CHARS: usize = 60;
+/// …or this many seconds have passed since generation started, whichever first.
+pub const STREAM_FIRST_POST_SECS: u64 = 4;
+/// Then edit at most this often (Discord tolerates ~5 edits / 5 s per channel).
+pub const STREAM_EDIT_EVERY_SECS: u64 = 2;
 
 /// What the pipeline did with an event — for logs and tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -316,18 +330,36 @@ pub async fn handle<O: Outbound + Sync>(
     );
     let prepared =
         AppState::lock(&state.engine).prepare(&scoped_channel, persona, &context, &enriched, now);
-    let answer = with_typing(out, &event.native_channel_id, async {
-        llm::chat_backend(
-            &state.llm,
-            backend,
-            &prepared.system_prompt,
-            &prepared.turns,
-        )
-        .await
+    let reply_to = Some(event.native_message_id.clone());
+    let generated = with_typing(out, &event.native_channel_id, async {
+        // One local generation at a time; the typing indicator keeps going
+        // while this turn waits for its slot.
+        let _slot = state.acquire_generation().await.map_err(llm::LlmError)?;
+        match backend {
+            // Local models are slow: stream, post early, edit as text arrives.
+            llm::Backend::OpenAiCompatible { .. } => {
+                stream_reply(
+                    &state.llm,
+                    out,
+                    &event.native_channel_id,
+                    reply_to.as_deref(),
+                    backend,
+                    &prepared,
+                    persona,
+                )
+                .await
+            }
+            // Anthropic answers in seconds; one post is the better UX, and a
+            // failure falls back to the local endpoint once when one is set.
+            llm::Backend::Anthropic { .. } => state
+                .chat(&prepared.system_prompt, &prepared.turns)
+                .await
+                .map(|(text, _label)| (ask::tidy_reply(persona, &text), None)),
+        }
     })
     .await;
-    let answer = match answer {
-        Ok(a) => a,
+    let (answer, already_sent) = match generated {
+        Ok(pair) => pair,
         Err(e) => {
             tracing::warn!(error = %e.0, backend = backend.label(), "reply generation failed");
             if forced {
@@ -335,7 +367,7 @@ pub async fn handle<O: Outbound + Sync>(
                 // the same honest failure line `/persona ask` already posts.
                 let failure = OutboundMessage {
                     text: ask::render_failure(persona, backend.label(), &e.0),
-                    reply_to_native_message_id: Some(event.native_message_id.clone()),
+                    reply_to_native_message_id: reply_to.clone(),
                     ..OutboundMessage::default()
                 };
                 let _ = out.send(&event.native_channel_id, &failure).await;
@@ -345,15 +377,20 @@ pub async fn handle<O: Outbound + Sync>(
     };
     AppState::lock(&state.engine).commit(&scoped_channel, &enriched, &answer, now);
 
-    let reply = OutboundMessage {
-        text: answer,
-        reply_to_native_message_id: Some(event.native_message_id.clone()),
-        title: None,
-        accent_color: None,
-    };
-    let sent_id = match out.send(&event.native_channel_id, &reply).await {
-        Ok(id) => id,
-        Err(e) => return Outcome::ReplyFailed(e),
+    let sent_id = match already_sent {
+        Some(id) => id,
+        None => {
+            let reply = OutboundMessage {
+                text: answer,
+                reply_to_native_message_id: reply_to,
+                title: None,
+                accent_color: None,
+            };
+            match out.send(&event.native_channel_id, &reply).await {
+                Ok(id) => id,
+                Err(e) => return Outcome::ReplyFailed(e),
+            }
+        }
     };
 
     AppState::lock(&state.rewards).register_reply(
@@ -374,6 +411,121 @@ pub async fn handle<O: Outbound + Sync>(
         );
     }
     Outcome::Replied
+}
+
+/// Generate through a streaming transport, posting the reply as soon as
+/// [`STREAM_FIRST_POST_CHARS`] have arrived or [`STREAM_FIRST_POST_SECS`]
+/// have passed, then editing the message every [`STREAM_EDIT_EVERY_SECS`]
+/// until the stream ends; the final edit carries the tidied full text.
+///
+/// Returns the tidied text and the id of the message that now holds it
+/// (`None` if the stream finished before anything was worth posting — the
+/// caller posts it the ordinary way). If the stream fails after a partial
+/// message went out, that message is edited to the honest failure line so
+/// a half-answer never stands as if it were whole.
+pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
+    transport: &T,
+    out: &O,
+    native_channel_id: &str,
+    reply_to: Option<&str>,
+    backend: &llm::Backend,
+    prepared: &crate::engine::PreparedTurn,
+    persona: Persona,
+) -> Result<(String, Option<String>), llm::LlmError> {
+    let request = llm::build_stream_request(backend, &prepared.system_prompt, &prepared.turns);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut stream = std::pin::pin!(transport.post_stream(&request, tx));
+    let started = tokio::time::Instant::now();
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(STREAM_EDIT_EVERY_SECS));
+    tick.tick().await;
+    let mut text = String::new();
+    let mut posted: Option<String> = None;
+    let mut last_edited_len = 0usize;
+    let mut finished: Option<Result<String, llm::LlmError>> = None;
+
+    // Post-or-edit with whatever has arrived, honouring the pacing rules.
+    async fn flush<O: Outbound + Sync>(
+        out: &O,
+        channel: &str,
+        reply_to: Option<&str>,
+        text: &str,
+        posted: &mut Option<String>,
+        last_edited_len: &mut usize,
+    ) -> Result<(), String> {
+        if text.trim().is_empty() || text.chars().count() == *last_edited_len {
+            return Ok(());
+        }
+        match posted {
+            None => {
+                let message = OutboundMessage {
+                    text: text.to_string(),
+                    reply_to_native_message_id: reply_to.map(str::to_string),
+                    ..OutboundMessage::default()
+                };
+                let id = out.send(channel, &message).await?;
+                *posted = Some(id);
+            }
+            Some(id) => out.edit(channel, id, text).await?,
+        }
+        *last_edited_len = text.chars().count();
+        Ok(())
+    }
+
+    while finished.is_none() {
+        tokio::select! {
+            // Deltas first: a chunk that arrived just before completion must
+            // be posted/edited before the final state is decided.
+            biased;
+            Some(delta) = rx.recv() => {
+                text.push_str(&delta);
+                let due = posted.is_none()
+                    && (text.chars().count() >= STREAM_FIRST_POST_CHARS
+                        || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS);
+                if due {
+                    flush(out, native_channel_id, reply_to, &text, &mut posted, &mut last_edited_len)
+                        .await
+                        .map_err(llm::LlmError)?;
+                }
+            }
+            _ = tick.tick() => {
+                if posted.is_some() || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS {
+                    flush(out, native_channel_id, reply_to, &text, &mut posted, &mut last_edited_len)
+                        .await
+                        .map_err(llm::LlmError)?;
+                }
+            }
+            result = &mut stream => finished = Some(result),
+        }
+    }
+    // Drain anything that arrived between the last recv and completion.
+    while let Ok(delta) = rx.try_recv() {
+        text.push_str(&delta);
+    }
+    match finished.expect("loop exits only when finished is set") {
+        Ok(full) => {
+            let tidy = ask::tidy_reply(
+                persona,
+                if full.len() >= text.len() {
+                    &full
+                } else {
+                    &text
+                },
+            );
+            if let Some(id) = &posted {
+                out.edit(native_channel_id, id, &tidy)
+                    .await
+                    .map_err(llm::LlmError)?;
+            }
+            Ok((tidy, posted))
+        }
+        Err(e) => {
+            if let Some(id) = &posted {
+                let failure = ask::render_failure(persona, backend.label(), &e.0);
+                let _ = out.edit(native_channel_id, id, &failure).await;
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Run `work` while re-broadcasting the typing indicator every 8 s. Discord's
@@ -463,8 +615,11 @@ async fn welcome<O: Outbound + Sync>(
         return Outcome::Ignored("welcome has no channel");
     }
     let system = engine::welcome_prompt(display_name);
+    let Ok(_slot) = state.acquire_generation().await else {
+        return Outcome::Ignored("welcome skipped: model busy");
+    };
     let text = match llm::ask_backend(&state.llm, backend, &system, "Say hello.").await {
-        Ok(t) => t,
+        Ok(t) => ask::tidy_reply(Persona::Abi, &t),
         Err(e) => return Outcome::ReplyFailed(e.0),
     };
     match out
@@ -492,6 +647,7 @@ mod tests {
     struct FakeOut {
         sent: Mutex<Vec<(String, OutboundMessage)>>,
         reacted: Mutex<Vec<(String, String, String)>>,
+        edited: Mutex<Vec<(String, String, String)>>,
     }
 
     impl Outbound for FakeOut {
@@ -509,6 +665,13 @@ mod tests {
         }
         async fn fetch(&self, _url: &str, _max: usize) -> Result<Vec<u8>, String> {
             Err("no network in tests".into())
+        }
+        async fn edit(&self, ch: &str, id: &str, text: &str) -> Result<(), String> {
+            self.edited
+                .lock()
+                .unwrap()
+                .push((ch.into(), id.into(), text.into()));
+            Ok(())
         }
     }
 
@@ -879,6 +1042,141 @@ mod tests {
             (6.0 - left - reacted as f32).abs() < 0.05,
             "tokens spent ({}) should equal reacts sent ({reacted}); phantom replies must not cost quota",
             6.0 - left
+        );
+    }
+
+    /// A streaming transport that replays canned deltas with small pauses.
+    struct FakeStream {
+        deltas: Vec<&'static str>,
+        fail_at_end: bool,
+    }
+
+    impl llm::StreamTransport for FakeStream {
+        async fn post_stream(
+            &self,
+            _request: &llm::LlmRequest,
+            on_delta: tokio::sync::mpsc::UnboundedSender<String>,
+        ) -> Result<String, llm::LlmError> {
+            let mut full = String::new();
+            for d in &self.deltas {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                full.push_str(d);
+                let _ = on_delta.send((*d).to_string());
+            }
+            if self.fail_at_end {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                return Err(llm::LlmError("upstream died".into()));
+            }
+            Ok(full)
+        }
+    }
+
+    fn prepared() -> crate::engine::PreparedTurn {
+        crate::engine::PreparedTurn {
+            system_prompt: "S".into(),
+            turns: vec![llm::ChatTurn::user("Q")],
+        }
+    }
+
+    fn local_backend() -> llm::Backend {
+        llm::Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:11434".into(),
+            model: "gemma4:e4b".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_posts_early_then_edits_to_the_tidied_final_text() {
+        let out = FakeOut::default();
+        // 70+ chars across deltas → first post after the 60-char threshold,
+        // final edit carries the whole tidied text.
+        let transport = FakeStream {
+            deltas: vec![
+                "**Abbey**: Here is the first part of the answer, ",
+                "which keeps going past sixty characters. ",
+                "And then it finishes.",
+            ],
+            fail_at_end: false,
+        };
+        let (text, id) = stream_reply(
+            &transport,
+            &out,
+            "c1",
+            Some("m1"),
+            &local_backend(),
+            &prepared(),
+            Persona::Abbey,
+        )
+        .await
+        .expect("streamed");
+        assert_eq!(id.as_deref(), Some("sent-1"));
+        assert!(
+            text.starts_with("Here is the first part"),
+            "persona echo stripped: {text}"
+        );
+        let sent = out.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one post");
+        assert_eq!(sent[0].1.reply_to_native_message_id.as_deref(), Some("m1"));
+        let edited = out.edited.lock().unwrap();
+        assert_eq!(
+            edited.last().map(|e| e.2.as_str()),
+            Some(text.as_str()),
+            "last edit is the final text"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_short_stream_is_returned_unposted_for_the_ordinary_send() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec!["Blue."],
+            fail_at_end: false,
+        };
+        let (text, id) = stream_reply(
+            &transport,
+            &out,
+            "c1",
+            None,
+            &local_backend(),
+            &prepared(),
+            Persona::Abbey,
+        )
+        .await
+        .expect("streamed");
+        assert_eq!(text, "Blue.");
+        assert!(
+            id.is_none(),
+            "under the threshold and under 4 s: nothing posted yet"
+        );
+        assert!(out.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_dies_after_posting_edits_in_the_failure_line() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec![
+                "This is going to be a long and promising answer that then ",
+                "stops abruptly mid",
+            ],
+            fail_at_end: true,
+        };
+        let err = stream_reply(
+            &transport,
+            &out,
+            "c1",
+            None,
+            &local_backend(),
+            &prepared(),
+            Persona::Abbey,
+        )
+        .await
+        .expect_err("upstream died");
+        assert_eq!(err.0, "upstream died");
+        let edited = out.edited.lock().unwrap();
+        assert!(
+            edited.last().is_some_and(|e| e.2.contains("upstream died")),
+            "{edited:?}"
         );
     }
 

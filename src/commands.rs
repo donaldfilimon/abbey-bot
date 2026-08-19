@@ -296,17 +296,15 @@ pub async fn ask(
             let now = runtime::now();
             let prepared =
                 AppState::lock(&state.engine).prepare(&scope, routed, &context, &question, now);
-            let outcome = llm::chat_backend(
-                &state.llm,
-                backend,
-                &prepared.system_prompt,
-                &prepared.turns,
-            )
-            .await;
+            let outcome = match state.acquire_generation().await {
+                Err(busy) => Err(llm::LlmError(busy)),
+                Ok(_slot) => state.chat(&prepared.system_prompt, &prepared.turns).await,
+            };
             match outcome {
-                Ok(answer) => {
+                Ok((answer, label)) => {
+                    let answer = ask::tidy_reply(routed, &answer);
                     AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
-                    ask::render_answer(routed, backend.label(), &answer)
+                    ask::render_answer(routed, label, &answer)
                 }
                 Err(error) => ask::render_failure(routed, backend.label(), &error.0),
             }

@@ -64,6 +64,68 @@ pub fn degraded_reply(persona: Persona) -> String {
     )
 }
 
+/// Longest reply that goes out untouched; above it we cut at a sentence end.
+pub const TIDY_LIMIT_CHARS: usize = 1_900;
+/// Where the sentence-boundary search starts when a reply is too long.
+const TIDY_CUT_FROM: usize = 1_800;
+
+/// Enforce the length-and-shape contract the system prompt only *asks* for.
+///
+/// Local models echo the persona name as a prefix, add markdown headings, and
+/// run long. This strips a leading `Abbey:` / `**Abbey**` / `Abbey —` echo,
+/// drops heading markers, collapses runs of blank lines, trims, and — past
+/// [`TIDY_LIMIT_CHARS`] — cuts at the last sentence end before
+/// `TIDY_CUT_FROM` (falling back to a word boundary) and appends ` …`. Short,
+/// well-formed text comes back unchanged. Pure; the command layer still clamps
+/// afterwards, so this is shape, not the safety net.
+pub fn tidy_reply(persona: Persona, text: &str) -> String {
+    let name = persona.to_string();
+    let mut out = text.trim().to_string();
+
+    // Leading persona echo, in the shapes models actually produce.
+    for prefix in [
+        format!("**{name}**:"),
+        format!("**{name}** —"),
+        format!("**{name}**"),
+        format!("{name}:"),
+        format!("{name} —"),
+    ] {
+        if let Some(rest) = out.strip_prefix(&prefix) {
+            out = rest.trim_start().to_string();
+            break;
+        }
+    }
+
+    // Heading markers → plain lines; collapse 3+ newlines to a blank line.
+    let mut lines: Vec<String> = Vec::new();
+    for line in out.lines() {
+        let trimmed = line.trim_start_matches('#').trim_start();
+        if line.starts_with('#') {
+            lines.push(trimmed.to_string());
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut out = lines.join("\n");
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    let out = out.trim().to_string();
+
+    if out.chars().count() <= TIDY_LIMIT_CHARS {
+        return out;
+    }
+    let head: String = out.chars().take(TIDY_CUT_FROM).collect();
+    let cut = head
+        .rfind(['.', '!', '?'])
+        .map(|i| i + 1)
+        .or_else(|| head.rfind(char::is_whitespace))
+        .unwrap_or(head.len());
+    let mut cut_text = head[..cut].trim_end().to_string();
+    cut_text.push_str(" …");
+    cut_text
+}
+
 /// Frame a backend's answer for Discord.
 ///
 /// The label names what actually answered (`Backend::label`), because the bot
@@ -119,6 +181,50 @@ mod tests {
         // identity.rs writes `honest\u{2014}not` with a real em dash; an ASCII
         // hyphen here would be a silent mis-transcription of the contract.
         assert!(contract_description(Persona::Aviva).contains("honest\u{2014}not"));
+    }
+
+    #[test]
+    fn tidy_leaves_short_clean_text_alone() {
+        assert_eq!(
+            tidy_reply(Persona::Abbey, "Blue. Rayleigh scattering."),
+            "Blue. Rayleigh scattering."
+        );
+    }
+
+    #[test]
+    fn tidy_strips_persona_echo_and_headings_and_blank_runs() {
+        let raw = "**Abbey**: ## Answer\n\n\n\nUse ChannelId.\n\n\n\nThen defer.";
+        assert_eq!(
+            tidy_reply(Persona::Abbey, raw),
+            "Answer\n\nUse ChannelId.\n\nThen defer."
+        );
+        assert_eq!(tidy_reply(Persona::Aviva, "Aviva — Yes."), "Yes.");
+        assert_eq!(tidy_reply(Persona::Abi, "Abi: hi there"), "hi there");
+    }
+
+    #[test]
+    fn tidy_cuts_long_text_at_a_sentence_boundary() {
+        let sentence = "This is a sentence of moderate length that ends here. ";
+        let long = sentence.repeat(60); // ~3,300 chars
+        let tidy = tidy_reply(Persona::Abbey, &long);
+        assert!(
+            tidy.chars().count() <= TIDY_LIMIT_CHARS,
+            "{}",
+            tidy.chars().count()
+        );
+        assert!(
+            tidy.ends_with("here. …"),
+            "cut lands after a sentence end: {:?}",
+            &tidy[tidy.len() - 12..]
+        );
+    }
+
+    #[test]
+    fn tidy_falls_back_to_a_word_boundary_when_there_is_no_sentence_end() {
+        let long = "word ".repeat(500);
+        let tidy = tidy_reply(Persona::Abbey, &long);
+        assert!(tidy.ends_with("word …"), "{:?}", &tidy[tidy.len() - 10..]);
+        assert!(tidy.chars().count() <= TIDY_LIMIT_CHARS);
     }
 
     #[test]

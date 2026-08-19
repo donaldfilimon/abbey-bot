@@ -145,9 +145,18 @@ pub struct AppState {
     pub cooldown: Mutex<ReplyCooldown>,
     /// Per-guild hourly budget for unsolicited actions.
     pub budget: Mutex<Budget>,
+    /// Generation slots. A local endpoint (ollama) wedged under concurrent
+    /// requests on 2026-08-19, so the local path defaults to one at a time;
+    /// Anthropic defaults to four. `ABBEY_BOT_LLM_CONCURRENCY` overrides.
+    pub generation: tokio::sync::Semaphore,
+    /// How long a turn waits for a slot before answering "busy".
+    pub queue_secs: u64,
     pub recall: Mutex<Recall>,
     pub engine: Mutex<Engine>,
     pub backend: Option<Backend>,
+    /// The local backend kept as a one-shot fallback when Anthropic is primary
+    /// and `ABBEY_BOT_LLM_ENDPOINT` is also set. `None` otherwise.
+    pub fallback: Option<Backend>,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
     /// the policy is untrained.
@@ -160,6 +169,34 @@ pub struct AppState {
     /// Abbey's own traffic.
     pub self_ids: Mutex<Vec<String>>,
 }
+
+/// Default wait for a generation slot before answering "busy".
+pub const DEFAULT_QUEUE_SECS: u64 = 90;
+
+/// Concurrency for the configured backend: 1 for a local endpoint, 4 for
+/// Anthropic, `ABBEY_BOT_LLM_CONCURRENCY` if set (blank/garbage/zero ignored).
+pub fn concurrency_from_env(backend: Option<&Backend>) -> usize {
+    let default = match backend {
+        Some(Backend::Anthropic { .. }) => 4,
+        _ => 1,
+    };
+    std::env::var("ABBEY_BOT_LLM_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(default)
+}
+
+/// Parse the queue wait; blank/garbage/zero fall back to the default.
+pub fn queue_secs_from_value(value: Option<String>) -> u64 {
+    value
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_QUEUE_SECS)
+}
+
+/// The honest copy when no slot frees up in time.
+pub const BUSY_REPLY: &str = "the model is busy answering someone else; try again in a minute";
 
 /// Why startup could not build the state.
 #[derive(Debug)]
@@ -197,6 +234,15 @@ impl AppState {
             config,
             transport: HttpVisionTransport::default(),
         });
+        let backend = Backend::from_env();
+        let fallback = match &backend {
+            Some(Backend::Anthropic { .. }) => Backend::from_values(
+                None,
+                std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
+                std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
+            ),
+            _ => None,
+        };
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -205,9 +251,12 @@ impl AppState {
             rewards: Mutex::new(RewardCollector::new()),
             cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
+            generation: tokio::sync::Semaphore::new(concurrency_from_env(backend.as_ref())),
+            queue_secs: queue_secs_from_value(std::env::var("ABBEY_BOT_LLM_QUEUE_SECS").ok()),
             recall: Mutex::new(recall),
             engine: Mutex::new(Engine::new()),
-            backend: Backend::from_env(),
+            backend,
+            fallback,
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
             vision,
@@ -228,15 +277,62 @@ impl AppState {
             rewards: Mutex::new(RewardCollector::new()),
             cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
+            generation: tokio::sync::Semaphore::new(1),
+            queue_secs: DEFAULT_QUEUE_SECS,
             recall: Mutex::new(Recall::new()),
             engine: Mutex::new(Engine::new()),
             backend: None,
+            fallback: None,
             quiet: false,
             llm: HttpTransport::default(),
             vision: None,
             data_dir: None,
             self_ids: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Wait for a generation slot, up to `queue_secs`. `Err` is the
+    /// user-facing reason (already honest copy) — callers render it with
+    /// `ask::render_failure`.
+    pub async fn acquire_generation(&self) -> Result<tokio::sync::SemaphorePermit<'_>, String> {
+        match tokio::time::timeout(
+            Duration::from_secs(self.queue_secs),
+            self.generation.acquire(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => Ok(permit),
+            Ok(Err(_)) => Err("the generation queue is closed".to_string()),
+            Err(_) => Err(BUSY_REPLY.to_string()),
+        }
+    }
+
+    /// Multi-turn generation through the primary backend, falling back to the
+    /// local one once when Anthropic is primary and fails. Returns the text
+    /// and the label of the backend that actually answered. The caller holds
+    /// the generation slot.
+    pub async fn chat(
+        &self,
+        system_prompt: &str,
+        turns: &[crate::llm::ChatTurn],
+    ) -> Result<(String, &'static str), crate::llm::LlmError> {
+        let Some(primary) = &self.backend else {
+            return Err(crate::llm::LlmError(
+                "no generation backend is configured".into(),
+            ));
+        };
+        match crate::llm::chat_backend(&self.llm, primary, system_prompt, turns).await {
+            Ok(text) => Ok((text, primary.label())),
+            Err(e) => match &self.fallback {
+                Some(local) => {
+                    tracing::warn!(error = %e.0, "primary backend failed; falling back to the local endpoint");
+                    crate::llm::chat_backend(&self.llm, local, system_prompt, turns)
+                        .await
+                        .map(|text| (text, local.label()))
+                }
+                None => Err(e),
+            },
+        }
     }
 
     /// Lock helper: a poisoned mutex means a panic elsewhere already took the
@@ -363,6 +459,29 @@ mod tests {
             ),
             "topology drift is rejected, not silently accepted"
         );
+    }
+
+    #[tokio::test]
+    async fn generation_slots_are_bounded_and_time_out_honestly() {
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().queue_secs = 1;
+        let first = state.acquire_generation().await.expect("first slot");
+        let started = std::time::Instant::now();
+        let second = state.acquire_generation().await;
+        assert_eq!(second.unwrap_err(), BUSY_REPLY);
+        assert!(
+            started.elapsed().as_millis() >= 900,
+            "waited for the queue window"
+        );
+        drop(first);
+        assert!(state.acquire_generation().await.is_ok(), "slot freed");
+    }
+
+    #[test]
+    fn queue_and_concurrency_parse_with_fallbacks() {
+        assert_eq!(queue_secs_from_value(None), DEFAULT_QUEUE_SECS);
+        assert_eq!(queue_secs_from_value(Some("30".into())), 30);
+        assert_eq!(queue_secs_from_value(Some("0".into())), DEFAULT_QUEUE_SECS);
     }
 
     #[test]

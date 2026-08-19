@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::all::{
-    ChannelId, CreateMessage, FullEvent, Http, Message, MessageId, MessageReference, Reaction,
-    ReactionType,
+    ChannelId, CreateMessage, EditMessage, FullEvent, Http, Message, MessageId, MessageReference,
+    Reaction, ReactionType,
 };
 
 use crate::persist::Stores;
@@ -98,6 +98,24 @@ impl Outbound for DiscordOutbound {
 
     async fn fetch(&self, url: &str, max: usize) -> Result<Vec<u8>, String> {
         fetch_capped(&self.fetcher, url, max, None).await
+    }
+
+    async fn edit(
+        &self,
+        native_channel_id: &str,
+        native_message_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        self.http
+            .edit_message(
+                ChannelId::new(parse_id(native_channel_id)?),
+                MessageId::new(parse_id(native_message_id)?),
+                &EditMessage::new().content(clamp(text, DISCORD_MESSAGE_CAP)),
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -405,6 +423,24 @@ impl Outbound for TelegramOutbound {
         };
         fetch_capped(&self.client, &resolved, max, None).await
     }
+
+    async fn edit(
+        &self,
+        native_channel_id: &str,
+        native_message_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        self.post_json(
+            "editMessageText",
+            &serde_json::json!({
+                "chat_id": native_channel_id,
+                "message_id": native_message_id.parse::<i64>().map_err(|e| e.to_string())?,
+                "text": clamp(text, TELEGRAM_MESSAGE_CAP),
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
 }
 
 /// Long-poll `getUpdates` forever, feeding the pipeline. Errors back off five
@@ -570,6 +606,20 @@ impl Outbound for SlackOutbound {
             .contains("files.slack.com")
             .then_some(self.bot_token.as_str());
         fetch_capped(&self.client, url, max, bearer).await
+    }
+
+    async fn edit(
+        &self,
+        native_channel_id: &str,
+        native_message_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        self.call(
+            "chat.update",
+            &serde_json::json!({ "channel": native_channel_id, "ts": native_message_id, "text": text }),
+        )
+        .await
+        .map(|_| ())
     }
 }
 

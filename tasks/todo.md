@@ -42,3 +42,11 @@
 - [x] T7 /admin act, /admin budget, /admin brain, /stats
 - [x] T8 docs + PR
 - [ ] T9 live acceptance — intent is on, act-off gate observed in other guilds; pending `/admin act on` in #bot-ops (MLAI Community) + policy decisions
+
+## Reply quality & speed (2026-08-19)
+- [x] benchmark 5 local models with Abbey's prompt
+- [x] tidy_reply + tests; wired at every generation site
+- [x] generation semaphore + queue timeout + busy copy
+- [x] SSE accumulator, StreamTransport, Outbound::edit, stream_reply + tests
+- [x] Anthropic→local fallback (AppState::chat)
+- [ ] live: streaming DM observed; concurrency serialisation observed
