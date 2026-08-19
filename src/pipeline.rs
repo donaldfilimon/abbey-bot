@@ -174,8 +174,8 @@ pub async fn handle<O: Outbound + Sync>(
         // Load the guild's brain even on the forced path: the reward for a
         // mention/DM reply settles 150 s later into `BrainRegistry::remember`,
         // which drops experiences for guilds that are not loaded.
-        let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
+        let mut brains = AppState::lock(&state.brains);
         let brain = brains.brain(&scoped_guild, &*stores, now);
         if let Some(eps) = settings.epsilon_override {
             brain.set_epsilon(eps);
@@ -217,17 +217,9 @@ pub async fn handle<O: Outbound + Sync>(
     // and DMs bypass both. Over budget, the decision is not acted on and not
     // learned — silence was not the policy's choice.
     if !forced {
-        let permitted = AppState::lock(&state.cooldown).permitted(
-            &scoped_channel,
-            settings.reply_cooldown_seconds,
-            now,
-        );
-        if !permitted {
-            return Outcome::CooledDown;
-        }
-        // The budget check itself is free; the token is *spent* only at the
-        // point of acting (below), so a reply the bot cannot make — no backend
-        // — or a failed react never burns quota that a later action could use.
+        // Budget is only *checked* here; the token is spent at the point of
+        // acting (below), so a reply the bot cannot make — no backend — or a
+        // failed react never burns quota a later action could use.
         let within_budget = AppState::lock(&state.budget).tokens_left(
             &scoped_guild,
             settings.unsolicited_per_hour,
@@ -235,6 +227,19 @@ pub async fn handle<O: Outbound + Sync>(
         ) >= 1.0;
         if !within_budget {
             return Outcome::OverBudget;
+        }
+        // The cooldown is reserved atomically (check + record in one lock), so
+        // two messages in the same channel handled concurrently cannot both
+        // pass. Reserved before the budget is spent and before any network
+        // call; a reservation that then fails to send still counts — quiet is
+        // the safe direction.
+        let reserved = AppState::lock(&state.cooldown).try_reserve(
+            &scoped_channel,
+            settings.reply_cooldown_seconds,
+            now,
+        );
+        if !reserved {
+            return Outcome::CooledDown;
         }
     }
 
@@ -266,7 +271,6 @@ pub async fn handle<O: Outbound + Sync>(
             scoped_guild.clone(),
             now,
         );
-        AppState::lock(&state.cooldown).record_reply(&scoped_channel, now);
         return Outcome::Reacted;
     }
 
@@ -359,9 +363,6 @@ pub async fn handle<O: Outbound + Sync>(
         scoped_guild.clone(),
         now,
     );
-    if !forced {
-        AppState::lock(&state.cooldown).record_reply(&scoped_channel, now);
-    }
     {
         let mut stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).record_interaction(

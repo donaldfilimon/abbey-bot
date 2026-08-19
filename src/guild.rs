@@ -227,6 +227,23 @@ impl ReplyCooldown {
     pub fn record_reply(&mut self, scoped_channel_id: &str, now: u64) {
         self.last_reply_at.insert(scoped_channel_id.to_owned(), now);
     }
+
+    /// Check and record in one step, so two messages handled concurrently in
+    /// the same channel cannot both observe "permitted" and both speak. The
+    /// reservation stands even if the action then fails to send — a cooldown
+    /// that errs toward quiet is the safe direction.
+    pub fn try_reserve(
+        &mut self,
+        scoped_channel_id: &str,
+        cooldown_seconds: u32,
+        now: u64,
+    ) -> bool {
+        if !self.permitted(scoped_channel_id, cooldown_seconds, now) {
+            return false;
+        }
+        self.record_reply(scoped_channel_id, now);
+        true
+    }
 }
 
 /// Clamp a user-supplied cooldown into `0..=MAX_COOLDOWN_SECONDS`.
@@ -386,6 +403,13 @@ mod tests {
         // Zero cooldown never blocks; other channels are unaffected.
         assert!(cd.permitted("discord:c1", 0, 1_000));
         assert!(cd.permitted("discord:c2", 20, 1_000));
+        // Atomic reservation: the first taker wins, the second in the same
+        // second is refused, and the window is measured from the reservation.
+        let mut cd = ReplyCooldown::new();
+        assert!(cd.try_reserve("discord:c3", 20, 2_000));
+        assert!(!cd.try_reserve("discord:c3", 20, 2_000));
+        assert!(!cd.try_reserve("discord:c3", 20, 2_019));
+        assert!(cd.try_reserve("discord:c3", 20, 2_020));
     }
 
     #[test]
