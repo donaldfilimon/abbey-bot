@@ -52,7 +52,7 @@ don't silently default and don't silently switch to Bun/TS either.
 
 ## Open decisions — surface, don't silently resolve
 
-> Rust-port status (2026-08-19, abbey-bot): #1 settled (output activation explicit, linear), #2 settled (kept unreachable by design, documented), #3 settled (WDBX-format store in `src/wdbx.rs`); #5, #9, #10 moot (Swift/Apple); #4, #6, #7, #8 moot here (no `voice.md` supplied; voice out of scope); the second item numbered 6 (scoped-ID column misnomers) is still Donald's call. The original text follows unchanged.
+> Rust-port status (2026-08-19, abbey-bot): #1 settled (output activation explicit, linear), #2 settled (kept unreachable by design, documented), #3 settled (WDBX-format store in `src/wdbx.rs`); #5, #9, #10 moot (Swift/Apple); #4, #6, #7, #8 moot here (no `voice.md` supplied; voice out of scope) — and now researched: DAVE/MLS E2EE has been mandatory for bots since March 2026 (close 4017 otherwise), XChaCha20-rtpsize is the required transport mode, and songbird 0.6 + the `davey` crate implement it in Rust (`docs/research/2026-08-19-voice-dave-entrypoint-tools.md`); the second item numbered 6 (scoped-ID column misnomers) is still Donald's call. The original text follows unchanged.
 
 Unresolved items live in the references. If a task touches one, raise it with Donald
 rather than picking a side:
