@@ -83,9 +83,28 @@ pub struct ChannelContext {
     pub recent: VecDeque<RecentMessage>,
     #[serde(default)]
     pub updated_at: u64,
+    /// The scoped guild this channel's traffic belongs to, recorded by the
+    /// pipeline so the summariser can check the guild's opt-in. `None` until
+    /// the first message arrives through the pipeline.
+    #[serde(default)]
+    pub guild: Option<String>,
+    /// `message_count` when `summary` was last refreshed by the rolling
+    /// summariser; the scheduler re-summarises after [`SUMMARY_EVERY_MESSAGES`]
+    /// more have arrived.
+    #[serde(default)]
+    pub summarized_at_count: u64,
 }
 
+/// New messages in a channel before its rolling summary is refreshed.
+pub const SUMMARY_EVERY_MESSAGES: u64 = 30;
+
 impl ChannelContext {
+    /// Whether the rolling summariser should run for this channel now.
+    pub fn summary_due(&self) -> bool {
+        self.message_count >= self.summarized_at_count + SUMMARY_EVERY_MESSAGES
+            && !self.recent.is_empty()
+    }
+
     /// Append one message, dropping the oldest past [`RECENT_CAP`]. Counts
     /// every message ever seen, not just the ones still held.
     pub fn push_recent(&mut self, author: &str, text: &str, now: u64) {
@@ -297,6 +316,15 @@ impl MemoryBank {
     }
 
     /// `MemoryAssembler.context(for:)`: what is known, defaults where nothing is.
+    /// Scoped channel ids whose rolling summary is due.
+    pub fn channels_due_for_summary(&self) -> Vec<String> {
+        self.channels
+            .iter()
+            .filter(|(_, c)| c.summary_due())
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
     pub fn context_for(&self, guild: &str, user: &str, scoped_channel: &str) -> PersonaContext {
         let memory = self.user(guild, user);
         PersonaContext {
@@ -375,6 +403,21 @@ mod tests {
         assert_eq!(bank.user("g2", "u"), None);
         bank.user_mut("g2", "u").reputation = 0.9;
         assert_eq!(bank.user("g1", "u").expect("kept").reputation, 0.5);
+    }
+
+    #[test]
+    fn a_channel_is_due_for_summary_every_thirty_messages() {
+        let mut bank = MemoryBank::default();
+        for i in 0..29 {
+            bank.record_message("discord:c", "a", &format!("m{i}"), i);
+        }
+        assert!(bank.channels_due_for_summary().is_empty());
+        bank.record_message("discord:c", "a", "m29", 29);
+        assert_eq!(bank.channels_due_for_summary(), ["discord:c"]);
+        let ctx = bank.channel_mut("discord:c");
+        ctx.summary = "so far".into();
+        ctx.summarized_at_count = ctx.message_count;
+        assert!(bank.channels_due_for_summary().is_empty());
     }
 
     #[test]

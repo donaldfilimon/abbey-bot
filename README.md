@@ -121,6 +121,13 @@ the configured backend or not at all; with none configured she says so. Persona
 descriptions are transcribed from abi-ai's contracts; the multi-turn transcript
 is per channel and survives a persona switch.
 
+**Learning and context survive restarts and maintain themselves.** Each
+guild's brain snapshot carries its last 1,000 experiences, and replies still
+inside their 150 s reward window are persisted too — a restart resumes warm and
+drops no reward. Channels where Abbey has been invited (`/admin act on`, or
+DMs) get a rolling summary refreshed by the backend every 30 new messages (the
+spec's "rolling 2k-token summary"); it feeds every reply's context.
+
 **Semantic memory is WDBX-shaped.** Facts are embedded with the same
 Zig-compatible wyhash n-gram embedding abi uses (pinned to abi's own vectors)
 and written to a `# ABI-WDBX v1` JSONL segment that abi's tooling can read. The
