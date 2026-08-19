@@ -169,7 +169,7 @@ fn top_role_position(member: &Member, guild: &PartialGuild) -> u16 {
 /// answer (a channel where two overwrites each carry dozens of flags measures
 /// over 2,000) fails the followup outright and the user gets a raw
 /// "Message too large." instead of their walkthrough.
-fn clamp_message(text: String) -> String {
+pub(crate) fn clamp_message(text: String) -> String {
     const LIMIT: usize = 2000;
     const MARKER: &str = "\n… (truncated to fit Discord's 2,000-character limit)";
     if text.chars().count() <= LIMIT {
@@ -244,6 +244,15 @@ pub async fn route(
     Ok(())
 }
 
+/// Opening phrases for `/persona ask` — `IntentClassifier.suggestCompletions`
+/// from the spec, surfaced where Discord can show it.
+async fn autocomplete_question(_ctx: Context<'_>, partial: &str) -> Vec<String> {
+    crate::brain::intent::suggest_completions(partial)
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
 /// Ask a question; the routed persona answers via the configured backend.
 ///
 /// The answer comes from an external or local model selected by the
@@ -256,7 +265,9 @@ pub async fn route(
 #[poise::command(slash_command, guild_only)]
 pub async fn ask(
     ctx: Context<'_>,
-    #[description = "What you want to know"] question: String,
+    #[description = "What you want to know"]
+    #[autocomplete = "autocomplete_question"]
+    question: String,
     #[description = "Force a persona instead of routing"] r#as: Option<PersonaChoice>,
 ) -> Result<(), Error> {
     ctx.defer().await?;

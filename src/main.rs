@@ -13,30 +13,53 @@
 //! - `ABBEY_BOT_LLM_ENDPOINT` (optional) — makes `/persona ask` answer via an
 //!   OpenAI-compatible server, usually loopback. With neither this nor the key
 //!   set, `/persona ask` replies that no generation backend is configured.
+//! - `ABBEY_DATA_DIR` (optional) — where learning, memory, and config persist.
+//!   Unset means in-memory only.
+//! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
+//!   MESSAGE_CONTENT intent (must also be enabled in the Dev Portal).
+//! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
-//! Intents are deliberately `non_privileged()`. Nothing here reads message
-//! content, presence, or the member list off the gateway; commands that need
-//! guild data fetch it over REST instead. That keeps the bot deployable
-//! without requesting privileged intents in the Dev Portal — and it is why
-//! [`profile::summarize`] states that presence is unavailable rather than
-//! guessing at it.
+//! Intents default to `non_privileged()` — which, since the adaptive loop
+//! landed, includes the non-privileged message and reaction events the
+//! pipeline listens to. Message *content* stays privileged: without
+//! `ABBEY_MESSAGE_CONTENT=1` (and the Dev Portal toggle) Abbey sees the body
+//! of mentions and DMs only, and learns from those alone. Presence and the
+//! member list are never requested; commands that need guild data fetch it
+//! over REST instead, which is why [`profile::summarize`] states that
+//! presence is unavailable rather than guessing at it.
 
 mod ask;
+mod brain;
 mod commands;
+mod commands_brain;
+mod embedding;
+mod engine;
+mod gateway;
+mod guild;
 mod llm;
+mod memory;
 mod moderation;
 mod perms;
+mod persist;
 mod persona;
+mod pipeline;
+mod platform;
 mod profile;
+mod runtime;
 mod server;
+mod vision;
+mod wdbx;
 mod webhook;
+mod wyhash;
 
 use serenity::all::{GatewayIntents, GuildId};
 
 /// Shared command state. Empty today; the type exists so adding state later does
 /// not mean touching every command signature.
-pub struct Data {}
+pub struct Data {
+    pub state: std::sync::Arc<runtime::AppState>,
+}
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
@@ -73,6 +96,32 @@ async fn main() -> Result<(), Error> {
         Err(_) => None,
     };
 
+    let state = runtime::AppState::from_env()?;
+    match &state.data_dir {
+        Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),
+        None => tracing::warn!("ABBEY_DATA_DIR unset — learning and memory are in-memory only"),
+    }
+    match &state.backend {
+        Some(b) => tracing::info!(backend = b.label(), "generation backend configured"),
+        None => tracing::warn!("no generation backend — Abbey answers honestly that she cannot"),
+    }
+    state.start_scheduler();
+    gateway::maybe_start_telegram(&state);
+    gateway::maybe_start_slack(&state);
+
+    let intents = if std::env::var("ABBEY_MESSAGE_CONTENT")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+    {
+        tracing::info!(
+            "requesting the privileged MESSAGE_CONTENT intent (must be enabled in the Dev Portal too)"
+        );
+        GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT
+    } else {
+        GatewayIntents::non_privileged()
+    };
+
+    let shell_state = std::sync::Arc::clone(&state);
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -82,9 +131,32 @@ async fn main() -> Result<(), Error> {
                 commands::modcall(),
                 commands::server(),
                 commands::webhook(),
+                commands_brain::remember(),
+                commands_brain::forget(),
+                commands_brain::recall(),
+                commands_brain::reputation(),
+                commands_brain::summarize(),
+                commands_brain::see(),
+                commands_brain::ocr(),
+                commands_brain::stats(),
+                commands_brain::admin(),
             ],
+            event_handler: |ctx, event, _framework, data| {
+                Box::pin(async move {
+                    gateway::on_discord_event(ctx, event, &data.state).await;
+                    Ok(())
+                })
+            },
+            post_command: |ctx| {
+                Box::pin(async move {
+                    record_interaction(ctx, true, None);
+                })
+            },
             on_error: |error| {
                 Box::pin(async move {
+                    if let poise::FrameworkError::Command { ctx, error, .. } = &error {
+                        record_interaction(*ctx, false, Some(error.to_string()));
+                    }
                     // Structured, not `println!` — and never swallowed: a command
                     // that fails silently is indistinguishable from Discord
                     // dropping the interaction.
@@ -112,15 +184,58 @@ async fn main() -> Result<(), Error> {
                     }
                 }
                 tracing::info!(user = %ready.user.name, "connected");
-                Ok(Data {})
+                shell_state.register_self(format!("discord:{}", ready.user.id.get()));
+                Ok(Data { state: shell_state })
             })
         })
         .build();
 
-    let mut client = serenity::Client::builder(token, GatewayIntents::non_privileged())
+    let mut client = serenity::Client::builder(token, intents)
         .framework(framework)
         .await?;
 
-    client.start().await?;
+    // Ctrl-C: persist, then take the shards down. Without this, everything
+    // learned since the last five-minute tick is lost on every redeploy.
+    let shard_manager = client.shard_manager.clone();
+    let shutdown_state = std::sync::Arc::clone(&state);
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::info!("shutting down");
+            gateway::shutdown(&shutdown_state);
+            shard_manager.shutdown_all().await;
+        }
+    });
+
+    // Persist whether the gateway ended cleanly or with an error — a bad
+    // token after a long uptime must not also cost the last five minutes.
+    let result = client.start().await;
+    gateway::shutdown(&state);
+    result?;
     Ok(())
+}
+
+/// `InteractionLog` row per slash command (`docs/spec/botarchitecture.md`).
+fn record_interaction(ctx: Context<'_>, succeeded: bool, error: Option<String>) {
+    let started = ctx.created_at().unix_timestamp();
+    let now = runtime::now();
+    let duration_ms = u64::try_from(i64::try_from(now).unwrap_or(0) - started)
+        .unwrap_or(0)
+        .saturating_mul(1000);
+    let entry = memory::InteractionEntry {
+        command: ctx.command().qualified_name.clone(),
+        user_id: guild::scoped_user_id("discord", &ctx.author().id.get().to_string()),
+        guild_id: guild::scoped_guild_id(
+            "discord",
+            ctx.guild_id().map(|g| g.get().to_string()).as_deref(),
+        ),
+        channel_id: guild::scoped_channel_id("discord", &ctx.channel_id().get().to_string()),
+        succeeded,
+        error,
+        duration_ms,
+        at: now,
+    };
+    runtime::AppState::lock(&ctx.data().state.stores)
+        .memory
+        .interactions
+        .record(entry);
 }
