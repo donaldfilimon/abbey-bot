@@ -228,8 +228,13 @@ pub async fn summarize(
         return Ok(());
     };
     let (system, user) = engine::summarize_prompt(persona, &transcript, count);
-    let reply = match llm::ask_backend(&state.llm, backend, &system, &user).await {
+    let outcome = match state.acquire_generation().await {
+        Err(busy) => Err(llm::LlmError(busy)),
+        Ok(_slot) => llm::ask_backend(&state.llm, backend, &system, &user).await,
+    };
+    let reply = match outcome {
         Ok(summary) => {
+            let summary = ask::tidy_reply(persona, &summary);
             AppState::lock(&state.stores)
                 .memory
                 .channel_mut(&ch)
@@ -293,9 +298,17 @@ pub async fn see(
     let reply = match (question, &state.backend) {
         (Some(q), Some(backend)) => {
             let folded = vision::fold_descriptions(&q, &[(image.filename.clone(), description)]);
-            match llm::ask_backend(&state.llm, backend, &ask::system_prompt(persona), &folded).await
-            {
-                Ok(a) => ask::render_answer(persona, backend.label(), &a),
+            let outcome = match state.acquire_generation().await {
+                Err(busy) => Err(llm::LlmError(busy)),
+                Ok(_slot) => {
+                    llm::ask_backend(&state.llm, backend, &ask::system_prompt(persona), &folded)
+                        .await
+                }
+            };
+            match outcome {
+                Ok(a) => {
+                    ask::render_answer(persona, backend.label(), &ask::tidy_reply(persona, &a))
+                }
                 Err(e) => ask::render_failure(persona, backend.label(), &e.0),
             }
         }

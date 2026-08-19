@@ -317,6 +317,9 @@ pub async fn handle<O: Outbound + Sync>(
     let prepared =
         AppState::lock(&state.engine).prepare(&scoped_channel, persona, &context, &enriched, now);
     let answer = with_typing(out, &event.native_channel_id, async {
+        // One local generation at a time; the typing indicator keeps going
+        // while this turn waits for its slot.
+        let _slot = state.acquire_generation().await.map_err(llm::LlmError)?;
         llm::chat_backend(
             &state.llm,
             backend,
@@ -327,7 +330,7 @@ pub async fn handle<O: Outbound + Sync>(
     })
     .await;
     let answer = match answer {
-        Ok(a) => a,
+        Ok(a) => ask::tidy_reply(persona, &a),
         Err(e) => {
             tracing::warn!(error = %e.0, backend = backend.label(), "reply generation failed");
             if forced {
@@ -463,8 +466,11 @@ async fn welcome<O: Outbound + Sync>(
         return Outcome::Ignored("welcome has no channel");
     }
     let system = engine::welcome_prompt(display_name);
+    let Ok(_slot) = state.acquire_generation().await else {
+        return Outcome::Ignored("welcome skipped: model busy");
+    };
     let text = match llm::ask_backend(&state.llm, backend, &system, "Say hello.").await {
-        Ok(t) => t,
+        Ok(t) => ask::tidy_reply(Persona::Abi, &t),
         Err(e) => return Outcome::ReplyFailed(e.0),
     };
     match out
