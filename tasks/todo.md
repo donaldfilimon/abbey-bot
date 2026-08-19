@@ -33,12 +33,12 @@
 - [ ] Exercise `/reputation`, `/stats`, `/remember`, `/see` individually once the DM slash picker shows them; Telegram/Slack adapters need their tokens
 
 ## Guild learning loop (plan 2026-08-19)
-- [ ] T1 brain/budget.rs
-- [ ] T2 brain/telemetry.rs
-- [ ] T3 guild.rs act/budget settings
-- [ ] T4 registry stats
-- [ ] T5 runtime budget + settle→stats
-- [ ] T6 pipeline gates/budget/telemetry
-- [ ] T7 /admin act, /admin budget, /admin brain, /stats
-- [ ] T8 docs + PR
+- [x] T1 brain/budget.rs
+- [x] T2 brain/telemetry.rs
+- [x] T3 guild.rs act/budget settings
+- [x] T4 registry stats
+- [x] T5 runtime budget + settle→stats
+- [x] T6 pipeline gates/budget/telemetry
+- [x] T7 /admin act, /admin budget, /admin brain, /stats
+- [x] T8 docs + PR
 - [ ] T9 live acceptance (MESSAGE_CONTENT) — Donald enables intent
