@@ -3,6 +3,7 @@
 //! Everything here is pure: no serenity, no poise, no I/O. Time and randomness
 //! are injected so every test is deterministic.
 
+pub mod budget;
 pub mod dqn;
 pub mod intent;
 pub mod nn;
