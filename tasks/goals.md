@@ -37,6 +37,7 @@ status: done
 status: in_progress
 - 2026-08-19: vision works on a local VLM — ollama `gemma4:e4b` described a screenshot correctly; `/v1` needed a 1,024-token budget (reasoning first) and a reasoning-exhausted error is now honest. launchd user agent for this Mac: `deploy/com.donaldfilimon.abbey-bot.plist` + `deploy/install-launchd.sh` (build, install, load; `--uninstall`) — written and lint-checked, **not installed** (a persistent launch agent is Donald's call; it would also double up with the session-run bot).
 - Not done / needs Donald: Telegram and Slack live (tokens); CI actually executing (account-level Actions billing lock); `/see` `/ocr` exercised from the client (needs an uploaded attachment).
+- 2026-08-19 (strict review pass): `pipeline.rs` split — the generation loop (streaming, tool rounds, typing) now lives in `src/generation.rs` (PR #23); no behavior change, gate 332 tests. Dependabot residual: all four open alerts are `rustls-webpki` 0.102.8 via serenity 0.12.5 → tokio-tungstenite 0.21 → rustls 0.22; every patch lands only on the 0.103 line, so this is blocked until serenity releases against rustls 0.23 — re-run `cargo update -p rustls-webpki@0.102.x` after any serenity bump. Practical exposure is low: the crate is a TLS client to Discord/ollama and the flaws are in CRL/name-constraint paths.
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
