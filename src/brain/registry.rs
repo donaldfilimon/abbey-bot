@@ -170,8 +170,7 @@ impl<B: Brain> BrainRegistry<B> {
         guilds
     }
 
-    /// Read-only view for `/admin` observability; does not touch the idle clock.
-    /// The guild's telemetry, if its brain is loaded.
+    /// The guild's telemetry, if its brain is loaded. Does not touch the idle clock.
     pub fn stats(&self, scoped_guild_id: &str) -> Option<&BrainStats> {
         self.brains.get(scoped_guild_id).map(|l| &l.stats)
     }
@@ -181,6 +180,7 @@ impl<B: Brain> BrainRegistry<B> {
         self.brains.get_mut(scoped_guild_id).map(|l| &mut l.stats)
     }
 
+    /// Read-only view for `/admin` observability; does not touch the idle clock.
     pub fn get(&self, scoped_guild_id: &str) -> Option<&B> {
         self.brains.get(scoped_guild_id).map(|loaded| &loaded.brain)
     }

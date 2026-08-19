@@ -147,10 +147,10 @@ it, Discord delivers empty bodies for anything but mentions and DMs, and the
 pipeline deliberately does not consult the policy on a blank (`Ignored("no
 content available")`) — training on noise would bias `stay`.
 
-**Unsolicited speech is gated four times, in this order, before the policy is
-consulted: `ABBEY_QUIET=1` (operator, wins over everything) → the guild's
-`/admin act on` (opt-in, default off) → `/admin learning off` → the
-blank-content guard.** After the policy picks reply/react: per-channel cooldown,
+**Unsolicited speech is gated four times before the policy is consulted:
+the blank-content guard first (no content → nothing to learn from), then in
+order `ABBEY_QUIET=1` (operator, wins over everything) → the guild's
+`/admin act on` (opt-in, default off) → `/admin learning off`.** After the policy picks reply/react: per-channel cooldown,
 then the per-guild hourly budget (`brain/budget.rs`, default 6/h); over budget
 returns `Outcome::OverBudget` and records **no** experience — silence was not
 the policy's choice, so it must not be taught as one. Mentions, DMs, and
