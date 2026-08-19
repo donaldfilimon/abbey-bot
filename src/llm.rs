@@ -140,9 +140,67 @@ impl std::fmt::Debug for LlmRequest {
     }
 }
 
-/// Build the request a backend call would send. Pure, so the exact wire shape
-/// is pinned by tests without any network.
+/// Who spoke a turn in a multi-turn transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+impl Role {
+    /// The wire name — identical on both backends.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+        }
+    }
+}
+
+/// One turn of conversation history. The engine keeps these per scope and the
+/// request builder serializes them in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatTurn {
+    pub role: Role,
+    pub text: String,
+}
+
+impl ChatTurn {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            text: text.into(),
+        }
+    }
+
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::Assistant,
+            text: text.into(),
+        }
+    }
+}
+
+/// Build the request a backend call would send for a single question. Pure,
+/// so the exact wire shape is pinned by tests without any network. This is
+/// [`build_chat_request`] with a one-turn transcript.
 pub fn build_request(backend: &Backend, system_prompt: &str, question: &str) -> LlmRequest {
+    build_chat_request(backend, system_prompt, &[ChatTurn::user(question)])
+}
+
+/// Build a multi-turn request. Anthropic takes the system prompt top-level
+/// and `messages` alternating user/assistant; OpenAI-compatible servers take
+/// the system prompt as the first message. Turns are serialized in the order
+/// given — the engine guarantees alternation, this function does not reorder.
+pub fn build_chat_request(
+    backend: &Backend,
+    system_prompt: &str,
+    turns: &[ChatTurn],
+) -> LlmRequest {
+    let messages: Vec<Value> = turns
+        .iter()
+        .map(|turn| json!({"role": turn.role.as_str(), "content": turn.text}))
+        .collect();
     match backend {
         Backend::Anthropic { api_key } => LlmRequest {
             url: ANTHROPIC_URL.to_string(),
@@ -155,24 +213,26 @@ pub fn build_request(backend: &Backend, system_prompt: &str, question: &str) -> 
                 "model": ANTHROPIC_MODEL,
                 "max_tokens": MAX_TOKENS,
                 "system": system_prompt,
-                "messages": [{"role": "user", "content": question}],
+                "messages": messages,
             }),
         },
-        Backend::OpenAiCompatible { endpoint } => LlmRequest {
-            url: format!("{}/v1/chat/completions", endpoint.trim_end_matches('/')),
-            headers: Vec::new(),
-            body: json!({
-                // llama-server and mlx serve whatever model they were started
-                // with and ignore this field; it exists because the schema
-                // requires one.
-                "model": "default",
-                "max_tokens": MAX_TOKENS,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": question},
-                ],
-            }),
-        },
+        Backend::OpenAiCompatible { endpoint } => {
+            let mut all = Vec::with_capacity(messages.len() + 1);
+            all.push(json!({"role": "system", "content": system_prompt}));
+            all.extend(messages);
+            LlmRequest {
+                url: format!("{}/v1/chat/completions", endpoint.trim_end_matches('/')),
+                headers: Vec::new(),
+                body: json!({
+                    // llama-server and mlx serve whatever model they were started
+                    // with and ignore this field; it exists because the schema
+                    // requires one.
+                    "model": "default",
+                    "max_tokens": MAX_TOKENS,
+                    "messages": all,
+                }),
+            }
+        }
     }
 }
 
@@ -286,6 +346,19 @@ impl Transport for HttpTransport {
             Ok(body)
         }
     }
+}
+
+/// Multi-turn variant of [`ask_backend`]: the engine's prepared transcript in,
+/// the assistant's text out. Same seam, same extraction.
+pub async fn chat_backend<T: Transport>(
+    transport: &T,
+    backend: &Backend,
+    system_prompt: &str,
+    turns: &[ChatTurn],
+) -> Result<String, LlmError> {
+    let request = build_chat_request(backend, system_prompt, turns);
+    let raw = transport.post(&request).await?;
+    extract_text(backend, &raw)
 }
 
 /// Test double: records the exact request it was handed and returns a canned
@@ -480,5 +553,67 @@ mod tests {
         let raw =
             r#"{"content":[{"type":"thinking","thinking":"…"},{"type":"text","text":"visible"}]}"#;
         assert_eq!(extract_text(&backend, raw).expect("parses"), "visible");
+    }
+
+    #[test]
+    fn chat_request_keeps_system_top_level_and_alternates_on_anthropic() {
+        let backend = Backend::Anthropic {
+            api_key: "k".into(),
+        };
+        let turns = [
+            ChatTurn::user("q1"),
+            ChatTurn::assistant("a1"),
+            ChatTurn::user("q2"),
+        ];
+        let request = build_chat_request(&backend, "SYS", &turns);
+        assert_eq!(request.body["system"], "SYS");
+        assert_eq!(
+            request.body["messages"],
+            json!([
+                {"role": "user", "content": "q1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "q2"},
+            ])
+        );
+    }
+
+    #[test]
+    fn chat_request_puts_system_first_on_openai_compatible() {
+        let backend = Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:8080".into(),
+        };
+        let turns = [
+            ChatTurn::user("q1"),
+            ChatTurn::assistant("a1"),
+            ChatTurn::user("q2"),
+        ];
+        let request = build_chat_request(&backend, "SYS", &turns);
+        assert!(request.body.get("system").is_none(), "no top-level system");
+        assert_eq!(
+            request.body["messages"],
+            json!([
+                {"role": "system", "content": "SYS"},
+                {"role": "user", "content": "q1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "q2"},
+            ])
+        );
+    }
+
+    #[test]
+    fn single_question_request_is_the_one_turn_chat_request() {
+        for backend in [
+            Backend::Anthropic {
+                api_key: "k".into(),
+            },
+            Backend::OpenAiCompatible {
+                endpoint: "http://127.0.0.1:1".into(),
+            },
+        ] {
+            assert_eq!(
+                build_request(&backend, "S", "Q"),
+                build_chat_request(&backend, "S", &[ChatTurn::user("Q")])
+            );
+        }
     }
 }

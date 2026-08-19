@@ -4,6 +4,8 @@
 #   cp target/release/abbey-bot /usr/local/bin/abbey-bot
 #   mkdir -p /etc/abbey-bot && $EDITOR /etc/abbey-bot/env   # DISCORD_TOKEN=...
 #   chmod 600 /etc/abbey-bot/env
+#   # Learning/memory persist under StateDirectory (/var/lib/abbey-bot) via
+#   # ABBEY_DATA_DIR in the env file; leave it unset for in-memory only.
 #   cp deploy/abbey-bot.service /etc/systemd/system/
 #   systemctl enable --now abbey-bot
 #
@@ -17,8 +19,11 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/local/bin/abbey-bot
 EnvironmentFile=/etc/abbey-bot/env
-# No state on disk, so no real user either: systemd fabricates one per run.
+# The only state on disk is the data dir; systemd owns it per run
+# (DynamicUser + StateDirectory keeps it writable across fabricated uids).
+# Set ABBEY_DATA_DIR=/var/lib/abbey-bot in the env file to use it.
 DynamicUser=yes
+StateDirectory=abbey-bot
 Restart=on-failure
 # 30s, not 5: a bad token exits 1 forever, and a 5-second loop re-auths
 # against Discord fast enough to draw IP-level rate limiting.

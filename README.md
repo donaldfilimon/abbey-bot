@@ -19,6 +19,20 @@ to this crate and shares no code with it.
 | `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out — both the permission bit and role hierarchy (owner-target, admin-timeout, top-role comparison). |
 | `/server <kind>` | Emits a role hierarchy, channel structure, and numbered setup steps. |
 | `/webhook <channel>` | Incoming-webhook setup guide: steps, curl, and a safe-by-default payload. Threads get a curl carrying their actual `?thread_id=`; forums (and media channels) get post semantics — `thread_name` or `?thread_id=`. |
+| `/remember <fact> [user]` | Store a durable fact about a member (ephemeral). Goes into both the plain memory and the WDBX segment for semantic recall. |
+| `/forget <fact>` | Remove one of your facts; the `fact` option autocompletes over what is on record (Manage Messages). |
+| `/recall [user]` | What Abbey remembers about a member, plus their standing. |
+| `/reputation [user]` | A member's reputation score (0–1) in this server. |
+| `/summarize [count] [as]` | Summarize the recent messages Abbey has seen in the channel via the backend; stores the summary as the channel's context. |
+| `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint: describe, or transcribe text. |
+| `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
+| `/admin show\|persona\|learning\|vision\|cooldown\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, ε override + brain inspection, persist now, export the brain snapshot as JSON, clear this channel's transcript. |
+
+Beyond commands, Abbey listens. Every message and reaction she can see runs
+through the adaptive pipeline (see "The learning loop" below): a per-server
+policy decides whether to stay silent, react, or reply; mentions and DMs always
+get a reply; reactions to her replies are the reward signal. The same pipeline
+serves Telegram (long-poll) and Slack (Socket Mode) when their tokens are set.
 
 ## Running
 
@@ -45,15 +59,50 @@ selected from the environment, first match wins:
 | `ABBEY_BOT_LLM_ENDPOINT` | An OpenAI-compatible server, usually loopback (llama-server / ollama / mlx). Base URL only, e.g. `http://127.0.0.1:8080` — the bot POSTs to `<endpoint>/v1/chat/completions`, and the server's own model choice is what answers. |
 
 With neither set, `/persona ask` replies that no generation backend is
-configured. No test requires either variable, a network, or a key — the gate
+configured, and the pipeline never speaks unsolicited (a mention gets the same
+honest reply). No test requires either variable, a network, or a key — the gate
 runs fully offline.
+
+| Env var | What it enables |
+|---|---|
+| `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
+| `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
+| `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`. |
+| `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
+| `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
 ## Design notes
 
-**Intents are `non_privileged()`.** Nothing here reads message content, presence,
-or the member list off the gateway, so the bot deploys without requesting
-privileged intents in the Dev Portal. `/whois` and `/perms` fetch member data over
-REST instead.
+**Intents are `non_privileged()` by default.** That set already includes guild
+messages and reactions — the events the learning loop listens to — but not
+message *content*, presence, or the member list, so the bot deploys without
+requesting privileged intents in the Dev Portal. `/whois` and `/perms` fetch
+member data over REST instead. `ABBEY_MESSAGE_CONTENT=1` is the one opt-in, and
+it needs the Dev Portal toggle as well or the gateway silently sends nothing.
+
+**The learning loop** (`docs/spec/brain.md`, `adaptivelearning.md`,
+`multiguild.md`) is the spec's design in Rust, one policy per server: an
+18-dimensional deterministic state (intent one-hot, reputation, length, mention,
+question, image, hour, channel heat, lexicon sentiment) feeds a `[18, 64, 32, 3]`
+DQN choosing *stay / reply / react*; rewards settle 150 s later from reactions
+(+1 each, capped at 3), human replies (+0.5), deletions (−2, immediate), and
+silence-after-reply (−0.2); `stay` is always 0, so the silent policy dominates
+early. Unsolicited output is rate-limited per channel (`/admin cooldown`,
+default 20 s), `/admin learning off` pins a server to mentions-and-commands
+only, and `/admin brain` shows ε / steps / buffer so the loop is inspectable
+rather than a black box. Learning runs every 30 s, reputation flushes every
+60 s, everything persists every 5 min and on shutdown.
+
+**Nothing Abbey says is a template.** Replies, welcomes, and summaries come from
+the configured backend or not at all; with none configured she says so. Persona
+descriptions are transcribed from abi-ai's contracts; the multi-turn transcript
+is per channel and survives a persona switch.
+
+**Semantic memory is WDBX-shaped.** Facts are embedded with the same
+Zig-compatible wyhash n-gram embedding abi uses (pinned to abi's own vectors)
+and written to a `# ABI-WDBX v1` JSONL segment that abi's tooling can read. The
+store is namespace-scoped by server: a fact stored in one guild is never
+recalled in another.
 
 The visible consequence: **`/whois` does not report online/idle/DND status.** That
 needs `GUILD_PRESENCES`. Rather than print a status it cannot actually observe,
@@ -113,7 +162,9 @@ therefore falls back to Abbey rather than picking a winner on list order.
 ## Deploying
 
 Two paths, both configured entirely through the environment (`DISCORD_TOKEN`,
-optional `ABBEY_GUILD_ID` and `RUST_LOG`):
+optional `ABBEY_GUILD_ID`, `ABBEY_DATA_DIR`, the backend variables, and
+`RUST_LOG`). Mount a writable `ABBEY_DATA_DIR` or learning resets on every
+restart:
 
 - **systemd** — `deploy/abbey-bot.service`, a hardened unit (`DynamicUser`,
   `ProtectSystem=strict`, empty capability set) whose install steps are in the
@@ -122,8 +173,11 @@ optional `ABBEY_GUILD_ID` and `RUST_LOG`):
 - **Docker** — the multi-stage `Dockerfile`. Pass secrets with
   `docker run --env-file`; never bake a token into an image layer.
 
-Honesty note: this host has neither Docker nor systemd, so both artifacts are
-**unverified as artifacts** — what is verified is that `cargo build --release
+Honesty note: **no part of this bot has been verified against a live Discord,
+Telegram, or Slack connection** — the gate proves the decision logic, the
+pipeline behind a recording transport, persistence round-trips, and the
+startup/fail-fast paths. This host has neither Docker nor systemd, so both
+deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
 --locked` produces the binary they both wrap. CI is *configured* to run the
 same gate as a local checkout, but no workflow on this repository has ever
 executed (account-level Actions lock), so that alignment is unverified until
