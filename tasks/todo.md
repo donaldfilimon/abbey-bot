@@ -41,4 +41,4 @@
 - [x] T6 pipeline gates/budget/telemetry
 - [x] T7 /admin act, /admin budget, /admin brain, /stats
 - [x] T8 docs + PR
-- [ ] T9 live acceptance (MESSAGE_CONTENT) — Donald enables intent
+- [ ] T9 live acceptance — intent is on, act-off gate observed in other guilds; pending `/admin act on` in #bot-ops (MLAI Community) + policy decisions
