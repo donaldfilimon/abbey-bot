@@ -68,6 +68,10 @@ pub struct Stores {
     pub reputations: BTreeMap<String, ReputationRow>,
     #[serde(default)]
     pub events: Vec<ReputationEvent>,
+    /// Replies still inside their 150 s settlement window at the last
+    /// persist, so a restart does not drop their rewards.
+    #[serde(default)]
+    pub pending_rewards: Vec<(String, crate::brain::reward::Pending)>,
     #[serde(default)]
     pub memory: MemoryBank,
 }

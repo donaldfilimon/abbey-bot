@@ -320,6 +320,8 @@ impl AppState {
             transport: HttpVisionTransport::default(),
         });
         let backend = Backend::from_env();
+        let mut rewards = RewardCollector::new();
+        rewards.restore(stores.pending_rewards.clone());
         let fallback = match &backend {
             Some(Backend::Anthropic { .. }) => Backend::from_values(
                 None,
@@ -333,7 +335,7 @@ impl AppState {
             guilds: Mutex::new(GuildRegistry::new()),
             brains: Mutex::new(BrainRegistry::new(fresh_brain, DEFAULT_EVICT_AFTER_SECS)),
             social: Mutex::new(SocialBrain::new()),
-            rewards: Mutex::new(RewardCollector::new()),
+            rewards: Mutex::new(rewards),
             cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
             generation: tokio::sync::Semaphore::new(concurrency_from_env(backend.as_ref())),
@@ -498,6 +500,7 @@ impl AppState {
             let mut stores = Self::lock(&self.stores);
             Self::lock(&self.brains).persist_all(&mut *stores, t);
             Self::lock(&self.social).flush(&mut *stores);
+            stores.pending_rewards = Self::lock(&self.rewards).export_pending();
         }
         Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
         let Some(dir) = &self.data_dir else { return };
