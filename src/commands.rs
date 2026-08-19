@@ -289,22 +289,41 @@ pub async fn ask(
     let reply = match &state.backend {
         None => ask::degraded_reply(routed),
         Some(backend) => {
-            // Same per-channel transcript and memory context the pipeline
-            // uses, so a slash-command question and a DM continue one thread.
+            // Same per-channel transcript, memory context, and tool loop the
+            // pipeline uses, so a slash-command question and a DM continue
+            // one thread. No streaming: an interaction followup is one post.
             let context =
                 pipeline::assemble_context(state, &scoped_guild, &scoped_user, &scope, &question);
             let now = runtime::now();
-            let prepared =
-                AppState::lock(&state.engine).prepare(&scope, routed, &context, &question, now);
+            let mut host = runtime::ToolScope {
+                state,
+                scoped_guild: scoped_guild.clone(),
+                scoped_user: scoped_user.clone(),
+                scoped_channel: scope.clone(),
+                persona: routed,
+            };
             let outcome = match state.acquire_generation().await {
                 Err(busy) => Err(llm::LlmError(busy)),
-                Ok(_slot) => state.chat(&prepared.system_prompt, &prepared.turns).await,
+                Ok(_slot) => {
+                    pipeline::generate::<pipeline::NoDelivery>(
+                        state,
+                        &mut host,
+                        &pipeline::Ask {
+                            scope: &scope,
+                            context: &context,
+                            user_input: &question,
+                            offer_tools: true,
+                            now,
+                        },
+                        None,
+                    )
+                    .await
+                }
             };
             match outcome {
-                Ok((answer, label)) => {
-                    let answer = ask::tidy_reply(routed, &answer);
+                Ok((answer, _posted, persona)) => {
                     AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
-                    ask::render_answer(routed, label, &answer)
+                    ask::render_answer(persona, backend.label(), &answer)
                 }
                 Err(error) => ask::render_failure(routed, backend.label(), &error.0),
             }

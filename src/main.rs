@@ -49,6 +49,7 @@ mod platform;
 mod profile;
 mod runtime;
 mod server;
+mod tools;
 mod vision;
 mod wdbx;
 mod webhook;

@@ -157,6 +157,12 @@ pub struct AppState {
     /// The local backend kept as a one-shot fallback when Anthropic is primary
     /// and `ABBEY_BOT_LLM_ENDPOINT` is also set. `None` otherwise.
     pub fallback: Option<Backend>,
+    /// `ABBEY_BOT_LLM_TOOLS`: `off` disables tool calling; anything else
+    /// (default `auto`) offers Abbey's tools on mention/DM replies and
+    /// `/persona ask`. Flips to false for the process if the backend rejects
+    /// a tooled request (4xx), so a model without tool support degrades once
+    /// and then stays plain.
+    pub tools_enabled: std::sync::atomic::AtomicBool,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
     /// the policy is untrained.
@@ -197,6 +203,85 @@ pub fn queue_secs_from_value(value: Option<String>) -> u64 {
 
 /// The honest copy when no slot frees up in time.
 pub const BUSY_REPLY: &str = "the model is busy answering someone else; try again in a minute";
+
+/// The runtime's [`crate::tools::ToolHost`]: one conversation's scope, over
+/// `AppState`. Each method takes the locks it needs, briefly, in the
+/// documented order, and returns the short plain string the model reads.
+pub struct ToolScope<'a> {
+    pub state: &'a AppState,
+    pub scoped_guild: String,
+    pub scoped_user: String,
+    pub scoped_channel: String,
+    /// The persona now answering; `switch_persona` changes it and the caller
+    /// rebuilds the system prompt from it.
+    pub persona: crate::persona::Persona,
+}
+
+impl crate::tools::ToolHost for ToolScope<'_> {
+    fn remember_fact(&mut self, fact: &str) -> String {
+        let t = now();
+        let stored = AppState::lock(&self.state.stores).memory.remember(
+            &self.scoped_guild,
+            &self.scoped_user,
+            fact,
+            t,
+        );
+        if stored {
+            AppState::lock(&self.state.recall).remember(
+                &self.scoped_guild,
+                &self.scoped_user,
+                fact,
+                t,
+            );
+            format!("Stored: {fact}")
+        } else {
+            "Already on record (or the fact list is full).".to_string()
+        }
+    }
+
+    fn lookup_reputation(&mut self, user_id: Option<&str>) -> String {
+        let user = match user_id {
+            Some(id) => crate::guild::scoped_user_id(
+                "discord",
+                id.trim_start_matches(['<', '@', '!']).trim_end_matches('>'),
+            ),
+            None => self.scoped_user.clone(),
+        };
+        let stores = AppState::lock(&self.state.stores);
+        let rep =
+            AppState::lock(&self.state.social).reputation(&user, &self.scoped_guild, &*stores);
+        format!("Reputation {rep:.2} (0 = poor, 1 = excellent).")
+    }
+
+    fn recall(&mut self, query: &str) -> String {
+        let facts = AppState::lock(&self.state.recall).recall(&self.scoped_guild, query, 5);
+        if facts.is_empty() {
+            return "Nothing on record.".to_string();
+        }
+        facts
+            .into_iter()
+            .map(|f| format!("• {}", f.text))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn switch_persona(&mut self, persona: crate::persona::Persona) -> String {
+        self.persona = persona;
+        format!("Switched to {persona}; continue the conversation as {persona}.")
+    }
+
+    fn recent_messages(&mut self, limit: usize) -> String {
+        let text = AppState::lock(&self.state.stores)
+            .memory
+            .channel_mut(&self.scoped_channel)
+            .render_recent(limit);
+        if text.trim().is_empty() {
+            "No recent messages on record for this channel.".to_string()
+        } else {
+            text
+        }
+    }
+}
 
 /// Why startup could not build the state.
 #[derive(Debug)]
@@ -257,6 +342,10 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             backend,
             fallback,
+            tools_enabled: std::sync::atomic::AtomicBool::new(
+                !std::env::var("ABBEY_BOT_LLM_TOOLS")
+                    .is_ok_and(|v| v.trim().eq_ignore_ascii_case("off")),
+            ),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
             vision,
@@ -283,6 +372,7 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             backend: None,
             fallback: None,
+            tools_enabled: std::sync::atomic::AtomicBool::new(true),
             quiet: false,
             llm: HttpTransport::default(),
             vision: None,

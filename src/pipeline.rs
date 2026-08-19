@@ -328,38 +328,40 @@ pub async fn handle<O: Outbound + Sync>(
         &scoped_channel,
         &enriched,
     );
-    let prepared =
-        AppState::lock(&state.engine).prepare(&scoped_channel, persona, &context, &enriched, now);
     let reply_to = Some(event.native_message_id.clone());
+    let mut host = crate::runtime::ToolScope {
+        state,
+        scoped_guild: scoped_guild.clone(),
+        scoped_user: scoped_user.clone(),
+        scoped_channel: scoped_channel.clone(),
+        persona,
+    };
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
-        // while this turn waits for its slot.
+        // while this turn waits for its slot. Tools are offered only when
+        // someone addressed Abbey — budgeted policy replies stay single-shot.
         let _slot = state.acquire_generation().await.map_err(llm::LlmError)?;
-        match backend {
-            // Local models are slow: stream, post early, edit as text arrives.
-            llm::Backend::OpenAiCompatible { .. } => {
-                stream_reply(
-                    &state.llm,
-                    out,
-                    &event.native_channel_id,
-                    reply_to.as_deref(),
-                    backend,
-                    &prepared,
-                    persona,
-                )
-                .await
-            }
-            // Anthropic answers in seconds; one post is the better UX, and a
-            // failure falls back to the local endpoint once when one is set.
-            llm::Backend::Anthropic { .. } => state
-                .chat(&prepared.system_prompt, &prepared.turns)
-                .await
-                .map(|(text, _label)| (ask::tidy_reply(persona, &text), None)),
-        }
+        generate(
+            state,
+            &mut host,
+            &Ask {
+                scope: &scoped_channel,
+                context: &context,
+                user_input: &enriched,
+                offer_tools: forced,
+                now,
+            },
+            Some(Delivery {
+                out,
+                native_channel_id: &event.native_channel_id,
+                reply_to: reply_to.as_deref(),
+            }),
+        )
+        .await
     })
     .await;
-    let (answer, already_sent) = match generated {
-        Ok(pair) => pair,
+    let (answer, already_sent, persona) = match generated {
+        Ok(triple) => triple,
         Err(e) => {
             tracing::warn!(error = %e.0, backend = backend.label(), "reply generation failed");
             if forced {
@@ -375,6 +377,17 @@ pub async fn handle<O: Outbound + Sync>(
             return Outcome::ReplyFailed(e.0);
         }
     };
+    // A tool may have switched the persona; the transcript keeps its history
+    // and the next turn prepares with the new persona.
+    if persona != persona_for(intent, &settings) {
+        let _ = AppState::lock(&state.engine).prepare(
+            &scoped_channel,
+            persona,
+            &context,
+            &enriched,
+            now,
+        );
+    }
     AppState::lock(&state.engine).commit(&scoped_channel, &enriched, &answer, now);
 
     let sent_id = match already_sent {
@@ -413,26 +426,44 @@ pub async fn handle<O: Outbound + Sync>(
     Outcome::Replied
 }
 
+/// How one streamed round ended.
+#[derive(Debug)]
+pub enum StreamEnd {
+    /// Final text (tidied) and the id of the message that holds it, if one
+    /// was posted during streaming.
+    Text(String, Option<String>),
+    /// The model asked for tools instead of (or before) answering; nothing
+    /// was posted. The caller runs them and streams again.
+    Calls(Vec<crate::tools::ToolCall>),
+}
+
 /// Generate through a streaming transport, posting the reply as soon as
 /// [`STREAM_FIRST_POST_CHARS`] have arrived or [`STREAM_FIRST_POST_SECS`]
 /// have passed, then editing the message every [`STREAM_EDIT_EVERY_SECS`]
 /// until the stream ends; the final edit carries the tidied full text.
 ///
-/// Returns the tidied text and the id of the message that now holds it
-/// (`None` if the stream finished before anything was worth posting — the
-/// caller posts it the ordinary way). If the stream fails after a partial
-/// message went out, that message is edited to the honest failure line so
-/// a half-answer never stands as if it were whole.
+/// If the stream ends with tool calls and no text was posted, returns
+/// [`StreamEnd::Calls`] so the caller can run the tools and stream again. If
+/// the stream fails after a partial message went out, that message is edited
+/// to the honest failure line so a half-answer never stands as if whole.
 pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
     transport: &T,
-    out: &O,
-    native_channel_id: &str,
-    reply_to: Option<&str>,
-    backend: &llm::Backend,
-    prepared: &crate::engine::PreparedTurn,
-    persona: Persona,
-) -> Result<(String, Option<String>), llm::LlmError> {
-    let request = llm::build_stream_request(backend, &prepared.system_prompt, &prepared.turns);
+    delivery: &Delivery<'_, O>,
+    round: &Round<'_>,
+) -> Result<StreamEnd, llm::LlmError> {
+    let Delivery {
+        out,
+        native_channel_id,
+        reply_to,
+    } = *delivery;
+    let Round {
+        backend,
+        system_prompt,
+        turns,
+        tools,
+        persona,
+    } = *round;
+    let request = llm::build_stream_request(backend, system_prompt, turns, tools);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let mut stream = std::pin::pin!(transport.post_stream(&request, tx));
     let started = tokio::time::Instant::now();
@@ -441,7 +472,7 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
     let mut text = String::new();
     let mut posted: Option<String> = None;
     let mut last_edited_len = 0usize;
-    let mut finished: Option<Result<String, llm::LlmError>> = None;
+    let mut finished: Option<Result<llm::ModelTurn, llm::LlmError>> = None;
 
     // Post-or-edit with whatever has arrived, honouring the pacing rules.
     async fn flush<O: Outbound + Sync>(
@@ -502,21 +533,22 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
         text.push_str(&delta);
     }
     match finished.expect("loop exits only when finished is set") {
-        Ok(full) => {
-            let tidy = ask::tidy_reply(
-                persona,
-                if full.len() >= text.len() {
-                    &full
-                } else {
-                    &text
-                },
-            );
+        Ok(turn) => {
+            if !turn.calls.is_empty() && posted.is_none() && turn.text.trim().is_empty() {
+                return Ok(StreamEnd::Calls(turn.calls));
+            }
+            let full = if turn.text.len() >= text.len() {
+                turn.text
+            } else {
+                text
+            };
+            let tidy = ask::tidy_reply(persona, &full);
             if let Some(id) = &posted {
                 out.edit(native_channel_id, id, &tidy)
                     .await
                     .map_err(llm::LlmError)?;
             }
-            Ok((tidy, posted))
+            Ok(StreamEnd::Text(tidy, posted))
         }
         Err(e) => {
             if let Some(id) = &posted {
@@ -526,6 +558,176 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
             Err(e)
         }
     }
+}
+
+/// Type to name when a caller has no delivery channel (slash commands):
+/// `generate::<NoDelivery>(…, None, …)`. Never constructed.
+pub enum NoDelivery {}
+
+impl Outbound for NoDelivery {
+    async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
+        match *self {}
+    }
+    async fn typing(&self, _: &str) {
+        match *self {}
+    }
+    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        match *self {}
+    }
+    async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
+        match *self {}
+    }
+    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        match *self {}
+    }
+}
+
+/// Where a generated reply should be delivered while it is being produced.
+pub struct Delivery<'a, O> {
+    pub out: &'a O,
+    pub native_channel_id: &'a str,
+    pub reply_to: Option<&'a str>,
+}
+
+impl<O> Clone for Delivery<'_, O> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<O> Copy for Delivery<'_, O> {}
+
+/// One generation round: what to send the backend.
+#[derive(Clone, Copy)]
+pub struct Round<'a> {
+    pub backend: &'a llm::Backend,
+    pub system_prompt: &'a str,
+    pub turns: &'a [llm::ChatTurn],
+    pub tools: &'a [crate::tools::ToolSpec],
+    pub persona: Persona,
+}
+
+/// What a round produced: text (tidied), the id of a message already holding
+/// it, and any tool calls.
+type RoundOutcome =
+    Result<(Option<String>, Option<String>, Vec<crate::tools::ToolCall>), llm::LlmError>;
+
+/// What `generate` is asked to do, independent of delivery.
+pub struct Ask<'a> {
+    pub scope: &'a str,
+    pub context: &'a PersonaContext,
+    pub user_input: &'a str,
+    pub offer_tools: bool,
+    pub now: u64,
+}
+
+/// The generation loop with tools: build the prompt for the scope's persona,
+/// call the backend (streamed to `delivery` on the local path, single-shot
+/// otherwise), run any tool calls against `host`, and repeat up to
+/// [`crate::tools::MAX_TOOL_ROUNDS`] times until the model answers in text.
+///
+/// Returns the tidied text, the id of the message already holding it (if the
+/// stream posted it), and the persona that ended up answering (tools may
+/// switch it). A backend that rejects tooled requests (HTTP 4xx) is retried
+/// once without tools and `tools_enabled` is cleared for the process.
+pub async fn generate<O: Outbound + Sync>(
+    state: &AppState,
+    host: &mut crate::runtime::ToolScope<'_>,
+    ask: &Ask<'_>,
+    delivery: Option<Delivery<'_, O>>,
+) -> Result<(String, Option<String>, Persona), llm::LlmError> {
+    use std::sync::atomic::Ordering;
+    let Ask {
+        scope,
+        context,
+        user_input,
+        offer_tools,
+        now,
+    } = *ask;
+    let Some(backend) = &state.backend else {
+        return Err(llm::LlmError("no generation backend is configured".into()));
+    };
+    let vocabulary = crate::tools::abbey_tools();
+    let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
+    for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
+        let persona = host.persona;
+        let prepared =
+            AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
+        let mut turns = prepared.turns.clone();
+        turns.extend(extra_turns.iter().cloned());
+        let offer = offer_tools
+            && round < crate::tools::MAX_TOOL_ROUNDS
+            && state.tools_enabled.load(Ordering::Relaxed);
+        let tools: &[crate::tools::ToolSpec] = if offer { &vocabulary } else { &[] };
+
+        let round = Round {
+            backend,
+            system_prompt: &prepared.system_prompt,
+            turns: &turns,
+            tools,
+            persona,
+        };
+        let turn: RoundOutcome = match (&delivery, backend) {
+            (Some(d), llm::Backend::OpenAiCompatible { .. }) => {
+                match stream_reply(&state.llm, d, &round).await {
+                    Ok(StreamEnd::Text(text, posted)) => Ok((Some(text), posted, Vec::new())),
+                    Ok(StreamEnd::Calls(calls)) => Ok((None, None, calls)),
+                    Err(e) => Err(e),
+                }
+            }
+            _ => llm::chat_turn(&state.llm, backend, &prepared.system_prompt, &turns, tools)
+                .await
+                .map(|t| {
+                    let text = if t.text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(ask::tidy_reply(persona, &t.text))
+                    };
+                    (text, None, t.calls)
+                }),
+        };
+
+        let (text, posted, calls) = match turn {
+            Ok(v) => v,
+            Err(e) if offer && looks_like_tool_rejection(&e.0) => {
+                tracing::warn!(error = %e.0, "backend rejected a tooled request; continuing without tools for this process");
+                state.tools_enabled.store(false, Ordering::Relaxed);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+
+        if calls.is_empty() {
+            if let Some(text) = text {
+                return Ok((text, posted, persona));
+            }
+            return Err(llm::LlmError("the response carried no answer text".into()));
+        }
+        // Run the tools, append the round, go again.
+        let mut results = Vec::with_capacity(calls.len());
+        for call in &calls {
+            let result = crate::tools::dispatch(call, host);
+            tracing::info!(tool = %call.name, scope, result = %result.content.chars().take(80).collect::<String>(), "tool call");
+            results.push(result);
+        }
+        extra_turns.push(llm::ChatTurn::assistant_calls(
+            text.unwrap_or_default(),
+            calls,
+        ));
+        extra_turns.extend(results.iter().map(llm::ChatTurn::tool_result));
+    }
+    Err(llm::LlmError(format!(
+        "the model kept calling tools for {} rounds without answering",
+        crate::tools::MAX_TOOL_ROUNDS
+    )))
+}
+
+/// HTTP 4xx on a tooled request is how a backend without tool support says
+/// so (ollama: "does not support tools"; others: 400 on unknown `tools`).
+fn looks_like_tool_rejection(error: &str) -> bool {
+    error.starts_with("HTTP 4")
+        || error
+            .to_ascii_lowercase()
+            .contains("does not support tools")
 }
 
 /// Run `work` while re-broadcasting the typing indicator every 8 s. Discord's
@@ -1049,6 +1251,7 @@ mod tests {
     struct FakeStream {
         deltas: Vec<&'static str>,
         fail_at_end: bool,
+        calls: Vec<crate::tools::ToolCall>,
     }
 
     impl llm::StreamTransport for FakeStream {
@@ -1056,7 +1259,7 @@ mod tests {
             &self,
             _request: &llm::LlmRequest,
             on_delta: tokio::sync::mpsc::UnboundedSender<String>,
-        ) -> Result<String, llm::LlmError> {
+        ) -> Result<llm::ModelTurn, llm::LlmError> {
             let mut full = String::new();
             for d in &self.deltas {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -1067,7 +1270,10 @@ mod tests {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 return Err(llm::LlmError("upstream died".into()));
             }
-            Ok(full)
+            Ok(llm::ModelTurn {
+                text: full,
+                calls: self.calls.clone(),
+            })
         }
     }
 
@@ -1097,18 +1303,27 @@ mod tests {
                 "And then it finishes.",
             ],
             fail_at_end: false,
+            calls: vec![],
         };
-        let (text, id) = stream_reply(
+        let StreamEnd::Text(text, id) = stream_reply(
             &transport,
-            &out,
-            "c1",
-            Some("m1"),
-            &local_backend(),
-            &prepared(),
-            Persona::Abbey,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: Some("m1"),
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &[],
+                persona: Persona::Abbey,
+            },
         )
         .await
-        .expect("streamed");
+        .expect("streamed") else {
+            panic!("expected text")
+        };
         assert_eq!(id.as_deref(), Some("sent-1"));
         assert!(
             text.starts_with("Here is the first part"),
@@ -1126,23 +1341,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stream_that_ends_in_tool_calls_reports_them_unposted() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec![],
+            fail_at_end: false,
+            calls: vec![crate::tools::ToolCall {
+                id: "call_1".into(),
+                name: "recall".into(),
+                arguments: serde_json::json!({"query": "rust"}),
+            }],
+        };
+        let end = stream_reply(
+            &transport,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &crate::tools::abbey_tools(),
+                persona: Persona::Abbey,
+            },
+        )
+        .await
+        .expect("streamed");
+        assert!(
+            matches!(end, StreamEnd::Calls(ref c) if c.len() == 1 && c[0].name == "recall"),
+            "{end:?}"
+        );
+        assert!(
+            out.sent.lock().unwrap().is_empty(),
+            "nothing posted for a tool round"
+        );
+    }
+
+    #[tokio::test]
     async fn a_short_stream_is_returned_unposted_for_the_ordinary_send() {
         let out = FakeOut::default();
         let transport = FakeStream {
             deltas: vec!["Blue."],
             fail_at_end: false,
+            calls: vec![],
         };
-        let (text, id) = stream_reply(
+        let StreamEnd::Text(text, id) = stream_reply(
             &transport,
-            &out,
-            "c1",
-            None,
-            &local_backend(),
-            &prepared(),
-            Persona::Abbey,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &[],
+                persona: Persona::Abbey,
+            },
         )
         .await
-        .expect("streamed");
+        .expect("streamed") else {
+            panic!("expected text")
+        };
         assert_eq!(text, "Blue.");
         assert!(
             id.is_none(),
@@ -1160,15 +1423,22 @@ mod tests {
                 "stops abruptly mid",
             ],
             fail_at_end: true,
+            calls: vec![],
         };
         let err = stream_reply(
             &transport,
-            &out,
-            "c1",
-            None,
-            &local_backend(),
-            &prepared(),
-            Persona::Abbey,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &[],
+                persona: Persona::Abbey,
+            },
         )
         .await
         .expect_err("upstream died");
