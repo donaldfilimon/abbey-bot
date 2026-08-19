@@ -333,15 +333,28 @@ pub struct HttpTransport {
     client: reqwest::Client,
 }
 
+/// Default request timeout. Discord's followup window is 15 minutes; a local
+/// reasoning model under concurrent load was observed live (2026-08-19) to
+/// need more than the old 120 s on a "research …" DM, so the default is 300 s
+/// and `ABBEY_BOT_LLM_TIMEOUT_SECS` overrides it.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
+
+/// Parse a timeout override; blank/garbage/zero fall back to the default.
+pub fn timeout_from_value(value: Option<String>) -> u64 {
+    value
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+}
+
 impl Default for HttpTransport {
     fn default() -> Self {
+        let secs = timeout_from_value(std::env::var("ABBEY_BOT_LLM_TIMEOUT_SECS").ok());
         Self {
             // Bounded so a hung backend cannot hold the deferred interaction
-            // forever: Discord's followup window is 15 minutes, and a large
-            // local model can legitimately take a couple of them — 120s is the
-            // compromise between that and never answering at all.
+            // forever — but generously, see `DEFAULT_TIMEOUT_SECS`.
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
+                .timeout(std::time::Duration::from_secs(secs))
                 .build()
                 .expect("static reqwest client configuration is valid"),
         }
@@ -485,6 +498,17 @@ mod tests {
         let request = build_request(&named, "S", "Q");
         assert_eq!(request.body["model"], "gemma4:26b");
         assert_eq!(request.body["max_tokens"], LOCAL_MAX_TOKENS);
+    }
+
+    #[test]
+    fn timeout_override_parses_and_falls_back() {
+        assert_eq!(timeout_from_value(None), DEFAULT_TIMEOUT_SECS);
+        assert_eq!(timeout_from_value(Some(" 45 ".into())), 45);
+        assert_eq!(timeout_from_value(Some("0".into())), DEFAULT_TIMEOUT_SECS);
+        assert_eq!(
+            timeout_from_value(Some("soon".into())),
+            DEFAULT_TIMEOUT_SECS
+        );
     }
 
     #[test]
