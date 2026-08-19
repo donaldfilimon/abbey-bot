@@ -61,6 +61,7 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `wyhash.rs`, `embedding.rs`, `wdbx.rs` | Zig-compatible wyhash (pinned to 188 reference vectors), abi's n-gram text embedding (pinned to abi's own vectors), a WDBX v1 JSONL store + guild-namespaced semantic recall |
 | `platform.rs`, `vision.rs` | The network-agnostic event model and Telegram/Slack wire translation; the image-understanding seam (request/extract pure, transport injected) |
 | `persist.rs` | The one JSON document the registries' store traits read and write, atomically |
+| `tools.rs` | The model-callable tool vocabulary, both wire shapes, both response parsers, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
 | `pipeline.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
 
 `llm.rs` is pure in the same sense — it imports neither serenity nor poise —
@@ -170,6 +171,17 @@ surface one person's facts to another — the pipeline test
 touch, every mention reply's reward settled into nothing. Also: a forced reply
 that fails at the backend posts `ask::render_failure` instead of dead air, and
 the typing indicator is re-broadcast every 8 s while a local model thinks.
+
+**Tools run through one loop, `pipeline::generate`.** Mentions, DMs, and
+`/persona ask` offer `tools::abbey_tools()`; unsolicited policy replies and
+`/summarize` do not. The loop is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
+local path (`StreamEnd::Calls` means "run the tools and stream again"), retries
+once without tools on a 4xx and clears `AppState.tools_enabled` for the
+process. Every tool result is a short string (`tools::truncate`); no tool posts,
+moderates, or changes config; `switch_persona` changes only the conversation's
+persona and keeps the transcript. Adding a tool means: a `ToolSpec` in
+`abbey_tools`, a `ToolHost` method, a `dispatch` arm, and a test — nothing in
+the shells.
 
 **Generated replies are shaped, queued, and (locally) streamed.** Every
 generated reply passes `ask::tidy_reply` (persona-echo/heading strip,

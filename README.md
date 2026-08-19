@@ -28,6 +28,16 @@ to this crate and shares no code with it.
 | `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
 
+**The model can call Abbey's own systems.** On mentions, DMs, and `/persona
+ask` the backend is offered five tools — `remember_fact`, `lookup_reputation`,
+`recall`, `switch_persona`, `recent_messages` — in the OpenAI or Anthropic
+shape as appropriate; calls run against the same memory/WDBX/reputation the
+slash commands use, scoped to the server and person in the conversation, for
+at most three rounds before the answer. None of them post, moderate, or change
+config. A backend that rejects tooled requests is retried once without and
+remembered (`ABBEY_BOT_LLM_TOOLS=off` disables outright). Verified live
+2026-08-19 with gpt-oss:20b (`remember_fact` stored "favorite editor is Zed").
+
 **DMs work.** A DM to Abbey is always answered (through the backend), keeps a
 per-conversation transcript, and is its own one-person namespace
 (`discord:dm:<user>`) for facts, recall, and reputation — two people DMing her
@@ -73,6 +83,7 @@ runs fully offline.
 | Env var | What it enables |
 |---|---|
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
+| `ABBEY_BOT_LLM_TOOLS` | `off` disables model tool calls; default on (auto-degrades on a 4xx). |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`. |
