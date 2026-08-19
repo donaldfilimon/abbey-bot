@@ -153,6 +153,13 @@ async fn main() -> Result<(), Error> {
                     Ok(())
                 })
             },
+            // Mentions are the pipeline's business, not a command prefix:
+            // with the default on, `@Abbey hello` logs a poise "didn't
+            // recognize command" warning for every mention she answers.
+            prefix_options: poise::PrefixFrameworkOptions {
+                mention_as_prefix: false,
+                ..Default::default()
+            },
             post_command: |ctx| {
                 Box::pin(async move {
                     record_interaction(ctx, true, None);

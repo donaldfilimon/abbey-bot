@@ -261,7 +261,8 @@ impl VisionConfig {
     ///
     /// Model is `ABBEY_VISION_MODEL` or `gpt-4o-mini`; key is
     /// `ABBEY_VISION_KEY` or empty. Blank values count as unset throughout,
-    /// because `.env.example` ships blank assignments.
+    /// because `.env.example` ships blank assignments. `ABBEY_VISION_ENDPOINT=off`
+    /// disables vision even when an LLM endpoint is set.
     pub fn from_values(
         vision_endpoint: Option<String>,
         vision_model: Option<String>,
@@ -274,6 +275,10 @@ impl VisionConfig {
                 .filter(|s| !s.is_empty())
         };
         let base_url = match non_blank(vision_endpoint) {
+            // `off` is the sentinel that stops the LLM-endpoint fallback: a
+            // text-only local model (ollama gemma) would otherwise be asked to
+            // read images and fail a round-trip per attachment.
+            Some(off) if off.eq_ignore_ascii_case("off") => return None,
             Some(explicit) => explicit,
             None => format!(
                 "{}/v1",
@@ -575,6 +580,16 @@ mod tests {
     #[test]
     fn config_precedence_explicit_then_llm_fallback_then_none() {
         assert_eq!(VisionConfig::from_values(None, None, None, None), None);
+        assert_eq!(
+            VisionConfig::from_values(
+                Some("off".into()),
+                None,
+                None,
+                Some("http://127.0.0.1:11434".into())
+            ),
+            None,
+            "the off sentinel beats the LLM-endpoint fallback"
+        );
         // Blank counts as unset everywhere.
         assert_eq!(
             VisionConfig::from_values(
