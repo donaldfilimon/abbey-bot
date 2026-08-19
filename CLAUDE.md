@@ -147,14 +147,16 @@ it, Discord delivers empty bodies for anything but mentions and DMs, and the
 pipeline deliberately does not consult the policy on a blank (`Ignored("no
 content available")`) — training on noise would bias `stay`.
 
-**Two hard gates on unsolicited speech, checked before the policy.**
-`ABBEY_QUIET=1` (operator; the token sits in 58 guilds and the policy is
-untrained) and the guild's `/admin learning off` both short-circuit to
-`Ignored(..)` *before* the brain is consulted, so nothing is learned from a
-message Abbey was never allowed to answer. Mentions, DMs, and commands bypass
-both. Until 2026-08-19 `learning_enabled` only gated `learn_all`, so the docs'
-"pins a server to mentions and commands" claim was false — it is true now and
-tested.
+**Unsolicited speech is gated four times, in this order, before the policy is
+consulted: `ABBEY_QUIET=1` (operator, wins over everything) → the guild's
+`/admin act on` (opt-in, default off) → `/admin learning off` → the
+blank-content guard.** After the policy picks reply/react: per-channel cooldown,
+then the per-guild hourly budget (`brain/budget.rs`, default 6/h); over budget
+returns `Outcome::OverBudget` and records **no** experience — silence was not
+the policy's choice, so it must not be taught as one. Mentions, DMs, and
+commands bypass all of it and are counted as `forced_replies` in the guild's
+`BrainStats` (`brain/telemetry.rs`), never as decisions. Every policy decision
+logs one `policy decision` line with the Q-values.
 
 **DMs are one-person guilds.** `SocialEvent::scoped_guild_id` returns
 `"{network}:dm:{user}"` when there is no guild, and `commands_brain` scopes the

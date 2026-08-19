@@ -389,5 +389,4 @@ mod tests {
         drop(brains);
         assert!(AppState::lock(&state.budget).try_take("discord:g", 6, 0));
     }
-
 }

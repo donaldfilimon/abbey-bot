@@ -345,5 +345,4 @@ mod tests {
         reg.persist_and_evict("discord:g", &mut store);
         assert!(reg.stats("discord:g").is_none(), "evicted with the brain");
     }
-
 }

@@ -26,7 +26,7 @@ to this crate and shares no code with it.
 | `/summarize [count] [as]` | Summarize the recent messages Abbey has seen in the channel via the backend; stores the summary as the channel's context. |
 | `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint: describe, or transcribe text. |
 | `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
-| `/admin show\|persona\|learning\|vision\|cooldown\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, ε override + brain inspection, persist now, export the brain snapshot as JSON, clear this channel's transcript. |
+| `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
 
 **DMs work.** A DM to Abbey is always answered (through the backend), keeps a
 per-conversation transcript, and is its own one-person namespace
@@ -73,7 +73,7 @@ runs fully offline.
 | Env var | What it enables |
 |---|---|
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
-| `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. |
+| `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
@@ -95,10 +95,14 @@ question, image, hour, channel heat, lexicon sentiment) feeds a `[18, 64, 32, 3]
 DQN choosing *stay / reply / react*; rewards settle 150 s later from reactions
 (+1 each, capped at 3), human replies (+0.5), deletions (−2, immediate), and
 silence-after-reply (−0.2); `stay` is always 0, so the silent policy dominates
-early. Unsolicited output is rate-limited per channel (`/admin cooldown`,
-default 20 s), `/admin learning off` pins a server to mentions-and-commands
-only, and `/admin brain` shows ε / steps / buffer so the loop is inspectable
-rather than a black box. Learning runs every 30 s, reputation flushes every
+early. Unsolicited output needs the server's opt-in (`/admin act on`, default off — on
+a token that sits in 58 servers nothing speaks up until an admin asks), then is
+bounded twice: per channel by the cooldown (`/admin cooldown`, default 20 s)
+and per server by an hourly budget (`/admin budget`, default 6/h; over budget
+the policy's choice is neither acted on nor learned). `/admin learning off`
+pins a server to mentions and commands, and `/admin brain` shows ε / steps /
+buffer, the last decision's Q-values, the action histogram, recent reward mean,
+and budget left — so the loop is inspectable rather than a black box. Learning runs every 30 s, reputation flushes every
 60 s, everything persists every 5 min and on shutdown.
 
 **Nothing Abbey says is a template.** Replies, welcomes, and summaries come from

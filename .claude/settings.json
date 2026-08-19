@@ -1,0 +1,63 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./check.sh)",
+      "Bash(./check.sh *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo run *)",
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Bash(gh repo view *)",
+      "Bash(osascript *)",
+      "Bash(screencapture *)",
+      "Bash(sips *)",
+      "Bash(curl -s http://127.0.0.1:11434/*)",
+      "Bash(curl -s -m * http://127.0.0.1:11434/*)",
+      "Bash(ollama ps)",
+      "Bash(ollama stop *)",
+      "Bash(pkill -INT -f target/debug/abbey-bot)",
+      "Bash(pkill -f target/debug/abbey-bot)",
+      "Bash(pgrep *)",
+      "Bash(grep *)",
+      "Bash(sed *)",
+      "Bash(tail *)",
+      "Bash(head *)",
+      "Bash(wc *)",
+      "Bash(cat *)",
+      "Bash(/bin/ls *)",
+      "Bash(python3 -c *)",
+      "Bash(python3 - *)",
+      "Bash(jq *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$f\" in *.rs) ./check.sh >| /tmp/claude-501/hook-gate.log 2>&1 || { tail -30 /tmp/claude-501/hook-gate.log >&2; exit 2; } ;; esac",
+            "timeout": 600,
+            "asyncRewake": true,
+            "statusMessage": "gate (./check.sh) running in background after Rust edit"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/donaldfilimon/sources/repos/abbey-bot && { printf -- '- %s stop: branch %s, %s\\n' \"$(date '+%Y-%m-%d %H:%M')\" \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" \"$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') dirty file(s)\" >> tasks/session-log.md; } ; jq -n --arg b \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" '{systemMessage: (\"abbey-bot stop — branch \" + $b + \"; gate is ./check.sh; ledger tasks/goals.md; note appended to tasks/session-log.md\")}'"
+          }
+        ]
+      }
+    ]
+  }
+}
