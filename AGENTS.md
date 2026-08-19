@@ -171,6 +171,17 @@ touch, every mention reply's reward settled into nothing. Also: a forced reply
 that fails at the backend posts `ask::render_failure` instead of dead air, and
 the typing indicator is re-broadcast every 8 s while a local model thinks.
 
+**Generated replies are shaped, queued, and (locally) streamed.** Every
+generated reply passes `ask::tidy_reply` (persona-echo/heading strip,
+sentence-boundary cut at 1,900 chars) before the clamp; every generation takes
+a slot from `AppState.generation` (1 for a local endpoint — ollama wedged under
+concurrent requests — 4 for Anthropic) or gets the honest "busy" line after
+`ABBEY_BOT_LLM_QUEUE_SECS`; the local path streams (`pipeline::stream_reply`:
+post after 60 chars / 4 s, edit every 2 s, final edit with the tidied text, a
+stream that dies after posting edits in the failure line). Model choice is
+measured, not guessed — `docs/benchmarks/2026-08-19-local-models.md`; the
+default is `gpt-oss:20b`.
+
 **Abbey never speaks unsolicited without a backend, and never from a template.**
 The policy may choose `reply`, but with no backend configured the pipeline
 treats that as silence; a mention or DM gets `ask::degraded_reply`. Welcomes and
