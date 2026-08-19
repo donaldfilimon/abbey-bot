@@ -16,6 +16,16 @@ header line differs. Apply any edit to both, or they drift.
 ./check.sh          # the gate: fmt --check, clippy --all-targets --locked -D warnings, test --locked
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
+
+# Live run the way it is actually operated here (persists state; stop with SIGINT):
+#   set -a; . ./.env; set +a
+#   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gpt-oss:20b \
+#   ABBEY_VISION_ENDPOINT=http://127.0.0.1:11434/v1 ABBEY_VISION_MODEL=gemma4:e4b \
+#   ABBEY_DATA_DIR=<dir> RUST_LOG=info,abbey_bot=debug ./target/debug/abbey-bot
+#   pkill -INT -f target/debug/abbey-bot      # SIGINT → persists learning/memory first
+# End-to-end against a real local model, no Discord (ignored by the gate):
+#   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gpt-oss:20b \
+#   cargo test live_dm -- --ignored --nocapture
 ```
 
 `cargo test moderation::` runs one module's tests. There is no `-p`
@@ -367,33 +377,24 @@ them away:
 
 ## What has and has not been verified
 
-**Verified live on 2026-08-19 (this clone, token from `.env`, Donald's own
-Discord client plus AppleScript-driven keystrokes into the Discord app, bot on
-`main` with ollama `gemma4:12b`, `ABBEY_QUIET=1`):**
-- gateway handshake, `Ready`, global registration — 16 commands (our 15 +
-  the app's preserved Entry Point), 58 guilds;
-- slash commands answering: `/admin export`, `/recall` ×4 (interaction log
-  `succeeded=true`);
-- the DM pipeline: "hey abbey, what toolchain…" → generated reply-to in 54 s;
-  "and what did I just ask you?" → reply in 17 s that referenced the first
-  (per-DM transcript); typing keepalive visible; a backend timeout posted the
-  honest failure line instead of silence;
-- guild mentions (`@Abbey …`) → `mentions_bot=true outcome=Replied` ×2; the
-  quiet guard held for every non-mention guild message;
-- a reaction on an Abbey message → `reaction handled … outcome=Rewarded`.
-
-**Not yet observed:** a settled reward landing in a replay buffer (needs a 👍
-on a reply made *after* the last restart — pending rewards are in-memory — then
-150 s; the settle now logs `reward settled into the replay buffer`), Telegram,
-Slack, vision, `/see` `/ocr`, persistence under real traffic beyond the
-5-minute tick. Do not describe those as working until seen.
+**What is and is not verified lives in `tasks/goals.md` (Current vs Proposed
+per goal, dated) — read it before claiming anything works.** As of 2026-08-19
+the following have been seen live from Donald's Discord client: gateway +
+registration (16 commands, 58 guilds), slash commands answering, DM and
+guild-mention replies (streamed, edited in place), the per-guild policy
+deciding/reacting in an opted-in server, cooldown and act-off gates holding,
+rewards settling into replay buffers, a model-initiated `remember_fact` tool
+call, vision on gemma4:e4b. Not seen live: Anthropic path/fallback (no key),
+Telegram/Slack (no tokens), `/see` `/ocr` from a client, an `OverBudget`
+refusal, a refreshed rolling summary.
 
 **Operational facts learned live:** `gemma4:26b` wedged its ollama runner
-(HTTP 000 after 100 s); `gemma4:12b` is healthy at ~10–50 s/reply. A
-"research …" DM exceeded 120 s under concurrent generation → the default
-backend timeout is now 300 s (`ABBEY_BOT_LLM_TIMEOUT_SECS`). Pending rewards do
-not survive a restart. Keystroke-driven testing must check Discord is
-frontmost first — the operator may be typing elsewhere.
+(HTTP 000 after 100 s); gpt-oss:20b is the measured default, gemma4:e4b the
+runner-up (`docs/benchmarks/2026-08-19-local-models.md`). A "research …" DM
+exceeded 120 s under concurrent generation → the default backend timeout is
+300 s (`ABBEY_BOT_LLM_TIMEOUT_SECS`) and generation is serialised. Keystroke-
+driven testing must check Discord is frontmost first — the operator may be
+typing elsewhere.
 
 **Discord's Entry Point command breaks poise's global registration.** Apps
 with Activities enabled carry an auto-created `PrimaryEntryPoint` command
@@ -406,15 +407,18 @@ and re-sends it alongside ours. Deleting it would be the easy fix and would
 disable the app's Activity — not this bot's call. Guild-scoped registration
 (`ABBEY_GUILD_ID`) never hits this, which is why the trap hides during dev.
 
-**The spec suite (`docs/spec/`) is implemented in Rust with these residuals,
-all recorded as Proposed in `tasks/goals.md`:** the Swift companion app and
-Apple on-device models (not a Rust concern), voice (no `voice.md` was
-supplied), Postgres (replaced by the file store above), model-initiated tools
-(`RememberFactTool` etc. — the backends are plain chat completions today), and
-the Slack HTTP Events listener (Socket Mode is implemented instead, so the
-request-signing code was removed rather than left dead).
+**The spec suite (`docs/spec/`) is implemented in Rust; residuals are recorded
+as Proposed in `tasks/goals.md`:** the Swift companion app and Apple on-device
+models (not a Rust concern), voice (no `voice.md` was supplied), Postgres
+(replaced by the file store above), and the Slack HTTP Events listener (Socket
+Mode is implemented instead). Tools shipped (PR #19) and are not a residual.
 
 ## Related, and easy to confuse
+
+**Design records:** `docs/superpowers/specs/*` (approved designs per
+sub-project), `docs/superpowers/plans/*` (the one executed plan),
+`docs/benchmarks/2026-08-19-local-models.md` (why gpt-oss:20b is the default),
+`docs/live-test-protocol.md` (how the bot is exercised from a Discord client).
 
 **`docs/spec/` is the Swift-era design this crate implements**, copied verbatim
 from the `discord-abbey` skill's reference files on 2026-08-19. The Swift types
