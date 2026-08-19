@@ -32,3 +32,8 @@ status: done
 status: done
 - Spec `docs/superpowers/specs/2026-08-19-tools-design.md`. Landed: pure `tools.rs` (5 tools, both wire shapes, both parsers, dispatch/ToolHost), tool-aware `ChatTurn`/request builder/`extract_turn`/streamed tool-call merging in `llm.rs`, `ToolScope` host in `runtime.rs`, `pipeline::generate` loop (max 3 rounds, streams locally, 4xx degrade), `/persona ask` on the same loop, `ABBEY_BOT_LLM_TOOLS`. Gate 326 tests.
 - 2026-08-19 19:00Z live (gpt-oss:20b): DM "please remember that my favourite editor is Zed" → `tool call tool=remember_fact … Stored: The user's favorite editor is Zed` → "Got it—Zed is your favorite editor." (14 s); "what do you remember about my tools and editor?" → grounded honest answer (the fact arrived via WDBX recall in the context, so no second tool call — correct). **Not observed live:** `switch_persona`, `lookup_reputation`, `recent_messages` calls; the Anthropic shape (recording transport only); the 4xx degrade path (gpt-oss supports tools).
+
+## Breadth & ops (sub-project 4 of "improve all")
+status: in_progress
+- 2026-08-19: vision works on a local VLM — ollama `gemma4:e4b` described a screenshot correctly; `/v1` needed a 1,024-token budget (reasoning first) and a reasoning-exhausted error is now honest. launchd user agent for this Mac: `deploy/com.donaldfilimon.abbey-bot.plist` + `deploy/install-launchd.sh` (build, install, load; `--uninstall`) — written and lint-checked, **not installed** (a persistent launch agent is Donald's call; it would also double up with the session-run bot).
+- Not done / needs Donald: Telegram and Slack live (tokens); CI actually executing (account-level Actions billing lock); `/see` `/ocr` exercised from the client (needs an uploaded attachment).

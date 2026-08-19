@@ -23,7 +23,11 @@ use serde_json::{Value, json};
 pub const MAX_IMAGE_BYTES: usize = 10 << 20;
 
 /// Output budget for a description or transcription.
-const MAX_TOKENS: u32 = 200;
+/// Output budget. The spec says 200, sized for the answer alone; local
+/// reasoning models (gemma4 via ollama) spend ~1.7k characters thinking about
+/// the picture first and returned a truncated "This image is" at 200
+/// (measured 2026-08-19), so the budget covers the thinking too.
+const MAX_TOKENS: u32 = 1024;
 
 /// Model used when `ABBEY_VISION_MODEL` is unset.
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -187,11 +191,22 @@ impl std::error::Error for VisionError {}
 pub fn extract_vision_text(raw: &str) -> Result<String, VisionError> {
     let value: Value = serde_json::from_str(raw)
         .map_err(|e| VisionError(format!("the vision response was not JSON: {e}")))?;
-    value
+    let content = value
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(|s| s.trim().to_string())
-        .ok_or_else(|| VisionError("the vision response carried no message content".to_string()))
+        .ok_or_else(|| VisionError("the vision response carried no message content".to_string()))?;
+    if content.is_empty()
+        && value
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            == Some("length")
+    {
+        return Err(VisionError(
+            "the vision model spent its whole budget reasoning and produced no description".into(),
+        ));
+    }
+    Ok(content)
 }
 
 /// The seam: natural-language description and OCR over raw image bytes.
@@ -501,7 +516,7 @@ mod tests {
                 .contains(&("Authorization".to_string(), "Bearer sk-test".to_string()))
         );
         assert_eq!(req.body["model"], "gpt-4o-mini");
-        assert_eq!(req.body["max_tokens"], 200);
+        assert_eq!(req.body["max_tokens"], 1024);
         let content = &req.body["messages"][0]["content"];
         assert_eq!(req.body["messages"][0]["role"], "user");
         assert_eq!(content[0]["type"], "text");
