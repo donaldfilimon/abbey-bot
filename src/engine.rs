@@ -253,6 +253,7 @@ mod tests {
 
         let local = Backend::OpenAiCompatible {
             endpoint: "http://127.0.0.1:8080".into(),
+            model: "default".into(),
         };
         let request = build_chat_request(&local, &prepared.system_prompt, &prepared.turns);
         let messages = request.body["messages"].as_array().expect("array");

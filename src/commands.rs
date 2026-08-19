@@ -28,7 +28,9 @@ use crate::llm;
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::{self, Persona};
+use crate::pipeline;
 use crate::profile::{self, ProfileFacts};
+use crate::runtime::{self, AppState};
 use crate::server::{self, Archetype};
 use crate::webhook;
 use crate::{Context, Error};
@@ -221,7 +223,7 @@ fn hierarchy_blocker(
 ///
 /// Discord never invokes the parent of a subcommand group — the client forces
 /// picking a subcommand — so this body is unreachable framework wiring.
-#[poise::command(slash_command, guild_only, subcommands("route", "ask"))]
+#[poise::command(slash_command, subcommands("route", "ask"))]
 pub async fn persona(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
@@ -231,7 +233,7 @@ pub async fn persona(_ctx: Context<'_>) -> Result<(), Error> {
 /// Pure routing — no network call — but it still defers, because a command that
 /// sometimes defers and sometimes does not is a command that eventually races.
 /// This is the pre-split `/persona` behaviour, unchanged.
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command)]
 pub async fn route(
     ctx: Context<'_>,
     #[description = "What you want help with"] request: String,
@@ -262,7 +264,7 @@ async fn autocomplete_question(_ctx: Context<'_>, partial: &str) -> Vec<String> 
 /// and more load-bearing here: an LLM round-trip exceeds Discord's 3-second
 /// interaction token by design. Non-ephemeral on purpose — an answer is not an
 /// accusation, unlike `/modcall`'s recommendation.
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command)]
 pub async fn ask(
     ctx: Context<'_>,
     #[description = "What you want to know"]
@@ -277,18 +279,35 @@ pub async fn ask(
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
     let routed = persona::route(&question, r#as.map(Into::into)).persona;
-    let reply = match llm::Backend::from_env() {
+    let state = &ctx.data().state;
+    let scope = format!("discord:{}", ctx.channel_id().get());
+    let scoped_guild = match ctx.guild_id() {
+        Some(g) => format!("discord:{}", g.get()),
+        None => format!("discord:dm:{}", ctx.author().id.get()),
+    };
+    let scoped_user = format!("discord:{}", ctx.author().id.get());
+    let reply = match &state.backend {
         None => ask::degraded_reply(routed),
         Some(backend) => {
-            let outcome = llm::ask_backend(
-                &llm::HttpTransport::default(),
-                &backend,
-                &ask::system_prompt(routed),
-                &question,
+            // Same per-channel transcript and memory context the pipeline
+            // uses, so a slash-command question and a DM continue one thread.
+            let context =
+                pipeline::assemble_context(state, &scoped_guild, &scoped_user, &scope, &question);
+            let now = runtime::now();
+            let prepared =
+                AppState::lock(&state.engine).prepare(&scope, routed, &context, &question, now);
+            let outcome = llm::chat_backend(
+                &state.llm,
+                backend,
+                &prepared.system_prompt,
+                &prepared.turns,
             )
             .await;
             match outcome {
-                Ok(answer) => ask::render_answer(routed, backend.label(), &answer),
+                Ok(answer) => {
+                    AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
+                    ask::render_answer(routed, backend.label(), &answer)
+                }
                 Err(error) => ask::render_failure(routed, backend.label(), &error.0),
             }
         }
@@ -735,6 +754,7 @@ mod tests {
         // Multibyte input, because the limit is codepoints, not bytes.
         let backend = llm::Backend::OpenAiCompatible {
             endpoint: "http://127.0.0.1:8080".into(),
+            model: "default".into(),
         };
         let long_answer = "é".repeat(5000);
         let canned =

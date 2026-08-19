@@ -138,6 +138,10 @@ pub struct AppState {
     pub recall: Mutex<Recall>,
     pub engine: Mutex<Engine>,
     pub backend: Option<Backend>,
+    /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
+    /// commands still answer. The guard for running a many-guild token while
+    /// the policy is untrained.
+    pub quiet: bool,
     pub llm: HttpTransport,
     pub vision: Option<RemoteVision<HttpVisionTransport>>,
     pub data_dir: Option<PathBuf>,
@@ -193,6 +197,7 @@ impl AppState {
             recall: Mutex::new(recall),
             engine: Mutex::new(Engine::new()),
             backend: Backend::from_env(),
+            quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
             vision,
             data_dir,
@@ -214,6 +219,7 @@ impl AppState {
             recall: Mutex::new(Recall::new()),
             engine: Mutex::new(Engine::new()),
             backend: None,
+            quiet: false,
             llm: HttpTransport::default(),
             vision: None,
             data_dir: None,

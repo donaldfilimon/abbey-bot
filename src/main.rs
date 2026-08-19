@@ -10,9 +10,10 @@
 //!   global, which is what you want once the command set has settled.
 //! - `ANTHROPIC_API_KEY` (optional, secret) — makes `/persona ask` answer via
 //!   the external Anthropic API. Same handling as `DISCORD_TOKEN`: env only.
-//! - `ABBEY_BOT_LLM_ENDPOINT` (optional) — makes `/persona ask` answer via an
+//! - `ABBEY_BOT_LLM_ENDPOINT` + `ABBEY_BOT_LLM_MODEL` (optional) — answer via an
 //!   OpenAI-compatible server, usually loopback. With neither this nor the key
 //!   set, `/persona ask` replies that no generation backend is configured.
+//! - `ABBEY_QUIET` (optional) — `1` forbids unsolicited replies everywhere.
 //! - `ABBEY_DATA_DIR` (optional) — where learning, memory, and config persist.
 //!   Unset means in-memory only.
 //! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
@@ -104,6 +105,11 @@ async fn main() -> Result<(), Error> {
     match &state.backend {
         Some(b) => tracing::info!(backend = b.label(), "generation backend configured"),
         None => tracing::warn!("no generation backend — Abbey answers honestly that she cannot"),
+    }
+    if state.quiet {
+        tracing::info!(
+            "ABBEY_QUIET=1 — no unsolicited replies anywhere; mentions, DMs, and commands still answer"
+        );
     }
     state.start_scheduler();
     gateway::maybe_start_telegram(&state);

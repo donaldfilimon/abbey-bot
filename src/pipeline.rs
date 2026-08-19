@@ -138,6 +138,17 @@ pub async fn handle<O: Outbound + Sync>(
     if text.trim().is_empty() && attachments.is_empty() && !forced {
         return Outcome::Ignored("no content available");
     }
+    // Two hard gates on unsolicited speech, checked before the policy so
+    // nothing is learned from a message Abbey was never allowed to answer:
+    // the operator's `ABBEY_QUIET=1` (a 58-guild token is not a playground),
+    // and the guild's `/admin learning off`, which pins it to mentions and
+    // commands exactly as the docs promise.
+    if !forced && state.quiet {
+        return Outcome::Ignored("quiet");
+    }
+    if !forced && !settings.learning_enabled {
+        return Outcome::Ignored("learning off");
+    }
 
     let enriched = enrich_with_vision(state, out, &settings, &text, &attachments).await;
     let intent = intent::classify(&enriched);
@@ -155,16 +166,22 @@ pub async fn handle<O: Outbound + Sync>(
         hour_of_day: runtime::hour_of_day(now),
     });
 
-    let action = if forced {
-        BotAction::Reply
-    } else {
+    let action = {
+        // Load the guild's brain even on the forced path: the reward for a
+        // mention/DM reply settles 150 s later into `BrainRegistry::remember`,
+        // which drops experiences for guilds that are not loaded. Without this
+        // touch every forced reply's reward was silently lost.
         let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
         let brain = brains.brain(&scoped_guild, &*stores, now);
         if let Some(eps) = settings.epsilon_override {
             brain.set_epsilon(eps);
         }
-        BotAction::from_index(brain.select_action(&encoded)).unwrap_or(BotAction::Stay)
+        if forced {
+            BotAction::Reply
+        } else {
+            BotAction::from_index(brain.select_action(&encoded)).unwrap_or(BotAction::Stay)
+        }
     };
 
     if action == BotAction::Stay {
@@ -229,6 +246,10 @@ pub async fn handle<O: Outbound + Sync>(
         };
     };
 
+    // Discord's typing indicator expires after ~10 s and a local model takes
+    // ~25 s, so one broadcast reads as "dead" mid-generation. Keep it alive
+    // until the answer is in hand; the keepalive task is dropped with the
+    // guard below.
     out.typing(&event.native_channel_id).await;
     let context = assemble_context(
         state,
@@ -239,17 +260,30 @@ pub async fn handle<O: Outbound + Sync>(
     );
     let prepared =
         AppState::lock(&state.engine).prepare(&scoped_channel, persona, &context, &enriched, now);
-    let answer = llm::chat_backend(
-        &state.llm,
-        backend,
-        &prepared.system_prompt,
-        &prepared.turns,
-    )
+    let answer = with_typing(out, &event.native_channel_id, async {
+        llm::chat_backend(
+            &state.llm,
+            backend,
+            &prepared.system_prompt,
+            &prepared.turns,
+        )
+        .await
+    })
     .await;
     let answer = match answer {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e.0, backend = backend.label(), "reply generation failed");
+            if forced {
+                // Someone addressed Abbey and waited; dead air is worse than
+                // the same honest failure line `/persona ask` already posts.
+                let failure = OutboundMessage {
+                    text: ask::render_failure(persona, backend.label(), &e.0),
+                    reply_to_native_message_id: Some(event.native_message_id.clone()),
+                    ..OutboundMessage::default()
+                };
+                let _ = out.send(&event.native_channel_id, &failure).await;
+            }
             return Outcome::ReplyFailed(e.0);
         }
     };
@@ -287,6 +321,25 @@ pub async fn handle<O: Outbound + Sync>(
         );
     }
     Outcome::Replied
+}
+
+/// Run `work` while re-broadcasting the typing indicator every 8 s. Discord's
+/// indicator lasts ~10 s; a local model takes ~25 s; without this a successful
+/// reply reads as silence for most of its generation.
+pub async fn with_typing<O: Outbound + Sync, T>(
+    out: &O,
+    native_channel_id: &str,
+    work: impl Future<Output = T>,
+) -> T {
+    let mut work = std::pin::pin!(work);
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(8));
+    tick.tick().await; // the immediate first tick; the caller already typed once
+    loop {
+        tokio::select! {
+            result = &mut work => return result,
+            _ = tick.tick() => out.typing(native_channel_id).await,
+        }
+    }
 }
 
 /// Channel summary + remembered facts + WDBX recollections + standing.
@@ -530,6 +583,148 @@ mod tests {
         let out = FakeOut::default();
         let outcome = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
         assert_eq!(outcome, Outcome::Ignored("triage"));
+    }
+
+    /// Live: a DM through the real pipeline against whatever
+    /// `ABBEY_BOT_LLM_ENDPOINT` / `ABBEY_BOT_LLM_MODEL` name. Ignored by
+    /// default so the gate stays offline; run with
+    /// `cargo test live_dm -- --ignored --nocapture` when a backend is up.
+    #[tokio::test]
+    #[ignore = "needs a running generation backend"]
+    async fn live_dm_round_trip_against_the_configured_backend() {
+        let Some(backend) = crate::llm::Backend::from_env() else {
+            panic!("set ABBEY_BOT_LLM_ENDPOINT (and ABBEY_BOT_LLM_MODEL) to run this");
+        };
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().backend = Some(backend);
+        let out = FakeOut::default();
+        let first = handle(
+            &state,
+            &out,
+            message("hey abbey", None, "donald"),
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(first, Outcome::Replied);
+        let mut second_event = message("remember that I build in nightly Rust", None, "donald");
+        second_event.native_message_id = "m2".into();
+        let second = handle(&state, &out, second_event, false, None).await;
+        assert_eq!(second, Outcome::Replied);
+        let mut third_event = message("so what toolchain am I on?", None, "donald");
+        third_event.native_message_id = "m3".into();
+        let third = handle(&state, &out, third_event, false, None).await;
+        assert_eq!(third, Outcome::Replied);
+        let sent = out.sent.lock().unwrap();
+        for (i, (_, m)) in sent.iter().enumerate() {
+            eprintln!(
+                "--- reply {} ({} chars):\n{}",
+                i + 1,
+                m.text.chars().count(),
+                m.text
+            );
+            assert!(!m.text.contains("no generation backend"));
+            assert!(m.text.chars().count() <= 2000);
+        }
+        assert_eq!(sent.len(), 3);
+        assert_eq!(
+            AppState::lock(&state.engine).session_len("discord:c1"),
+            6,
+            "three exchanges committed to one transcript"
+        );
+        assert!(
+            sent[2].1.text.to_lowercase().contains("nightly"),
+            "the transcript should carry the toolchain fact: {}",
+            sent[2].1.text
+        );
+    }
+
+    #[tokio::test]
+    async fn quiet_and_learning_off_gate_unsolicited_speech_before_the_policy() {
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().quiet = true;
+        let out = FakeOut::default();
+        let outcome = handle(
+            &state,
+            &out,
+            message("lol nice", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Ignored("quiet"));
+        assert!(
+            AppState::lock(&state.brains).loaded_guilds().is_empty(),
+            "nothing learned"
+        );
+        // A mention still answers under quiet (degraded — no backend).
+        let outcome = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
+        assert_eq!(outcome, Outcome::Replied);
+
+        let state = AppState::in_memory();
+        {
+            let mut stores = AppState::lock(&state.stores);
+            AppState::lock(&state.guilds)
+                .update("discord:g", &mut *stores, |s| s.learning_enabled = false);
+        }
+        let outcome = handle(
+            &state,
+            &out,
+            message("lol nice", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Ignored("learning off"));
+    }
+
+    #[tokio::test]
+    async fn a_forced_reply_loads_the_brain_so_its_reward_is_not_dropped() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        // No backend → degraded reply, but the brain must already be loaded.
+        let outcome = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
+        assert_eq!(outcome, Outcome::Replied);
+        assert_eq!(AppState::lock(&state.brains).loaded_guilds(), ["discord:g"]);
+        // Simulate a settled reward for that guild: it lands in the buffer.
+        AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "sent-1", "discord:g", 0);
+        AppState::lock(&state.rewards).reaction("👍", "sent-1", true);
+        let settled = AppState::lock(&state.rewards).settle_expired(1_000);
+        let mut brains = AppState::lock(&state.brains);
+        for (g, exp) in settled {
+            brains.remember(&g, exp);
+        }
+        assert_eq!(brains.get("discord:g").map(|b| b.buffer_len()), Some(1));
+    }
+
+    #[test]
+    fn two_dm_users_never_share_recall_or_facts() {
+        let state = AppState::in_memory();
+        let alice = message("hi", None, "alice");
+        let bob = message("hi", None, "bob");
+        assert_ne!(alice.scoped_guild_id(), bob.scoped_guild_id());
+        AppState::lock(&state.recall).remember(
+            &alice.scoped_guild_id(),
+            &alice.scoped_user_id(),
+            "alice likes rust",
+            1,
+        );
+        let for_bob = assemble_context(
+            &state,
+            &bob.scoped_guild_id(),
+            &bob.scoped_user_id(),
+            &bob.scoped_channel_id(),
+            "rust",
+        );
+        assert!(for_bob.user_facts.is_empty(), "{:?}", for_bob.user_facts);
+        let for_alice = assemble_context(
+            &state,
+            &alice.scoped_guild_id(),
+            &alice.scoped_user_id(),
+            &alice.scoped_channel_id(),
+            "rust",
+        );
+        assert_eq!(for_alice.user_facts, ["alice likes rust"]);
     }
 
     #[test]

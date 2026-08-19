@@ -38,14 +38,16 @@ const fn contract_description(persona: Persona) -> &'static str {
 
 /// Assemble the system prompt for the routed persona.
 ///
-/// Deliberately static: the transcribed contract plus one fixed sentence of
-/// Discord framing (the reply is clamped at 2,000 codepoints, so the model is
+/// Deliberately static: the transcribed contract plus fixed Discord framing
+/// (answer-first, length-matched, no shown reasoning — the lines that keep a
+/// local reasoning model from rambling; wording reviewed by the persona
+/// 2026-08-19) (the reply is clamped at 2,000 codepoints, so the model is
 /// told the budget rather than generating text destined for truncation).
 /// Nothing dynamic — no timestamps, ids, or guild data — so each persona's
 /// prompt is one fixed string, pinned by test.
 pub fn system_prompt(persona: Persona) -> String {
     format!(
-        "You are {persona}. {} You are answering one question asked through a Discord slash command; keep the answer under 1,900 characters, because it is posted as a single Discord message.",
+        "You are {persona}. {} You are replying in a Discord conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. You have no tools, cannot see the server, and remember only what is in this conversation or the facts provided below — say so rather than guess.",
         contract_description(persona)
     )
 }
@@ -58,7 +60,7 @@ pub fn system_prompt(persona: Persona) -> String {
 /// deliberately, with the test.
 pub fn degraded_reply(persona: Persona) -> String {
     format!(
-        "**{persona}** was routed this question, but no generation backend is configured, so there is no model to answer it. Set ANTHROPIC_API_KEY (external Anthropic API) or ABBEY_BOT_LLM_ENDPOINT (local OpenAI-compatible server) in the bot's environment to enable answers."
+        "**{persona}** was routed this, but no generation backend is configured, so there is no model to answer — nothing here is a canned reply. Whoever runs the bot enables answers by setting ANTHROPIC_API_KEY (Anthropic API) or ABBEY_BOT_LLM_ENDPOINT (local OpenAI-compatible server, e.g. Ollama)."
     )
 }
 
@@ -126,7 +128,7 @@ mod tests {
         // configured. Any edit to the wording must be a deliberate one, here.
         assert_eq!(
             degraded_reply(Persona::Abbey),
-            "**Abbey** was routed this question, but no generation backend is configured, so there is no model to answer it. Set ANTHROPIC_API_KEY (external Anthropic API) or ABBEY_BOT_LLM_ENDPOINT (local OpenAI-compatible server) in the bot's environment to enable answers."
+            "**Abbey** was routed this, but no generation backend is configured, so there is no model to answer — nothing here is a canned reply. Whoever runs the bot enables answers by setting ANTHROPIC_API_KEY (Anthropic API) or ABBEY_BOT_LLM_ENDPOINT (local OpenAI-compatible server, e.g. Ollama)."
         );
         // The persona slot is live, not baked into the literal.
         assert!(degraded_reply(Persona::Aviva).starts_with("**Aviva** was routed"));

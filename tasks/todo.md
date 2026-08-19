@@ -19,3 +19,13 @@
 - [ ] Live smoke test: token + `ABBEY_GUILD_ID` + `ABBEY_MESSAGE_CONTENT=1` + a backend; confirm command registration, a mention reply, a reaction reward settling, `/admin brain` moving
 - [ ] Model-initiated tools (spec `appleintelligence.md` `Tool` conformances) on the Anthropic path — design decision first
 - [ ] voice.md was not supplied — voice remains out of scope
+
+## DM / live (2026-08-19)
+- [x] ABBEY_BOT_LLM_MODEL, local max_tokens 4096, reasoning-only error
+- [x] DM namespace per user; DM-capable commands; /persona ask through engine
+- [x] Forced path loads brain; failure reply on mention/DM; typing keepalive; mention strip
+- [x] ABBEY_QUIET + learning-off gate before policy
+- [x] Live DM round-trip via pipeline against ollama gemma4:12b
+- [ ] Browser-driven Discord test per docs/live-test-protocol.md — BLOCKED: Claude Chrome extension not connected
+- [ ] ABBEY_VISION_ENDPOINT=off sentinel (vision silently falls back to the LLM endpoint)
+- [ ] ABBEY_BOT_LLM_MAX_TOKENS / TIMEOUT tunables (Proposed)

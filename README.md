@@ -28,6 +28,13 @@ to this crate and shares no code with it.
 | `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
 | `/admin show\|persona\|learning\|vision\|cooldown\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, ε override + brain inspection, persist now, export the brain snapshot as JSON, clear this channel's transcript. |
 
+**DMs work.** A DM to Abbey is always answered (through the backend), keeps a
+per-conversation transcript, and is its own one-person namespace
+(`discord:dm:<user>`) for facts, recall, and reputation — two people DMing her
+never share memory. `/persona`, `/remember`, `/forget`, `/recall`,
+`/reputation`, `/summarize`, `/see`, `/ocr`, and `/stats` all work in a DM;
+`/admin` and the guild-data commands stay guild-only.
+
 Beyond commands, Abbey listens. Every message and reaction she can see runs
 through the adaptive pipeline (see "The learning loop" below): a per-server
 policy decides whether to stay silent, react, or reply; mentions and DMs always
@@ -56,7 +63,7 @@ selected from the environment, first match wins:
 | Env var | Backend |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. A secret with `DISCORD_TOKEN`'s exact handling: env only, never in a commit or an image layer. |
-| `ABBEY_BOT_LLM_ENDPOINT` | An OpenAI-compatible server, usually loopback (llama-server / ollama / mlx). Base URL only, e.g. `http://127.0.0.1:8080` — the bot POSTs to `<endpoint>/v1/chat/completions`, and the server's own model choice is what answers. |
+| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (llama-server / ollama / mlx). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. `ABBEY_BOT_LLM_MODEL` names the model (`gemma4:12b`); llama-server/mlx ignore it, ollama requires it. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
 
 With neither set, `/persona ask` replies that no generation backend is
 configured, and the pipeline never speaks unsolicited (a mention gets the same
@@ -66,6 +73,7 @@ runs fully offline.
 | Env var | What it enables |
 |---|---|
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
+| `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
@@ -175,8 +183,12 @@ restart:
 
 Honesty note: **verified live so far: gateway connect and global command
 registration (2026-08-19; 16 commands including the app's preserved Entry
-Point, 58 guilds). Not yet verified live: any command answering, the pipeline
-replying or learning, Telegram, Slack, vision.** The gate proves those paths
+Point, 58 guilds), and the DM pipeline end-to-end against a real local model
+(`cargo test live_dm -- --ignored` with ollama `gemma4:12b`: three DM turns,
+transcript survives, ~35 s/reply — through the pipeline's `Outbound` seam, not
+through Discord's client). Not yet verified from a Discord client: any command
+answering, a reply appearing in a channel, a reaction reward settling,
+Telegram, Slack, vision.** The gate proves those paths
 behind recording transports, persistence round-trips, and the
 startup/fail-fast paths. This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
