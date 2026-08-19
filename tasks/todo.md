@@ -49,4 +49,4 @@
 - [x] generation semaphore + queue timeout + busy copy
 - [x] SSE accumulator, StreamTransport, Outbound::edit, stream_reply + tests
 - [x] Anthropic→local fallback (AppState::chat)
-- [ ] live: streaming DM observed; concurrency serialisation observed
+- [x] live: streaming DM observed (posted :39, final :44, "(edited)"); concurrency serialisation not observed (unit-tested)
