@@ -404,6 +404,122 @@ pub async fn chat_backend<T: Transport>(
     extract_text(backend, &raw)
 }
 
+/// The streaming variant of [`build_chat_request`] for the OpenAI-compatible
+/// path: the same body with `"stream": true`, so the server answers with
+/// server-sent events (`data: {...}` lines ending in `data: [DONE]`). The
+/// Anthropic path is not streamed here — it answers in seconds — so a
+/// request built for it is returned unchanged and `stream` stays absent.
+pub fn build_stream_request(
+    backend: &Backend,
+    system_prompt: &str,
+    turns: &[ChatTurn],
+) -> LlmRequest {
+    let mut request = build_chat_request(backend, system_prompt, turns);
+    if matches!(backend, Backend::OpenAiCompatible { .. }) {
+        request.body["stream"] = json!(true);
+    }
+    request
+}
+
+/// Incremental parser for OpenAI-style SSE bodies. Feed it raw chunks as they
+/// arrive (they split anywhere, including mid-line); it returns the text
+/// deltas found in complete `data:` lines and remembers the partial tail.
+/// Pure and allocation-light; pinned by tests with chunks cut mid-JSON.
+#[derive(Debug, Default)]
+pub struct SseAccumulator {
+    buffer: String,
+    done: bool,
+}
+
+impl SseAccumulator {
+    /// Consume one network chunk; return the content deltas it completed.
+    pub fn feed(&mut self, chunk: &str) -> Vec<String> {
+        let mut deltas = Vec::new();
+        self.buffer.push_str(chunk);
+        while let Some(newline) = self.buffer.find('\n') {
+            let line = self.buffer[..newline].trim_end_matches('\r').to_string();
+            self.buffer.drain(..=newline);
+            let Some(payload) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let payload = payload.trim();
+            if payload == "[DONE]" {
+                self.done = true;
+                continue;
+            }
+            if let Some(text) = serde_json::from_str::<Value>(payload).ok().and_then(|v| {
+                v.pointer("/choices/0/delta/content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }) && !text.is_empty()
+            {
+                deltas.push(text);
+            }
+        }
+        deltas
+    }
+
+    /// Whether `data: [DONE]` has been seen.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+}
+
+/// A transport that can stream: deliver deltas through `on_delta` as they
+/// arrive and resolve with the full text. `HttpTransport` implements it over
+/// reqwest's byte stream; tests use a fake that replays canned SSE chunks.
+pub trait StreamTransport {
+    fn post_stream(
+        &self,
+        request: &LlmRequest,
+        on_delta: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> impl Future<Output = Result<String, LlmError>> + Send;
+}
+
+impl StreamTransport for HttpTransport {
+    fn post_stream(
+        &self,
+        request: &LlmRequest,
+        on_delta: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> impl Future<Output = Result<String, LlmError>> + Send {
+        let mut builder = self.client.post(&request.url).json(&request.body);
+        for (name, value) in &request.headers {
+            builder = builder.header(*name, value);
+        }
+        async move {
+            use futures_util::StreamExt as _;
+            let response = builder
+                .send()
+                .await
+                .map_err(|e| LlmError(format!("the request failed: {e}")))?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                let brief: String = body.chars().take(300).collect();
+                return Err(LlmError(format!("HTTP {status}: {brief}")));
+            }
+            let mut stream = response.bytes_stream();
+            let mut acc = SseAccumulator::default();
+            let mut full = String::new();
+            while let Some(chunk) = stream.next().await {
+                let bytes =
+                    chunk.map_err(|e| LlmError(format!("reading the stream failed: {e}")))?;
+                for delta in acc.feed(&String::from_utf8_lossy(&bytes)) {
+                    full.push_str(&delta);
+                    let _ = on_delta.send(delta);
+                }
+                if acc.is_done() {
+                    break;
+                }
+            }
+            if full.trim().is_empty() {
+                return Err(LlmError("the stream carried no answer text".to_string()));
+            }
+            Ok(full)
+        }
+    }
+}
+
 /// Test double: records the exact request it was handed and returns a canned
 /// body. `cfg(test)` deliberately — this is a binary crate, where `pub` exempts
 /// nothing from the dead-code lint.
@@ -498,6 +614,44 @@ mod tests {
         let request = build_request(&named, "S", "Q");
         assert_eq!(request.body["model"], "gemma4:26b");
         assert_eq!(request.body["max_tokens"], LOCAL_MAX_TOKENS);
+    }
+
+    #[test]
+    fn stream_request_sets_stream_only_on_the_local_path() {
+        let local = Backend::OpenAiCompatible {
+            endpoint: "http://127.0.0.1:11434".into(),
+            model: "gemma4:e4b".into(),
+        };
+        assert_eq!(
+            build_stream_request(&local, "S", &[ChatTurn::user("Q")]).body["stream"],
+            true
+        );
+        let anthropic = Backend::Anthropic {
+            api_key: "k".into(),
+        };
+        assert!(
+            build_stream_request(&anthropic, "S", &[ChatTurn::user("Q")])
+                .body
+                .get("stream")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sse_accumulator_handles_chunks_split_mid_line_and_done() {
+        let mut acc = SseAccumulator::default();
+        let a = acc.feed(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choices\":[{\"del",
+        );
+        assert_eq!(a, vec!["Hel".to_string()]);
+        let b = acc.feed(
+            "ta\":{\"content\":\"lo\"}}]}\nnot-an-sse-line\ndata: {\"choices\":[{\"delta\":{}}]}\n",
+        );
+        assert_eq!(b, vec!["lo".to_string()]);
+        assert!(!acc.is_done());
+        let c = acc.feed("data: [DONE]\n");
+        assert!(c.is_empty());
+        assert!(acc.is_done());
     }
 
     #[test]
