@@ -12,3 +12,4 @@ pub mod replay;
 pub mod reward;
 pub mod social;
 pub mod state;
+pub mod telemetry;
