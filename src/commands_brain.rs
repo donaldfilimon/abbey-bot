@@ -10,7 +10,7 @@
 use serenity::all::{Attachment, CreateAttachment, User};
 
 use crate::ask;
-use crate::brain::state::BotAction;
+use crate::brain::telemetry::BrainView;
 use crate::commands::{PersonaChoice, clamp_message};
 use crate::engine;
 use crate::guild::{self, GuildSettings};
@@ -362,9 +362,23 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         )
     };
     let pending = AppState::lock(&state.rewards).pending_len();
+    let budget_line = {
+        let mut stores = AppState::lock(&state.stores);
+        let settings = AppState::lock(&state.guilds).config(&g, &mut *stores);
+        let left = AppState::lock(&state.budget).tokens_left(
+            &g,
+            settings.unsolicited_per_hour,
+            runtime::now(),
+        );
+        format!(
+            "act: {} · budget {left:.1} of {}/h left",
+            if settings.unsolicited { "on" } else { "off" },
+            settings.unsolicited_per_hour
+        )
+    };
     let backend = state.backend.as_ref().map_or("none", llm::Backend::label);
     let text = format!(
-        "{interaction_text}\nmessages seen: {seen}\n{brain_line}\npending rewards: {pending}\nbackend: {backend} · vision: {}",
+        "{interaction_text}\nmessages seen: {seen}\n{brain_line}\npending rewards: {pending}\nbackend: {backend} · vision: {}\n{budget_line}",
         if state.vision.is_some() { "on" } else { "off" }
     );
     ctx.say(clamp_message(text)).await?;
@@ -383,6 +397,8 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_learning",
         "admin_vision",
         "admin_cooldown",
+        "admin_act",
+        "admin_budget",
         "admin_brain",
         "admin_flush",
         "admin_export",
@@ -494,6 +510,44 @@ pub async fn admin_cooldown(
     Ok(())
 }
 
+/// Let Abbey speak unsolicited in this server (the per-guild policy decides).
+#[poise::command(slash_command, guild_only, ephemeral, rename = "act")]
+pub async fn admin_act(
+    ctx: Context<'_>,
+    #[description = "on | off"] state: OnOff,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let on = state.is_on();
+    let Some(_) = update_settings(ctx, |s| s.unsolicited = on) else {
+        ctx.say(NO_GUILD).await?;
+        return Ok(());
+    };
+    ctx.say(if on {
+        "Abbey may now speak unsolicited here — bounded by the cooldown and the hourly budget (`/admin budget`). `ABBEY_QUIET=1` on the host still silences her."
+    } else {
+        "Abbey will only answer mentions, DMs, and commands here."
+    })
+    .await?;
+    Ok(())
+}
+
+/// Unsolicited actions allowed per hour in this server (1–60).
+#[poise::command(slash_command, guild_only, ephemeral, rename = "budget")]
+pub async fn admin_budget(
+    ctx: Context<'_>,
+    #[description = "1–60"] per_hour: i64,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let n = guild::clamp_budget(per_hour);
+    let Some(_) = update_settings(ctx, |s| s.unsolicited_per_hour = n) else {
+        ctx.say(NO_GUILD).await?;
+        return Ok(());
+    };
+    ctx.say(format!("Unsolicited budget: **{n}/h** for this server."))
+        .await?;
+    Ok(())
+}
+
 /// Inspect this server's policy: ε, steps, buffer fill, experiences.
 #[poise::command(slash_command, guild_only, ephemeral, rename = "brain")]
 pub async fn admin_brain(
@@ -512,26 +566,38 @@ pub async fn admin_brain(
         update_settings(ctx, |s| s.epsilon_override = override_eps);
     }
     let text = {
+        let now = runtime::now();
+        let (settings, tokens_left) = {
+            let mut stores = AppState::lock(&state.stores);
+            let settings = AppState::lock(&state.guilds).config(&g, &mut *stores);
+            let tokens_left =
+                AppState::lock(&state.budget).tokens_left(&g, settings.unsolicited_per_hour, now);
+            (settings, tokens_left)
+        };
         let mut brains = AppState::lock(&state.brains);
         let stores = AppState::lock(&state.stores);
-        let brain = brains.brain(&g, &*stores, runtime::now());
+        let brain = brains.brain(&g, &*stores, now);
         if let Some(eps) = override_eps {
             brain.set_epsilon(eps);
         }
-        let q_hint = format!(
-            "actions: {}",
-            BotAction::ALL
-                .iter()
-                .map(|a| format!("{a:?}"))
-                .collect::<Vec<_>>()
-                .join(" / ")
-        );
         let (eps, steps, buffer) = (brain.epsilon(), brain.step_count(), brain.buffer_len());
+        let experiences = brains.experience_count(&g).unwrap_or(0);
+        let view = BrainView {
+            scoped_guild_id: &g,
+            epsilon: eps,
+            learn_steps: steps,
+            buffer_len: buffer,
+            buffer_capacity: runtime::REPLAY_CAPACITY,
+            experiences,
+            budget_per_hour: settings.unsolicited_per_hour,
+            tokens_left,
+            topology: &runtime::TOPOLOGY,
+        };
+        let stats = brains.stats(&g).cloned().unwrap_or_default();
         format!(
-            "**brain — {g}**\nε {eps:.3} · learn steps {steps} · replay buffer {buffer}/{} · experiences {}\n{q_hint}\ntopology {:?}",
-            runtime::REPLAY_CAPACITY,
-            brains.experience_count(&g).unwrap_or(0),
-            runtime::TOPOLOGY
+            "{}\nact: {}",
+            stats.render(&view),
+            if settings.unsolicited { "on" } else { "off" }
         )
     };
     ctx.say(clamp_message(text)).await?;
