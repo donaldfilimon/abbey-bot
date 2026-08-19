@@ -138,6 +138,9 @@ pub async fn handle<O: Outbound + Sync>(
             .memory
             .record_message(&scoped_channel, &event.user_display_name, &text, now);
         let ctx = stores.memory.channel_mut(&scoped_channel);
+        if ctx.guild.is_none() {
+            ctx.guild = Some(scoped_guild.clone());
+        }
         u32::try_from(
             ctx.recent
                 .iter()

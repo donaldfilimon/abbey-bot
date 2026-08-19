@@ -37,3 +37,7 @@ status: done
 status: in_progress
 - 2026-08-19: vision works on a local VLM — ollama `gemma4:e4b` described a screenshot correctly; `/v1` needed a 1,024-token budget (reasoning first) and a reasoning-exhausted error is now honest. launchd user agent for this Mac: `deploy/com.donaldfilimon.abbey-bot.plist` + `deploy/install-launchd.sh` (build, install, load; `--uninstall`) — written and lint-checked, **not installed** (a persistent launch agent is Donald's call; it would also double up with the session-run bot).
 - Not done / needs Donald: Telegram and Slack live (tokens); CI actually executing (account-level Actions billing lock); `/see` `/ocr` exercised from the client (needs an uploaded attachment).
+
+## Self-learning hardening (continuation of "improve all")
+status: done
+- 2026-08-19: replay buffer (last 1,000 experiences) and pending rewards persist across restarts; rolling channel summaries for opted-in guilds/DMs every 30 messages (scheduler, 10 min), grounding replies. Gate 331 tests. Live observation of a refreshed summary needs 30 new messages in an invited channel — not yet seen.

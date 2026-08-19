@@ -40,6 +40,8 @@ pub const PERSIST_EVERY: Duration = Duration::from_secs(300);
 pub const SETTLE_EVERY: Duration = Duration::from_secs(30);
 /// Idle conversation sessions are dropped after this long.
 pub const SESSION_IDLE_SECS: u64 = 6 * 3600;
+/// How often the rolling channel summariser looks for due channels.
+pub const SUMMARIZE_EVERY: Duration = Duration::from_secs(600);
 
 /// Unix seconds now. The single place the wall clock is read; everything pure
 /// takes the value as a parameter.
@@ -320,6 +322,8 @@ impl AppState {
             transport: HttpVisionTransport::default(),
         });
         let backend = Backend::from_env();
+        let mut rewards = RewardCollector::new();
+        rewards.restore(stores.pending_rewards.clone());
         let fallback = match &backend {
             Some(Backend::Anthropic { .. }) => Backend::from_values(
                 None,
@@ -333,7 +337,7 @@ impl AppState {
             guilds: Mutex::new(GuildRegistry::new()),
             brains: Mutex::new(BrainRegistry::new(fresh_brain, DEFAULT_EVICT_AFTER_SECS)),
             social: Mutex::new(SocialBrain::new()),
-            rewards: Mutex::new(RewardCollector::new()),
+            rewards: Mutex::new(rewards),
             cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
             generation: tokio::sync::Semaphore::new(concurrency_from_env(backend.as_ref())),
@@ -498,6 +502,7 @@ impl AppState {
             let mut stores = Self::lock(&self.stores);
             Self::lock(&self.brains).persist_all(&mut *stores, t);
             Self::lock(&self.social).flush(&mut *stores);
+            stores.pending_rewards = Self::lock(&self.rewards).export_pending();
         }
         Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
         let Some(dir) = &self.data_dir else { return };
@@ -507,6 +512,69 @@ impl AppState {
         if let Err(e) = Self::lock(&self.recall).save(&Stores::wdbx_path(dir)) {
             tracing::error!(error = %e, "persisting the WDBX segment failed");
         }
+    }
+
+    /// Rolling channel summaries — the spec's "rolling 2k-token summary
+    /// compressed via ABI". For every channel whose count is
+    /// [`crate::memory::SUMMARY_EVERY_MESSAGES`] past its last summary, and
+    /// whose guild has opted in (`/admin act on`) or is a DM, ask the backend
+    /// for a summary of the recent lines and store it as the channel's
+    /// context. One generation at a time, through the usual slot, so it never
+    /// starves a live reply. Returns how many channels were summarised.
+    pub async fn refresh_summaries(&self) -> usize {
+        let Some(_) = &self.backend else { return 0 };
+        let due: Vec<String> = Self::lock(&self.stores).memory.channels_due_for_summary();
+        let mut done = 0;
+        for scoped_channel in due {
+            // Only where Abbey has been invited to pay attention.
+            let Some(guild) = guild_of_channel(&Self::lock(&self.stores), &scoped_channel) else {
+                continue;
+            };
+            let invited = guild.contains(":dm:") || {
+                let mut stores = Self::lock(&self.stores);
+                Self::lock(&self.guilds)
+                    .config(&guild, &mut *stores)
+                    .unsolicited
+            };
+            if !invited {
+                continue;
+            }
+            let (transcript, count) = {
+                let mut stores = Self::lock(&self.stores);
+                let ctx = stores.memory.channel_mut(&scoped_channel);
+                (
+                    ctx.render_recent(crate::memory::RECENT_CAP),
+                    ctx.recent.len(),
+                )
+            };
+            if transcript.trim().is_empty() {
+                continue;
+            }
+            let (system, user) =
+                crate::engine::summarize_prompt(crate::persona::Persona::Abbey, &transcript, count);
+            let Ok(_slot) = self.acquire_generation().await else {
+                break;
+            };
+            match self
+                .chat(&system, &[crate::llm::ChatTurn::user(user)])
+                .await
+            {
+                Ok((summary, _)) => {
+                    let summary = crate::ask::tidy_reply(crate::persona::Persona::Abbey, &summary);
+                    let mut stores = Self::lock(&self.stores);
+                    let ctx = stores.memory.channel_mut(&scoped_channel);
+                    ctx.summary = summary;
+                    ctx.summarized_at_count = ctx.message_count;
+                    done += 1;
+                    tracing::info!(channel = %scoped_channel, "rolling summary refreshed");
+                }
+                Err(e) => {
+                    tracing::warn!(channel = %scoped_channel, error = %e.0, "rolling summary failed");
+                    break;
+                }
+            }
+        }
+        done
     }
 
     /// Start the heartbeat: learn / flush / persist / settle on their
@@ -528,7 +596,27 @@ impl AppState {
         spawn(FLUSH_EVERY, Self::flush_social);
         spawn(PERSIST_EVERY, Self::persist_all);
         spawn(SETTLE_EVERY, Self::settle_rewards);
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(SUMMARIZE_EVERY);
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                state.refresh_summaries().await;
+            }
+        });
     }
+}
+
+/// The scoped guild a channel's traffic belongs to, recovered from the most
+/// recent message's stored guild tag. Channels are keyed by
+/// `"{platform}:{channel}"` only, so the guild is stored beside the messages.
+fn guild_of_channel(stores: &Stores, scoped_channel: &str) -> Option<String> {
+    stores
+        .memory
+        .channels
+        .get(scoped_channel)
+        .and_then(|c| c.guild.clone())
 }
 
 #[cfg(test)]
@@ -572,6 +660,28 @@ mod tests {
         assert_eq!(queue_secs_from_value(None), DEFAULT_QUEUE_SECS);
         assert_eq!(queue_secs_from_value(Some("30".into())), 30);
         assert_eq!(queue_secs_from_value(Some("0".into())), DEFAULT_QUEUE_SECS);
+    }
+
+    #[tokio::test]
+    async fn rolling_summaries_do_nothing_without_a_backend_and_keep_channels_due() {
+        let state = AppState::in_memory();
+        {
+            let mut stores = AppState::lock(&state.stores);
+            for i in 0..30 {
+                stores
+                    .memory
+                    .record_message("discord:c", "a", &format!("m{i}"), i);
+            }
+            stores.memory.channel_mut("discord:c").guild = Some("discord:g".into());
+        }
+        assert_eq!(state.refresh_summaries().await, 0);
+        assert_eq!(
+            AppState::lock(&state.stores)
+                .memory
+                .channels_due_for_summary(),
+            ["discord:c"],
+            "still due — nothing consumed the marker"
+        );
     }
 
     #[test]

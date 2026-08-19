@@ -41,7 +41,15 @@ pub struct BrainSnapshot {
     pub layers: Vec<LayerSnapshot>,
     pub epsilon: f32,
     pub step_count: u64,
+    /// The most recent experiences (up to [`SNAPSHOT_EXPERIENCES`]), oldest
+    /// first, so a restart resumes learning from a warm buffer instead of an
+    /// empty one. Absent in older snapshots.
+    #[serde(default)]
+    pub experiences: Vec<Experience>,
 }
+
+/// How many replay experiences a snapshot keeps.
+pub const SNAPSHOT_EXPERIENCES: usize = 1_000;
 
 /// One dense layer's parameters as stored in a [`BrainSnapshot`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -224,10 +232,13 @@ impl DqnAgent {
                 .collect(),
             epsilon: self.epsilon,
             step_count: self.step_count,
+            experiences: self.buffer.recent(SNAPSHOT_EXPERIENCES),
         }
     }
 
-    /// Loads a snapshot into both networks and restores ε / step count.
+    /// Loads a snapshot into both networks and restores ε / step count, and
+    /// refills the replay buffer with the snapshot's recent experiences
+    /// (state width must match; others are skipped).
     ///
     /// # Errors
     /// Returns [`ImportError`] — and leaves the agent untouched — if the
@@ -258,6 +269,12 @@ impl DqnAgent {
         self.target = self.online.clone();
         self.epsilon = snapshot.epsilon;
         self.step_count = snapshot.step_count;
+        let width = self.state_size();
+        for exp in &snapshot.experiences {
+            if exp.state.len() == width && exp.next_state.len() == width {
+                self.buffer.push(exp.clone());
+            }
+        }
         Ok(())
     }
 }
@@ -357,7 +374,9 @@ mod tests {
         agent.learn();
         assert_eq!(agent.step_count(), 0);
         assert_eq!(agent.epsilon(), EPSILON_INITIAL);
-        assert_eq!(agent.export_weights(), before);
+        // Weights untouched (the snapshot now also carries the buffer, so
+        // compare the learned parts only).
+        assert_eq!(agent.export_weights().layers, before.layers);
 
         agent.remember(bandit_exp(0));
         agent.learn();
@@ -446,6 +465,43 @@ mod tests {
         assert_eq!(fresh.online, trained.online);
         assert_eq!(fresh.online, fresh.target, "import syncs the target too");
         assert_eq!(fresh.q_values(&[0.2, 0.8]), trained.q_values(&[0.2, 0.8]));
+    }
+
+    #[test]
+    fn a_snapshot_carries_recent_experiences_and_import_refills_the_buffer() {
+        let mut a = DqnAgent::new(&[2, 4, 3], 10, 7);
+        for i in 0..5 {
+            a.remember(Experience {
+                state: vec![i as f32, 0.0],
+                action: 1,
+                reward: 1.0,
+                next_state: vec![i as f32, 0.0],
+                done: true,
+            });
+        }
+        // One malformed width to be skipped on import.
+        let mut snap = a.export_weights();
+        assert_eq!(snap.experiences.len(), 5);
+        snap.experiences.push(Experience {
+            state: vec![9.0],
+            action: 0,
+            reward: 0.0,
+            next_state: vec![9.0],
+            done: true,
+        });
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: BrainSnapshot = serde_json::from_str(&json).unwrap();
+        let mut b = DqnAgent::new(&[2, 4, 3], 10, 8);
+        b.import_weights(&back).unwrap();
+        assert_eq!(
+            b.buffer_len(),
+            5,
+            "five well-formed experiences restored, one skipped"
+        );
+        // An older snapshot without the field still loads.
+        let old = r#"{"topology":[2,4,3],"layers":[],"epsilon":0.1,"step_count":0}"#;
+        let parsed: Result<BrainSnapshot, _> = serde_json::from_str(old);
+        assert!(parsed.is_ok_and(|s| s.experiences.is_empty()));
     }
 
     #[test]

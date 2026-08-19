@@ -61,6 +61,26 @@ impl ReplayBuffer {
     }
 
     /// Appends while under capacity, otherwise overwrites the oldest entry.
+    /// The most recent `n` experiences, oldest first — what a snapshot keeps
+    /// so learning continues across a restart instead of starting from an
+    /// empty buffer every time.
+    pub fn recent(&self, n: usize) -> Vec<Experience> {
+        let len = self.storage.len();
+        if len == 0 || n == 0 {
+            return Vec::new();
+        }
+        let n = n.min(len);
+        // When full, the oldest element sits at `write_index`.
+        let start = if len < self.capacity {
+            0
+        } else {
+            self.write_index
+        };
+        (0..n)
+            .map(|i| self.storage[(start + (len - n) + i) % len].clone())
+            .collect()
+    }
+
     pub fn push(&mut self, experience: Experience) {
         if self.storage.len() < self.capacity {
             self.storage.push(experience);
@@ -134,6 +154,25 @@ mod tests {
             [6.0, 4.0, 5.0]
         );
         assert_eq!(buf.capacity(), 3);
+    }
+
+    #[test]
+    fn recent_returns_oldest_first_even_after_wrap() {
+        let mut buf = ReplayBuffer::new(3);
+        for i in 0..5u8 {
+            buf.push(Experience {
+                state: vec![f32::from(i)],
+                action: 0,
+                reward: 0.0,
+                next_state: vec![],
+                done: true,
+            });
+        }
+        let recent: Vec<f32> = buf.recent(2).into_iter().map(|e| e.state[0]).collect();
+        assert_eq!(recent, [3.0, 4.0], "last two, oldest first");
+        let all: Vec<f32> = buf.recent(10).into_iter().map(|e| e.state[0]).collect();
+        assert_eq!(all, [2.0, 3.0, 4.0]);
+        assert!(ReplayBuffer::new(3).recent(2).is_empty());
     }
 
     #[test]

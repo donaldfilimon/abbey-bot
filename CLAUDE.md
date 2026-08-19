@@ -318,6 +318,14 @@ eviction, and the DQN all deterministic under test. A `SystemTime::now()` or a
 `rand` import inside `brain/`, `guild.rs`, `memory.rs`, `engine.rs`, or `wdbx.rs`
 is a regression, not a convenience.
 
+**What persists of the learning loop.** `BrainSnapshot` carries weights, ε,
+step count, and the last `SNAPSHOT_EXPERIENCES` (1,000) experiences; pending
+rewards are exported into the state document at every persist and restored at
+start. Telemetry (`BrainStats`) and the budget buckets are deliberately
+in-memory. The rolling summariser (`AppState::refresh_summaries`, every 10 min)
+only touches channels whose guild has `act on` or that are DMs, and takes the
+generation slot like any other turn.
+
 **Persistence is one JSON document plus one WDBX segment, not a database.**
 `persist::Stores` implements the three store traits the registries speak and
 writes `abbey-state.json` atomically; `wdbx::Recall` writes `wdbx.seg.0.jsonl`

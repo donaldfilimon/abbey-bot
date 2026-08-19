@@ -27,7 +27,7 @@ const POSITIVE_EMOJI: [&str; 6] = ["👍", "❤️", "🔥", "😂", "💯", "�
 const NEGATIVE_EMOJI: [&str; 4] = ["👎", "💀", "😡", "🤮"];
 
 /// A reply awaiting settlement.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Pending {
     pub state: Vec<f32>,
     pub action: usize,
@@ -41,7 +41,7 @@ pub struct Pending {
 
 /// Holds replies open for their settlement window and closes them into
 /// experiences. Keyed by the native id of the message Abbey sent.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RewardCollector {
     pending: HashMap<String, Pending>,
 }
@@ -49,6 +49,25 @@ pub struct RewardCollector {
 impl RewardCollector {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Take everything still open — for persistence, so a restart inside the
+    /// settlement window does not drop the reward. `restore` puts it back.
+    pub fn export_pending(&self) -> Vec<(String, Pending)> {
+        let mut rows: Vec<(String, Pending)> = self
+            .pending
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
+    }
+
+    /// Restore previously exported rows (existing keys win).
+    pub fn restore(&mut self, rows: Vec<(String, Pending)>) {
+        for (k, v) in rows {
+            self.pending.entry(k).or_insert(v);
+        }
     }
 
     /// Number of replies still awaiting settlement.
@@ -162,6 +181,25 @@ impl RewardCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_rewards_export_and_restore_across_a_restart() {
+        let mut a = RewardCollector::new();
+        a.register_reply(vec![0.0; 3], 1, "m1", "discord:g", 10);
+        a.reaction("👍", "m1", true);
+        let rows = a.export_pending();
+        let json = serde_json::to_string(&rows).unwrap();
+        let back: Vec<(String, Pending)> = serde_json::from_str(&json).unwrap();
+        let mut b = RewardCollector::new();
+        b.restore(back);
+        assert_eq!(b.pending_len(), 1);
+        let settled = b.settle_expired(10 + SETTLEMENT_WINDOW_SECS + 1);
+        assert_eq!(settled.len(), 1);
+        assert!(
+            (settled[0].1.reward - 0.8).abs() < 1e-6,
+            "the reaction survived the restart"
+        );
+    }
 
     const T0: u64 = 1_700_000_000;
 
