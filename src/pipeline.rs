@@ -349,15 +349,12 @@ pub async fn handle<O: Outbound + Sync>(
                 )
                 .await
             }
-            // Anthropic answers in seconds; one post is the better UX.
-            llm::Backend::Anthropic { .. } => llm::chat_backend(
-                &state.llm,
-                backend,
-                &prepared.system_prompt,
-                &prepared.turns,
-            )
-            .await
-            .map(|text| (ask::tidy_reply(persona, &text), None)),
+            // Anthropic answers in seconds; one post is the better UX, and a
+            // failure falls back to the local endpoint once when one is set.
+            llm::Backend::Anthropic { .. } => state
+                .chat(&prepared.system_prompt, &prepared.turns)
+                .await
+                .map(|(text, _label)| (ask::tidy_reply(persona, &text), None)),
         }
     })
     .await;

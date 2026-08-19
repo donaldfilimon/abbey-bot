@@ -154,6 +154,9 @@ pub struct AppState {
     pub recall: Mutex<Recall>,
     pub engine: Mutex<Engine>,
     pub backend: Option<Backend>,
+    /// The local backend kept as a one-shot fallback when Anthropic is primary
+    /// and `ABBEY_BOT_LLM_ENDPOINT` is also set. `None` otherwise.
+    pub fallback: Option<Backend>,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
     /// the policy is untrained.
@@ -232,6 +235,14 @@ impl AppState {
             transport: HttpVisionTransport::default(),
         });
         let backend = Backend::from_env();
+        let fallback = match &backend {
+            Some(Backend::Anthropic { .. }) => Backend::from_values(
+                None,
+                std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
+                std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
+            ),
+            _ => None,
+        };
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -245,6 +256,7 @@ impl AppState {
             recall: Mutex::new(recall),
             engine: Mutex::new(Engine::new()),
             backend,
+            fallback,
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
             vision,
@@ -270,6 +282,7 @@ impl AppState {
             recall: Mutex::new(Recall::new()),
             engine: Mutex::new(Engine::new()),
             backend: None,
+            fallback: None,
             quiet: false,
             llm: HttpTransport::default(),
             vision: None,
@@ -291,6 +304,34 @@ impl AppState {
             Ok(Ok(permit)) => Ok(permit),
             Ok(Err(_)) => Err("the generation queue is closed".to_string()),
             Err(_) => Err(BUSY_REPLY.to_string()),
+        }
+    }
+
+    /// Multi-turn generation through the primary backend, falling back to the
+    /// local one once when Anthropic is primary and fails. Returns the text
+    /// and the label of the backend that actually answered. The caller holds
+    /// the generation slot.
+    pub async fn chat(
+        &self,
+        system_prompt: &str,
+        turns: &[crate::llm::ChatTurn],
+    ) -> Result<(String, &'static str), crate::llm::LlmError> {
+        let Some(primary) = &self.backend else {
+            return Err(crate::llm::LlmError(
+                "no generation backend is configured".into(),
+            ));
+        };
+        match crate::llm::chat_backend(&self.llm, primary, system_prompt, turns).await {
+            Ok(text) => Ok((text, primary.label())),
+            Err(e) => match &self.fallback {
+                Some(local) => {
+                    tracing::warn!(error = %e.0, "primary backend failed; falling back to the local endpoint");
+                    crate::llm::chat_backend(&self.llm, local, system_prompt, turns)
+                        .await
+                        .map(|text| (text, local.label()))
+                }
+                None => Err(e),
+            },
         }
     }
 
