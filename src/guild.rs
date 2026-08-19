@@ -18,6 +18,14 @@ use crate::persona::Persona;
 pub const MAX_COOLDOWN_SECONDS: u32 = 600;
 /// Spec default for the unsolicited-reply gap.
 pub const DEFAULT_COOLDOWN_SECONDS: u32 = 20;
+/// Unsolicited actions per guild per hour when nothing else is configured.
+pub const DEFAULT_BUDGET_PER_HOUR: u32 = 6;
+/// Ceiling for `/admin budget`.
+pub const MAX_BUDGET_PER_HOUR: u32 = 60;
+
+fn default_budget_per_hour() -> u32 {
+    DEFAULT_BUDGET_PER_HOUR
+}
 
 /// Lowercase wire name of a persona (`"abbey" | "aviva" | "abi"`), the form
 /// the `guild_configs.default_persona` column and `/admin persona` use.
@@ -70,6 +78,13 @@ pub struct GuildSettings {
     pub reply_cooldown_seconds: u32,
     /// `None` = the global exploration schedule.
     pub epsilon_override: Option<f32>,
+    /// May Abbey speak unsolicited here (reply/react chosen by the policy)?
+    /// Opt-in per guild via `/admin act on`; `ABBEY_QUIET=1` overrides.
+    #[serde(default)]
+    pub unsolicited: bool,
+    /// Hourly budget of unsolicited actions for the whole guild.
+    #[serde(default = "default_budget_per_hour")]
+    pub unsolicited_per_hour: u32,
     /// Reply language hint.
     pub locale: String,
 }
@@ -84,6 +99,8 @@ impl Default for GuildSettings {
             vision_enabled: true,
             reply_cooldown_seconds: DEFAULT_COOLDOWN_SECONDS,
             epsilon_override: None,
+            unsolicited: false,
+            unsolicited_per_hour: DEFAULT_BUDGET_PER_HOUR,
             locale: "en".to_owned(),
         }
     }
@@ -217,6 +234,13 @@ pub fn clamp_cooldown(seconds: i64) -> u32 {
     seconds.clamp(0, i64::from(MAX_COOLDOWN_SECONDS)) as u32
 }
 
+/// `/admin budget` input → `1..=MAX_BUDGET_PER_HOUR`. Zero is not a valid
+/// budget: "never" is `/admin act off`, which also stops learning from the
+/// guild, and the distinction matters.
+pub fn clamp_budget(per_hour: i64) -> u32 {
+    per_hour.clamp(1, i64::from(MAX_BUDGET_PER_HOUR)) as u32
+}
+
 fn on_off(flag: bool) -> &'static str {
     if flag { "on" } else { "off" }
 }
@@ -224,12 +248,14 @@ fn on_off(flag: bool) -> &'static str {
 /// The `/admin show` text.
 pub fn render_settings(scoped_guild_id: &str, settings: &GuildSettings) -> String {
     format!(
-        "**Abbey — {scoped_guild_id}**\npersona: {} · learning: {} · voice: {} · vision: {} · cooldown: {}s",
+        "**Abbey — {scoped_guild_id}**\npersona: {} · learning: {} · voice: {} · vision: {} · cooldown: {}s · act: {} · budget: {}/h",
         persona_name(settings.default_persona),
         on_off(settings.learning_enabled),
         on_off(settings.voice_enabled),
         on_off(settings.vision_enabled),
         settings.reply_cooldown_seconds,
+        on_off(settings.unsolicited),
+        settings.unsolicited_per_hour,
     )
 }
 
@@ -380,8 +406,31 @@ mod tests {
         };
         assert_eq!(
             render_settings("discord:42", &s),
-            "**Abbey — discord:42**\npersona: abbey · learning: on · voice: on · vision: off · cooldown: 20s"
+            "**Abbey — discord:42**\npersona: abbey · learning: on · voice: on · vision: off · cooldown: 20s · act: off · budget: 6/h"
         );
+    }
+
+    #[test]
+    fn new_settings_default_to_not_acting_with_six_per_hour() {
+        let s = GuildSettings::default();
+        assert!(!s.unsolicited, "opt-in, never opt-out");
+        assert_eq!(s.unsolicited_per_hour, DEFAULT_BUDGET_PER_HOUR);
+    }
+
+    #[test]
+    fn an_old_document_without_the_new_fields_still_loads() {
+        let old = r#"{"enabled":true,"default_persona":"abbey","learning_enabled":true,"voice_enabled":true,"vision_enabled":true,"reply_cooldown_seconds":20,"epsilon_override":null,"locale":"en"}"#;
+        let s: GuildSettings = serde_json::from_str(old).expect("older row loads");
+        assert!(!s.unsolicited);
+        assert_eq!(s.unsolicited_per_hour, 6);
+    }
+
+    #[test]
+    fn budget_clamps_to_one_through_sixty() {
+        assert_eq!(clamp_budget(0), 1);
+        assert_eq!(clamp_budget(-5), 1);
+        assert_eq!(clamp_budget(6), 6);
+        assert_eq!(clamp_budget(999), MAX_BUDGET_PER_HOUR);
     }
 
     #[test]
