@@ -214,8 +214,11 @@ access logs, and historical consent are explicitly not acceptable substitutes.
       Linux/Windows CI, and untested-connector evidence; record that Go Live video is not ingested
 - [ ] Commit in reviewable groups (provider/deployment, safety/core, cross-platform tests/docs) and
       push the branch **without merging**
-- [ ] Keep `cargo audit` honest and non-green: rustls-webpki plus DAVE/OpenMLS/libcrux advisories
-      stay documented, with no hand-maintained cryptographic fork
+- [x] Keep `cargo audit` honest: the active root lock reports zero vulnerabilities after a
+      provenance-checked, source-identical `openmls_rust_crypto` 0.5.1 compatibility patch moved
+      only its HPKE manifest constraints from 0.6 to 0.7. Remove the patch when `davey` adopts a
+      fixed upstream line. Retain the informational unmaintained `derivative`, `instant`, and
+      `proc-macro-error2` warnings as maintenance debt, not vulnerabilities.
 
 ## Memory relevance and intelligence layers (2026-08-20)
 

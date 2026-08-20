@@ -501,8 +501,14 @@ barge-in. A fresh everyone-present consent epoch, renewed `/voice resume`, an
 audible wake/reply, and interruption acceptance require their own current
 record and remain unclaimed by source evidence. OpenAI Realtime is
 an explicit degraded backup, not an offline path, and its spoken control is not
-authoritative. `tasks/goals.md` remains the detailed evidence ledger, including
-the non-green DAVE/OpenMLS dependency audit.
+authoritative. `tasks/goals.md` retains the dated dependency-audit history. The
+current root lock has zero reported vulnerabilities: Abbey carries a
+provenance-checked `openmls_rust_crypto` 0.5.1 compatibility patch whose Rust
+source is byte-identical to the crates.io archive and whose manifests only move
+the HPKE family from 0.6 to 0.7. Remove it when `davey` adopts a fixed upstream
+OpenMLS/HPKE line. `cargo audit` still reports the informational unmaintained
+`derivative`, `instant`, and `proc-macro-error2` warnings; those are not hidden
+or described as vulnerability fixes.
 This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
 --locked` produces the binary they both wrap. The exact stable Rust + locked

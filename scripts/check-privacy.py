@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import re
+import shlex
 import sys
 
 
@@ -74,6 +75,12 @@ RUST_OUTPUT_CALL = re.compile(
 SHELL_OUTPUT = re.compile(r"\b(?:cat|echo|printf|logger|tee)\b")
 SHELL_VARIABLE = re.compile(r"\$(?:\{)?([A-Za-z_][A-Za-z0-9_]*)")
 SHELL_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+SHELL_DUMP_COMMAND = re.compile(
+    r"(?:^|(?:&&|\|\||[;&|])\s*)(?:command\s+)?"
+    r"(?P<command>env|printenv|set|export)\b(?P<arguments>[^;&|]*)"
+)
+SHELL_REDIRECTION = re.compile(r"(?:^|\s)(?:\d*>>?|&>)")
+SHELL_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def sensitive(identifier: str) -> bool:
@@ -317,6 +324,50 @@ def scan_python(path: pathlib.Path) -> list[str]:
     )
 
 
+def shell_dump_command(line: str) -> str | None:
+    """Return a direct environment-dump command found in one logical line."""
+
+    for match in SHELL_DUMP_COMMAND.finditer(line):
+        command = match.group("command")
+        arguments = match.group("arguments")
+        before_redirection = SHELL_REDIRECTION.split(arguments, maxsplit=1)[0].strip()
+        try:
+            words = shlex.split(before_redirection, posix=True)
+        except ValueError:
+            # `sh -n` reports malformed quoting; do not guess at its tokenization here.
+            continue
+
+        if command == "printenv":
+            # With or without names, printenv exists only to emit environment values.
+            return command
+        if command == "set" and not words:
+            return command
+        if command == "export" and (not words or words[0] == "-p"):
+            return command
+        if command != "env":
+            continue
+
+        # `env` emits the resulting environment when no utility remains after
+        # its options and NAME=VALUE operands. Keep the ordinary
+        # `env NAME=VALUE utility ...` execution form available.
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if SHELL_ASSIGNMENT.match(word):
+                index += 1
+            elif word in {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}:
+                index += 2
+            elif word.startswith(("--unset=", "--chdir=", "--split-string=")):
+                index += 1
+            elif word.startswith("-"):
+                index += 1
+            else:
+                break
+        if index >= len(words):
+            return command
+    return None
+
+
 def scan_shell_source(source: str, label: str) -> list[str]:
     failures: list[str] = []
     logical_lines: list[tuple[int, str]] = []
@@ -351,13 +402,11 @@ def scan_shell_source(source: str, label: str) -> list[str]:
                     + ", ".join(unsafe)
                 )
             continue
-        if (
-            re.match(r"\s*(?:command\s+)?printenv(?:\s|$)", line)
-            or re.match(r"\s*(?:command\s+)?env\s*(?:[>|]|$)", line)
-            or re.match(r"\s*(?:command\s+)?set\s*(?:[>|]|$)", line)
-            or re.match(r"\s*(?:command\s+)?export\s+-p(?:\s|$)", line)
-        ):
-            failures.append(f"{label}:{number}: bare environment dump is forbidden")
+        dump_command = shell_dump_command(line)
+        if dump_command is not None:
+            failures.append(
+                f"{label}:{number}: shell environment dump via {dump_command} is forbidden"
+            )
             continue
         if re.search(r"(?:^|[;&|]\s*)set\s+-[^\n#]*x", line):
             failures.append(f"{label}:{number}: shell xtrace is forbidden")
@@ -469,8 +518,12 @@ def self_test() -> None:
         "set",
         "printenv DISCORD_TOKEN",
         "env > /tmp/environment.debug",
+        "env -0 > /tmp/environment.debug",
+        "env ABBEY_TEST=1 | logger",
         "set | logger",
+        "true; set > /tmp/shell.debug",
         "export -p",
+        "export -p DISCORD_TOKEN | logger",
     ):
         if not scan_shell_source(source, "unsafe-shell-fixture"):
             raise SystemExit(
