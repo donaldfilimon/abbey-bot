@@ -7,6 +7,10 @@ VENV_DIR="$HOME/.local/libexec/abbey-bot/mlx-vlm-venv"
 CACHE_DIR="$HOME/.local/share/abbey-bot/mlx-vlm/huggingface"
 MODEL_REVISION=73bcf09092aa277861d5a191b989b666f7f32e8f
 MODEL_DIR="$CACHE_DIR/hub/models--mlx-community--gemma-4-12B-it-4bit/snapshots/$MODEL_REVISION"
+# A generated-token limit does not bound prompt/KV growth. Keep the resident
+# context deliberately small enough for Gemma, Whisper, Kokoro, Discord, and
+# macOS to coexist on the 24 GiB deployment host.
+MAX_KV_SIZE=8192
 
 if [ ! -d "$MODEL_DIR" ]; then
   echo "pinned MLX-VLM model snapshot is missing: $MODEL_DIR" >&2
@@ -31,6 +35,7 @@ exec "$VENV_DIR/bin/python" -m mlx_vlm.server \
   --port 8282 \
   --model "$MODEL_DIR" \
   --max-tokens 4096 \
+  --max-kv-size "$MAX_KV_SIZE" \
   --max-num-seqs 1 \
   --vision-cache-size 4 \
   --log-level INFO
