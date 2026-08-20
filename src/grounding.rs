@@ -220,6 +220,11 @@ pub struct Verdict {
     pub examined: Vec<Specific>,
     /// The subset that appears nowhere in the grounding.
     pub ungrounded: Vec<Specific>,
+    /// The grounding had no sources at all, so `ungrounded` is necessarily
+    /// everything `examined` found. Recorded rather than hidden: the
+    /// measurement is still true, but it carries no information, and
+    /// [`Verdict::should_hedge`] refuses to act on it.
+    pub grounding_empty: bool,
 }
 
 impl Verdict {
@@ -228,6 +233,16 @@ impl Verdict {
     /// checks*", not "true" and not "not a hallucination".
     pub fn is_grounded(&self) -> bool {
         self.ungrounded.is_empty()
+    }
+
+    /// The policy predicate, which is deliberately *not* `!is_grounded()`.
+    ///
+    /// With no grounding at all, every specific is trivially ungrounded and a
+    /// hedge would fire on every reply carrying a number — the cry-wolf mode
+    /// that makes a guard worse than none. That case is enforced here rather
+    /// than left to the caller's discipline.
+    pub fn should_hedge(&self) -> bool {
+        !self.grounding_empty && !self.is_grounded()
     }
 }
 
@@ -252,6 +267,7 @@ pub fn check(reply: &str, grounding: &Grounding) -> Verdict {
     Verdict {
         examined,
         ungrounded,
+        grounding_empty: grounding.is_empty(),
     }
 }
 
@@ -279,6 +295,18 @@ const HEDGE_MAX_LISTED: usize = 3;
 /// Longest rendering of a single specific inside the note.
 const HEDGE_ITEM_CHARS: usize = 40;
 
+/// Render one ungrounded specific for display inside the note.
+///
+/// The text is model output being quoted back into a message Discord will
+/// render, so it is treated as hostile: whitespace collapsed to keep the note
+/// one line, backticks stripped, and the result wrapped in inline code so any
+/// `**`, `_`, `|| ||`, `#` or `>` it still contains is inert rather than live
+/// markup in the middle of an honesty sentence.
+fn hedge_item(s: &Specific) -> String {
+    let flat = collapse_ws(&s.text).replace('`', "");
+    format!("`{}`", clip(&flat, HEDGE_ITEM_CHARS))
+}
+
 /// Render the fixed hedge copy for a non-empty set of ungrounded specifics.
 ///
 /// Bounded regardless of how many specifics there are: at most
@@ -287,7 +315,7 @@ fn hedge_note(ungrounded: &[Specific]) -> String {
     let listed: Vec<String> = ungrounded
         .iter()
         .take(HEDGE_MAX_LISTED)
-        .map(|s| clip(&s.text, HEDGE_ITEM_CHARS))
+        .map(hedge_item)
         .collect();
     let mut body = listed.join(", ");
     let extra = ungrounded.len().saturating_sub(listed.len());
@@ -299,11 +327,14 @@ fn hedge_note(ungrounded: &[Specific]) -> String {
 
 /// Turn a verdict into an action. Policy lives here so [`check`] stays a pure
 /// measurement and a caller can choose a different policy over the same data.
+///
+/// See [`Verdict::should_hedge`] for why this is not simply
+/// `!verdict.is_grounded()`.
 pub fn action(verdict: &Verdict) -> Action {
-    if verdict.is_grounded() {
-        Action::PassThrough
-    } else {
+    if verdict.should_hedge() {
         Action::Hedge(hedge_note(&verdict.ungrounded))
+    } else {
+        Action::PassThrough
     }
 }
 
@@ -970,9 +1001,58 @@ mod tests {
         };
         assert_eq!(
             note,
-            "Heads up — treat these as unsupported: 2019. Nothing in this conversation or the \
+            "Heads up — treat these as unsupported: `2019`. Nothing in this conversation or the \
              facts I was given contains them, and I have no source for them here."
         );
+    }
+
+    #[test]
+    fn an_empty_grounding_never_hedges() {
+        // With no sources, every specific is trivially "ungrounded" and the
+        // hedge would fire on every reply containing a number. The measurement
+        // stays honest; the policy refuses to act on it.
+        let v = check("It shipped in 2019 at 40%.", &Grounding::new());
+        assert!(v.grounding_empty);
+        assert!(!v.is_grounded(), "the measurement is still reported");
+        assert_eq!(v.ungrounded.len(), 2);
+        assert!(!v.should_hedge());
+        assert_eq!(action(&v), Action::PassThrough);
+        assert_eq!(
+            hedged("It shipped in 2019 at 40%.", &v),
+            "It shipped in 2019 at 40%."
+        );
+    }
+
+    #[test]
+    fn a_quoted_specific_cannot_inject_markup_into_the_honesty_sentence() {
+        // The note quotes model output back into a message Discord renders, so
+        // a quotation carrying newlines or markdown must not break the note's
+        // shape or turn live inside it.
+        let g = Grounding::from_sources(["what does the doc say?"]);
+        let reply = "The doc says \"the **fast** path\nis || spoilered ||\".";
+        let v = check(reply, &g);
+        let Action::Hedge(note) = action(&v) else {
+            panic!("expected a hedge");
+        };
+        assert!(!note.contains('\n'), "{note:?}");
+        assert_eq!(note.lines().count(), 1, "{note:?}");
+        assert!(
+            note.contains("`the **fast** path is || spoilered ||`"),
+            "{note:?}"
+        );
+    }
+
+    #[test]
+    fn backticks_in_a_quoted_specific_cannot_escape_the_inline_code_span() {
+        let g = Grounding::from_sources(["what does it say?"]);
+        let reply = "It says \"run `rm -rf /` first\".";
+        let v = check(reply, &g);
+        let Action::Hedge(note) = action(&v) else {
+            panic!("expected a hedge");
+        };
+        // Exactly the two backticks this module added, and no more.
+        assert_eq!(note.matches('`').count(), 2, "{note:?}");
+        assert!(note.contains("`run rm -rf / first`"), "{note:?}");
     }
 
     #[test]
@@ -1022,7 +1102,7 @@ mod tests {
         let Action::Hedge(note) = action(&v) else {
             panic!("expected a hedge");
         };
-        assert!(note.contains("1985, 1986, 1987 and 2 more"), "{note}");
+        assert!(note.contains("`1985`, `1986`, `1987` and 2 more"), "{note}");
     }
 
     #[test]
@@ -1081,7 +1161,7 @@ mod tests {
         assert_eq!(tidy, "Answer\n\nIt shipped in 2019.");
         let out = hedged(&tidy, &check(&tidy, &g));
         assert!(out.starts_with("Answer\n\nIt shipped in 2019."), "{out}");
-        assert!(out.contains("treat these as unsupported: 2019"), "{out}");
+        assert!(out.contains("treat these as unsupported: `2019`"), "{out}");
     }
 
     // -- grounding construction -------------------------------------------
