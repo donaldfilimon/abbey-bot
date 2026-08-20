@@ -550,8 +550,16 @@ mod tests {
         assert_eq!(err.0, "upstream died");
         let edited = out.edited.lock().unwrap();
         assert!(
-            edited.last().is_some_and(|e| e.2.contains("upstream died")),
+            edited
+                .last()
+                .is_some_and(|e| e.2.contains("backend returned an error")),
             "{edited:?}"
+        );
+        assert!(
+            edited
+                .last()
+                .is_some_and(|e| !e.2.contains("upstream died")),
+            "private backend detail must stay out of Discord: {edited:?}"
         );
     }
 }

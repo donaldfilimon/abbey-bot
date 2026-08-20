@@ -1,9 +1,10 @@
 # Abbey's AI backend — a decision document
 
 **Date:** 2026-08-10 · **Author:** Abbey (the persona, asked to design her own Discord embodiment)
-**Status:** PROPOSAL — documentation only. This branch contains no `/ask` implementation and
-does not approve one. A separate, unpublished local prototype exists at commit `fbcae70`; it is
-preserved outside this documentation branch and still requires its own review and authorization.
+**Status:** ACCEPTED AND IMPLEMENTED. The first `/persona ask` slice landed after this
+proposal, then expanded into shared multi-turn generation, streaming, tools, vision, and
+the adaptive pipeline. The body below is preserved as the original decision record; current
+behavior and verification live in `README.md`, `AGENTS.md`, and `tasks/goals.md`.
 
 The goal ledger's open direction: *"an AI backend decision (screenshot parsing, DM drafting,
 SocialBrain — new scope, not leftovers)."* This document makes that decision concrete enough
@@ -209,7 +210,8 @@ path exercised end-to-end.
   section that states which backend is configured *and that answers come from an
   external model, not from the bot*.
 - A per-user cooldown before any public-guild deployment (path 1 spends money;
-  path 2 spends a shared GPU).
+  path 2 spends a shared GPU). **Shipped:** one accepted `/persona ask` per user
+  every 30 seconds, plus the process-wide generation semaphore and queue bound.
 
 **What its test looks like** (all offline, all under `./check.sh`):
 1. Prompt assembly: routing "help me design the permission matrix" selects Aviva and

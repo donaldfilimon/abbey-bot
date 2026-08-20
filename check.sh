@@ -1,5 +1,5 @@
 #!/bin/sh
-# Abbey Bot gate — fmt + clippy + tests. Mirrors the sibling Rust projects.
+# Abbey Bot gate — fmt + clippy + tests + the deployed release artifact.
 #
 # Note the deliberate absence of a pipe anywhere below: `cmd | tail` reports
 # tail's exit status, not cmd's, which is how a red suite reads as green.
@@ -16,5 +16,8 @@ echo "== test =="
 # --locked here proves what the Dockerfile's --locked build depends on:
 # a Cargo.toml bump without a regenerated lock fails THIS gate, not the deploy.
 cargo test --locked
+
+echo "== release build =="
+cargo build --release --locked
 
 echo "== ok =="

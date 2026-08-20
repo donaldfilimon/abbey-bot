@@ -86,6 +86,14 @@ pub fn fresh_brain() -> DqnAgent {
     DqnAgent::new(&TOPOLOGY, REPLAY_CAPACITY, now() ^ 0x5eed_ab13)
 }
 
+fn attachment_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()
+        .expect("static attachment client configuration is valid")
+}
+
 /// The live vision transport — reqwest behind the same seam the tests fake.
 pub struct HttpVisionTransport {
     client: reqwest::Client,
@@ -96,6 +104,7 @@ impl Default for HttpVisionTransport {
         Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
         }
@@ -117,10 +126,10 @@ impl VisionTransport for HttpVisionTransport {
                 .await
                 .map_err(|e| VisionError(format!("the request failed: {e}")))?;
             let status = response.status();
-            let body = response
-                .text()
+            let body = crate::http_body::read_capped(response, 2 * 1024 * 1024)
                 .await
-                .map_err(|e| VisionError(format!("reading the response failed: {e}")))?;
+                .map_err(|e| VisionError(e.to_string()))?;
+            let body = String::from_utf8_lossy(&body).into_owned();
             if !status.is_success() {
                 let brief: String = body.chars().take(300).collect();
                 return Err(VisionError(format!("HTTP {status}: {brief}")));
@@ -134,7 +143,7 @@ impl VisionTransport for HttpVisionTransport {
 ///
 /// **Lock order.** When more than one of these mutexes is held at once, take
 /// them in field order: `stores` → `guilds` → `brains` → `social` → `rewards`
-/// → `cooldown` → `budget` → `recall` → `engine`. The 5-minute persist tick
+/// → `cooldown` → `ask_cooldown` → `budget` → `recall` → `engine`. The 5-minute persist tick
 /// holds `stores` then `brains`; a message handler that took `brains` first
 /// would deadlock against it (reported on PR #10, fixed after #16). `engine`
 /// and `recall` are only ever taken alone or last.
@@ -145,6 +154,8 @@ pub struct AppState {
     pub social: Mutex<SocialBrain>,
     pub rewards: Mutex<RewardCollector>,
     pub cooldown: Mutex<ReplyCooldown>,
+    /// Atomic per-user reservation for `/persona ask` cost control.
+    pub ask_cooldown: Mutex<ReplyCooldown>,
     /// Per-guild hourly budget for unsolicited actions.
     pub budget: Mutex<Budget>,
     /// Generation slots. A local endpoint (ollama) wedged under concurrent
@@ -170,6 +181,8 @@ pub struct AppState {
     /// the policy is untrained.
     pub quiet: bool,
     pub llm: HttpTransport,
+    /// Shared, timeout-bounded client for Discord attachment downloads.
+    pub attachments: reqwest::Client,
     pub vision: Option<RemoteVision<HttpVisionTransport>>,
     pub data_dir: Option<PathBuf>,
     /// The bot's own user id per platform (`"discord:123"`), filled in at
@@ -204,7 +217,7 @@ pub fn queue_secs_from_value(value: Option<String>) -> u64 {
 }
 
 /// The honest copy when no slot frees up in time.
-pub const BUSY_REPLY: &str = "the model is busy answering someone else; try again in a minute";
+pub const BUSY_REPLY: &str = crate::ask::BUSY_REASON;
 
 /// The runtime's [`crate::tools::ToolHost`]: one conversation's scope, over
 /// `AppState`. Each method takes the locks it needs, briefly, in the
@@ -317,11 +330,21 @@ impl AppState {
             }
             None => (Stores::default(), Recall::new()),
         };
-        let vision = VisionConfig::from_env().map(|config| RemoteVision {
+        let backend = Backend::from_env();
+        if let Some(backend) = &backend {
+            backend
+                .validate()
+                .map_err(|e| StartupError(e.to_string()))?;
+        }
+        let vision_config = VisionConfig::from_env();
+        if let Some(config) = &vision_config {
+            crate::llm::validate_remote_endpoint(&config.base_url, "ABBEY_VISION_ENDPOINT")
+                .map_err(StartupError)?;
+        }
+        let vision = vision_config.map(|config| RemoteVision {
             config,
             transport: HttpVisionTransport::default(),
         });
-        let backend = Backend::from_env();
         let mut rewards = RewardCollector::new();
         rewards.restore(stores.pending_rewards.clone());
         let fallback = match &backend {
@@ -332,6 +355,11 @@ impl AppState {
             ),
             _ => None,
         };
+        if let Some(fallback) = &fallback {
+            fallback
+                .validate()
+                .map_err(|e| StartupError(e.to_string()))?;
+        }
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -339,6 +367,7 @@ impl AppState {
             social: Mutex::new(SocialBrain::new()),
             rewards: Mutex::new(rewards),
             cooldown: Mutex::new(ReplyCooldown::new()),
+            ask_cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
             generation: tokio::sync::Semaphore::new(concurrency_from_env(backend.as_ref())),
             queue_secs: queue_secs_from_value(std::env::var("ABBEY_BOT_LLM_QUEUE_SECS").ok()),
@@ -352,6 +381,7 @@ impl AppState {
             ),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
+            attachments: attachment_client(),
             vision,
             data_dir,
             self_ids: Mutex::new(Vec::new()),
@@ -369,6 +399,7 @@ impl AppState {
             social: Mutex::new(SocialBrain::new()),
             rewards: Mutex::new(RewardCollector::new()),
             cooldown: Mutex::new(ReplyCooldown::new()),
+            ask_cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
             generation: tokio::sync::Semaphore::new(1),
             queue_secs: DEFAULT_QUEUE_SECS,
@@ -379,6 +410,7 @@ impl AppState {
             tools_enabled: std::sync::atomic::AtomicBool::new(true),
             quiet: false,
             llm: HttpTransport::default(),
+            attachments: attachment_client(),
             vision: None,
             data_dir: None,
             self_ids: Mutex::new(Vec::new()),

@@ -1,10 +1,8 @@
-# Build stage. The rust image's rustup honours rust-toolchain.toml, so the
-# toolchain channel it names (a floating nightly) is installed at build time
-# rather than hardcoded here. The tag pins the Debian release: `rust:slim`
-# floats to the newest Debian (currently trixie, glibc 2.41), and a binary
-# linked there fails at startup on the bookworm runtime below with
-# "GLIBC_2.xx not found" — build and runtime must share a release.
-FROM rust:slim-bookworm AS build
+# Build stage. The image and rust-toolchain.toml name the same exact stable
+# compiler. Build and runtime also share Debian trixie: mixing a floating
+# builder with an older runtime can produce a binary that needs a newer glibc
+# and dies at startup with "GLIBC_2.xx not found".
+FROM rust:1.97.1-slim-trixie AS build
 WORKDIR /src
 COPY . .
 # --locked: Cargo.lock is committed; a deploy build must not resolve afresh.
@@ -14,7 +12,7 @@ RUN cargo build --release --locked
 # (webpki-roots via hyper-rustls and tokio-tungstenite — verifiable in
 # Cargo.lock; nothing native-tls or openssl is present), so the system cert
 # store is never read and installing ca-certificates would be a dead layer.
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN useradd --system --create-home --home-dir /app abbey
 USER abbey
 WORKDIR /app

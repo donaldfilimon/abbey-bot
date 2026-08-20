@@ -242,13 +242,16 @@ pub async fn summarize(
                 .clone_from(&summary);
             ask::render_answer(persona, backend.label(), &summary)
         }
-        Err(e) => ask::render_failure(persona, backend.label(), &e.0),
+        Err(e) => {
+            tracing::warn!(error = %e.0, backend = backend.label(), "summary generation failed");
+            ask::render_failure(persona, backend.label(), &e.0)
+        }
     };
     ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
 
-async fn fetch_attachment(att: &Attachment) -> Result<Vec<u8>, String> {
+async fn fetch_attachment(state: &AppState, att: &Attachment) -> Result<Vec<u8>, String> {
     if usize::try_from(att.size).is_ok_and(|s| s > vision::MAX_IMAGE_BYTES) {
         return Err(format!(
             "that image is {} bytes; the cap is {}",
@@ -256,7 +259,7 @@ async fn fetch_attachment(att: &Attachment) -> Result<Vec<u8>, String> {
             vision::MAX_IMAGE_BYTES
         ));
     }
-    att.download().await.map_err(|e| e.to_string())
+    crate::gateway::fetch_capped(&state.attachments, &att.url, vision::MAX_IMAGE_BYTES, None).await
 }
 
 /// Describe an image — and answer a question about it if you ask one.
@@ -273,7 +276,7 @@ pub async fn see(
             .await?;
         return Ok(());
     };
-    let bytes = match fetch_attachment(&image).await {
+    let bytes = match fetch_attachment(state, &image).await {
         Ok(b) => b,
         Err(e) => {
             ctx.say(clamp_message(format!(
@@ -286,11 +289,9 @@ pub async fn see(
     let description = match vision_client.describe(&bytes).await {
         Ok(d) => d,
         Err(e) => {
-            ctx.say(clamp_message(format!(
-                "I couldn't read that image: {}",
-                e.0
-            )))
-            .await?;
+            tracing::warn!(error = %e.0, "vision description failed");
+            ctx.say("I couldn't read that image because the vision backend failed; try again or check the bot logs.")
+                .await?;
             return Ok(());
         }
     };
@@ -309,7 +310,10 @@ pub async fn see(
                 Ok(a) => {
                     ask::render_answer(persona, backend.label(), &ask::tidy_reply(persona, &a))
                 }
-                Err(e) => ask::render_failure(persona, backend.label(), &e.0),
+                Err(e) => {
+                    tracing::warn!(error = %e.0, backend = backend.label(), "vision follow-up generation failed");
+                    ask::render_failure(persona, backend.label(), &e.0)
+                }
             }
         }
         _ => vision::render_see(&persona.to_string(), &description),
@@ -331,11 +335,15 @@ pub async fn ocr(
             .await?;
         return Ok(());
     };
-    let reply = match fetch_attachment(&image).await {
+    let reply = match fetch_attachment(state, &image).await {
         Err(e) => format!("Could not read that attachment: {e}"),
         Ok(bytes) => match vision_client.extract_text(&bytes).await {
             Ok(text) => vision::render_ocr(&text),
-            Err(e) => format!("I couldn't read that image: {}", e.0),
+            Err(e) => {
+                tracing::warn!(error = %e.0, "vision OCR failed");
+                "I couldn't read that image because the vision backend failed; try again or check the bot logs."
+                    .to_string()
+            }
         },
     };
     ctx.say(clamp_message(reply)).await?;

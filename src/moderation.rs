@@ -130,6 +130,34 @@ pub struct Recommendation {
     pub reason: String,
 }
 
+/// Why Discord would refuse an action for this actor and target, independent
+/// of whether the actor holds the permission bit. The shell supplies these
+/// primitive facts after fetching the guild over REST.
+pub fn hierarchy_blocker(
+    actor_is_owner: bool,
+    actor_top: u16,
+    target_is_owner: bool,
+    target_is_admin: bool,
+    target_top: u16,
+    is_timeout: bool,
+) -> Option<&'static str> {
+    if target_is_owner {
+        return Some("The server owner cannot be kicked, banned, or timed out.");
+    }
+    if actor_is_owner {
+        return None;
+    }
+    if is_timeout && target_is_admin {
+        return Some("Administrators cannot be timed out — Discord refuses it outright.");
+    }
+    if actor_top <= target_top {
+        return Some(
+            "Their top role is at or above yours, so Discord will refuse this — hand it to someone who outranks them.",
+        );
+    }
+    None
+}
+
 /// Recommend an action.
 pub fn recommend(severity: Severity, history: History) -> Recommendation {
     match severity {
@@ -326,6 +354,40 @@ mod tests {
                 previous = rank;
             }
         }
+
+        for severity in [Severity::Minor, Severity::Serious, Severity::Severe] {
+            for fixed in 0..=8u8 {
+                let mut previous = 0;
+                for warnings in 0..=8u8 {
+                    let rank = recommend(
+                        severity,
+                        History {
+                            warnings,
+                            timeouts: fixed,
+                        },
+                    )
+                    .action
+                    .severity_rank();
+                    assert!(rank >= previous, "{severity:?} softened as warnings grew");
+                    previous = rank;
+                }
+
+                let mut previous = 0;
+                for timeouts in 0..=8u8 {
+                    let rank = recommend(
+                        severity,
+                        History {
+                            warnings: fixed,
+                            timeouts,
+                        },
+                    )
+                    .action
+                    .severity_rank();
+                    assert!(rank >= previous, "{severity:?} softened as timeouts grew");
+                    previous = rank;
+                }
+            }
+        }
     }
 
     #[test]
@@ -395,5 +457,19 @@ mod tests {
                 assert!(!out.to_lowercase().contains(moralizing), "{out}");
             }
         }
+    }
+
+    #[test]
+    fn hierarchy_rules_follow_discords_refusal_order() {
+        assert!(hierarchy_blocker(true, 99, true, true, 99, false).is_some());
+        assert_eq!(hierarchy_blocker(true, 0, false, true, 99, false), None);
+
+        let timeout = hierarchy_blocker(false, 50, false, true, 10, true);
+        assert!(timeout.is_some_and(|b| b.contains("timed out")));
+        assert_eq!(hierarchy_blocker(false, 50, false, true, 10, false), None);
+
+        assert!(hierarchy_blocker(false, 10, false, false, 10, false).is_some());
+        assert!(hierarchy_blocker(false, 9, false, false, 10, false).is_some());
+        assert_eq!(hierarchy_blocker(false, 11, false, false, 10, false), None);
     }
 }

@@ -13,7 +13,7 @@ to this crate and shares no code with it.
 | Command | What it does |
 |---|---|
 | `/persona route <request> [as]` | Shows which persona takes a request and why. `as` is a dropdown that forces one. |
-| `/persona ask <question>` | Routes the question to a persona and answers it via the configured generation backend (see "Configured backends"). With none configured, it says so. |
+| `/persona ask <question>` | Routes the question to a persona and answers it via the configured generation backend (see "Configured backends"). With none configured, it says so. Questions are capped at 2,000 characters and each user gets one accepted invocation per 30 seconds. |
 | `/whois <user>` | Profile read: identity, standing, roles, join date. |
 | `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. Threads are redirected to their parent, which owns the overwrites they inherit. |
 | `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out — both the permission bit and role hierarchy (owner-target, admin-timeout, top-role comparison). |
@@ -73,7 +73,7 @@ selected from the environment, first match wins:
 | Env var | Backend |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. A secret with `DISCORD_TOKEN`'s exact handling: env only, never in a commit or an image layer. |
-| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (llama-server / ollama / mlx). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. `ABBEY_BOT_LLM_MODEL` names the model — measured 2026-08-19 (`docs/benchmarks/2026-08-19-local-models.md`): **`gpt-oss:20b`** is the recommended default (7–25 s, light reasoning, tool calling), `gemma4:e4b` the runner-up; llama-server/mlx ignore the field, ollama requires it. Local replies stream: the message appears within ~4 s and grows; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
+| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (llama-server / ollama / mlx). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. Plain HTTP is accepted only for loopback; remote endpoints require HTTPS, and credentials/query strings in the base URL are rejected. `ABBEY_BOT_LLM_MODEL` names the model — measured 2026-08-19 (`docs/benchmarks/2026-08-19-local-models.md`): **`gpt-oss:20b`** is the recommended default (7–25 s, light reasoning, tool calling), `gemma4:e4b` the runner-up; llama-server/mlx ignore the field, ollama requires it. Local replies stream: the message appears within ~4 s and grows; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
 
 With neither set, `/persona ask` replies that no generation backend is
 configured, and the pipeline never speaks unsolicited (a mention gets the same
@@ -155,13 +155,18 @@ interaction token 3 seconds after issuing it, and one cold REST round-trip can
 spend that alone. The deferral is unconditional; a command that defers only
 sometimes is one that races eventually.
 
-**Decision logic is separated from Discord.** `persona.rs`, `profile.rs`,
-`perms.rs`, `moderation.rs`, and `server.rs` are plain Rust over plain structs
-and know nothing about serenity, which is why the interesting behaviour is unit-tested
-with no gateway connection at all. `commands.rs` is the only
-file that translates between Discord types and those structs — including the
-`SeverityChoice`, `ArchetypeChoice`, and `PersonaChoice` mirrors that keep
-poise's derive out of the pure modules.
+**Decision logic is separated from Discord.** Persona, profile, permission,
+moderation, server, learning, memory, generation-shaping, platform, and tool
+decisions live in plain Rust modules with no serenity or poise dependency. The
+Discord shell is limited to `commands.rs`, `commands_brain.rs`, `gateway.rs`,
+and `main.rs`: they fetch or translate native data, call the core, and deliver
+the result. This is why the decision suite runs with no gateway connection. The
+complete module map and its load-bearing boundaries live in `AGENTS.md`.
+
+**Generated text cannot ping anyone.** Command responses, gateway posts, reply
+references, and streaming edits all send an empty Discord allowed-mentions
+policy. Model output and guild-derived text remain visible as text but never
+notify a user, role, `@everyone`, or the replied-to author.
 
 **`/server` emits a plan and creates nothing.** Building a server is a run of
 structural changes, and those stay with a human who can see what already exists.
@@ -237,10 +242,9 @@ summary, `/whois` `/perms` `/modcall` `/server` `/webhook` `/remember` `/forget`
 `/reputation` `/summarize` `/see` `/ocr` from a client — `tasks/goals.md` is the
 ledger of record.** This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
---locked` produces the binary they both wrap. CI is *configured* to run the
-same gate as a local checkout, but no workflow on this repository has ever
-executed (account-level Actions lock), so that alignment is unverified until
-the first green run.
+--locked` produces the binary they both wrap. Successful push and pull-request
+workflow runs were observed on 2026-08-19; those runs predate the new stable
+Rust + release-build gate, which is verified locally and awaits its first CI run.
 
 ## Gate
 
@@ -248,8 +252,9 @@ the first green run.
 ./check.sh
 ```
 
-CI (`.github/workflows/rust.yml`) runs exactly this script, so a green check
-means fmt, clippy `-D warnings`, and the test suite — not merely "it built".
+CI (`.github/workflows/rust.yml`) runs exactly this script with the exact Rust
+1.97.1 toolchain, so a green check means fmt, clippy `-D warnings`, the test
+suite, and the locked release build used by deployment.
 
-`cargo fmt --all -- --check`, then `cargo clippy --all-targets -- -D warnings`, then
-`cargo test`.
+`cargo fmt --all -- --check`, then `cargo clippy --all-targets --locked -- -D warnings`,
+then `cargo test --locked`, then `cargo build --release --locked`.

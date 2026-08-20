@@ -15,6 +15,10 @@
 
 use crate::persona::Persona;
 
+/// Safe public copy for a generation-queue timeout. Backend/provider error
+/// strings are never public; callers may preserve only this exact literal.
+pub const BUSY_REASON: &str = "the model is busy answering someone else; try again in a minute";
+
 /// The routed persona's operating description, transcribed verbatim from
 /// abi-ai's `ProfileContract::description` in
 /// `../abi/crates/abi-ai/src/identity.rs`.
@@ -139,7 +143,16 @@ pub fn render_answer(persona: Persona, backend_label: &str, answer: &str) -> Str
 /// Honest about what happened: a backend was configured, the call produced no
 /// answer, and no text is invented to fill the gap.
 pub fn render_failure(persona: Persona, backend_label: &str, reason: &str) -> String {
-    format!("**{persona}** — the {backend_label} call failed, so there is no answer: {reason}")
+    let public_reason = if reason == BUSY_REASON {
+        reason
+    } else if reason.contains("reasoning") && reason.contains("budget") {
+        "the model used its response budget without producing an answer"
+    } else {
+        "the backend returned an error; try again or check the bot logs"
+    };
+    format!(
+        "**{persona}** — the {backend_label} call failed, so there is no answer: {public_reason}"
+    )
 }
 
 #[cfg(test)]
@@ -251,8 +264,27 @@ mod tests {
 
     #[test]
     fn rendered_failures_state_there_is_no_answer() {
-        let reply = render_failure(Persona::Abbey, "external Anthropic API", "HTTP 500");
+        let reply = render_failure(
+            Persona::Abbey,
+            "external Anthropic API",
+            "HTTP 500: provider-internal detail",
+        );
         assert!(reply.contains("there is no answer"), "{reply}");
-        assert!(reply.contains("HTTP 500"), "{reply}");
+        assert!(!reply.contains("HTTP 500"), "{reply}");
+        assert!(!reply.contains("provider-internal detail"), "{reply}");
+    }
+
+    #[test]
+    fn safe_busy_reason_remains_actionable() {
+        let reply = render_failure(Persona::Abbey, "configured endpoint", BUSY_REASON);
+        assert!(reply.contains("busy answering someone else"), "{reply}");
+    }
+
+    #[test]
+    fn provider_text_cannot_impersonate_the_safe_busy_reason() {
+        let injected = format!("HTTP 500: {BUSY_REASON}; provider secret");
+        let reply = render_failure(Persona::Abbey, "configured endpoint", &injected);
+        assert!(!reply.contains("provider secret"), "{reply}");
+        assert!(!reply.contains("busy answering someone else"), "{reply}");
     }
 }

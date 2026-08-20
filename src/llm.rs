@@ -38,6 +38,36 @@ const LOCAL_MAX_TOKENS: u32 = 4096;
 /// mlx serve whatever they were started with and ignore the field; ollama
 /// resolves it and rejects an unknown name, which is why it is configurable.
 pub const DEFAULT_LOCAL_MODEL: &str = "default";
+/// Maximum JSON/SSE response retained from a generation backend.
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum diagnostic body retained from a failed backend response.
+const MAX_ERROR_RESPONSE_BYTES: usize = 4 * 1024;
+
+pub(crate) fn validate_remote_endpoint(value: &str, name: &str) -> Result<(), String> {
+    let url =
+        reqwest::Url::parse(value).map_err(|_| format!("{name} must be a valid absolute URL"))?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!("{name} must not contain credentials"));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(format!("{name} must not contain a query or fragment"));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("{name} must include a host"))?
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if loopback => Ok(()),
+        "http" => Err(format!("{name} requires HTTPS unless it targets loopback")),
+        _ => Err(format!("{name} must use HTTP or HTTPS")),
+    }
+}
 
 /// Which generation backend the environment selected.
 ///
@@ -92,6 +122,16 @@ impl Backend {
             std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
             std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
         )
+    }
+
+    /// Reject endpoint shapes that can leak traffic or credentials. Remote
+    /// backends require HTTPS; plain HTTP is accepted only on loopback for
+    /// local model servers.
+    pub fn validate(&self) -> Result<(), LlmError> {
+        let Self::OpenAiCompatible { endpoint, .. } = self else {
+            return Ok(());
+        };
+        validate_remote_endpoint(endpoint, "ABBEY_BOT_LLM_ENDPOINT").map_err(LlmError)
     }
 
     /// What to call this backend in user-facing copy. Names what actually
@@ -514,6 +554,9 @@ impl Default for HttpTransport {
             // forever — but generously, see `DEFAULT_TIMEOUT_SECS`.
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(secs))
+                // Never forward the Anthropic x-api-key or a future endpoint
+                // credential through a server-selected redirect.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("static reqwest client configuration is valid"),
         }
@@ -532,10 +575,15 @@ impl Transport for HttpTransport {
                 .await
                 .map_err(|e| LlmError(format!("the request failed: {e}")))?;
             let status = response.status();
-            let body = response
-                .text()
+            let limit = if status.is_success() {
+                MAX_RESPONSE_BYTES
+            } else {
+                MAX_ERROR_RESPONSE_BYTES
+            };
+            let body = crate::http_body::read_capped(response, limit)
                 .await
-                .map_err(|e| LlmError(format!("reading the response failed: {e}")))?;
+                .map_err(|e| LlmError(format!("HTTP {status}: {e}")))?;
+            let body = String::from_utf8_lossy(&body).into_owned();
             if !status.is_success() {
                 // Enough body to diagnose a loopback misconfiguration, not
                 // enough to flood the channel; the reply is clamped regardless.
@@ -719,16 +767,28 @@ impl StreamTransport for HttpTransport {
                 .map_err(|e| LlmError(format!("the request failed: {e}")))?;
             let status = response.status();
             if !status.is_success() {
-                let body = response.text().await.unwrap_or_default();
+                let body = crate::http_body::read_capped(response, MAX_ERROR_RESPONSE_BYTES)
+                    .await
+                    .map_err(|e| LlmError(format!("HTTP {status}: {e}")))?;
+                let body = String::from_utf8_lossy(&body);
                 let brief: String = body.chars().take(300).collect();
                 return Err(LlmError(format!("HTTP {status}: {brief}")));
             }
             let mut stream = response.bytes_stream();
             let mut acc = SseAccumulator::default();
             let mut full = String::new();
+            let mut received = 0usize;
             while let Some(chunk) = stream.next().await {
                 let bytes =
                     chunk.map_err(|e| LlmError(format!("reading the stream failed: {e}")))?;
+                received = received.checked_add(bytes.len()).ok_or_else(|| {
+                    LlmError("the backend stream exceeded its response limit".into())
+                })?;
+                if received > MAX_RESPONSE_BYTES {
+                    return Err(LlmError(format!(
+                        "the backend stream exceeded the {MAX_RESPONSE_BYTES}-byte response limit"
+                    )));
+                }
                 for delta in acc.feed(&String::from_utf8_lossy(&bytes)) {
                     full.push_str(&delta);
                     let _ = on_delta.send(delta);
@@ -1026,6 +1086,29 @@ mod tests {
             Backend::from_values(Some("  ".into()), Some(String::new()), None),
             None
         );
+    }
+
+    #[test]
+    fn endpoint_policy_allows_https_and_loopback_http_only() {
+        let backend = |endpoint: &str| Backend::OpenAiCompatible {
+            endpoint: endpoint.into(),
+            model: "m".into(),
+        };
+        assert!(backend("https://models.example.com").validate().is_ok());
+        assert!(backend("http://127.0.0.1:11434").validate().is_ok());
+        assert!(backend("http://[::1]:11434").validate().is_ok());
+        assert!(backend("http://models.example.com").validate().is_err());
+        assert!(
+            backend("https://user:secret@models.example.com")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            backend("https://models.example.com?token=secret")
+                .validate()
+                .is_err()
+        );
+        assert!(backend("file:///tmp/model").validate().is_err());
     }
 
     #[test]
