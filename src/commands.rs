@@ -704,6 +704,66 @@ impl VoiceRuntime {
     }
 }
 
+/// Establish the explicitly configured no-audio connection during an operator
+/// requested deployment. This path refuses to run when a provider key exists:
+/// a restart must never begin transmitting participant audio automatically.
+pub async fn autojoin_self_deafened(
+    ctx: &serenity::all::Context,
+    runtime: Arc<VoiceRuntime>,
+) -> Result<(), String> {
+    if runtime.config.realtime_ready() {
+        return Err(
+            "ABBEY_VOICE_AUTOJOIN is allowed only without OPENAI_API_KEY; use /voice join for full-duplex mode"
+                .into(),
+        );
+    }
+    let guild_id = GuildId::new(runtime.config.guild_id);
+    let channel_id = ChannelId::new(runtime.config.channel_id);
+    let channel = channel_id
+        .to_channel(&ctx.http)
+        .await
+        .map_err(|e| format!("fetching the configured channel failed: {e}"))?;
+    let Some(channel) = channel.guild() else {
+        return Err("the configured voice destination is not a server channel".into());
+    };
+    if channel.guild_id != guild_id || channel.kind != ChannelType::Voice {
+        return Err(
+            "the configured destination is not a voice channel in its configured server".into(),
+        );
+    }
+    let manager = songbird::get(ctx)
+        .await
+        .ok_or_else(|| "Songbird was not registered in the Discord client".to_string())?;
+    if manager.get(guild_id).is_some() {
+        manager
+            .remove(guild_id)
+            .await
+            .map_err(|e| format!("replacing the existing voice session failed: {e}"))?;
+    }
+    let generation = runtime.begin();
+    let call = manager.join(guild_id, channel_id).await.map_err(|e| {
+        runtime.set_status(generation, format!("Discord join failed: {e}"));
+        format!("Discord refused the voice join: {e}")
+    })?;
+    let result = {
+        let mut call = call.lock().await;
+        call.deafen(true).await
+    };
+    if let Err(error) = result {
+        runtime.set_status(generation, format!("Discord self-deafen failed: {error}"));
+        let _ = manager.remove(guild_id).await;
+        return Err(format!(
+            "entering the required self-deafened state failed: {error}"
+        ));
+    }
+    runtime.set_status(
+        generation,
+        "Discord connected, self-deafened; Realtime unavailable (OPENAI_API_KEY missing)",
+    );
+    tracing::info!(guild = %guild_id, channel = %channel_id, "joined Discord voice self-deafened; audio receive and provider streaming are disabled");
+    Ok(())
+}
+
 /// `/voice join`, `/voice leave`, and `/voice status`.
 ///
 /// Voice is deliberately admin-triggered and bound to one env-configured
@@ -719,7 +779,9 @@ pub async fn voice(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Join the configured channel and start a full-duplex Realtime session.
+/// Join the configured voice channel.
+// Without a Realtime key, remain self-deafened so the bot can establish
+// presence without receiving participant audio.
 #[poise::command(
     slash_command,
     guild_only,
@@ -783,6 +845,31 @@ pub async fn voice_join(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
+
+    if !runtime.config.realtime_ready() {
+        let deafen_result = {
+            let mut call = call.lock().await;
+            call.deafen(true).await
+        };
+        if let Err(error) = deafen_result {
+            runtime.set_status(generation, format!("Discord self-deafen failed: {error}"));
+            let _ = manager.remove(guild_id).await;
+            ctx.say(format!(
+                "Joined Discord, but could not enter the required self-deafened state: {error}"
+            ))
+            .await?;
+            return Ok(());
+        }
+        runtime.set_status(
+            generation,
+            "Discord connected, self-deafened; Realtime unavailable (OPENAI_API_KEY missing)",
+        );
+        ctx.say(format!(
+            "Joined <#{channel_id}> self-deafened. I cannot receive anyone's audio or speak until OPENAI_API_KEY is configured; `/voice leave` disconnects me."
+        ))
+        .await?;
+        return Ok(());
+    }
 
     let (input_tx, input_rx) = tokio::sync::mpsc::channel(50);
     let (output_tx, output_rx) = std::sync::mpsc::sync_channel(50);
@@ -1019,9 +1106,13 @@ async fn run_realtime(
         .websocket_url()
         .into_client_request()
         .map_err(|e| format!("building the Realtime request failed: {e}"))?;
+    let authorization = runtime
+        .config
+        .authorization()
+        .ok_or_else(|| "OPENAI_API_KEY is not configured; Realtime cannot start".to_string())?;
     request.headers_mut().insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&runtime.config.authorization())
+        HeaderValue::from_str(&authorization)
             .map_err(|_| "OPENAI_API_KEY contains invalid header bytes".to_string())?,
     );
     let (socket, _) = tokio_tungstenite::connect_async(request)

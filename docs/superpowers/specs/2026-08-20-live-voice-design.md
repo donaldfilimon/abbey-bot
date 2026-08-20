@@ -1,7 +1,7 @@
 # Abbey Live Voice Design
 
 **Date:** 2026-08-20  
-**Status:** implemented locally; provider and Discord live validation blocked on configuration
+**Status:** self-deafened Discord join validated live; provider speech blocked on configuration
 
 ## Outcome
 
@@ -30,9 +30,12 @@ voice session, and an OpenAI key used elsewhere does not opt voice in.
 
 `/voice join`, `/voice leave`, and `/voice status` require Manage Server. Join
 works only in `ABBEY_VOICE_GUILD_ID` and only for the voice channel named by
-`ABBEY_VOICE_CHANNEL_ID`; Stage channels are rejected. Abbey never auto-joins.
-The join response states that channel audio is sent to the configured provider
-and names `/voice leave` as the stop control.
+`ABBEY_VOICE_CHANNEL_ID`; Stage channels are rejected. The operations-only
+`ABBEY_VOICE_AUTOJOIN=1` path is permitted only when no provider key exists and
+immediately self-deafens, so it cannot receive or transmit call audio. Normal
+full-duplex mode still requires `/voice join`. Its response states that channel
+audio is sent to the configured provider and names `/voice leave` as the stop
+control.
 
 The code does not ingest Discord Go Live video. Realtime supports audio plus
 discrete image inputs, not video; Songbird's supported receive API is voice and
@@ -41,13 +44,16 @@ must define an explicit consented screenshot source and retention policy.
 
 ## Configuration
 
-Required to opt in:
+Required to opt in to the Discord connection:
 
 - `ABBEY_VOICE_GUILD_ID`
 - `ABBEY_VOICE_CHANNEL_ID`
-- `OPENAI_API_KEY`
 
-Optional: `ABBEY_VOICE_REALTIME_ENDPOINT` (default OpenAI WSS),
+`OPENAI_API_KEY` is required for full-duplex Realtime speech. Without it,
+Abbey can connect only in self-deafened, audio-free mode.
+
+Optional: `ABBEY_VOICE_AUTOJOIN` (no-key/self-deafened only),
+`ABBEY_VOICE_REALTIME_ENDPOINT` (default OpenAI WSS),
 `ABBEY_VOICE_REALTIME_MODEL` (current default `gpt-realtime-2.1`),
 `ABBEY_VOICE_NAME` (default `marin`), and `ABBEY_VOICE_INSTRUCTIONS`.
 

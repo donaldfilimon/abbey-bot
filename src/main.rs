@@ -19,8 +19,9 @@
 //! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
 //!   MESSAGE_CONTENT intent (must also be enabled in the Dev Portal).
 //! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
-//! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` + `OPENAI_API_KEY`
-//!   (optional) — enable admin-triggered, DAVE-capable Discord/Realtime voice.
+//! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
+//!   admin-triggered, DAVE-capable Discord connection. It stays self-deafened
+//!   until `OPENAI_API_KEY` enables full-duplex Realtime voice.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
@@ -229,6 +230,24 @@ async fn main() -> Result<(), Error> {
                         tracing::info!(
                             "registered global commands — propagation can take up to an hour"
                         );
+                    }
+                }
+                if std::env::var("ABBEY_VOICE_AUTOJOIN")
+                    .map(|value| value.trim() == "1")
+                    .unwrap_or(false)
+                {
+                    match voice_runtime.as_ref() {
+                        Some(runtime) => {
+                            commands::autojoin_self_deafened(ctx, std::sync::Arc::clone(runtime))
+                                .await
+                                .map_err(runtime::StartupError)?;
+                        }
+                        None => {
+                            return Err(runtime::StartupError(
+                                "ABBEY_VOICE_AUTOJOIN=1 requires both voice destination IDs".into(),
+                            )
+                            .into());
+                        }
                     }
                 }
                 tracing::info!(user = %ready.user.name, "connected");

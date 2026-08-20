@@ -27,7 +27,7 @@ to this crate and shares no code with it.
 | `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint: describe, or transcribe text. |
 | `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
-| `/voice join\|leave\|status` | Manage Server-only, full-duplex Discord voice through the configured OpenAI Realtime model. It is locked to one env-configured guild/channel, never auto-joins, and reports bounded audio-queue drops. |
+| `/voice join\|leave\|status` | Manage Server-only Discord voice, locked to one env-configured guild/channel. Without a Realtime key Abbey connects self-deafened (no received or transmitted audio); with one it reports full-duplex model/queue health. The operations-only `ABBEY_VOICE_AUTOJOIN=1` is refused when a key exists. |
 
 **The model can call Abbey's own systems.** On mentions, DMs, and `/persona
 ask` the backend is offered five tools — `remember_fact`, `lookup_reputation`,
@@ -88,7 +88,7 @@ runs fully offline.
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`; `off` stops that. Measured 2026-08-19: `http://127.0.0.1:11434/v1` + `gemma4:e4b` describes a screenshot correctly in ~4–15 s (budget raised to 1,024 tokens because the model reasons before it answers). |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` + `OPENAI_API_KEY` | Enables `/voice` for exactly one Discord voice channel. Songbird 0.6 provides Discord's mandatory DAVE E2EE and jitter-buffered receive; Abbey streams 24 kHz PCM to OpenAI Realtime and returns audio through Discord. Optional overrides: `ABBEY_VOICE_REALTIME_ENDPOINT`, `_MODEL`, `ABBEY_VOICE_NAME`, and `ABBEY_VOICE_INSTRUCTIONS`. Voice never auto-joins, and `OPENAI_API_KEY` alone does not opt in. Everyone present should be told audio is sent to the provider. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (+ `OPENAI_API_KEY`) | Enables `/voice` for exactly one Discord voice channel. Without the optional key, Abbey can only connect self-deafened and cannot receive or send audio. With the key, Songbird 0.6 supplies Discord DAVE E2EE and jitter-buffered receive while Abbey streams 24 kHz PCM to OpenAI Realtime and returns audio through Discord. Optional overrides: `ABBEY_VOICE_REALTIME_ENDPOINT`, `_MODEL`, `ABBEY_VOICE_NAME`, and `ABBEY_VOICE_INSTRUCTIONS`. A key alone does not opt in. `ABBEY_VOICE_AUTOJOIN=1` is a self-deafened operations path and fails startup if a key is present, so provider audio always requires `/voice join`. Everyone present should be told before full-duplex mode sends audio to the provider. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -267,9 +267,11 @@ summary, `/whois` `/perms` `/modcall` `/server` `/webhook` `/remember` `/forget`
 launchd release service, persistent data path, gateway connection, local
 generation backend, and real three-turn backend pipeline were verified;
 `tasks/goals.md` is the ledger of record. The new `/voice` path is offline-verified
-only (including a loopback Realtime WebSocket); it has not joined Discord or
-called the paid provider because the deployment has no `OPENAI_API_KEY` and its
-commands are scoped to a different guild. Its DAVE/OpenMLS dependency audit is
+(including a loopback Realtime WebSocket) and its no-key connection mode was
+observed live in Space Engineering on 2026-08-20: Discord showed `Abbey,
+Deafened`, while service logs confirmed the requested channel and disabled
+receive/provider streaming. It has not called the paid provider or spoken
+because the deployment has no `OPENAI_API_KEY`. Its DAVE/OpenMLS dependency audit is
 also explicitly recorded in the voice design rather than reported green.**
 This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release

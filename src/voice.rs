@@ -13,14 +13,15 @@ const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
 
 /// A single explicitly allowed Discord destination and Realtime provider.
 ///
-/// The API key is deliberately private and `Debug` is redacted. Voice is off
-/// unless all three required values are present; a partial configuration is a
-/// startup error rather than an unexpectedly permissive mode.
+/// The API key is deliberately private and `Debug` is redacted. The two
+/// destination IDs opt voice in; without a key Abbey may connect only while
+/// self-deafened, so no participant audio is received or sent to a provider.
+/// A partial destination remains a startup error.
 #[derive(Clone)]
 pub struct VoiceConfig {
     pub guild_id: u64,
     pub channel_id: u64,
-    api_key: String,
+    api_key: Option<String>,
     pub endpoint: String,
     pub model: String,
     pub voice: String,
@@ -32,7 +33,14 @@ impl fmt::Debug for VoiceConfig {
         f.debug_struct("VoiceConfig")
             .field("guild_id", &self.guild_id)
             .field("channel_id", &self.channel_id)
-            .field("api_key", &"[REDACTED]")
+            .field(
+                "api_key",
+                &if self.api_key.is_some() {
+                    "[REDACTED]"
+                } else {
+                    "[NOT CONFIGURED]"
+                },
+            )
             .field("endpoint", &self.endpoint)
             .field("model", &self.model)
             .field("voice", &self.voice)
@@ -74,9 +82,6 @@ impl VoiceConfig {
         }
         let guild_id = snowflake(guild, "ABBEY_VOICE_GUILD_ID")?;
         let channel_id = snowflake(channel, "ABBEY_VOICE_CHANNEL_ID")?;
-        let api_key = api_key.ok_or_else(|| {
-            "OPENAI_API_KEY is required when Abbey live voice is configured".to_string()
-        })?;
         let endpoint = nonblank(endpoint).unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
         validate_endpoint(&endpoint)?;
         let model = safe_name(nonblank(model), DEFAULT_MODEL, "ABBEY_VOICE_REALTIME_MODEL")?;
@@ -99,8 +104,12 @@ impl VoiceConfig {
         }))
     }
 
-    pub fn authorization(&self) -> String {
-        format!("Bearer {}", self.api_key)
+    pub fn realtime_ready(&self) -> bool {
+        self.api_key.is_some()
+    }
+
+    pub fn authorization(&self) -> Option<String> {
+        self.api_key.as_ref().map(|key| format!("Bearer {key}"))
     }
 
     pub fn websocket_url(&self) -> String {
@@ -238,6 +247,24 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("ABBEY_VOICE_CHANNEL_ID"));
+    }
+
+    #[test]
+    fn destination_without_key_enables_only_connect_mode() {
+        let config = VoiceConfig::from_values(
+            Some("123".into()),
+            Some("456".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!config.realtime_ready());
+        assert!(config.authorization().is_none());
+        assert!(format!("{config:?}").contains("NOT CONFIGURED"));
     }
 
     #[test]
