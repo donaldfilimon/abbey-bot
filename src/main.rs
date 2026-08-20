@@ -39,6 +39,7 @@ mod engine;
 mod gateway;
 mod generation;
 mod guild;
+mod http_body;
 mod llm;
 mod memory;
 mod moderation;
@@ -81,6 +82,9 @@ async fn main() -> Result<(), Error> {
     // handshake error.
     let token = std::env::var("DISCORD_TOKEN")
         .map_err(|_| "DISCORD_TOKEN is not set. Export the bot token; never hardcode it.")?;
+    if token.trim().is_empty() {
+        return Err("DISCORD_TOKEN is blank. Export the bot token; never hardcode it.".into());
+    }
 
     let guild_id = match std::env::var("ABBEY_GUILD_ID") {
         Ok(raw) => {
@@ -162,6 +166,10 @@ async fn main() -> Result<(), Error> {
                 mention_as_prefix: false,
                 ..Default::default()
             },
+            // Model and guild-derived text must never notify arbitrary users,
+            // roles, or everyone. Replies also stay visually threaded without
+            // pinging the author.
+            allowed_mentions: Some(gateway::no_mentions()),
             post_command: |ctx| {
                 Box::pin(async move {
                     record_interaction(ctx, true, None);
@@ -205,7 +213,10 @@ async fn main() -> Result<(), Error> {
         })
         .build();
 
-    let mut client = serenity::Client::builder(token, intents)
+    let http = serenity::http::HttpBuilder::new(&token)
+        .default_allowed_mentions(gateway::no_mentions())
+        .build();
+    let mut client = serenity::client::ClientBuilder::new_with_http(http, intents)
         .framework(framework)
         .await?;
 

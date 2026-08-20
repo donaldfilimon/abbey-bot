@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::all::{
-    ChannelId, CreateMessage, EditMessage, FullEvent, Http, Message, MessageId, MessageReference,
-    Reaction, ReactionType,
+    ChannelId, CreateAllowedMentions, CreateMessage, EditMessage, FullEvent, Http, Message,
+    MessageId, MessageReference, Reaction, ReactionType,
 };
 
 use crate::persist::Stores;
@@ -26,6 +26,11 @@ use crate::runtime::AppState;
 pub const DISCORD_MESSAGE_CAP: usize = 2_000;
 /// Telegram's `sendMessage` cap.
 pub const TELEGRAM_MESSAGE_CAP: usize = 4_096;
+
+/// No generated or guild-derived text may trigger a Discord notification.
+pub(crate) fn no_mentions() -> CreateAllowedMentions {
+    CreateAllowedMentions::new().replied_user(false)
+}
 
 fn clamp(text: &str, cap: usize) -> String {
     if text.chars().count() <= cap {
@@ -58,7 +63,9 @@ impl Outbound for DiscordOutbound {
         message: &OutboundMessage,
     ) -> Result<String, String> {
         let channel = ChannelId::new(parse_id(native_channel_id)?);
-        let mut builder = CreateMessage::new().content(clamp(&message.text, DISCORD_MESSAGE_CAP));
+        let mut builder = CreateMessage::new()
+            .content(clamp(&message.text, DISCORD_MESSAGE_CAP))
+            .allowed_mentions(no_mentions());
         if let Some(reply) = &message.reply_to_native_message_id {
             // A message deleted mid-generation must not turn a good reply into
             // a 400: reference it if it still exists, post plainly otherwise.
@@ -110,7 +117,9 @@ impl Outbound for DiscordOutbound {
             .edit_message(
                 ChannelId::new(parse_id(native_channel_id)?),
                 MessageId::new(parse_id(native_message_id)?),
-                &EditMessage::new().content(clamp(text, DISCORD_MESSAGE_CAP)),
+                &EditMessage::new()
+                    .content(clamp(text, DISCORD_MESSAGE_CAP))
+                    .allowed_mentions(no_mentions()),
                 Vec::new(),
             )
             .await
@@ -121,7 +130,7 @@ impl Outbound for DiscordOutbound {
 
 /// GET `url` and refuse bodies over `max` bytes — attachments are
 /// attacker-controlled (`docs/spec/vision.md`).
-async fn fetch_capped(
+pub(crate) async fn fetch_capped(
     client: &reqwest::Client,
     url: &str,
     max: usize,
@@ -131,20 +140,20 @@ async fn fetch_capped(
     if let Some(token) = bearer {
         req = req.bearer_auth(token);
     }
-    let response = req.send().await.map_err(|e| e.to_string())?;
-    if let Some(len) = response.content_length()
-        && usize::try_from(len).is_ok_and(|l| l > max)
-    {
-        return Err(format!("attachment is {len} bytes; the cap is {max}"));
+    let response = req.send().await.map_err(|e| e.without_url().to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("attachment fetch failed: HTTP {status}"));
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    if bytes.len() > max {
-        return Err(format!(
-            "attachment is {} bytes; the cap is {max}",
-            bytes.len()
-        ));
-    }
-    Ok(bytes.to_vec())
+    crate::http_body::read_capped(response, max)
+        .await
+        .map_err(|error| {
+            if error.is_too_large() {
+                format!("attachment exceeds the {max}-byte cap")
+            } else {
+                "attachment download failed while reading the response".to_string()
+            }
+        })
 }
 
 fn discord_message_event(msg: &Message) -> SocialEvent {
@@ -210,7 +219,7 @@ pub async fn on_discord_event(
 ) {
     let out = DiscordOutbound {
         http: Arc::clone(&ctx.http),
-        fetcher: reqwest::Client::new(),
+        fetcher: state.attachments.clone(),
     };
     match event {
         FullEvent::Ready { data_about_bot } => {
@@ -760,5 +769,14 @@ mod tests {
     fn snowflakes_parse_and_garbage_does_not() {
         assert_eq!(parse_id("123"), Ok(123));
         assert!(parse_id("abc").is_err());
+    }
+
+    #[test]
+    fn discord_mentions_are_fully_disabled() {
+        let value = serde_json::to_value(no_mentions()).unwrap();
+        assert_eq!(value["parse"], serde_json::json!([]));
+        assert_eq!(value["users"], serde_json::json!([]));
+        assert_eq!(value["roles"], serde_json::json!([]));
+        assert_eq!(value["replied_user"], false);
     }
 }

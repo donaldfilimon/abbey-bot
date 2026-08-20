@@ -184,38 +184,6 @@ pub(crate) fn clamp_message(text: String) -> String {
     clamped
 }
 
-/// Why Discord would refuse this moderation action for this actor and target,
-/// independent of whether the actor holds the permission bit.
-///
-/// Pure over primitives so it is testable; the command supplies the facts.
-/// Rules, in precedence order: the owner cannot be actioned; the owner can
-/// action anyone; administrators cannot be timed out; otherwise the actor's
-/// top role must sit strictly above the target's.
-fn hierarchy_blocker(
-    actor_is_owner: bool,
-    actor_top: u16,
-    target_is_owner: bool,
-    target_is_admin: bool,
-    target_top: u16,
-    is_timeout: bool,
-) -> Option<&'static str> {
-    if target_is_owner {
-        return Some("The server owner cannot be kicked, banned, or timed out.");
-    }
-    if actor_is_owner {
-        return None;
-    }
-    if is_timeout && target_is_admin {
-        return Some("Administrators cannot be timed out — Discord refuses it outright.");
-    }
-    if actor_top <= target_top {
-        return Some(
-            "Their top role is at or above yours, so Discord will refuse this — hand it to someone who outranks them.",
-        );
-    }
-    None
-}
-
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -265,11 +233,19 @@ async fn autocomplete_question(_ctx: Context<'_>, partial: &str) -> Vec<String> 
 /// and more load-bearing here: an LLM round-trip exceeds Discord's 3-second
 /// interaction token by design. Non-ephemeral on purpose — an answer is not an
 /// accusation, unlike `/modcall`'s recommendation.
+const ASK_COOLDOWN_SECONDS: u32 = 30;
+const ASK_COOLDOWN_REPLY: &str = "You can ask again 30 seconds after your last accepted question.";
+
+fn reserve_ask(state: &AppState, scoped_user: &str, now: u64) -> bool {
+    AppState::lock(&state.ask_cooldown).try_reserve(scoped_user, ASK_COOLDOWN_SECONDS, now)
+}
+
 #[poise::command(slash_command)]
 pub async fn ask(
     ctx: Context<'_>,
     #[description = "What you want to know"]
     #[autocomplete = "autocomplete_question"]
+    #[max_length = 2000]
     question: String,
     #[description = "Force a persona instead of routing"] r#as: Option<PersonaChoice>,
 ) -> Result<(), Error> {
@@ -287,6 +263,11 @@ pub async fn ask(
         None => format!("discord:dm:{}", ctx.author().id.get()),
     };
     let scoped_user = format!("discord:{}", ctx.author().id.get());
+    let now = runtime::now();
+    if !reserve_ask(state, &scoped_user, now) {
+        ctx.say(ASK_COOLDOWN_REPLY).await?;
+        return Ok(());
+    }
     let reply = match &state.backend {
         None => ask::degraded_reply(routed),
         Some(backend) => {
@@ -295,7 +276,6 @@ pub async fn ask(
             // one thread. No streaming: an interaction followup is one post.
             let context =
                 pipeline::assemble_context(state, &scoped_guild, &scoped_user, &scope, &question);
-            let now = runtime::now();
             let mut host = runtime::ToolScope {
                 state,
                 scoped_guild: scoped_guild.clone(),
@@ -326,7 +306,10 @@ pub async fn ask(
                     AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
                     ask::render_answer(persona, backend.label(), &answer)
                 }
-                Err(error) => ask::render_failure(routed, backend.label(), &error.0),
+                Err(error) => {
+                    tracing::warn!(error = %error.0, backend = backend.label(), "slash-command generation failed");
+                    ask::render_failure(routed, backend.label(), &error.0)
+                }
             }
         }
     };
@@ -546,7 +529,7 @@ pub async fn modcall(
                     "You do not have **{required}**, so you cannot carry this out — hand it to someone who does."
                 ))
             } else {
-                hierarchy_blocker(
+                moderation::hierarchy_blocker(
                     ctx.author().id == guild.owner_id,
                     top_role_position(&moderator, &guild),
                     user.id == guild.owner_id,
@@ -718,35 +701,6 @@ mod tests {
     }
 
     #[test]
-    fn hierarchy_owner_target_beats_everything() {
-        // Even the owner asking about the owner: the target rule wins.
-        assert!(hierarchy_blocker(true, 99, true, true, 99, false).is_some());
-    }
-
-    #[test]
-    fn hierarchy_owner_actor_outranks_all_non_owners() {
-        assert_eq!(hierarchy_blocker(true, 0, false, true, 99, false), None);
-    }
-
-    #[test]
-    fn hierarchy_admins_cannot_be_timed_out_but_can_be_banned() {
-        let timeout = hierarchy_blocker(false, 50, false, true, 10, true);
-        assert!(
-            timeout.is_some_and(|b| b.contains("timed out")),
-            "{timeout:?}"
-        );
-        // Same shape, ban instead of timeout: hierarchy alone decides.
-        assert_eq!(hierarchy_blocker(false, 50, false, true, 10, false), None);
-    }
-
-    #[test]
-    fn hierarchy_requires_strictly_outranking_the_target() {
-        assert!(hierarchy_blocker(false, 10, false, false, 10, false).is_some());
-        assert!(hierarchy_blocker(false, 9, false, false, 10, false).is_some());
-        assert_eq!(hierarchy_blocker(false, 11, false, false, 10, false), None);
-    }
-
-    #[test]
     fn clamp_passes_short_messages_untouched() {
         let short = "fits".to_string();
         assert_eq!(clamp_message(short.clone()), short);
@@ -799,6 +753,15 @@ mod tests {
             reply.ends_with("limit)"),
             "truncation must be stated, not silent"
         );
+    }
+
+    #[test]
+    fn ask_has_atomic_per_user_cost_control() {
+        let state = AppState::in_memory();
+        assert!(reserve_ask(&state, "discord:u1", 100));
+        assert!(!reserve_ask(&state, "discord:u1", 129));
+        assert!(reserve_ask(&state, "discord:u2", 129));
+        assert!(reserve_ask(&state, "discord:u1", 130));
     }
 
     #[test]

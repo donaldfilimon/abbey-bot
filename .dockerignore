@@ -1,4 +1,11 @@
 target
 .git
 .env
+.env.*
+!.env.example
 deploy
+abbey-state.json
+abbey-state.json.tmp
+wdbx.seg.*.jsonl
+wdbx.seg.*.jsonl.tmp
+data

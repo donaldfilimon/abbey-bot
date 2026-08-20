@@ -236,9 +236,10 @@ pub async fn handle<O: Outbound + Sync>(
     // and DMs bypass both. Over budget, the decision is not acted on and not
     // learned — silence was not the policy's choice.
     if !forced {
-        // Budget is only *checked* here; the token is spent at the point of
-        // acting (below), so a reply the bot cannot make — no backend — or a
-        // failed react never burns quota a later action could use.
+        // Budget is only *checked* here; a token is reserved immediately before
+        // the network action below. A missing backend costs nothing, while an
+        // attempted react/reply consumes quota even if delivery later fails so
+        // a broken endpoint cannot bypass the volume guard indefinitely.
         let within_budget = AppState::lock(&state.budget).tokens_left(
             &scoped_guild,
             settings.unsolicited_per_hour,
@@ -887,7 +888,7 @@ mod tests {
         assert!(AppState::lock(&state.budget).try_take("discord:g", 1, runtime::now()));
         let out = FakeOut::default();
         let mut saw_over_budget = false;
-        for i in 0..40 {
+        for i in 0..400 {
             let mut m = message("lol nice", Some("g"), "u1");
             m.native_message_id = format!("m{i}");
             match handle(&state, &out, m, false, None).await {
@@ -901,7 +902,7 @@ mod tests {
         }
         assert!(
             saw_over_budget,
-            "the policy never picked reply/react in 40 tries"
+            "the policy never picked reply/react in 400 tries"
         );
         assert!(out.reacted.lock().unwrap().is_empty());
         assert!(out.sent.lock().unwrap().is_empty());

@@ -9,16 +9,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      # The runner's rustup honours rust-toolchain.toml, so the channel it
-      # names (a floating nightly, with rustfmt and clippy) is installed on
-      # first cargo invocation.
-      - name: Gate — fmt, clippy -D warnings, tests
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The runner's rustup honours the exact stable release and components in
+      # rust-toolchain.toml on the first Cargo invocation.
+      - name: Gate — fmt, clippy -D warnings, tests, release build
         run: ./check.sh

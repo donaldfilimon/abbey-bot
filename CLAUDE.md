@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working in this repository.
 
 `README.md` is written for a human running the bot — commands, env vars, and the
 per-feature design notes. Read it first. This file holds what the README leaves
@@ -13,7 +13,7 @@ header line differs. Apply any edit to both, or they drift.
 ## Commands
 
 ```bash
-./check.sh          # the gate: fmt --check, clippy --all-targets --locked -D warnings, test --locked
+./check.sh          # gate: fmt, clippy -D warnings, tests, release build; all locked
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
 
@@ -38,15 +38,14 @@ green while every deploy build died. The gate proves the property the deploy
 depends on — do not remove the flag to "fix" a lock error; regenerate the lock.
 
 **CI runs the real gate — since PR #4.** `.github/workflows/rust.yml` executes
-`./check.sh` itself (fmt --check, clippy --all-targets --locked `-D warnings`, tests --locked) on push and PR to
-`main`, and the runner's rustup honours `rust-toolchain.toml`, so CI and local
-runs share the pinned nightly. Two caveats keep the local habit load-bearing:
-green check marks older than PR #4 vouch only for `cargo build && cargo test`
-(the workflow's original, weaker shape), and **no workflow on this repository
-has ever executed** (account-level Actions billing lock) — the CI–local
-alignment is configured, not verified, until the first green run. So "run
-`./check.sh` locally before trusting a merge" remains the rule, now for
-availability rather than coverage.
+`./check.sh` itself (fmt check, all-target Clippy with `--locked -D warnings`,
+locked tests, locked release build) on push and PR to `main`. The runner's
+rustup honours `rust-toolchain.toml`, so CI and local runs share exact stable
+Rust 1.97.1. Successful push and pull-request runs were observed on 2026-08-19;
+those runs predate the stable-toolchain/release-build extension, which is green
+locally and awaits its first CI run. Checks older than PR #4 vouch only for the
+workflow's original weaker `cargo build && cargo test`; run `./check.sh` locally
+before trusting a merge.
 
 ## Architecture: a pure core with a thin Discord shell
 
@@ -88,6 +87,9 @@ anywhere.
 `Mutex`, locked briefly and never across a network `.await`), the scheduler
 (learn 30 s / flush 60 s / persist 300 s / settle 30 s), and the live vision
 transport; it imports neither serenity nor poise either.
+`http_body.rs` is the shared incremental response reader: it treats
+`Content-Length` as an early hint and enforces the byte cap again on every
+actual chunk before retaining it.
 
 `commands.rs` and `commands_brain.rs` are the files that translate *Discord
 data* into those plain structs, and that is their whole job: fetch over REST,
@@ -205,6 +207,15 @@ stream that dies after posting edits in the failure line). Model choice is
 measured, not guessed — `docs/benchmarks/2026-08-19-local-models.md`; the
 default is `gpt-oss:20b`.
 
+**Generated Discord text never pings.** Poise responses and Serenity's HTTP
+client both default to an empty `CreateAllowedMentions`, and gateway posts and
+edits set it explicitly. Model output, guild-derived names, and reply references
+remain visible text but cannot notify users, roles, everyone, or reply authors.
+Generation and vision clients refuse redirects and cap bodies while streaming;
+remote OpenAI-compatible endpoints require HTTPS, while HTTP is loopback-only.
+Detailed backend errors go to tracing, while `ask::render_failure` emits stable
+public categories rather than provider bodies.
+
 **Abbey never speaks unsolicited without a backend, and never from a template.**
 The policy may choose `reply`, but with no backend configured the pipeline
 treats that as silence; a mention or DM gets `ask::degraded_reply`. Welcomes and
@@ -231,6 +242,8 @@ nothing can answer; a template echo dressed up as AI is what the
 a hand **transcription** of abi-ai's `ProfileContract` — not a path dependency
 on `../abi`, because that would break this clone's build — so when the
 contracts change over there, this table drifts until someone re-copies it.
+The command caps questions at 2,000 characters and applies a 30-second
+per-user cooldown before entering the shared generation queue.
 
 **Fetch over REST, not from the cache.** The cache is only as complete as the
 intents held, so a cache read produces a silently thinner answer instead of an
@@ -312,12 +325,12 @@ voice channel. `server::render` normalizes per channel kind, and a test asserts
 the voice exemption is actually exercised so the asymmetry cannot rot into an
 untested claim.
 
-**Docker base images float between Debian releases.** `rust:slim` re-aliases
-to each new stable (it moved to trixie/glibc 2.41 while the runtime stage was
-bookworm/2.36 — a combination that builds green and dies at `docker run` with
-"GLIBC_2.xx not found"). Build and runtime stages must name the same release
-(`rust:slim-bookworm` + `debian:bookworm-slim`); never pair a floating builder
-with a pinned runtime. Remember also that this host has neither Docker nor
+**Docker base images float between Debian releases.** A floating builder once
+moved to trixie/glibc 2.41 while the runtime stayed on bookworm/2.36 — a
+combination that builds green and dies at `docker run` with "GLIBC_2.xx not
+found". Build and runtime stages must name the same release; the current pair is
+`rust:1.97.1-slim-trixie` + `debian:trixie-slim`. Never update only one stage.
+Remember also that this host has neither Docker nor
 systemd, so `Dockerfile` and `deploy/abbey-bot.service` can only ever be
 source-reviewed here, never artifact-verified — the README's honesty note says
 exactly what is and is not verified; keep it true when touching either file.
@@ -428,8 +441,9 @@ are the *how*. When the two disagree, the Rust code plus its tests are current
 and the spec is the record of intent — update the spec file only when Donald
 changes the design.
 
-**This repository has two live clones**: this one and `~/dev/active/abbey-bot`,
-both tracking `origin/main` (`donaldfilimon/abbey-bot`, private). Concurrent
+**This repository has two live clones**: `~/dev/active/abbey-bot` and
+`~/sources/repos/abbey-bot`, both tracking `origin/main`
+(`donaldfilimon/abbey-bot`, private). Concurrent
 sessions have worked them simultaneously — `git fetch` before assuming either
 is current, and never reason about "the" working tree from memory of the other.
 

@@ -50,3 +50,13 @@
 - [x] SSE accumulator, StreamTransport, Outbound::edit, stream_reply + tests
 - [x] Anthropic→local fallback (AppState::chat)
 - [x] live: streaming DM observed (posted :39, final :44, "(edited)"); concurrency serialisation not observed (unit-tested)
+
+## Rust 2026 modernization (2026-08-19)
+- [x] Fast-forward local `main` to the current upstream baseline
+- [x] Pin Rust 1.97.1 and declare `rust-version`
+- [x] Refresh semver-compatible transitive dependencies without reqwest/Serenity stack duplication
+- [x] Add mention suppression, endpoint validation, redirect refusal, streaming body caps, and shared bounded attachment downloads
+- [x] Add `/persona ask` cost/input controls and move hierarchy policy into the pure core
+- [x] Update CI, paired Docker images, ignores, hooks, and claim-honest docs
+- [ ] Run focused tests, the complete release gate, and final diff review
+- [ ] Integrate the verified modernization on `main`

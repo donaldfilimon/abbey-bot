@@ -1,5 +1,5 @@
-# Abbey Bot — Rust nightly (edition 2024), matching the sibling projects here.
+# Exact stable toolchain used by local builds, CI, and deployment builds.
 [toolchain]
-channel = "nightly"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

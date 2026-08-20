@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /Users/donaldfilimon/sources/repos/abbey-bot && { printf -- '- %s stop: branch %s, %s\\n' \"$(date '+%Y-%m-%d %H:%M')\" \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" \"$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') dirty file(s)\" >> tasks/session-log.md; } ; jq -n --arg b \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" '{systemMessage: (\"abbey-bot stop — branch \" + $b + \"; gate is ./check.sh; ledger tasks/goals.md; note appended to tasks/session-log.md\")}'"
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; cd \"$root\" && { printf -- '- %s stop: branch %s, %s\\n' \"$(date '+%Y-%m-%d %H:%M')\" \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" \"$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') dirty file(s)\" >> tasks/session-log.md; } ; jq -n --arg b \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" '{systemMessage: (\"abbey-bot stop — branch \" + $b + \"; gate is ./check.sh; ledger tasks/goals.md; note appended to tasks/session-log.md\")}'"
           }
         ]
       }
