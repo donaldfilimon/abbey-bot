@@ -368,9 +368,12 @@ pub fn verify_fm_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::io::Write as _;
+    #[cfg(unix)]
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    #[cfg(unix)]
     static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
 
     #[cfg(unix)]
