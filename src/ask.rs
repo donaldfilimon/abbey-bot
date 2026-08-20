@@ -40,6 +40,30 @@ const fn contract_description(persona: Persona) -> &'static str {
     }
 }
 
+/// The routed persona's operating character, transcribed verbatim from
+/// abi-ai's `ProfileContract::response_suffix` in
+/// `../abi/crates/abi-ai/src/identity.rs`.
+///
+/// abi-ai appends this text *after* a reply; here it is given to the model as a
+/// standing directive instead, because appended boilerplate on every Discord
+/// message would be noise and the sentence already reads as a commitment.
+///
+/// The companion `response_prefix` (`"Abbey: "`) is deliberately **not**
+/// transcribed: [`tidy_reply`] exists specifically to strip that echo from
+/// model output, so carrying it here would fight this module's own contract.
+///
+/// Verbatim includes punctuation: Abbey's line opens with a U+2019 right single
+/// quotation mark in `I\u{2019}ll`, not an ASCII apostrophe. A test pins it.
+const fn contract_character(persona: Persona) -> &'static str {
+    match persona {
+        Persona::Abbey => {
+            "I\u{2019}ll approach this with warmth, creativity, and technical care while keeping uncertainty explicit."
+        }
+        Persona::Aviva => "Leading with the concrete answer, assumptions, and next action.",
+        Persona::Abi => "Evaluating intent, risk, context, and the appropriate response mode.",
+    }
+}
+
 /// Assemble the system prompt for the routed persona.
 ///
 /// Deliberately static: the transcribed contract plus fixed Discord framing
@@ -51,8 +75,9 @@ const fn contract_description(persona: Persona) -> &'static str {
 /// prompt is one fixed string, pinned by test.
 pub fn system_prompt(persona: Persona) -> String {
     format!(
-        "You are {persona}. {} You are replying in a Discord conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. Use only tools explicitly supplied for this turn; otherwise you cannot see or change the server. Remember only what is in this conversation or the facts provided below, and say so rather than guess.",
-        contract_description(persona)
+        "You are {persona}. {} Your operating character, in your own words: {} You are replying in a Discord conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. Use only tools explicitly supplied for this turn; otherwise you cannot see or change the server. Remember only what is in this conversation or the facts provided below, and say so rather than guess.",
+        contract_description(persona),
+        contract_character(persona)
     )
 }
 
@@ -184,6 +209,45 @@ mod tests {
             );
             assert!(prompt.contains(contract_description(persona)), "{prompt}");
         }
+    }
+
+    #[test]
+    fn each_personas_prompt_carries_its_operating_character() {
+        for persona in [Persona::Abbey, Persona::Aviva, Persona::Abi] {
+            let prompt = system_prompt(persona);
+            assert!(prompt.contains(contract_character(persona)), "{prompt}");
+        }
+        // Abbey's canonical character line is the one that makes her Abbey
+        // rather than a generic assistant; losing it would be a silent
+        // personality regression that no other assertion here would catch.
+        assert!(
+            contract_character(Persona::Abbey).contains("warmth, creativity, and technical care")
+        );
+        assert!(contract_character(Persona::Abbey).contains("uncertainty explicit"));
+    }
+
+    #[test]
+    fn abbeys_character_keeps_the_curly_apostrophe() {
+        // identity.rs writes `I\u{2019}ll` with a right single quotation mark;
+        // an ASCII apostrophe here would be a silent mis-transcription, the
+        // same failure mode the em-dash test below guards for Aviva.
+        assert!(contract_character(Persona::Abbey).starts_with("I\u{2019}ll"));
+        assert!(!contract_character(Persona::Abbey).contains('\''));
+    }
+
+    #[test]
+    fn the_prefix_echo_is_deliberately_not_transcribed() {
+        // abi-ai's response_prefix is "Abbey: ", but tidy_reply strips exactly
+        // that echo from model output. Carrying it into the prompt would ask
+        // the model to emit text this module then deletes.
+        for persona in [Persona::Abbey, Persona::Aviva, Persona::Abi] {
+            let character = contract_character(persona);
+            assert!(
+                !character.starts_with(&format!("{persona}: ")),
+                "{character}"
+            );
+        }
+        assert_eq!(tidy_reply(Persona::Abbey, "Abbey: hello."), "hello.");
     }
 
     #[test]

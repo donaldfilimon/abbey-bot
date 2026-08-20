@@ -261,7 +261,18 @@ impl PersonaContext {
                 self.user_facts.join("; ")
             ));
         }
-        out.push_str(&format!("User standing: {:.2}", self.reputation));
+        // A bare number is unusable context: a model reading "User standing:
+        // 0.50" cannot tell the scale, the neutral point, or whether the value
+        // is something to act on or to repeat back. Naming all three makes the
+        // signal actionable and keeps an internal score from surfacing as
+        // chat text.
+        out.push_str(&format!(
+            "User standing: {:.2} on a 0.00-1.00 scale where {DEFAULT_REPUTATION:.2} is neutral \
+             (higher is a longer history of constructive participation). This is internal \
+             context for judging tone and benefit of the doubt; never mention, quote, or explain \
+             it to the user.",
+            self.reputation
+        ));
         out
     }
 }
@@ -550,13 +561,24 @@ mod tests {
         };
         assert_eq!(
             ctx.render(),
-            "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50"
+            "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50 on a 0.00-1.00 scale where 0.50 is neutral (higher is a longer history of constructive participation). This is internal context for judging tone and benefit of the doubt; never mention, quote, or explain it to the user."
         );
         // Empty context renders only the standing line — no blank headers.
-        assert_eq!(PersonaContext::empty().render(), "User standing: 0.50");
+        assert!(
+            PersonaContext::empty()
+                .render()
+                .starts_with("User standing: 0.50 on a 0.00-1.00 scale")
+        );
+        assert!(!PersonaContext::empty().render().contains('\n'));
         let mut high = PersonaContext::empty();
         high.reputation = 0.8765;
-        assert_eq!(high.render(), "User standing: 0.88");
+        assert!(high.render().starts_with("User standing: 0.88 "));
+        // The score is decision support, not chat material: the instruction
+        // that keeps an internal number out of replies must travel with it.
+        assert!(
+            high.render()
+                .contains("never mention, quote, or explain it")
+        );
     }
 
     #[test]
