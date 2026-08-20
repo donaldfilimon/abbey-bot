@@ -19,12 +19,12 @@ cargo run           # needs DISCORD_TOKEN; see README
 
 # Live run the way it is actually operated here (persists state; stop with SIGINT):
 #   set -a; . ./.env; set +a
-#   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gpt-oss:20b \
-#   ABBEY_VISION_ENDPOINT=http://127.0.0.1:11434/v1 ABBEY_VISION_MODEL=gemma4:e4b \
+#   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gemma4:12b \
+#   ABBEY_VISION_ENDPOINT=http://127.0.0.1:11434/v1 ABBEY_VISION_MODEL=gemma4:12b \
 #   ABBEY_DATA_DIR=<dir> RUST_LOG=info,abbey_bot=debug ./target/debug/abbey-bot
 #   pkill -INT -f target/debug/abbey-bot      # SIGINT → persists learning/memory first
 # End-to-end against a real local model, no Discord (ignored by the gate):
-#   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gpt-oss:20b \
+#   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gemma4:12b \
 #   cargo test live_dm -- --ignored --nocapture
 ```
 
@@ -93,15 +93,17 @@ transport; it imports neither serenity nor poise either.
 `Content-Length` as an early hint and enforces the byte cap again on every
 actual chunk before retaining it.
 
-`commands.rs` and `commands_brain.rs` are the files that translate *Discord
-data* into those plain structs, and that is their whole job: fetch over REST,
-build the struct, hand it to a pure function, post the string back.
+`commands.rs`, `commands_brain.rs`, and `commands_voice.rs` translate *Discord
+data* into those plain structs and lifecycle calls. The ordinary command files
+fetch over REST, build the struct, hand it to a pure function, and post the
+string back; the voice shell additionally owns Songbird Call construction and
+Discord event registration while `voice_session` and the actors own decisions.
 `gateway.rs` is the same thing for gateway events (serenity `FullEvent` →
 `SocialEvent` → `pipeline::handle`) plus the Telegram long-poll and Slack Socket
 Mode adapters, which feed the *same* pipeline through their own `Outbound`.
 `main.rs` also imports serenity — for `GatewayIntents`, `GuildId`, and the
 `Client` builder — but it reads no guild data; it is env parsing and framework
-wiring only. Those four files are the entire Discord surface.
+wiring only. Those five files are the entire Discord surface.
 
 **This split is the reason the entire decision suite runs with no gateway
 connection** (a count is deliberately not written here — it rots), and it is
@@ -133,7 +135,12 @@ interaction token 3 seconds after issuing it, and one cold REST round-trip can
 spend that alone. Every command here calls `ctx.defer()` or
 `ctx.defer_ephemeral()` first — including `/persona`, which makes no network call
 at all. A command that defers only when it looks slow is a command that races
-eventually. The corollary that actually bit: **never declare a `GuildChannel`
+eventually. The one deliberate exception is `/voice leave`: an authorized stop
+must close the voice media gate before its first await, so its guard paths
+answer the interaction directly (cache/interaction-payload reads only, well
+inside the 3-second window) and the defer runs concurrently with the
+transition lock — do not "fix" it back to a leading defer. The corollary that
+actually bit: **never declare a `GuildChannel`
 parameter** — poise resolves it with a REST fetch *during argument parsing*,
 before the body and its defer ever run. Take `ChannelId` and fetch after
 deferring, the way `/perms` does. Guild fetches go through
@@ -206,8 +213,15 @@ concurrent requests — 4 for Anthropic) or gets the honest "busy" line after
 `ABBEY_BOT_LLM_QUEUE_SECS`; the local path streams (`generation::stream_reply`:
 post after 60 chars / 4 s, edit every 2 s, final edit with the tidied text, a
 stream that dies after posting edits in the failure line). Model choice is
-measured, not guessed — `docs/benchmarks/2026-08-19-local-models.md`; the
-default is `gpt-oss:20b`.
+measured, not guessed — `docs/benchmarks/2026-08-19-local-models.md`. That
+benchmark originally recommended `gpt-oss:20b`; Donald first selected
+`gemma4:e4b` for its stronger register, then selected the larger
+`gemma4:12b` as the cross-platform operational default on 2026-08-20.
+The Apple-silicon acceleration profile is a separate pinned `mlx_vlm.server`
+on loopback port 8282 with `mlx-community/gemma-4-12B-it-4bit`; Abbey must send
+the installer's exact local snapshot path as both request model values because
+MLX-VLM does not alias the portable Ollama name. `fm serve` is an optional
+text/vision fallback with tools disabled, not the Gemma default.
 
 **Generated Discord text never pings.** Poise responses and Serenity's HTTP
 client both default to an empty `CreateAllowedMentions`, and gateway posts and
@@ -412,8 +426,11 @@ Telegram/Slack (no tokens), `/see` `/ocr` from a client, an `OverBudget`
 refusal, a refreshed rolling summary.
 
 **Operational facts learned live:** `gemma4:26b` wedged its ollama runner
-(HTTP 000 after 100 s); gpt-oss:20b is the measured default, gemma4:e4b the
-runner-up (`docs/benchmarks/2026-08-19-local-models.md`). A "research …" DM
+(HTTP 000 after 100 s); the benchmark's speed-first recommendation was
+gpt-oss:20b, while `gemma4:e4b` had the best register and became Donald's
+interim choice. Donald then selected the larger `gemma4:12b` as the
+cross-platform operational default on 2026-08-20
+(`docs/benchmarks/2026-08-19-local-models.md`). A "research …" DM
 exceeded 120 s under concurrent generation → the default backend timeout is
 300 s (`ABBEY_BOT_LLM_TIMEOUT_SECS`) and generation is serialised. Keystroke-
 driven testing must check Discord is frontmost first — the operator may be
@@ -441,7 +458,8 @@ Mode is implemented instead). Tools shipped (PR #19) and are not a residual.
 
 **Design records:** `docs/superpowers/specs/*` (approved designs per
 sub-project), `docs/superpowers/plans/*` (the one executed plan),
-`docs/benchmarks/2026-08-19-local-models.md` (why gpt-oss:20b is the default),
+`docs/benchmarks/2026-08-19-local-models.md` (historical measurements behind
+the later `gemma4:12b` operator choice),
 `docs/live-test-protocol.md` (how the bot is exercised from a Discord client).
 
 **`docs/spec/` is the Swift-era design this crate implements**, copied verbatim
