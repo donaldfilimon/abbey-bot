@@ -123,7 +123,9 @@ impl Engine {
             system_prompt: format!(
                 "{}\n\n{}",
                 crate::ask::system_prompt(persona),
-                context.render()
+                // The message being answered is the relevance query, so the
+                // facts shown are the ones that bear on it.
+                context.render(user_input)
             ),
             turns,
         }
@@ -211,12 +213,25 @@ mod tests {
             reputation: 0.5,
         };
         let prepared = engine.prepare("c", Persona::Aviva, &context, "hi", 1);
+        // Compose from the canonical renderers rather than re-pinning their
+        // copy here: this test owns "prepare joins the persona prompt to the
+        // rendered context with a blank line", and memory/ask own their own
+        // wording. Duplicating the literal made an unrelated context-copy
+        // change fail in two places at once.
         assert_eq!(
             prepared.system_prompt,
             format!(
-                "{}\n\nRecent channel context: deploy talk\nKnown about this user: likes rust\nUser standing: 0.50",
-                crate::ask::system_prompt(Persona::Aviva)
+                "{}\n\n{}",
+                crate::ask::system_prompt(Persona::Aviva),
+                // prepare focuses the context on the message it is preparing,
+                // so the expectation must use the same query ("hi").
+                context.render("hi")
             )
+        );
+        assert!(
+            prepared
+                .system_prompt
+                .contains("Recent channel context: deploy talk")
         );
         assert_eq!(prepared.turns, vec![ChatTurn::user("hi")]);
         // prepare alone records nothing — a failed call leaves no orphan turn.

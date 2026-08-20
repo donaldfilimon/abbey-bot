@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 pub const RECENT_CAP: usize = 50;
 /// Facts one user may hold in one guild. Exact duplicates never count twice.
 pub const MAX_FACTS: usize = 100;
+/// Longest durable fact, measured in Unicode scalar values after whitespace
+/// normalization. This is shared by slash commands and model tools so every
+/// write path enforces the same storage/context bound.
+pub const MAX_FACT_CHARS: usize = 300;
 /// Interaction entries kept in process before the oldest fall off.
 pub const INTERACTION_CAP: usize = 1000;
 /// The standing a never-seen user starts with, per `MemoryAssembler`
@@ -34,6 +38,25 @@ pub const AUTOCOMPLETE_MAX_CHARS: usize = 100;
 
 fn default_reputation() -> f64 {
     DEFAULT_REPUTATION
+}
+
+/// Collapse all whitespace in a durable fact to single ASCII spaces.
+#[must_use]
+pub fn normalize_fact_text(fact: &str) -> String {
+    fact.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Normalize and validate one durable fact before it reaches either memory
+/// representation. The returned messages are safe, fixed user-facing copy.
+pub fn validated_fact(fact: &str) -> Result<String, &'static str> {
+    let normalized = normalize_fact_text(fact);
+    if normalized.is_empty() {
+        return Err("The fact must contain some text.");
+    }
+    if normalized.chars().count() > MAX_FACT_CHARS {
+        return Err("Keep one remembered fact to 300 characters or fewer.");
+    }
+    Ok(normalized)
 }
 
 /// Per-user fact store + reputation (bot-architecture.md `UserMemory`).
@@ -222,9 +245,18 @@ impl PersonaContext {
         }
     }
 
-    /// The context block appended to the system prompt — a line-for-line port
-    /// of appleintelligence.md's `render(_ c:)`.
-    pub fn render(&self) -> String {
+    /// The context block appended to the system prompt, focused on `query`.
+    ///
+    /// Originally a line-for-line port of appleintelligence.md's `render(_ c:)`,
+    /// which joined *every* stored fact. At the hundred-fact cap that put tens
+    /// of thousands of characters of biography in front of every message, so
+    /// facts are now ranked for the message being answered — see
+    /// [`crate::recall`]. Pass the user's message as `query`; an empty query
+    /// degrades to newest-first, never to nothing.
+    ///
+    /// Ranking is not forgetting: held-back facts are counted in the output so
+    /// the model knows more is on file, and `/recall` still lists everything.
+    pub fn render(&self, query: &str) -> String {
         let mut out = String::new();
         if !self.channel_summary.is_empty() {
             out.push_str(&format!(
@@ -233,12 +265,39 @@ impl PersonaContext {
             ));
         }
         if !self.user_facts.is_empty() {
+            let picked = crate::recall::select(
+                &self.user_facts,
+                query,
+                crate::recall::MAX_CONTEXT_FACTS,
+                crate::recall::FACT_CONTEXT_CHARS,
+            );
             out.push_str(&format!(
-                "Known about this user: {}\n",
-                self.user_facts.join("; ")
+                "Known about this user: {}",
+                picked.facts.join("; ")
             ));
+            if picked.omitted > 0 {
+                // Disclose the trim rather than implying this is everything on
+                // file; the model can offer to look further instead of
+                // asserting from a partial view.
+                out.push_str(&format!(
+                    " (+{} more remembered facts not shown for this message)",
+                    picked.omitted
+                ));
+            }
+            out.push('\n');
         }
-        out.push_str(&format!("User standing: {:.2}", self.reputation));
+        // A bare number is unusable context: a model reading "User standing:
+        // 0.50" cannot tell the scale, the neutral point, or whether the value
+        // is something to act on or to repeat back. Naming all three makes the
+        // signal actionable and keeps an internal score from surfacing as
+        // chat text.
+        out.push_str(&format!(
+            "User standing: {:.2} on a 0.00-1.00 scale where {DEFAULT_REPUTATION:.2} is neutral \
+             (higher is a longer history of constructive participation). This is internal \
+             context for judging tone and benefit of the doubt; never mention, quote, or explain \
+             it to the user.",
+            self.reputation
+        ));
         out
     }
 }
@@ -362,6 +421,23 @@ pub fn autocomplete_facts<'a>(facts: &'a [String], partial: &str) -> Vec<&'a str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_fact_validation_is_shared_and_unicode_bounded() {
+        assert_eq!(
+            validated_fact("  Donald\nlikes\tRust.  "),
+            Ok("Donald likes Rust.".to_string())
+        );
+        assert_eq!(
+            validated_fact(" \n\t "),
+            Err("The fact must contain some text.")
+        );
+        assert!(validated_fact(&"x".repeat(MAX_FACT_CHARS)).is_ok());
+        assert_eq!(
+            validated_fact(&"🦀".repeat(MAX_FACT_CHARS + 1)),
+            Err("Keep one remembered fact to 300 characters or fewer.")
+        );
+    }
 
     #[test]
     fn remember_dedupes_exact_duplicates() {
@@ -508,15 +584,94 @@ mod tests {
             user_facts: vec!["likes rust".into(), "runs a homelab".into()],
             reputation: 0.5,
         };
+        // Both facts fit the budget, so a focused render shows both and adds
+        // no "not shown" note. The query names only "rust", so that fact
+        // outranks the homelab one — a query naming both would tie them and
+        // let recency decide the order instead.
         assert_eq!(
-            ctx.render(),
-            "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50"
+            ctx.render("a rust question"),
+            "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50 on a 0.00-1.00 scale where 0.50 is neutral (higher is a longer history of constructive participation). This is internal context for judging tone and benefit of the doubt; never mention, quote, or explain it to the user."
         );
         // Empty context renders only the standing line — no blank headers.
-        assert_eq!(PersonaContext::empty().render(), "User standing: 0.50");
+        assert!(
+            PersonaContext::empty()
+                .render("anything")
+                .starts_with("User standing: 0.50 on a 0.00-1.00 scale")
+        );
+        assert!(!PersonaContext::empty().render("anything").contains('\n'));
         let mut high = PersonaContext::empty();
         high.reputation = 0.8765;
-        assert_eq!(high.render(), "User standing: 0.88");
+        assert!(high.render("").starts_with("User standing: 0.88 "));
+        // The score is decision support, not chat material: the instruction
+        // that keeps an internal number out of replies must travel with it.
+        assert!(
+            high.render("")
+                .contains("never mention, quote, or explain it")
+        );
+    }
+
+    #[test]
+    fn render_focuses_facts_on_the_message_and_discloses_the_trim() {
+        // Ten facts, one obviously about the question. The prompt must lead
+        // with that one and must not silently imply it is the whole file.
+        let mut user_facts: Vec<String> = (0..9).map(|i| format!("unrelated fact {i}")).collect();
+        user_facts.push("deploys with kubernetes".into());
+        let ctx = PersonaContext {
+            channel_summary: String::new(),
+            user_facts,
+            reputation: DEFAULT_REPUTATION,
+        };
+
+        let rendered = ctx.render("how do I roll back a kubernetes deploy?");
+        assert!(
+            rendered.contains("Known about this user: deploys with kubernetes"),
+            "the relevant fact must come first: {rendered}"
+        );
+        assert!(
+            rendered.contains("(+2 more remembered facts not shown for this message)"),
+            "the trim must be disclosed: {rendered}"
+        );
+        // Ranking is not forgetting: everything is still on file.
+        assert_eq!(ctx.user_facts.len(), 10);
+    }
+
+    #[test]
+    fn relevance_selection_never_reaches_across_guilds() {
+        // The privacy boundary. Facts are keyed "{guild}:{user}", so isolation
+        // is a property of the key — but ranking is new machinery reading those
+        // facts, and "the key happens to separate them" is not the same as a
+        // test that fails if it ever stops. A highly relevant fact in another
+        // guild must stay invisible no matter how well it matches.
+        let mut bank = MemoryBank::default();
+        bank.remember("guild-a", "u", "runs the kubernetes cluster", 1);
+        bank.remember("guild-b", "u", "mundane unrelated detail", 1);
+
+        let context = bank.context_for("guild-b", "u", "chan");
+        let rendered = context.render("kubernetes cluster question");
+        assert!(
+            !rendered.contains("kubernetes"),
+            "guild-a's fact leaked into guild-b's context: {rendered}"
+        );
+        assert!(rendered.contains("mundane unrelated detail"));
+
+        // And the same user in the other guild still sees their own.
+        let own = bank.context_for("guild-a", "u", "chan");
+        assert!(own.render("kubernetes").contains("kubernetes"));
+    }
+
+    #[test]
+    fn a_short_fact_list_is_never_trimmed_by_focusing() {
+        // The common case — a handful of facts — must behave exactly as it did
+        // before relevance selection existed, whatever the message says.
+        let ctx = PersonaContext {
+            channel_summary: String::new(),
+            user_facts: vec!["likes tea".into(), "uses nixos".into()],
+            reputation: DEFAULT_REPUTATION,
+        };
+        let rendered = ctx.render("totally unrelated question about pottery");
+        assert!(rendered.contains("likes tea"));
+        assert!(rendered.contains("uses nixos"));
+        assert!(!rendered.contains("not shown for this message"));
     }
 
     #[test]

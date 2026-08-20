@@ -13,7 +13,9 @@
 use std::future::Future;
 
 use crate::ask;
-use crate::brain::intent::{self, Intent};
+use crate::brain::intent;
+use crate::brain::outcome::{self, ReplyOutcome};
+use crate::brain::reward::ReplyTurn;
 use crate::brain::state::{self, BotAction, StateInput};
 use crate::engine;
 use crate::generation::{Ask, Delivery, generate, with_typing};
@@ -22,6 +24,7 @@ use crate::llm;
 use crate::memory::PersonaContext;
 use crate::persona::Persona;
 use crate::platform::{OutboundMessage, RemoteAttachment, RouteDecision, SocialEvent, triage};
+use crate::routing_signals;
 use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
 
@@ -73,14 +76,31 @@ pub enum Outcome {
     ReplyFailed(String),
 }
 
-/// Intent → persona, per `multiguild.md`'s `ABIRouter.route`: mod requests and
-/// commands go to Aviva, greetings and small talk to Abi, everything else to
-/// the guild's default.
-pub fn persona_for(intent: Intent, settings: &GuildSettings) -> Persona {
-    match intent {
-        Intent::ModRequest | Intent::Command => Persona::Aviva,
-        Intent::Greeting | Intent::SmallTalk => Persona::Abi,
-        _ => settings.default_persona,
+/// Canonical ABI text routing with the guild default retained only for neutral
+/// input. Explicit leading names and weighted ABI cues take precedence.
+pub fn persona_for(text: &str, settings: &GuildSettings) -> Persona {
+    persona_for_session(text, settings, None)
+}
+
+/// Explicit names and weighted ABI cues always win. A message the canonical
+/// keyword table is blind to but that carries distress, confusion, or terse
+/// urgency is decided by [`routing_signals`] — the message where routing
+/// matters most is exactly the one with no keyword in it. Only a message
+/// neutral to *both* layers keeps the persona already attached to this
+/// transcript, falling back to the guild default on a new session. This makes
+/// `switch_persona` a real conversational handoff instead of a one-response
+/// costume change, without letting stickiness answer a distress signal in
+/// Aviva's register.
+fn persona_for_session(
+    text: &str,
+    settings: &GuildSettings,
+    session_persona: Option<Persona>,
+) -> Persona {
+    let composed = routing_signals::route(text, None);
+    if composed.is_decisive() {
+        composed.persona
+    } else {
+        session_persona.unwrap_or(settings.default_persona)
     }
 }
 
@@ -131,8 +151,44 @@ pub async fn handle<O: Outbound + Sync>(
     };
 
     // Bookkeeping that happens whether or not Abbey speaks.
-    if let Some(id) = reply_to {
-        AppState::lock(&state.rewards).human_replied(id);
+    //
+    // Two reward channels, deliberately separate. `human_replied` is the
+    // existing untyped heuristic — "a human bothered to reply", +0.5 whatever
+    // they said. `observe_*` feeds the delayed channel: *what* they said,
+    // typed. A Discord reply-to legitimately feeds both; that is the blend, not
+    // a double count. See `brain::reward`.
+    //
+    // Claim-honest: this is the only place real Discord observations reach the
+    // delayed channel today. It covers a reply-to and a same-channel follow-up.
+    // Reactions still land on the untyped path, and edits, threads, and voice
+    // are not observed at all.
+    {
+        let mut rewards = AppState::lock(&state.rewards);
+        if let Some(id) = reply_to {
+            rewards.human_replied(id);
+        }
+        let prior_ask = match reply_to {
+            Some(id) => rewards.open_ask(id),
+            None => rewards.open_ask_in_scope(&scoped_channel, now),
+        }
+        .map(str::to_owned);
+        // An unreadable or off-topic message means the human moved on without
+        // engaging: weak evidence, worth exactly nothing, never a penalty.
+        let observed =
+            outcome::classify(&text, prior_ask.as_deref()).unwrap_or(ReplyOutcome::NoEngagement);
+        let credited = match reply_to {
+            Some(id) => rewards
+                .observe_reply_to(id, observed)
+                .then(|| id.to_owned()),
+            None => rewards.observe_in_scope(&scoped_channel, &scoped_user, observed, now),
+        };
+        if let Some(turn) = credited {
+            tracing::debug!(
+                turn = %turn,
+                outcome = ?observed,
+                "delayed outcome attributed to an open turn"
+            );
+        }
     }
     let heat = {
         let mut stores = AppState::lock(&state.stores);
@@ -295,7 +351,11 @@ pub async fn handle<O: Outbound + Sync>(
     }
 
     // Reply.
-    let persona = persona_for(intent, &settings);
+    let session_persona = AppState::lock(&state.engine).session_persona(&scoped_channel);
+    let initial_persona = session_persona.map_or_else(
+        || persona_for(&enriched, &settings),
+        |persona| persona_for_session(&enriched, &settings, Some(persona)),
+    );
     let Some(backend) = &state.backend else {
         if !forced {
             // A policy that wants to speak with nothing to speak through is a
@@ -303,7 +363,7 @@ pub async fn handle<O: Outbound + Sync>(
             return Outcome::Stayed;
         }
         let reply = OutboundMessage {
-            text: ask::degraded_reply(persona),
+            text: ask::degraded_reply(initial_persona),
             reply_to_native_message_id: Some(event.native_message_id.clone()),
             ..OutboundMessage::default()
         };
@@ -340,7 +400,7 @@ pub async fn handle<O: Outbound + Sync>(
         scoped_guild: scoped_guild.clone(),
         scoped_user: scoped_user.clone(),
         scoped_channel: scoped_channel.clone(),
-        persona,
+        persona: initial_persona,
     };
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
@@ -374,7 +434,7 @@ pub async fn handle<O: Outbound + Sync>(
                 // Someone addressed Abbey and waited; dead air is worse than
                 // the same honest failure line `/persona ask` already posts.
                 let failure = OutboundMessage {
-                    text: ask::render_failure(persona, backend.label(), &e.0),
+                    text: ask::render_failure(initial_persona, backend.label(), &e.0),
                     reply_to_native_message_id: reply_to.clone(),
                     ..OutboundMessage::default()
                 };
@@ -385,7 +445,7 @@ pub async fn handle<O: Outbound + Sync>(
     };
     // A tool may have switched the persona; the transcript keeps its history
     // and the next turn prepares with the new persona.
-    if persona != persona_for(intent, &settings) {
+    if persona != initial_persona {
         let _ = AppState::lock(&state.engine).prepare(
             &scoped_channel,
             persona,
@@ -412,13 +472,22 @@ pub async fn handle<O: Outbound + Sync>(
         }
     };
 
-    AppState::lock(&state.rewards).register_reply(
-        encoded.to_vec(),
-        BotAction::Reply.index(),
-        sent_id,
-        scoped_guild.clone(),
+    // The full turn: scope and ask travel with it so a later follow-up in this
+    // channel — one with no reply-to pointer — can still be attributed back to
+    // this exact action.
+    AppState::lock(&state.rewards).register_turn(ReplyTurn {
+        state: encoded.to_vec(),
+        action: BotAction::Reply.index(),
+        sent_native_message_id: sent_id,
+        scope: scoped_channel.clone(),
+        scoped_guild_id: scoped_guild.clone(),
+        // The human's own words, not `enriched`: vision folds Abbey-written
+        // image descriptions into the prompt text, and padding the ask with
+        // them would depress every later topic-overlap ratio.
+        ask: text.clone(),
+        asker: scoped_user.clone(),
         now,
-    );
+    });
     {
         let mut stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).record_interaction(
@@ -444,7 +513,8 @@ pub fn assemble_context(
         AppState::lock(&state.stores)
             .memory
             .context_for(scoped_guild, scoped_user, scoped_channel);
-    let recalled = AppState::lock(&state.recall).recall(scoped_guild, query, RECALL_K);
+    let recalled =
+        AppState::lock(&state.recall).recall_for_user(scoped_guild, scoped_user, query, RECALL_K);
     for fact in recalled {
         if !context.user_facts.contains(&fact.text) {
             context.user_facts.push(fact.text);
@@ -643,6 +713,139 @@ mod tests {
         let settled = AppState::lock(&state.rewards).settle_expired(10_000);
         assert_eq!(settled.len(), 1);
         assert!((settled[0].1.reward - 0.8).abs() < 1e-6, "−0.2 + 1.0");
+    }
+
+    /// An open Abbey turn in `discord:c1`, the scope `message()` produces,
+    /// answering `discord:u1` — the user the tests below speak as.
+    fn open_turn(state: &AppState, now: u64) {
+        AppState::lock(&state.rewards).register_turn(ReplyTurn {
+            state: vec![0.0; 18],
+            action: BotAction::Reply.index(),
+            sent_native_message_id: "abbey-msg".into(),
+            scope: "discord:c1".into(),
+            scoped_guild_id: "discord:g".into(),
+            ask: "how do I configure the voice gateway timeout?".into(),
+            asker: "discord:u1".into(),
+            now,
+        });
+    }
+
+    fn only_settled_reward(state: &AppState, now: u64) -> f32 {
+        let settled = AppState::lock(&state.rewards).settle_expired(now);
+        assert_eq!(settled.len(), 1);
+        settled[0].1.reward
+    }
+
+    #[tokio::test]
+    async fn a_thanks_in_reply_to_abbey_reaches_the_delayed_channel() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        open_turn(&state, 0);
+        // The guild has not opted in, so Abbey stays silent — but reward
+        // bookkeeping for a turn she already took runs before the gates.
+        let outcome = handle(
+            &state,
+            &out,
+            message("thanks, that worked", Some("g"), "u1"),
+            false,
+            Some("abbey-msg"),
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Ignored("act off"));
+        // −0.2 baseline + 0.5 untyped engagement + 1.0 typed thanks.
+        let reward = only_settled_reward(&state, 10_000);
+        assert!((reward - 1.3).abs() < 1e-6, "{reward}");
+    }
+
+    #[tokio::test]
+    async fn a_correction_in_reply_to_abbey_costs_more_than_silence() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        open_turn(&state, 0);
+        let _ = handle(
+            &state,
+            &out,
+            message("no, that's not the right port", Some("g"), "u1"),
+            false,
+            Some("abbey-msg"),
+        )
+        .await;
+        // −0.2 + 0.5 engaged − 1.0 typed correction: below the −0.2 a turn
+        // nobody answered would have settled at.
+        let reward = only_settled_reward(&state, 10_000);
+        assert!((reward + 0.7).abs() < 1e-6, "{reward}");
+        assert!(reward < -0.2);
+    }
+
+    #[tokio::test]
+    async fn a_same_channel_follow_up_needs_no_reply_pointer() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let now = runtime::now();
+        open_turn(&state, now);
+        let _ = handle(
+            &state,
+            &out,
+            message("does the gateway retry after a timeout?", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        // −0.2 + 0.4 topical follow-up. No untyped +0.5: there was no reply-to,
+        // which is exactly the gap scope attribution exists to cover.
+        let reward = only_settled_reward(
+            &state,
+            now + crate::brain::reward::SETTLEMENT_WINDOW_SECS + 1,
+        );
+        assert!((reward - 0.2).abs() < 1e-6, "{reward}");
+    }
+
+    #[tokio::test]
+    async fn a_bystanders_thanks_in_the_same_channel_is_not_credited() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let now = runtime::now();
+        open_turn(&state, now);
+        // u2 was never answered by Abbey — this is "thanks Carol!", not
+        // feedback, and it must not move the turn u1's ask earned.
+        let _ = handle(
+            &state,
+            &out,
+            message("thanks, that worked", Some("g"), "u2"),
+            false,
+            None,
+        )
+        .await;
+        let reward = only_settled_reward(
+            &state,
+            now + crate::brain::reward::SETTLEMENT_WINDOW_SECS + 1,
+        );
+        assert_eq!(reward.to_bits(), (-0.2f32).to_bits(), "{reward}");
+    }
+
+    #[tokio::test]
+    async fn unrelated_chatter_leaves_the_turn_exactly_as_it_was() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let now = runtime::now();
+        open_turn(&state, now);
+        let _ = handle(
+            &state,
+            &out,
+            message("anyone up for lunch?", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        let reward = only_settled_reward(
+            &state,
+            now + crate::brain::reward::SETTLEMENT_WINDOW_SECS + 1,
+        );
+        assert_eq!(
+            reward.to_bits(),
+            (-0.2f32).to_bits(),
+            "an off-topic message is no engagement, and no engagement is free"
+        );
     }
 
     #[tokio::test]
@@ -998,17 +1201,98 @@ mod tests {
     }
 
     #[test]
-    fn persona_routing_follows_the_spec_table() {
+    fn two_users_in_one_guild_never_share_semantic_recall() {
+        let state = AppState::in_memory();
+        AppState::lock(&state.recall).remember(
+            "discord:g",
+            "discord:alice",
+            "alice's private editor preference is helix",
+            1,
+        );
+        AppState::lock(&state.recall).remember(
+            "discord:g",
+            "discord:bob",
+            "bob's private editor preference is vim",
+            2,
+        );
+        let alice = assemble_context(
+            &state,
+            "discord:g",
+            "discord:alice",
+            "discord:c",
+            "editor preference",
+        );
+        let bob = assemble_context(
+            &state,
+            "discord:g",
+            "discord:bob",
+            "discord:c",
+            "editor preference",
+        );
+        assert_eq!(
+            alice.user_facts,
+            ["alice's private editor preference is helix"]
+        );
+        assert_eq!(bob.user_facts, ["bob's private editor preference is vim"]);
+    }
+
+    #[test]
+    fn persona_routing_follows_the_canonical_abi_router() {
         let s = GuildSettings::default();
-        assert_eq!(persona_for(Intent::Command, &s), Persona::Aviva);
-        assert_eq!(persona_for(Intent::ModRequest, &s), Persona::Aviva);
-        assert_eq!(persona_for(Intent::Greeting, &s), Persona::Abi);
-        assert_eq!(persona_for(Intent::SmallTalk, &s), Persona::Abi);
-        assert_eq!(persona_for(Intent::Question, &s), Persona::Abbey);
+        assert_eq!(persona_for("hello there", &s), Persona::Abbey);
+        assert_eq!(
+            persona_for("execute the deploy quickly", &s),
+            Persona::Aviva
+        );
+        assert_eq!(persona_for("ABI: review governance risk", &s), Persona::Abi);
         let aviva = GuildSettings {
             default_persona: Persona::Aviva,
             ..GuildSettings::default()
         };
-        assert_eq!(persona_for(Intent::Question, &aviva), Persona::Aviva);
+        assert_eq!(persona_for("hello there", &aviva), Persona::Aviva);
+        assert_eq!(persona_for("Abbey, help me", &aviva), Persona::Abbey);
+        assert_eq!(
+            persona_for_session("and what about tomorrow?", &s, Some(Persona::Aviva)),
+            Persona::Aviva,
+            "a neutral follow-up keeps a tool-selected persona"
+        );
+        assert_eq!(
+            persona_for_session("Abbey, take this one", &s, Some(Persona::Aviva)),
+            Persona::Abbey,
+            "an explicit canonical name still overrides sticky state"
+        );
+    }
+
+    /// The signal layer is only worth having if it survives the `Default`
+    /// sentinel: before it, a distressed message carried no canonical evidence,
+    /// so its route was discarded and the guild (or sticky) persona answered —
+    /// which is the one case where the wrong register hurts most.
+    #[test]
+    fn distress_outranks_the_guild_default_and_sticky_state() {
+        let aviva = GuildSettings {
+            default_persona: Persona::Aviva,
+            ..GuildSettings::default()
+        };
+        let distressed = "I'm completely stuck and losing my mind on this";
+        assert_eq!(
+            crate::persona::route(distressed, None).reason,
+            crate::persona::Reason::Default,
+            "precondition: the canonical keyword table sees nothing here"
+        );
+        assert_eq!(persona_for(distressed, &aviva), Persona::Abbey);
+        assert_eq!(
+            persona_for_session(distressed, &aviva, Some(Persona::Abi)),
+            Persona::Abbey,
+            "distress is a handoff, not a follow-up"
+        );
+
+        // Terse urgency goes the other way, and neutral text still sticks.
+        let s = GuildSettings::default();
+        assert_eq!(persona_for("restart it now", &s), Persona::Aviva);
+        assert_eq!(
+            persona_for_session("and what about tomorrow?", &aviva, Some(Persona::Abi)),
+            Persona::Abi,
+            "text neutral to both layers keeps the sticky persona"
+        );
     }
 }

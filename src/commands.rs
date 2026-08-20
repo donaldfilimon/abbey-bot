@@ -28,9 +28,10 @@ use crate::generation;
 use crate::llm;
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
-use crate::persona::{self, Persona};
+use crate::persona::Persona;
 use crate::pipeline;
 use crate::profile::{self, ProfileFacts};
+use crate::routing_signals;
 use crate::runtime::{self, AppState};
 use crate::server::{self, Archetype};
 use crate::webhook;
@@ -97,11 +98,11 @@ impl From<SeverityChoice> for Severity {
 /// error branch that apologised for it.
 #[derive(Debug, poise::ChoiceParameter)]
 pub enum PersonaChoice {
-    #[name = "abbey — direct, reads people fast"]
+    #[name = "abbey — empathetic polymath and default"]
     Abbey,
-    #[name = "aviva — analytical system-builder"]
+    #[name = "aviva — concise direct expert"]
     Aviva,
-    #[name = "abi — warm rapport-builder"]
+    #[name = "abi — orchestration and governance"]
     Abi,
 }
 
@@ -210,8 +211,14 @@ pub async fn route(
 ) -> Result<(), Error> {
     ctx.defer().await?;
 
-    let route = persona::route(&request, r#as.map(Into::into));
-    ctx.say(clamp_message(persona::describe(&route))).await?;
+    // Explains both layers — canonical weights and the signal layer — so the
+    // explanation matches how the same text would route. Guild defaults and
+    // session stickiness are not visible from a slash command, so a message
+    // neutral to both layers is still described by its prior here while the
+    // pipeline would hand it to the sticky or guild persona.
+    let route = routing_signals::route(&request, r#as.map(Into::into));
+    ctx.say(clamp_message(routing_signals::describe(&route)))
+        .await?;
     Ok(())
 }
 
@@ -255,9 +262,19 @@ pub async fn ask(
     // explains a choice, while this one decides who actually answers. Hardcoding
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
-    let routed = persona::route(&question, r#as.map(Into::into)).persona;
     let state = &ctx.data().state;
     let scope = format!("discord:{}", ctx.channel_id().get());
+    // Same composition the message pipeline uses, so `/persona ask` and an
+    // ordinary message never disagree about identical text. Session stickiness
+    // still applies, but only to text neither layer has an opinion about.
+    let route = routing_signals::route(&question, r#as.map(Into::into));
+    let routed = if route.is_decisive() {
+        route.persona
+    } else {
+        AppState::lock(&state.engine)
+            .session_persona(&scope)
+            .unwrap_or(route.persona)
+    };
     let scoped_guild = match ctx.guild_id() {
         Some(g) => format!("discord:{}", g.get()),
         None => format!("discord:dm:{}", ctx.author().id.get()),
@@ -753,6 +770,144 @@ mod tests {
             reply.ends_with("limit)"),
             "truncation must be stated, not silent"
         );
+    }
+
+    #[cfg(any())]
+    #[test]
+    fn no_audio_songbird_config_disables_decryption_and_decoding() {
+        let base = songbird::Config::default().decode_mode(songbird::driver::DecodeMode::Decode(
+            songbird::driver::DecodeConfig::default(),
+        ));
+        let no_audio = no_audio_songbird_config(&base);
+
+        assert_eq!(no_audio.decode_mode, songbird::driver::DecodeMode::Pass);
+        assert!(matches!(
+            base.decode_mode,
+            songbird::driver::DecodeMode::Decode(_)
+        ));
+    }
+
+    #[cfg(any())]
+    #[tokio::test]
+    async fn songbird_raw_pcm_input_has_a_registered_decoder() {
+        let samples = vec![0_u8; 480 * 2 * std::mem::size_of::<f32>()];
+        let input: songbird::input::Input =
+            RawAdapter::new(std::io::Cursor::new(samples), 48_000, 2).into();
+        let playable = input
+            .make_playable_async(
+                songbird::input::codecs::get_codec_registry(),
+                songbird::input::codecs::get_probe(),
+            )
+            .await
+            .expect("RawAdapter f32 PCM must be decodable by the deployed registry");
+        assert!(playable.is_playable());
+    }
+
+    #[cfg(any())]
+    #[tokio::test]
+    async fn realtime_websocket_exchanges_session_input_and_output_audio() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback fake");
+        let address = listener.local_addr().expect("fake address");
+        let config = VoiceConfig::from_values(
+            Some("123".into()),
+            Some("456".into()),
+            Some("test-secret".into()),
+            Some(format!("ws://{address}/realtime")),
+            Some("test-model".into()),
+            Some("marin".into()),
+            Some("Be Abbey.".into()),
+        )
+        .expect("valid test config")
+        .expect("voice enabled");
+        let runtime = Arc::new(VoiceRuntime::new(config));
+        let generation = runtime.begin();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept fake client");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("accept websocket");
+            let session = socket
+                .next()
+                .await
+                .expect("session event")
+                .expect("session frame")
+                .into_text()
+                .expect("session text");
+            let session: serde_json::Value = serde_json::from_str(&session).expect("session JSON");
+            assert_eq!(session["type"], "session.update");
+            assert_eq!(session["session"]["model"], "test-model");
+            assert_eq!(
+                session["session"]["audio"]["input"]["format"]["rate"],
+                24_000
+            );
+            socket
+                .send(Message::Text(
+                    serde_json::json!({"type": "session.updated"}).to_string(),
+                ))
+                .await
+                .expect("session acknowledgement");
+
+            let input = socket
+                .next()
+                .await
+                .expect("input event")
+                .expect("input frame")
+                .into_text()
+                .expect("input text");
+            let input: serde_json::Value = serde_json::from_str(&input).expect("input JSON");
+            assert_eq!(input["type"], "input_audio_buffer.append");
+            assert!(
+                input["audio"]
+                    .as_str()
+                    .is_some_and(|audio| !audio.is_empty())
+            );
+
+            socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "response.output_audio.delta",
+                        "delta": base64::engine::general_purpose::STANDARD.encode(32767_i16.to_le_bytes())
+                    })
+                    .to_string(),
+                ))
+                .await
+                .expect("output delta");
+            while let Some(Ok(message)) = socket.next().await {
+                if message.is_close() {
+                    break;
+                }
+            }
+        });
+
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(2);
+        let (output_tx, output_rx) = std::sync::mpsc::sync_channel(2);
+        let client_runtime = Arc::clone(&runtime);
+        let client = tokio::spawn(async move {
+            run_realtime(&client_runtime, generation, input_rx, output_tx).await
+        });
+        input_tx
+            .send(vec![1000; 480])
+            .await
+            .expect("send fake voice tick");
+        let output = tokio::task::spawn_blocking(move || {
+            output_rx.recv_timeout(std::time::Duration::from_secs(5))
+        })
+        .await
+        .expect("output wait task")
+        .expect("receive converted audio");
+        assert_eq!(
+            output.len(),
+            16,
+            "one mono sample becomes two stereo frames"
+        );
+        assert_eq!(runtime.status(), "live; listening and speaking");
+
+        drop(input_tx);
+        client.await.expect("client task").expect("client exit");
+        server.await.expect("server task");
     }
 
     #[test]

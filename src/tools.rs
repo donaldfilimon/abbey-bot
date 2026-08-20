@@ -52,7 +52,7 @@ pub fn abbey_tools() -> Vec<ToolSpec> {
             description: "Store one durable fact about the person you are talking to, in third person, for future conversations in this server.",
             parameters: json!({
                 "type": "object",
-                "properties": { "fact": { "type": "string", "description": "A single concise fact" } },
+                "properties": { "fact": { "type": "string", "description": "A single concise fact", "maxLength": crate::memory::MAX_FACT_CHARS } },
                 "required": ["fact"]
             }),
         },
@@ -273,6 +273,10 @@ mod tests {
         assert_eq!(oa.as_array().unwrap().len(), 5);
         assert_eq!(oa[0]["type"], "function");
         assert_eq!(oa[0]["function"]["name"], "remember_fact");
+        assert_eq!(
+            oa[0]["function"]["parameters"]["properties"]["fact"]["maxLength"],
+            crate::memory::MAX_FACT_CHARS
+        );
         assert_eq!(an[3]["name"], "switch_persona");
         assert_eq!(
             an[3]["input_schema"]["properties"]["persona"]["enum"][1],

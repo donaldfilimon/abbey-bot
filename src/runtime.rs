@@ -96,17 +96,40 @@ fn attachment_client() -> reqwest::Client {
 
 /// The live vision transport — reqwest behind the same seam the tests fake.
 pub struct HttpVisionTransport {
-    client: reqwest::Client,
+    remote_client: reqwest::Client,
+    loopback_client: reqwest::Client,
 }
 
 impl Default for HttpVisionTransport {
     fn default() -> Self {
-        Self {
-            client: reqwest::Client::builder()
+        let client = |no_proxy| {
+            let builder = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(reqwest::redirect::Policy::none());
+            let builder = if no_proxy {
+                builder.no_proxy()
+            } else {
+                builder
+            };
+            builder
                 .build()
-                .unwrap_or_default(),
+                .expect("static vision transport client configuration is valid")
+        };
+        Self {
+            remote_client: client(false),
+            // Images destined for a local VLM must never transit a process-
+            // wide HTTP proxy, matching the local text and speech boundary.
+            loopback_client: client(true),
+        }
+    }
+}
+
+impl HttpVisionTransport {
+    fn client_for(&self, raw_url: &str) -> &reqwest::Client {
+        if reqwest::Url::parse(raw_url).is_ok_and(|url| crate::llm::url_is_loopback(&url)) {
+            &self.loopback_client
+        } else {
+            &self.remote_client
         }
     }
 }
@@ -116,7 +139,10 @@ impl VisionTransport for HttpVisionTransport {
         &self,
         request: &VisionRequest,
     ) -> impl std::future::Future<Output = Result<String, VisionError>> + Send {
-        let mut builder = self.client.post(&request.url).json(&request.body);
+        let mut builder = self
+            .client_for(&request.url)
+            .post(&request.url)
+            .json(&request.body);
         for (name, value) in &request.headers {
             builder = builder.header(name.as_str(), value);
         }
@@ -124,15 +150,15 @@ impl VisionTransport for HttpVisionTransport {
             let response = builder
                 .send()
                 .await
-                .map_err(|e| VisionError(format!("the request failed: {e}")))?;
+                .map_err(|e| VisionError::internal(format!("the request failed: {e}")))?;
             let status = response.status();
             let body = crate::http_body::read_capped(response, 2 * 1024 * 1024)
                 .await
-                .map_err(|e| VisionError(e.to_string()))?;
+                .map_err(|e| VisionError::internal(e.to_string()))?;
             let body = String::from_utf8_lossy(&body).into_owned();
             if !status.is_success() {
                 let brief: String = body.chars().take(300).collect();
-                return Err(VisionError(format!("HTTP {status}: {brief}")));
+                return Err(VisionError::internal(format!("HTTP {status}: {brief}")));
             }
             Ok(body)
         }
@@ -234,18 +260,22 @@ pub struct ToolScope<'a> {
 
 impl crate::tools::ToolHost for ToolScope<'_> {
     fn remember_fact(&mut self, fact: &str) -> String {
+        let fact = match crate::memory::validated_fact(fact) {
+            Ok(fact) => fact,
+            Err(message) => return message.to_string(),
+        };
         let t = now();
         let stored = AppState::lock(&self.state.stores).memory.remember(
             &self.scoped_guild,
             &self.scoped_user,
-            fact,
+            &fact,
             t,
         );
         if stored {
             AppState::lock(&self.state.recall).remember(
                 &self.scoped_guild,
                 &self.scoped_user,
-                fact,
+                &fact,
                 t,
             );
             format!("Stored: {fact}")
@@ -269,7 +299,12 @@ impl crate::tools::ToolHost for ToolScope<'_> {
     }
 
     fn recall(&mut self, query: &str) -> String {
-        let facts = AppState::lock(&self.state.recall).recall(&self.scoped_guild, query, 5);
+        let facts = AppState::lock(&self.state.recall).recall_for_user(
+            &self.scoped_guild,
+            &self.scoped_user,
+            query,
+            5,
+        );
         if facts.is_empty() {
             return "Nothing on record.".to_string();
         }
@@ -694,6 +729,25 @@ mod tests {
         assert_eq!(queue_secs_from_value(Some("0".into())), DEFAULT_QUEUE_SECS);
     }
 
+    #[test]
+    fn vision_transport_routes_every_loopback_shape_to_the_no_proxy_client() {
+        let transport = HttpVisionTransport::default();
+        for endpoint in [
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "http://localhost:8080/v1/chat/completions",
+            "http://[::1]:8181/v1/chat/completions",
+        ] {
+            assert!(std::ptr::eq(
+                transport.client_for(endpoint),
+                &transport.loopback_client
+            ));
+        }
+        assert!(std::ptr::eq(
+            transport.client_for("https://vision.example.com/v1/chat/completions"),
+            &transport.remote_client
+        ));
+    }
+
     #[tokio::test]
     async fn rolling_summaries_do_nothing_without_a_backend_and_keep_channels_due() {
         let state = AppState::in_memory();
@@ -727,6 +781,42 @@ mod tests {
     fn topology_matches_the_spec() {
         assert_eq!(TOPOLOGY, [18, 64, 32, 3]);
     }
+
+    #[test]
+    fn tool_memory_uses_the_shared_fact_validator() {
+        let state = AppState::in_memory();
+        let mut scope = ToolScope {
+            state: &state,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            persona: crate::persona::Persona::Abbey,
+        };
+        assert_eq!(
+            crate::tools::ToolHost::remember_fact(&mut scope, "  Donald\nlikes\tRust.  "),
+            "Stored: Donald likes Rust."
+        );
+        assert_eq!(
+            AppState::lock(&state.stores)
+                .memory
+                .facts("discord:g", "discord:u"),
+            ["Donald likes Rust."]
+        );
+        assert_eq!(
+            crate::tools::ToolHost::remember_fact(
+                &mut scope,
+                &"🦀".repeat(crate::memory::MAX_FACT_CHARS + 1)
+            ),
+            "Keep one remembered fact to 300 characters or fewer."
+        );
+        assert_eq!(
+            AppState::lock(&state.recall)
+                .facts_for_user("discord:g", "discord:u")
+                .len(),
+            1
+        );
+    }
+
     #[test]
     fn settled_rewards_reach_the_guild_stats() {
         let state = AppState::in_memory();

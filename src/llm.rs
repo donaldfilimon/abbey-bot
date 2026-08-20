@@ -34,10 +34,10 @@ const MAX_TOKENS: u32 = 1024;
 /// an empty `content` — observed live 2026-08-19: "Say hi in three words"
 /// cost 739 tokens of reasoning for a four-word reply.
 const LOCAL_MAX_TOKENS: u32 = 4096;
-/// The model name sent when `ABBEY_BOT_LLM_MODEL` is unset. llama-server and
-/// mlx serve whatever they were started with and ignore the field; ollama
-/// resolves it and rejects an unknown name, which is why it is configurable.
-pub const DEFAULT_LOCAL_MODEL: &str = "default";
+/// The model name sent when `ABBEY_BOT_LLM_MODEL` is unset. OpenAI-compatible
+/// servers differ on whether they validate, resolve, or ignore this field;
+/// Ollama and MLX-VLM require the configured name to resolve to a served model.
+pub const DEFAULT_LOCAL_MODEL: &str = "gemma4:12b";
 /// Maximum JSON/SSE response retained from a generation backend.
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum diagnostic body retained from a failed backend response.
@@ -52,21 +52,26 @@ pub(crate) fn validate_remote_endpoint(value: &str, name: &str) -> Result<(), St
     if url.query().is_some() || url.fragment().is_some() {
         return Err(format!("{name} must not contain a query or fragment"));
     }
-    let host = url
-        .host_str()
-        .ok_or_else(|| format!("{name} must include a host"))?
-        .trim_start_matches('[')
-        .trim_end_matches(']');
-    let loopback = host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
+    if url.host_str().is_none() {
+        return Err(format!("{name} must include a host"));
+    }
+    let loopback = url_is_loopback(&url);
     match url.scheme() {
         "https" => Ok(()),
         "http" if loopback => Ok(()),
         "http" => Err(format!("{name} requires HTTPS unless it targets loopback")),
         _ => Err(format!("{name} must use HTTP or HTTPS")),
     }
+}
+
+pub(crate) fn url_is_loopback(url: &reqwest::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    })
 }
 
 /// Which generation backend the environment selected.
@@ -142,6 +147,18 @@ impl Backend {
             Self::Anthropic { .. } => "external Anthropic API",
             Self::OpenAiCompatible { .. } => "configured OpenAI-compatible endpoint",
         }
+    }
+
+    /// Whether this backend is an OpenAI-compatible service bound to this
+    /// machine. Local voice uses this guard so its own HTTP hop cannot send a
+    /// transcript off-host. The operator still controls whether that local
+    /// service serves a resident model or proxies an upstream model.
+    #[must_use]
+    pub fn is_loopback_openai_compatible(&self) -> bool {
+        let Self::OpenAiCompatible { endpoint, .. } = self else {
+            return false;
+        };
+        reqwest::Url::parse(endpoint).is_ok_and(|url| url_is_loopback(&url))
     }
 }
 
@@ -529,7 +546,8 @@ pub async fn ask_backend<T: Transport>(
 
 /// The live transport — the only I/O in this module. No test constructs it.
 pub struct HttpTransport {
-    client: reqwest::Client,
+    remote_client: reqwest::Client,
+    loopback_client: reqwest::Client,
 }
 
 /// Default request timeout. Discord's followup window is 15 minutes; a local
@@ -549,23 +567,46 @@ pub fn timeout_from_value(value: Option<String>) -> u64 {
 impl Default for HttpTransport {
     fn default() -> Self {
         let secs = timeout_from_value(std::env::var("ABBEY_BOT_LLM_TIMEOUT_SECS").ok());
-        Self {
-            // Bounded so a hung backend cannot hold the deferred interaction
-            // forever — but generously, see `DEFAULT_TIMEOUT_SECS`.
-            client: reqwest::Client::builder()
+        let client = |no_proxy| {
+            let builder = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(secs))
                 // Never forward the Anthropic x-api-key or a future endpoint
                 // credential through a server-selected redirect.
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(reqwest::redirect::Policy::none());
+            let builder = if no_proxy {
+                builder.no_proxy()
+            } else {
+                builder
+            };
+            builder
                 .build()
-                .expect("static reqwest client configuration is valid"),
+                .expect("static reqwest client configuration is valid")
+        };
+        Self {
+            remote_client: client(false),
+            // A process-wide HTTP_PROXY must never receive a local transcript,
+            // ABI persona/context, or WDBX recall destined for Ollama/MLX.
+            loopback_client: client(true),
+        }
+    }
+}
+
+impl HttpTransport {
+    fn client_for(&self, raw_url: &str) -> &reqwest::Client {
+        if reqwest::Url::parse(raw_url).is_ok_and(|url| url_is_loopback(&url)) {
+            &self.loopback_client
+        } else {
+            &self.remote_client
         }
     }
 }
 
 impl Transport for HttpTransport {
     fn post(&self, request: &LlmRequest) -> impl Future<Output = Result<String, LlmError>> + Send {
-        let mut builder = self.client.post(&request.url).json(&request.body);
+        let mut builder = self
+            .client_for(&request.url)
+            .post(&request.url)
+            .json(&request.body);
         for (name, value) in &request.headers {
             builder = builder.header(*name, value);
         }
@@ -755,7 +796,10 @@ impl StreamTransport for HttpTransport {
         request: &LlmRequest,
         on_delta: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> impl Future<Output = Result<ModelTurn, LlmError>> + Send {
-        let mut builder = self.client.post(&request.url).json(&request.body);
+        let mut builder = self
+            .client_for(&request.url)
+            .post(&request.url)
+            .json(&request.body);
         for (name, value) in &request.headers {
             builder = builder.header(*name, value);
         }
@@ -1109,6 +1153,25 @@ mod tests {
                 .is_err()
         );
         assert!(backend("file:///tmp/model").validate().is_err());
+    }
+
+    #[test]
+    fn live_transport_routes_every_loopback_shape_to_the_no_proxy_client() {
+        let transport = HttpTransport::default();
+        for endpoint in [
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "http://localhost:8080/v1/chat/completions",
+            "http://[::1]:8181/v1/chat/completions",
+        ] {
+            assert!(std::ptr::eq(
+                transport.client_for(endpoint),
+                &transport.loopback_client
+            ));
+        }
+        assert!(std::ptr::eq(
+            transport.client_for("https://api.anthropic.com/v1/messages"),
+            &transport.remote_client
+        ));
     }
 
     #[test]

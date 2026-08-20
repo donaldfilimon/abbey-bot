@@ -11,8 +11,15 @@ cargo fmt --all -- --check
 
 echo "== deploy syntax =="
 sh -n deploy/install-launchd.sh
+sh -n deploy/install-mlx-audio-launchd.sh
+sh -n deploy/install-mlx-vlm-launchd.sh
+sh -n deploy/run-mlx-audio.sh
+sh -n deploy/run-mlx-vlm.sh
+python3 -c 'import ast, pathlib; ast.parse(pathlib.Path("deploy/smoke-mlx-vlm.py").read_text(encoding="utf-8"))'
 if command -v plutil >/dev/null 2>&1; then
   plutil -lint deploy/com.donaldfilimon.abbey-bot.plist
+  plutil -lint deploy/com.donaldfilimon.abbey-mlx-audio.plist
+  plutil -lint deploy/com.donaldfilimon.abbey-mlx-vlm.plist
 fi
 
 echo "== clippy =="

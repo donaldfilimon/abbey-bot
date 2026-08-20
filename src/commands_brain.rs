@@ -4,10 +4,11 @@
 //!
 //! Same contract as `commands.rs`: defer first, clamp every rendered answer,
 //! translate Discord data into plain values and hand them to the pure modules.
-//! Commands that change per-guild config or forget facts are gated by
-//! Discord's own `default_member_permissions`, the way `/modcall` is.
+//! Per-guild configuration uses Discord's `default_member_permissions`.
+//! Member memory is self-service; explicit cross-member access is checked
+//! against the invoker's current Discord permissions at command runtime.
 
-use serenity::all::{Attachment, CreateAttachment, User};
+use serenity::all::{Attachment, CreateAttachment, Permissions, User, UserId};
 
 use crate::ask;
 use crate::brain::telemetry::BrainView;
@@ -23,6 +24,8 @@ use crate::{Context, Error};
 const NO_GUILD: &str = "This one only works inside a server.";
 
 const PLATFORM: &str = "discord";
+
+const CROSS_USER_MEMORY_DENIED: &str = "You can manage only your own memory unless Discord currently grants you Manage Messages or Manage Server.";
 
 /// The namespace a command's data lives in: the guild, or — in a DM — the
 /// invoker's own one-person DM guild, matching `SocialEvent::scoped_guild_id`
@@ -64,16 +67,80 @@ impl OnOff {
 // Memory
 // ---------------------------------------------------------------------------
 
+fn can_access_memory_subject(
+    actor: UserId,
+    subject: UserId,
+    permissions: Option<Permissions>,
+) -> bool {
+    actor == subject
+        || permissions.is_some_and(|permissions| {
+            permissions.manage_messages()
+                || permissions.manage_guild()
+                || permissions.administrator()
+        })
+}
+
+async fn memory_subject_authorized(ctx: Context<'_>, subject: &User) -> bool {
+    if subject.id == ctx.author().id {
+        return true;
+    }
+    let permissions = ctx
+        .author_member()
+        .await
+        .and_then(|member| member.permissions);
+    can_access_memory_subject(ctx.author().id, subject.id, permissions)
+}
+
+/// Preserve exact matching for legacy facts written before normalization, but
+/// let a manually entered whitespace variant find a newly normalized fact.
+fn fact_for_deletion(facts: &[String], requested: &str) -> Option<String> {
+    facts
+        .iter()
+        .find(|fact| fact.as_str() == requested)
+        .or_else(|| {
+            let normalized = memory::normalize_fact_text(requested);
+            facts.iter().find(|fact| fact.as_str() == normalized)
+        })
+        .cloned()
+}
+
+/// Present the subject-scoped union of plain memory and WDBX. Plain memory is
+/// authoritative during normal operation, while the WDBX-only tail makes a
+/// partially persisted deletion visible and recoverable after a crash.
+fn union_fact_texts(plain: &[String], semantic: &[crate::wdbx::RecalledFact]) -> Vec<String> {
+    let mut facts = plain.to_vec();
+    for fact in semantic {
+        if !facts.iter().any(|existing| existing == &fact.text) {
+            facts.push(fact.text.clone());
+        }
+    }
+    facts
+}
+
 /// Store a durable fact about a member (yourself by default).
 #[poise::command(slash_command, ephemeral)]
 pub async fn remember(
     ctx: Context<'_>,
-    #[description = "A single concise fact, stated in third person"] fact: String,
-    #[description = "Who it is about (default: you)"] user: Option<User>,
+    #[description = "A single concise fact, stated in third person"]
+    #[max_length = 300]
+    fact: String,
+    #[description = "Who it is about (default: you; moderators may choose another member)"]
+    user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
+    let fact = match memory::validated_fact(&fact) {
+        Ok(fact) => fact,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
     let u = scoped_user(subject);
     let state = &ctx.data().state;
     let now = runtime::now();
@@ -93,42 +160,58 @@ pub async fn remember(
 async fn autocomplete_fact(ctx: Context<'_>, partial: &str) -> Vec<String> {
     let g = scoped_guild(ctx);
     let u = scoped_user(ctx.author());
-    let stores = AppState::lock(&ctx.data().state.stores);
-    memory::autocomplete_facts(stores.memory.facts(&g, &u), partial)
+    let state = &ctx.data().state;
+    let plain = AppState::lock(&state.stores).memory.facts(&g, &u).to_vec();
+    let semantic = AppState::lock(&state.recall).facts_for_user(&g, &u);
+    let facts = union_fact_texts(&plain, &semantic);
+    memory::autocomplete_facts(&facts, partial)
         .into_iter()
         .map(str::to_string)
         .collect()
 }
 
 /// Forget one of your stored facts.
-#[poise::command(
-    slash_command,
-    ephemeral,
-    default_member_permissions = "MANAGE_MESSAGES"
-)]
+#[poise::command(slash_command, ephemeral)]
 pub async fn forget(
     ctx: Context<'_>,
     #[description = "The fact to remove"]
     #[autocomplete = "autocomplete_fact"]
     fact: String,
+    #[description = "Who it is about (default: you; moderators may choose another member)"]
+    user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
-    let u = scoped_user(ctx.author());
+    let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
+    let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let removed = AppState::lock(&state.stores).memory.forget(&g, &u, &fact);
-    if removed {
-        let ids: Vec<u64> = AppState::lock(&state.recall)
+    let plain = AppState::lock(&state.stores).memory.facts(&g, &u).to_vec();
+    let semantic = AppState::lock(&state.recall).facts_for_user(&g, &u);
+    let candidates = union_fact_texts(&plain, &semantic);
+    let selected = fact_for_deletion(&candidates, &fact);
+    let removed = if let Some(selected) = selected {
+        let removed_plain = AppState::lock(&state.stores)
+            .memory
+            .forget(&g, &u, &selected);
+        let mut recall = AppState::lock(&state.recall);
+        let ids: Vec<u64> = recall
             .facts_for_user(&g, &u)
             .into_iter()
-            .filter(|f| f.text == fact)
+            .filter(|f| f.text == selected)
             .map(|f| f.id)
             .collect();
-        let mut recall = AppState::lock(&state.recall);
+        let mut removed_semantic = false;
         for id in ids {
-            recall.forget(&g, id);
+            removed_semantic |= recall.forget(&g, id);
         }
-    }
+        removed_plain || removed_semantic
+    } else {
+        false
+    };
     ctx.say(if removed {
         "Forgotten."
     } else {
@@ -142,19 +225,26 @@ pub async fn forget(
 #[poise::command(slash_command, ephemeral)]
 pub async fn recall(
     ctx: Context<'_>,
-    #[description = "Who to look up (default: you)"] user: Option<User>,
+    #[description = "Who to look up (default: you; moderators may choose another member)"]
+    user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let (facts, reputation) = {
+    let (plain, reputation) = {
         let stores = AppState::lock(&state.stores);
         let facts = stores.memory.facts(&g, &u).to_vec();
         let rep = AppState::lock(&state.social).reputation(&u, &g, &*stores);
         (facts, rep)
     };
+    let semantic = AppState::lock(&state.recall).facts_for_user(&g, &u);
+    let facts = union_fact_texts(&plain, &semantic);
     let mut out = format!(
         "**<@{}>** — standing {reputation:.2} (0 = poor, 1 = excellent)\n",
         subject.id.get()
@@ -289,9 +379,11 @@ pub async fn see(
     let description = match vision_client.describe(&bytes).await {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!(error = %e.0, "vision description failed");
-            ctx.say("I couldn't read that image because the vision backend failed; try again or check the bot logs.")
-                .await?;
+            tracing::warn!(error = %e, "vision description failed");
+            ctx.say(e.public_message().unwrap_or(
+                "I couldn't read that image because the vision backend failed; try again or check the bot logs.",
+            ))
+            .await?;
             return Ok(());
         }
     };
@@ -340,8 +432,11 @@ pub async fn ocr(
         Ok(bytes) => match vision_client.extract_text(&bytes).await {
             Ok(text) => vision::render_ocr(&text),
             Err(e) => {
-                tracing::warn!(error = %e.0, "vision OCR failed");
-                "I couldn't read that image because the vision backend failed; try again or check the bot logs."
+                tracing::warn!(error = %e, "vision OCR failed");
+                e.public_message()
+                    .unwrap_or(
+                        "I couldn't read that image because the vision backend failed; try again or check the bot logs.",
+                    )
                     .to_string()
             }
         },
@@ -685,5 +780,78 @@ mod tests {
     fn on_off_labels() {
         assert!(OnOff::On.is_on());
         assert_eq!(OnOff::Off.label(), "off");
+    }
+
+    #[test]
+    fn memory_subject_access_is_self_service_or_runtime_moderated() {
+        let actor = UserId::new(10);
+        let other = UserId::new(20);
+        assert!(can_access_memory_subject(actor, actor, None));
+        assert!(!can_access_memory_subject(actor, other, None));
+        assert!(!can_access_memory_subject(
+            actor,
+            other,
+            Some(Permissions::VIEW_CHANNEL)
+        ));
+        assert!(can_access_memory_subject(
+            actor,
+            other,
+            Some(Permissions::MANAGE_MESSAGES)
+        ));
+        assert!(can_access_memory_subject(
+            actor,
+            other,
+            Some(Permissions::MANAGE_GUILD)
+        ));
+        assert!(can_access_memory_subject(
+            actor,
+            other,
+            Some(Permissions::ADMINISTRATOR)
+        ));
+    }
+
+    #[test]
+    fn facts_are_whitespace_normalized_and_character_bounded() {
+        assert_eq!(
+            memory::validated_fact("  Donald\nlikes\tRust.  "),
+            Ok("Donald likes Rust.".to_string())
+        );
+        assert_eq!(
+            memory::validated_fact(" \n\t "),
+            Err("The fact must contain some text.")
+        );
+        assert!(memory::validated_fact(&"x".repeat(memory::MAX_FACT_CHARS)).is_ok());
+        assert_eq!(
+            memory::validated_fact(&"🦀".repeat(memory::MAX_FACT_CHARS + 1)),
+            Err("Keep one remembered fact to 300 characters or fewer.")
+        );
+    }
+
+    #[test]
+    fn deletion_accepts_legacy_exact_text_or_normalized_new_text() {
+        let facts = vec!["legacy\nfact".to_string(), "Donald likes Rust.".to_string()];
+        assert_eq!(
+            fact_for_deletion(&facts, "legacy\nfact"),
+            Some("legacy\nfact".to_string())
+        );
+        assert_eq!(
+            fact_for_deletion(&facts, "  Donald\nlikes  Rust. "),
+            Some("Donald likes Rust.".to_string())
+        );
+        assert_eq!(fact_for_deletion(&facts, "missing"), None);
+    }
+
+    #[test]
+    fn wdbx_only_fact_is_visible_and_selectable_for_recovery() {
+        let plain = vec!["plain fact".to_string()];
+        let mut recall = crate::wdbx::Recall::new();
+        recall.remember("g", "u", "semantic ghost", 1);
+        let semantic = recall.facts_for_user("g", "u");
+        let union = union_fact_texts(&plain, &semantic);
+        assert_eq!(union, ["plain fact", "semantic ghost"]);
+        assert_eq!(
+            fact_for_deletion(&union, "  semantic\nghost "),
+            Some("semantic ghost".to_string())
+        );
     }
 }

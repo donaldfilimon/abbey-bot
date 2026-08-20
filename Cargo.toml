@@ -9,7 +9,7 @@ poise = "0.6.2"
 # Already in the tree via serenity (which pins the rustls stack); promoted to a
 # direct dependency for the /persona ask backend call, with features matching
 # serenity's so no second TLS stack is pulled in.
-reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.151"
 serenity = "0.12.5"
@@ -21,3 +21,16 @@ tracing = "0.1.44"
 tokio-tungstenite = { version = "0.21.0", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# Discord voice. Songbird 0.6 is the first release line with the DAVE/MLS
+# support Discord requires in 2026; `receive` exposes decoded, jitter-buffered
+# 20 ms voice ticks for the Realtime bridge.
+songbird = { version = "0.6.0", features = ["receive"] }
+# Songbird's RawAdapter registers its raw container but leaves Symphonia codec
+# features to the application. PCM is required to decode the f32 stream used by
+# consented live-voice output.
+symphonia = { version = "0.5.5", default-features = false, features = ["pcm"] }
+base64 = "0.22.1"
+# Validate every accepted attachment under bounded decoder limits before handing
+# it to an OpenAI-compatible vision endpoint. GIF is normalized to first-frame
+# PNG because Ollama rejects the otherwise valid image/gif data-URL prefix.
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }

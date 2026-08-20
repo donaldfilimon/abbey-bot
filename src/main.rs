@@ -19,6 +19,12 @@
 //! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
 //!   MESSAGE_CONTENT intent (must also be enabled in the Dev Portal).
 //! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
+//! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
+//!   admin-triggered, DAVE-capable Discord connection. `ABBEY_VOICE_AUTOJOIN=1`
+//!   provides persistent muted/self-deafened no-audio presence. Conversational
+//!   local or Realtime voice still requires `/voice join consent:true`.
+//! - `--voice-self-test OUTPUT.wav` — run local TTS → STT → canonical Abbey
+//!   reasoning → TTS without a Discord token, microphone, or call.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
@@ -34,25 +40,35 @@ mod ask;
 mod brain;
 mod commands;
 mod commands_brain;
+mod commands_voice;
 mod embedding;
 mod engine;
 mod gateway;
 mod generation;
+mod grounding;
 mod guild;
 mod http_body;
 mod llm;
 mod memory;
 mod moderation;
+mod offline_voice;
 mod perms;
 mod persist;
 mod persona;
 mod pipeline;
 mod platform;
 mod profile;
+mod recall;
+mod routing_signals;
 mod runtime;
 mod server;
 mod tools;
 mod vision;
+mod voice;
+mod voice_local;
+mod voice_openai;
+mod voice_self_test;
+mod voice_session;
 mod wdbx;
 mod webhook;
 mod wyhash;
@@ -63,6 +79,7 @@ use serenity::all::{GatewayIntents, GuildId};
 /// not mean touching every command signature.
 pub struct Data {
     pub state: std::sync::Arc<runtime::AppState>,
+    pub voice: Option<std::sync::Arc<voice_session::VoiceRuntime>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -91,6 +108,24 @@ async fn main() -> Result<(), Error> {
         )
         .init();
 
+    if let Some(output) = voice_self_test_output().map_err(runtime::StartupError)? {
+        let report = voice_self_test::run(&output)
+            .await
+            .map_err(runtime::StartupError)?;
+        println!(
+            "local voice self-test passed\nstimulus transcript: {}\nreply: {}\nreply transcript: {}\nround-trip word recall: {:.0}%\naudio: {} ({} Hz, {} channel(s), {} ms)",
+            report.transcript,
+            report.spoken_answer,
+            report.reply_transcript,
+            report.round_trip_word_recall * 100.0,
+            report.output.display(),
+            report.sample_rate,
+            report.channels,
+            report.duration_millis,
+        );
+        return Ok(());
+    }
+
     // Read before building anything else: a missing token should fail in the
     // first millisecond with a sentence you can act on, not inside a gateway
     // handshake error.
@@ -118,6 +153,10 @@ async fn main() -> Result<(), Error> {
     };
 
     let state = runtime::AppState::from_env()?;
+    let voice_runtime = voice::VoiceConfig::from_env()
+        .map_err(runtime::StartupError)?
+        .map(voice_session::VoiceRuntime::new)
+        .map(std::sync::Arc::new);
     match &state.data_dir {
         Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),
         None => tracing::warn!("ABBEY_DATA_DIR unset — learning and memory are in-memory only"),
@@ -142,12 +181,15 @@ async fn main() -> Result<(), Error> {
         tracing::info!(
             "requesting the privileged MESSAGE_CONTENT intent (must be enabled in the Dev Portal too)"
         );
-        GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT
-    } else {
         GatewayIntents::non_privileged()
+            | GatewayIntents::GUILD_VOICE_STATES
+            | GatewayIntents::MESSAGE_CONTENT
+    } else {
+        GatewayIntents::non_privileged() | GatewayIntents::GUILD_VOICE_STATES
     };
 
     let shell_state = std::sync::Arc::clone(&state);
+    let setup_voice_runtime = voice_runtime.clone();
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -166,10 +208,45 @@ async fn main() -> Result<(), Error> {
                 commands_brain::ocr(),
                 commands_brain::stats(),
                 commands_brain::admin(),
+                commands_voice::voice(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
-                    gateway::on_discord_event(ctx, event, &data.state).await;
+                    gateway::on_discord_event(ctx, event, &data.state, data.voice.as_deref()).await;
+                    if let serenity::all::FullEvent::VoiceStateUpdate { old, new } = event {
+                        commands_voice::on_voice_state_update(ctx, old, new, data).await;
+                    }
+                    if let serenity::all::FullEvent::ChannelUpdate { new, .. } = event {
+                        commands_voice::on_voice_permissions_changed(
+                            ctx,
+                            new.guild_id,
+                            Some(new.id),
+                            data,
+                        )
+                        .await;
+                    }
+                    if let serenity::all::FullEvent::GuildRoleUpdate { new, .. } = event {
+                        commands_voice::on_voice_permissions_changed(ctx, new.guild_id, None, data)
+                            .await;
+                    }
+                    if let serenity::all::FullEvent::GuildRoleDelete { guild_id, .. } = event {
+                        commands_voice::on_voice_permissions_changed(ctx, *guild_id, None, data)
+                            .await;
+                    }
+                    if let serenity::all::FullEvent::GuildMemberUpdate { event, .. } = event
+                        && event.user.id == ctx.cache.current_user().id
+                    {
+                        // Discord sends updates for the current bot member even
+                        // without the privileged GUILD_MEMBERS intent. Role
+                        // assignments can therefore revoke voice immediately.
+                        commands_voice::on_voice_permissions_changed(
+                            ctx,
+                            event.guild_id,
+                            None,
+                            data,
+                        )
+                        .await;
+                    }
                     Ok(())
                 })
             },
@@ -220,9 +297,33 @@ async fn main() -> Result<(), Error> {
                         );
                     }
                 }
+                let voice_autojoin = std::env::var("ABBEY_VOICE_AUTOJOIN")
+                    .map(|value| value.trim() == "1")
+                    .unwrap_or(false);
+                if voice_autojoin {
+                    match setup_voice_runtime.as_ref() {
+                        Some(runtime) => {
+                            commands_voice::autojoin_self_deafened(
+                                ctx,
+                                std::sync::Arc::clone(runtime),
+                            )
+                            .await
+                            .map_err(runtime::StartupError)?;
+                        }
+                        None => {
+                            return Err(runtime::StartupError(
+                                "ABBEY_VOICE_AUTOJOIN=1 requires both voice destination IDs".into(),
+                            )
+                            .into());
+                        }
+                    }
+                }
                 tracing::info!(user = %ready.user.name, "connected");
                 shell_state.register_self(format!("discord:{}", ready.user.id.get()));
-                Ok(Data { state: shell_state })
+                Ok(Data {
+                    state: shell_state,
+                    voice: setup_voice_runtime,
+                })
             })
         })
         .build();
@@ -230,17 +331,25 @@ async fn main() -> Result<(), Error> {
     let http = serenity::http::HttpBuilder::new(&token)
         .default_allowed_mentions(gateway::no_mentions())
         .build();
+    use songbird::SerenityInit;
     let mut client = serenity::client::ClientBuilder::new_with_http(http, intents)
         .framework(framework)
+        .register_songbird_from_config(
+            songbird::Config::default().decode_mode(songbird::driver::DecodeMode::Pass),
+        )
         .await?;
 
     // Persist on interactive Ctrl-C and service-manager SIGTERM before taking
     // shards down. Otherwise a redeploy loses the current five-minute window.
     let shard_manager = client.shard_manager.clone();
     let shutdown_state = std::sync::Arc::clone(&state);
+    let shutdown_voice = voice_runtime.clone();
     tokio::spawn(async move {
         if shutdown_signal().await.is_ok() {
             tracing::info!("shutting down");
+            if let Some(voice) = shutdown_voice {
+                voice.disconnect("process shutdown stopped voice").await;
+            }
             gateway::shutdown(&shutdown_state);
             shard_manager.shutdown_all().await;
         }
@@ -249,9 +358,41 @@ async fn main() -> Result<(), Error> {
     // Persist whether the gateway ended cleanly or with an error — a bad
     // token after a long uptime must not also cost the last five minutes.
     let result = client.start().await;
+    if let Some(voice) = voice_runtime {
+        voice.disconnect("Discord gateway stopped voice").await;
+    }
     gateway::shutdown(&state);
     result?;
     Ok(())
+}
+
+fn voice_self_test_output() -> Result<Option<std::path::PathBuf>, String> {
+    parse_startup_arguments(std::env::args_os().skip(1))
+}
+
+fn parse_startup_arguments(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(mode) = arguments.next() else {
+        return Ok(None);
+    };
+    if mode != std::ffi::OsStr::new("--voice-self-test") {
+        return Err(format!(
+            "unknown argument {:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav]",
+            mode
+        ));
+    }
+    let output = arguments.next().ok_or_else(|| {
+        "usage: abbey-bot --voice-self-test OUTPUT.wav (the output must not already exist)"
+            .to_string()
+    })?;
+    if arguments.next().is_some() {
+        return Err(
+            "usage: abbey-bot --voice-self-test OUTPUT.wav (exactly one output path is required)"
+                .into(),
+        );
+    }
+    Ok(Some(output.into()))
 }
 
 /// Global registration that survives Discord's Entry Point command.
@@ -317,4 +458,34 @@ fn record_interaction(ctx: Context<'_>, succeeded: bool, error: Option<String>) 
         .memory
         .interactions
         .record(entry);
+}
+
+#[cfg(test)]
+mod startup_argument_tests {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<Option<std::path::PathBuf>, String> {
+        parse_startup_arguments(arguments.iter().map(std::ffi::OsString::from))
+    }
+
+    #[test]
+    fn no_arguments_starts_the_discord_service() {
+        assert_eq!(parse(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn exact_voice_self_test_has_one_create_new_output() {
+        assert_eq!(
+            parse(&["--voice-self-test", "audition.wav"]).unwrap(),
+            Some(std::path::PathBuf::from("audition.wav"))
+        );
+        assert!(parse(&["--voice-self-test"]).is_err());
+        assert!(parse(&["--voice-self-test", "one.wav", "two.wav"]).is_err());
+    }
+
+    #[test]
+    fn an_unknown_or_mistyped_mode_cannot_start_discord() {
+        assert!(parse(&["--voice-self-tset", "audition.wav"]).is_err());
+        assert!(parse(&["unexpected"]).is_err());
+    }
 }
