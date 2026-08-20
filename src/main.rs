@@ -57,6 +57,7 @@ mod persona;
 mod pipeline;
 mod platform;
 mod profile;
+mod recall;
 mod runtime;
 mod server;
 mod tools;

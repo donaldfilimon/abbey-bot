@@ -245,9 +245,18 @@ impl PersonaContext {
         }
     }
 
-    /// The context block appended to the system prompt — a line-for-line port
-    /// of appleintelligence.md's `render(_ c:)`.
-    pub fn render(&self) -> String {
+    /// The context block appended to the system prompt, focused on `query`.
+    ///
+    /// Originally a line-for-line port of appleintelligence.md's `render(_ c:)`,
+    /// which joined *every* stored fact. At the hundred-fact cap that put tens
+    /// of thousands of characters of biography in front of every message, so
+    /// facts are now ranked for the message being answered — see
+    /// [`crate::recall`]. Pass the user's message as `query`; an empty query
+    /// degrades to newest-first, never to nothing.
+    ///
+    /// Ranking is not forgetting: held-back facts are counted in the output so
+    /// the model knows more is on file, and `/recall` still lists everything.
+    pub fn render(&self, query: &str) -> String {
         let mut out = String::new();
         if !self.channel_summary.is_empty() {
             out.push_str(&format!(
@@ -256,10 +265,26 @@ impl PersonaContext {
             ));
         }
         if !self.user_facts.is_empty() {
+            let picked = crate::recall::select(
+                &self.user_facts,
+                query,
+                crate::recall::MAX_CONTEXT_FACTS,
+                crate::recall::FACT_CONTEXT_CHARS,
+            );
             out.push_str(&format!(
-                "Known about this user: {}\n",
-                self.user_facts.join("; ")
+                "Known about this user: {}",
+                picked.facts.join("; ")
             ));
+            if picked.omitted > 0 {
+                // Disclose the trim rather than implying this is everything on
+                // file; the model can offer to look further instead of
+                // asserting from a partial view.
+                out.push_str(&format!(
+                    " (+{} more remembered facts not shown for this message)",
+                    picked.omitted
+                ));
+            }
+            out.push('\n');
         }
         // A bare number is unusable context: a model reading "User standing:
         // 0.50" cannot tell the scale, the neutral point, or whether the value
@@ -559,26 +584,70 @@ mod tests {
             user_facts: vec!["likes rust".into(), "runs a homelab".into()],
             reputation: 0.5,
         };
+        // Both facts fit the budget, so a focused render shows both and adds
+        // no "not shown" note. The query names only "rust", so that fact
+        // outranks the homelab one — a query naming both would tie them and
+        // let recency decide the order instead.
         assert_eq!(
-            ctx.render(),
+            ctx.render("a rust question"),
             "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50 on a 0.00-1.00 scale where 0.50 is neutral (higher is a longer history of constructive participation). This is internal context for judging tone and benefit of the doubt; never mention, quote, or explain it to the user."
         );
         // Empty context renders only the standing line — no blank headers.
         assert!(
             PersonaContext::empty()
-                .render()
+                .render("anything")
                 .starts_with("User standing: 0.50 on a 0.00-1.00 scale")
         );
-        assert!(!PersonaContext::empty().render().contains('\n'));
+        assert!(!PersonaContext::empty().render("anything").contains('\n'));
         let mut high = PersonaContext::empty();
         high.reputation = 0.8765;
-        assert!(high.render().starts_with("User standing: 0.88 "));
+        assert!(high.render("").starts_with("User standing: 0.88 "));
         // The score is decision support, not chat material: the instruction
         // that keeps an internal number out of replies must travel with it.
         assert!(
-            high.render()
+            high.render("")
                 .contains("never mention, quote, or explain it")
         );
+    }
+
+    #[test]
+    fn render_focuses_facts_on_the_message_and_discloses_the_trim() {
+        // Ten facts, one obviously about the question. The prompt must lead
+        // with that one and must not silently imply it is the whole file.
+        let mut user_facts: Vec<String> = (0..9).map(|i| format!("unrelated fact {i}")).collect();
+        user_facts.push("deploys with kubernetes".into());
+        let ctx = PersonaContext {
+            channel_summary: String::new(),
+            user_facts,
+            reputation: DEFAULT_REPUTATION,
+        };
+
+        let rendered = ctx.render("how do I roll back a kubernetes deploy?");
+        assert!(
+            rendered.contains("Known about this user: deploys with kubernetes"),
+            "the relevant fact must come first: {rendered}"
+        );
+        assert!(
+            rendered.contains("(+2 more remembered facts not shown for this message)"),
+            "the trim must be disclosed: {rendered}"
+        );
+        // Ranking is not forgetting: everything is still on file.
+        assert_eq!(ctx.user_facts.len(), 10);
+    }
+
+    #[test]
+    fn a_short_fact_list_is_never_trimmed_by_focusing() {
+        // The common case — a handful of facts — must behave exactly as it did
+        // before relevance selection existed, whatever the message says.
+        let ctx = PersonaContext {
+            channel_summary: String::new(),
+            user_facts: vec!["likes tea".into(), "uses nixos".into()],
+            reputation: DEFAULT_REPUTATION,
+        };
+        let rendered = ctx.render("totally unrelated question about pottery");
+        assert!(rendered.contains("likes tea"));
+        assert!(rendered.contains("uses nixos"));
+        assert!(!rendered.contains("not shown for this message"));
     }
 
     #[test]

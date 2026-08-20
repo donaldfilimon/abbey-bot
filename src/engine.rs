@@ -123,7 +123,9 @@ impl Engine {
             system_prompt: format!(
                 "{}\n\n{}",
                 crate::ask::system_prompt(persona),
-                context.render()
+                // The message being answered is the relevance query, so the
+                // facts shown are the ones that bear on it.
+                context.render(user_input)
             ),
             turns,
         }
@@ -221,7 +223,9 @@ mod tests {
             format!(
                 "{}\n\n{}",
                 crate::ask::system_prompt(Persona::Aviva),
-                context.render()
+                // prepare focuses the context on the message it is preparing,
+                // so the expectation must use the same query ("hi").
+                context.render("hi")
             )
         );
         assert!(
