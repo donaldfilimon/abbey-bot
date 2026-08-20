@@ -51,7 +51,7 @@ const fn contract_description(persona: Persona) -> &'static str {
 /// prompt is one fixed string, pinned by test.
 pub fn system_prompt(persona: Persona) -> String {
     format!(
-        "You are {persona}. {} You are replying in a Discord conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. You have no tools, cannot see the server, and remember only what is in this conversation or the facts provided below — say so rather than guess.",
+        "You are {persona}. {} You are replying in a Discord conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. Use only tools explicitly supplied for this turn; otherwise you cannot see or change the server. Remember only what is in this conversation or the facts provided below, and say so rather than guess.",
         contract_description(persona)
     )
 }
@@ -160,11 +160,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn routing_the_permission_matrix_question_assembles_avivas_prompt() {
-        // The proposal's worked example: this request routes to Aviva, and the
-        // assembled system prompt carries her transcribed contract text —
-        // asserted by string, pinned to the transcription.
-        let route = crate::persona::route("help me design the permission matrix", None);
+    fn canonical_execution_cues_assemble_avivas_prompt() {
+        let route = crate::persona::route("execute deploy run the build quickly", None);
         assert_eq!(route.persona, Persona::Aviva);
 
         let prompt = system_prompt(route.persona);

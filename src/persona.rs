@@ -1,49 +1,33 @@
-//! Persona routing.
+//! Canonical ABI persona routing, transcribed from `abi-ai`.
 //!
-//! The `discord-abbey` skill defines three registers and exactly one rule for
-//! choosing between them: switch when Donald specifies, or when the task type is
-//! *unambiguous*. That word is load-bearing, and it is why this module refuses to
-//! guess: when a request pulls toward two personas at once, it falls back to Abbey
-//! rather than picking a winner on a tiebreak nobody specified.
-//!
-//! Known limit, not a bug to paper over: scoring counts distinct cue hits and
-//! the two lists are different lengths, so a request touching several Aviva
-//! topics can outscore a clearer Abi intent. `as` exists to override it.
-//!
-//! Routing is deliberately deterministic and model-free. Discord kills an
-//! interaction token after 3 seconds, so the path that decides *who answers* must
-//! not itself be the thing that blows the budget.
+//! Abbey is the empathetic polymath and neutral default, Aviva is the concise
+//! direct expert, and ABI/Abi is the orchestration and governance layer. The
+//! weights, keyword scores, prefix matching, exact leading-name selector, and
+//! tie order mirror `../abi/crates/abi-ai/src/{identity,keywords,router}.rs`.
 
 use std::fmt;
 
-/// One of Abbey's three registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Persona {
-    /// Direct, street-smart, reads people fast. The default.
     Abbey,
-    /// Analytical, structured, system-builder.
     Aviva,
-    /// Warm, adaptive, rapport-builder.
     Abi,
 }
 
 impl Persona {
-    /// How this persona writes. Shown to the caller so the routing decision is
-    /// legible rather than magic.
     pub const fn register(self) -> &'static str {
         match self {
-            Self::Abbey => "direct, street-smart, reads people fast",
-            Self::Aviva => "analytical, structured, system-builder",
-            Self::Abi => "warm, adaptive, rapport-builder",
+            Self::Abbey => "empathetic polymath with technical depth and human awareness",
+            Self::Aviva => "concise direct expert: answer, assumptions, next action",
+            Self::Abi => "orchestration, reasoning, policy, risk, and routing",
         }
     }
 
-    /// What this persona is for.
     pub const fn handles(self) -> &'static str {
         match self {
-            Self::Abbey => "social help, DM drafts, navigation, general Q&A",
-            Self::Aviva => "server architecture, permission design, bot specs, mod policy, code",
-            Self::Abi => "welcome messages, community tone-setting, de-escalation",
+            Self::Abbey => "most technical, emotional, creative, and teaching conversations",
+            Self::Aviva => "urgent execution, precise fixes, and deliberately terse answers",
+            Self::Abi => "explicit system orchestration, governance, routing, and risk review",
         }
     }
 }
@@ -58,76 +42,183 @@ impl fmt::Display for Persona {
     }
 }
 
-/// Why a particular persona was chosen.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProfileWeights {
+    pub abbey: f32,
+    pub aviva: f32,
+    pub abi: f32,
+}
+
+impl ProfileWeights {
+    pub const fn prior() -> Self {
+        Self {
+            abbey: 0.40,
+            aviva: 0.30,
+            abi: 0.30,
+        }
+    }
+
+    pub const fn only(persona: Persona) -> Self {
+        match persona {
+            Persona::Abbey => Self {
+                abbey: 1.0,
+                aviva: 0.0,
+                abi: 0.0,
+            },
+            Persona::Aviva => Self {
+                abbey: 0.0,
+                aviva: 1.0,
+                abi: 0.0,
+            },
+            Persona::Abi => Self {
+                abbey: 0.0,
+                aviva: 0.0,
+                abi: 1.0,
+            },
+        }
+    }
+
+    fn normalize(&mut self) {
+        let total = self.abbey + self.aviva + self.abi;
+        if total > 0.0 {
+            self.abbey /= total;
+            self.aviva /= total;
+            self.abi /= total;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Keyword {
+    word: &'static str,
+    abbey: f32,
+    aviva: f32,
+    abi: f32,
+}
+
+macro_rules! keyword {
+    ($word:literal, $abbey:literal, $aviva:literal, $abi:literal) => {
+        Keyword {
+            word: $word,
+            abbey: $abbey,
+            aviva: $aviva,
+            abi: $abi,
+        }
+    };
+}
+
+const KEYWORDS: [Keyword; 29] = [
+    keyword!("analyze", 0.9, 0.5, 0.2),
+    keyword!("structure", 0.9, 0.6, 0.2),
+    keyword!("logical", 0.85, 0.7, 0.2),
+    keyword!("compare", 0.8, 0.7, 0.2),
+    keyword!("explain", 0.95, 0.4, 0.2),
+    keyword!("creative", 0.95, 0.3, 0.1),
+    keyword!("imagine", 0.95, 0.3, 0.1),
+    keyword!("explore", 0.9, 0.4, 0.2),
+    keyword!("brainstorm", 0.95, 0.3, 0.1),
+    keyword!("help", 0.95, 0.4, 0.2),
+    keyword!("learn", 0.95, 0.3, 0.2),
+    keyword!("frustrated", 0.95, 0.2, 0.1),
+    keyword!("run", 0.3, 0.95, 0.2),
+    keyword!("execute", 0.3, 0.95, 0.2),
+    keyword!("deploy", 0.3, 0.95, 0.2),
+    keyword!("build", 0.5, 0.9, 0.2),
+    keyword!("fix", 0.5, 0.95, 0.2),
+    keyword!("quick", 0.3, 0.95, 0.1),
+    keyword!("direct", 0.3, 0.95, 0.1),
+    keyword!("concise", 0.3, 0.95, 0.1),
+    keyword!("orchestrate", 0.2, 0.2, 0.95),
+    keyword!("routing", 0.2, 0.2, 0.95),
+    keyword!("governance", 0.3, 0.3, 0.95),
+    keyword!("policy", 0.3, 0.4, 0.9),
+    keyword!("profile", 0.3, 0.3, 0.9),
+    keyword!("safe", 0.8, 0.5, 0.5),
+    keyword!("risk", 0.8, 0.6, 0.6),
+    keyword!("design", 0.9, 0.5, 0.3),
+    keyword!("pattern", 0.85, 0.5, 0.3),
+];
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Reason {
-    /// The caller named the persona outright.
     Explicit,
-    /// The task type was unambiguous; carries the cue that decided it.
-    Cue(&'static str),
-    /// Nothing pulled hard enough, or two personas pulled equally.
+    Weighted(ProfileWeights),
     Default,
 }
 
-/// A routing decision: who answers, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Route {
     pub persona: Persona,
     pub reason: Reason,
 }
 
-/// Cues that mark a request as Aviva's. Matched as substrings against
-/// lowercased input, so `permissions` matches on `permission`.
-const AVIVA_CUES: &[&str] = &[
-    "permission",
-    "role hierarchy",
-    "channel structure",
-    "architecture",
-    "server setup",
-    "set up a server",
-    "mod policy",
-    "moderation policy",
-    "bot spec",
-    "schema",
-    "webhook",
-    "audit log",
-    "rate limit",
-    "slash command",
-];
+/// Recognize only an exact leading Abbey, Aviva, or ABI token, optionally
+/// prefixed with `@` and followed by whitespace, comma, or colon.
+#[must_use]
+pub fn explicit_selector(input: &str) -> Option<Persona> {
+    let mut remaining = input.trim_matches([' ', '\t', '\r', '\n']);
+    remaining = remaining.strip_prefix('@').unwrap_or(remaining);
+    let bytes = remaining.as_bytes();
+    let end = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_alphabetic())
+        .unwrap_or(bytes.len());
+    if end == 0 {
+        return None;
+    }
+    if end < bytes.len() {
+        let separator = bytes[end];
+        if !matches!(
+            separator,
+            b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | b',' | b':'
+        ) {
+            return None;
+        }
+    }
+    match &remaining[..end] {
+        name if name.eq_ignore_ascii_case("abbey") => Some(Persona::Abbey),
+        name if name.eq_ignore_ascii_case("aviva") => Some(Persona::Aviva),
+        name if name.eq_ignore_ascii_case("abi") => Some(Persona::Abi),
+        _ => None,
+    }
+}
 
-/// Cues that mark a request as Abi's.
-const ABI_CUES: &[&str] = &[
-    "welcome",
-    "onboard",
-    "de-escalate",
-    "deescalate",
-    "calm",
-    "defuse",
-    "icebreaker",
-    "tone-setting",
-    "introduce",
-];
-
-fn count_hits(haystack: &str, cues: &[&'static str]) -> (usize, Option<&'static str>) {
-    let mut hits = 0;
-    let mut first = None;
-    for cue in cues {
-        if haystack.contains(cue) {
-            hits += 1;
-            if first.is_none() {
-                first = Some(*cue);
+#[must_use]
+pub fn analyze(input: &str) -> ProfileWeights {
+    if let Some(persona) = explicit_selector(input) {
+        return ProfileWeights::only(persona);
+    }
+    let mut weights = ProfileWeights::prior();
+    for word in input.split_ascii_whitespace() {
+        let trimmed = word.trim_end_matches(['.', ',', '!', '?', ':', ';', '"', '\'']);
+        for entry in KEYWORDS {
+            if starts_with_ignore_case(trimmed, entry.word) {
+                weights.abbey += entry.abbey * 0.1;
+                weights.aviva += entry.aviva * 0.1;
+                weights.abi += entry.abi * 0.1;
             }
         }
     }
-    (hits, first)
+    weights.normalize();
+    weights
 }
 
-/// Route a request to a persona.
-///
-/// Precedence is explicit > unambiguous cue > default. A request that hits both
-/// Aviva and Abi cues equally is *ambiguous by definition*, so it goes to Abbey
-/// rather than to whichever list happened to be checked first — that ordering
-/// would be an implementation detail masquerading as a decision.
+fn select(weights: ProfileWeights) -> Persona {
+    if weights.abbey >= weights.aviva && weights.abbey >= weights.abi {
+        Persona::Abbey
+    } else if weights.aviva >= weights.abi {
+        Persona::Aviva
+    } else {
+        Persona::Abi
+    }
+}
+
+fn starts_with_ignore_case(haystack: &str, needle: &str) -> bool {
+    haystack.len() >= needle.len()
+        && haystack.as_bytes()[..needle.len()].eq_ignore_ascii_case(needle.as_bytes())
+}
+
+#[must_use]
 pub fn route(request: &str, explicit: Option<Persona>) -> Route {
     if let Some(persona) = explicit {
         return Route {
@@ -135,40 +226,31 @@ pub fn route(request: &str, explicit: Option<Persona>) -> Route {
             reason: Reason::Explicit,
         };
     }
-
-    let lowered = request.to_lowercase();
-    let (aviva, aviva_cue) = count_hits(&lowered, AVIVA_CUES);
-    let (abi, abi_cue) = count_hits(&lowered, ABI_CUES);
-
-    match (aviva, abi) {
-        (0, 0) => Route {
-            persona: Persona::Abbey,
-            reason: Reason::Default,
-        },
-        (a, b) if a > b => Route {
-            persona: Persona::Aviva,
-            // `a > b >= 0` means at least one Aviva cue matched, so the cue is present.
-            reason: Reason::Cue(aviva_cue.expect("aviva hit implies a recorded cue")),
-        },
-        (a, b) if b > a => Route {
-            persona: Persona::Abi,
-            reason: Reason::Cue(abi_cue.expect("abi hit implies a recorded cue")),
-        },
-        // Equal and non-zero: pulled both ways, so not unambiguous.
-        _ => Route {
-            persona: Persona::Abbey,
-            reason: Reason::Default,
-        },
+    if let Some(persona) = explicit_selector(request) {
+        return Route {
+            persona,
+            reason: Reason::Explicit,
+        };
     }
+    let weights = analyze(request);
+    let persona = select(weights);
+    let reason = if weights == ProfileWeights::prior() {
+        Reason::Default
+    } else {
+        Reason::Weighted(weights)
+    };
+    Route { persona, reason }
 }
 
-/// Render a routing decision for Discord. Kept out of the command body so the
-/// wording is testable without a gateway connection.
+#[must_use]
 pub fn describe(route: &Route) -> String {
-    let why = match &route.reason {
-        Reason::Explicit => "you named her".to_string(),
-        Reason::Cue(cue) => format!("unambiguous cue: \"{cue}\""),
-        Reason::Default => "nothing pulled hard enough either way".to_string(),
+    let why = match route.reason {
+        Reason::Explicit => "explicit leading name or command choice".to_string(),
+        Reason::Default => "neutral ABI prior favors Abbey (0.40 / 0.30 / 0.30)".to_string(),
+        Reason::Weighted(weights) => format!(
+            "ABI weights: Abbey {:.2} · Aviva {:.2} · ABI {:.2}",
+            weights.abbey, weights.aviva, weights.abi
+        ),
     };
     format!(
         "**{}** — {}\nHandles: {}\nWhy: {}",
@@ -184,61 +266,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_to_abbey_when_nothing_matches() {
-        let r = route("what's going on in here", None);
-        assert_eq!(r.persona, Persona::Abbey);
-        assert_eq!(r.reason, Reason::Default);
-    }
-
-    #[test]
-    fn explicit_choice_beats_every_cue() {
-        // The text is saturated with Aviva cues; the explicit pick must still win.
-        let r = route("permission architecture schema webhook", Some(Persona::Abi));
-        assert_eq!(r.persona, Persona::Abi);
-        assert_eq!(r.reason, Reason::Explicit);
-    }
-
-    #[test]
-    fn routes_system_work_to_aviva() {
-        let r = route("help me design the permission matrix", None);
-        assert_eq!(r.persona, Persona::Aviva);
-        assert_eq!(r.reason, Reason::Cue("permission"));
-    }
-
-    #[test]
-    fn routes_rapport_work_to_abi() {
-        let r = route("write a welcome message for new members", None);
-        assert_eq!(r.persona, Persona::Abi);
-        assert_eq!(r.reason, Reason::Cue("welcome"));
-    }
-
-    #[test]
-    fn an_even_pull_is_ambiguous_and_falls_back_to_abbey() {
-        // One cue each: "permission" (Aviva) and "welcome" (Abi).
-        let r = route("set the welcome channel's permission overwrites", None);
-        assert_eq!(r.persona, Persona::Abbey);
-        assert_eq!(r.reason, Reason::Default);
-    }
-
-    #[test]
-    fn a_stronger_pull_still_wins_when_both_match() {
-        // Two Aviva cues against one Abi cue.
-        let r = route(
-            "welcome channel: permission matrix and role hierarchy",
-            None,
+    fn neutral_prior_and_ties_favor_abbey() {
+        let route = route("hello world", None);
+        assert_eq!(route.persona, Persona::Abbey);
+        assert_eq!(route.reason, Reason::Default);
+        assert_eq!(
+            select(ProfileWeights {
+                abbey: 1.0,
+                aviva: 1.0,
+                abi: 1.0
+            }),
+            Persona::Abbey
         );
-        assert_eq!(r.persona, Persona::Aviva);
     }
 
     #[test]
-    fn matching_is_case_insensitive() {
-        assert_eq!(route("PERMISSION design", None).persona, Persona::Aviva);
+    fn leading_names_are_exact_overrides() {
+        assert_eq!(route("Aviva, be direct", None).persona, Persona::Aviva);
+        assert_eq!(route("@ABI: orchestrate", None).persona, Persona::Abi);
+        assert_eq!(route("Abbey help", None).persona, Persona::Abbey);
+        assert_eq!(route("avivacious prose", None).persona, Persona::Abbey);
+        assert_eq!(route("Please ask Aviva", None).persona, Persona::Abbey);
     }
 
     #[test]
-    fn describe_names_the_cue_that_decided_it() {
-        let text = describe(&route("audit log retention", None));
-        assert!(text.contains("Aviva"), "{text}");
-        assert!(text.contains("audit log"), "{text}");
+    fn explicit_command_choice_beats_text() {
+        assert_eq!(
+            route("Aviva execute quickly", Some(Persona::Abi)).persona,
+            Persona::Abi
+        );
+    }
+
+    #[test]
+    fn execution_routes_aviva_and_governance_routes_abi() {
+        assert_eq!(
+            route("execute deploy run the build quickly", None).persona,
+            Persona::Aviva
+        );
+        assert_eq!(
+            route("orchestrate routing governance policy", None).persona,
+            Persona::Abi
+        );
+    }
+
+    #[test]
+    fn stems_match_only_token_prefixes() {
+        assert!(analyze("running").aviva > ProfileWeights::prior().aviva);
+        assert_eq!(analyze("overrun"), ProfileWeights::prior());
+        assert_eq!(route("unsafe", None).reason, Reason::Default);
+    }
+
+    #[test]
+    fn descriptions_match_canonical_roles() {
+        assert!(Persona::Abbey.register().contains("empathetic polymath"));
+        assert!(Persona::Aviva.register().contains("direct expert"));
+        assert!(Persona::Abi.register().contains("orchestration"));
     }
 }

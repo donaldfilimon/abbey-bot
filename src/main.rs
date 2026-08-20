@@ -38,6 +38,7 @@ mod ask;
 mod brain;
 mod commands;
 mod commands_brain;
+mod commands_voice;
 mod embedding;
 mod engine;
 mod gateway;
@@ -47,6 +48,7 @@ mod http_body;
 mod llm;
 mod memory;
 mod moderation;
+mod offline_voice;
 mod perms;
 mod persist;
 mod persona;
@@ -58,6 +60,9 @@ mod server;
 mod tools;
 mod vision;
 mod voice;
+mod voice_local;
+mod voice_openai;
+mod voice_session;
 mod wdbx;
 mod webhook;
 mod wyhash;
@@ -68,7 +73,7 @@ use serenity::all::{GatewayIntents, GuildId};
 /// not mean touching every command signature.
 pub struct Data {
     pub state: std::sync::Arc<runtime::AppState>,
-    pub voice: Option<std::sync::Arc<commands::VoiceRuntime>>,
+    pub voice: Option<std::sync::Arc<voice_session::VoiceRuntime>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -126,7 +131,7 @@ async fn main() -> Result<(), Error> {
     let state = runtime::AppState::from_env()?;
     let voice_runtime = voice::VoiceConfig::from_env()
         .map_err(runtime::StartupError)?
-        .map(commands::VoiceRuntime::new)
+        .map(voice_session::VoiceRuntime::new)
         .map(std::sync::Arc::new);
     match &state.data_dir {
         Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),
@@ -160,6 +165,7 @@ async fn main() -> Result<(), Error> {
     };
 
     let shell_state = std::sync::Arc::clone(&state);
+    let setup_voice_runtime = voice_runtime.clone();
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -178,11 +184,17 @@ async fn main() -> Result<(), Error> {
                 commands_brain::ocr(),
                 commands_brain::stats(),
                 commands_brain::admin(),
-                commands::voice(),
+                commands_voice::voice(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
                     gateway::on_discord_event(ctx, event, &data.state).await;
+                    if let serenity::all::FullEvent::VoiceStateUpdate { old, new } = event {
+                        commands_voice::on_voice_state_update(ctx, old, new, data).await;
+                    }
+                    if let serenity::all::FullEvent::ChannelUpdate { new, .. } = event {
+                        commands_voice::on_voice_channel_update(ctx, new, data).await;
+                    }
                     Ok(())
                 })
             },
@@ -237,11 +249,14 @@ async fn main() -> Result<(), Error> {
                     .map(|value| value.trim() == "1")
                     .unwrap_or(false);
                 if voice_autojoin {
-                    match voice_runtime.as_ref() {
+                    match setup_voice_runtime.as_ref() {
                         Some(runtime) => {
-                            commands::autojoin_self_deafened(ctx, std::sync::Arc::clone(runtime))
-                                .await
-                                .map_err(runtime::StartupError)?;
+                            commands_voice::autojoin_self_deafened(
+                                ctx,
+                                std::sync::Arc::clone(runtime),
+                            )
+                            .await
+                            .map_err(runtime::StartupError)?;
                         }
                         None => {
                             return Err(runtime::StartupError(
@@ -255,7 +270,7 @@ async fn main() -> Result<(), Error> {
                 shell_state.register_self(format!("discord:{}", ready.user.id.get()));
                 Ok(Data {
                     state: shell_state,
-                    voice: voice_runtime,
+                    voice: setup_voice_runtime,
                 })
             })
         })
@@ -267,18 +282,22 @@ async fn main() -> Result<(), Error> {
     use songbird::SerenityInit;
     let mut client = serenity::client::ClientBuilder::new_with_http(http, intents)
         .framework(framework)
-        .register_songbird_from_config(songbird::Config::default().decode_mode(
-            songbird::driver::DecodeMode::Decode(songbird::driver::DecodeConfig::default()),
-        ))
+        .register_songbird_from_config(
+            songbird::Config::default().decode_mode(songbird::driver::DecodeMode::Pass),
+        )
         .await?;
 
     // Persist on interactive Ctrl-C and service-manager SIGTERM before taking
     // shards down. Otherwise a redeploy loses the current five-minute window.
     let shard_manager = client.shard_manager.clone();
     let shutdown_state = std::sync::Arc::clone(&state);
+    let shutdown_voice = voice_runtime.clone();
     tokio::spawn(async move {
         if shutdown_signal().await.is_ok() {
             tracing::info!("shutting down");
+            if let Some(voice) = shutdown_voice {
+                voice.disconnect("process shutdown stopped voice").await;
+            }
             gateway::shutdown(&shutdown_state);
             shard_manager.shutdown_all().await;
         }
@@ -287,6 +306,9 @@ async fn main() -> Result<(), Error> {
     // Persist whether the gateway ended cleanly or with an error — a bad
     // token after a long uptime must not also cost the last five minutes.
     let result = client.start().await;
+    if let Some(voice) = voice_runtime {
+        voice.disconnect("Discord gateway stopped voice").await;
+    }
     gateway::shutdown(&state);
     result?;
     Ok(())

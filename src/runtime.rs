@@ -269,7 +269,12 @@ impl crate::tools::ToolHost for ToolScope<'_> {
     }
 
     fn recall(&mut self, query: &str) -> String {
-        let facts = AppState::lock(&self.state.recall).recall(&self.scoped_guild, query, 5);
+        let facts = AppState::lock(&self.state.recall).recall_for_user(
+            &self.scoped_guild,
+            &self.scoped_user,
+            query,
+            5,
+        );
         if facts.is_empty() {
             return "Nothing on record.".to_string();
         }

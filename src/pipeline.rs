@@ -13,14 +13,14 @@
 use std::future::Future;
 
 use crate::ask;
-use crate::brain::intent::{self, Intent};
+use crate::brain::intent;
 use crate::brain::state::{self, BotAction, StateInput};
 use crate::engine;
 use crate::generation::{Ask, Delivery, generate, with_typing};
 use crate::guild::GuildSettings;
 use crate::llm;
 use crate::memory::PersonaContext;
-use crate::persona::Persona;
+use crate::persona::{self, Persona};
 use crate::platform::{OutboundMessage, RemoteAttachment, RouteDecision, SocialEvent, triage};
 use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
@@ -73,14 +73,26 @@ pub enum Outcome {
     ReplyFailed(String),
 }
 
-/// Intent → persona, per `multiguild.md`'s `ABIRouter.route`: mod requests and
-/// commands go to Aviva, greetings and small talk to Abi, everything else to
-/// the guild's default.
-pub fn persona_for(intent: Intent, settings: &GuildSettings) -> Persona {
-    match intent {
-        Intent::ModRequest | Intent::Command => Persona::Aviva,
-        Intent::Greeting | Intent::SmallTalk => Persona::Abi,
-        _ => settings.default_persona,
+/// Canonical ABI text routing with the guild default retained only for neutral
+/// input. Explicit leading names and weighted ABI cues take precedence.
+pub fn persona_for(text: &str, settings: &GuildSettings) -> Persona {
+    persona_for_session(text, settings, None)
+}
+
+/// Explicit names and weighted ABI cues always win. A neutral follow-up keeps
+/// the persona already attached to this transcript; only a new session falls
+/// back to the guild default. This makes `switch_persona` a real conversational
+/// handoff instead of a one-response costume change.
+fn persona_for_session(
+    text: &str,
+    settings: &GuildSettings,
+    session_persona: Option<Persona>,
+) -> Persona {
+    let route = persona::route(text, None);
+    if matches!(route.reason, persona::Reason::Default) {
+        session_persona.unwrap_or(settings.default_persona)
+    } else {
+        route.persona
     }
 }
 
@@ -295,7 +307,11 @@ pub async fn handle<O: Outbound + Sync>(
     }
 
     // Reply.
-    let persona = persona_for(intent, &settings);
+    let session_persona = AppState::lock(&state.engine).session_persona(&scoped_channel);
+    let initial_persona = session_persona.map_or_else(
+        || persona_for(&enriched, &settings),
+        |persona| persona_for_session(&enriched, &settings, Some(persona)),
+    );
     let Some(backend) = &state.backend else {
         if !forced {
             // A policy that wants to speak with nothing to speak through is a
@@ -303,7 +319,7 @@ pub async fn handle<O: Outbound + Sync>(
             return Outcome::Stayed;
         }
         let reply = OutboundMessage {
-            text: ask::degraded_reply(persona),
+            text: ask::degraded_reply(initial_persona),
             reply_to_native_message_id: Some(event.native_message_id.clone()),
             ..OutboundMessage::default()
         };
@@ -340,7 +356,7 @@ pub async fn handle<O: Outbound + Sync>(
         scoped_guild: scoped_guild.clone(),
         scoped_user: scoped_user.clone(),
         scoped_channel: scoped_channel.clone(),
-        persona,
+        persona: initial_persona,
     };
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
@@ -374,7 +390,7 @@ pub async fn handle<O: Outbound + Sync>(
                 // Someone addressed Abbey and waited; dead air is worse than
                 // the same honest failure line `/persona ask` already posts.
                 let failure = OutboundMessage {
-                    text: ask::render_failure(persona, backend.label(), &e.0),
+                    text: ask::render_failure(initial_persona, backend.label(), &e.0),
                     reply_to_native_message_id: reply_to.clone(),
                     ..OutboundMessage::default()
                 };
@@ -385,7 +401,7 @@ pub async fn handle<O: Outbound + Sync>(
     };
     // A tool may have switched the persona; the transcript keeps its history
     // and the next turn prepares with the new persona.
-    if persona != persona_for(intent, &settings) {
+    if persona != initial_persona {
         let _ = AppState::lock(&state.engine).prepare(
             &scoped_channel,
             persona,
@@ -444,7 +460,8 @@ pub fn assemble_context(
         AppState::lock(&state.stores)
             .memory
             .context_for(scoped_guild, scoped_user, scoped_channel);
-    let recalled = AppState::lock(&state.recall).recall(scoped_guild, query, RECALL_K);
+    let recalled =
+        AppState::lock(&state.recall).recall_for_user(scoped_guild, scoped_user, query, RECALL_K);
     for fact in recalled {
         if !context.user_facts.contains(&fact.text) {
             context.user_facts.push(fact.text);
@@ -998,17 +1015,65 @@ mod tests {
     }
 
     #[test]
-    fn persona_routing_follows_the_spec_table() {
+    fn two_users_in_one_guild_never_share_semantic_recall() {
+        let state = AppState::in_memory();
+        AppState::lock(&state.recall).remember(
+            "discord:g",
+            "discord:alice",
+            "alice's private editor preference is helix",
+            1,
+        );
+        AppState::lock(&state.recall).remember(
+            "discord:g",
+            "discord:bob",
+            "bob's private editor preference is vim",
+            2,
+        );
+        let alice = assemble_context(
+            &state,
+            "discord:g",
+            "discord:alice",
+            "discord:c",
+            "editor preference",
+        );
+        let bob = assemble_context(
+            &state,
+            "discord:g",
+            "discord:bob",
+            "discord:c",
+            "editor preference",
+        );
+        assert_eq!(
+            alice.user_facts,
+            ["alice's private editor preference is helix"]
+        );
+        assert_eq!(bob.user_facts, ["bob's private editor preference is vim"]);
+    }
+
+    #[test]
+    fn persona_routing_follows_the_canonical_abi_router() {
         let s = GuildSettings::default();
-        assert_eq!(persona_for(Intent::Command, &s), Persona::Aviva);
-        assert_eq!(persona_for(Intent::ModRequest, &s), Persona::Aviva);
-        assert_eq!(persona_for(Intent::Greeting, &s), Persona::Abi);
-        assert_eq!(persona_for(Intent::SmallTalk, &s), Persona::Abi);
-        assert_eq!(persona_for(Intent::Question, &s), Persona::Abbey);
+        assert_eq!(persona_for("hello there", &s), Persona::Abbey);
+        assert_eq!(
+            persona_for("execute the deploy quickly", &s),
+            Persona::Aviva
+        );
+        assert_eq!(persona_for("ABI: review governance risk", &s), Persona::Abi);
         let aviva = GuildSettings {
             default_persona: Persona::Aviva,
             ..GuildSettings::default()
         };
-        assert_eq!(persona_for(Intent::Question, &aviva), Persona::Aviva);
+        assert_eq!(persona_for("hello there", &aviva), Persona::Aviva);
+        assert_eq!(persona_for("Abbey, help me", &aviva), Persona::Abbey);
+        assert_eq!(
+            persona_for_session("and what about tomorrow?", &s, Some(Persona::Aviva)),
+            Persona::Aviva,
+            "a neutral follow-up keeps a tool-selected persona"
+        );
+        assert_eq!(
+            persona_for_session("Abbey, take this one", &s, Some(Persona::Aviva)),
+            Persona::Abbey,
+            "an explicit canonical name still overrides sticky state"
+        );
     }
 }

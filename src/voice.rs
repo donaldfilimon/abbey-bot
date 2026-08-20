@@ -1,46 +1,66 @@
-//! Provider-neutral policy and PCM transforms for live voice.
+//! Provider-neutral policy for Abbey's Discord voice surface.
 //!
-//! Discord/Songbird and WebSocket types stay in the command shell. This module
-//! owns the fail-closed configuration and deterministic audio transforms, so
-//! both can be tested without a gateway, voice server, or API key.
+//! The mode is explicit. Local inference is the default once a destination is
+//! configured, cloud audio is an opt-in backup, and neither mode is inferred
+//! from whether a provider key happens to exist. Discord still transports the
+//! call; `local` means speech recognition, reasoning, and synthesis stay on
+//! this Mac.
 
 use std::fmt;
 
-const DEFAULT_ENDPOINT: &str = "wss://api.openai.com/v1/realtime";
-const DEFAULT_MODEL: &str = "gpt-realtime-2.1";
-const DEFAULT_VOICE: &str = "marin";
+use crate::offline_voice::OfflineVoiceConfig;
+
+const DEFAULT_OPENAI_ENDPOINT: &str = "wss://api.openai.com/v1/realtime";
+const DEFAULT_OPENAI_MODEL: &str = "gpt-realtime-2.1";
+const DEFAULT_OPENAI_VOICE: &str = "marin";
 const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
 
-/// A single explicitly allowed Discord destination and Realtime provider.
-///
-/// The API key is deliberately private and `Debug` is redacted. The two
-/// destination IDs opt voice in; without a key Abbey may connect only while
-/// self-deafened, so no participant audio is received or sent to a provider.
-/// A partial destination remains a startup error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceMode {
+    Disabled,
+    Local,
+    OpenAi,
+}
+
+impl VoiceMode {
+    fn parse(value: Option<String>) -> Result<Self, String> {
+        match nonblank(value)
+            .unwrap_or_else(|| "local".into())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "disabled" | "off" => Ok(Self::Disabled),
+            "local" | "offline" => Ok(Self::Local),
+            "openai" => Ok(Self::OpenAi),
+            other => Err(format!(
+                "ABBEY_VOICE_MODE must be disabled, local, or openai; got {other:?}"
+            )),
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled / no audio",
+            Self::Local => "local AI inference",
+            Self::OpenAi => "direct OpenAI Realtime backup (buffered output)",
+        }
+    }
+}
+
 #[derive(Clone)]
-pub struct VoiceConfig {
-    pub guild_id: u64,
-    pub channel_id: u64,
-    api_key: Option<String>,
+pub struct OpenAiVoiceConfig {
+    api_key: String,
     pub endpoint: String,
     pub model: String,
     pub voice: String,
     pub instructions: String,
 }
 
-impl fmt::Debug for VoiceConfig {
+impl fmt::Debug for OpenAiVoiceConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("VoiceConfig")
-            .field("guild_id", &self.guild_id)
-            .field("channel_id", &self.channel_id)
-            .field(
-                "api_key",
-                &if self.api_key.is_some() {
-                    "[REDACTED]"
-                } else {
-                    "[NOT CONFIGURED]"
-                },
-            )
+        f.debug_struct("OpenAiVoiceConfig")
+            .field("api_key", &"[REDACTED]")
             .field("endpoint", &self.endpoint)
             .field("model", &self.model)
             .field("voice", &self.voice)
@@ -49,67 +69,9 @@ impl fmt::Debug for VoiceConfig {
     }
 }
 
-impl VoiceConfig {
-    pub fn from_env() -> Result<Option<Self>, String> {
-        Self::from_values(
-            std::env::var("ABBEY_VOICE_GUILD_ID").ok(),
-            std::env::var("ABBEY_VOICE_CHANNEL_ID").ok(),
-            std::env::var("OPENAI_API_KEY").ok(),
-            std::env::var("ABBEY_VOICE_REALTIME_ENDPOINT").ok(),
-            std::env::var("ABBEY_VOICE_REALTIME_MODEL").ok(),
-            std::env::var("ABBEY_VOICE_NAME").ok(),
-            std::env::var("ABBEY_VOICE_INSTRUCTIONS").ok(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_values(
-        guild: Option<String>,
-        channel: Option<String>,
-        api_key: Option<String>,
-        endpoint: Option<String>,
-        model: Option<String>,
-        voice: Option<String>,
-        instructions: Option<String>,
-    ) -> Result<Option<Self>, String> {
-        let guild = nonblank(guild);
-        let channel = nonblank(channel);
-        let api_key = nonblank(api_key);
-        // A general OpenAI key may exist for unrelated features. Only the two
-        // voice-specific destination variables opt this subsystem in.
-        if guild.is_none() && channel.is_none() {
-            return Ok(None);
-        }
-        let guild_id = snowflake(guild, "ABBEY_VOICE_GUILD_ID")?;
-        let channel_id = snowflake(channel, "ABBEY_VOICE_CHANNEL_ID")?;
-        let endpoint = nonblank(endpoint).unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
-        validate_endpoint(&endpoint)?;
-        let model = safe_name(nonblank(model), DEFAULT_MODEL, "ABBEY_VOICE_REALTIME_MODEL")?;
-        let voice = safe_name(nonblank(voice), DEFAULT_VOICE, "ABBEY_VOICE_NAME")?;
-        let instructions = nonblank(instructions).unwrap_or_else(default_instructions);
-        if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-            return Err(format!(
-                "ABBEY_VOICE_INSTRUCTIONS must be at most {MAX_INSTRUCTIONS_CHARS} characters"
-            ));
-        }
-
-        Ok(Some(Self {
-            guild_id,
-            channel_id,
-            api_key,
-            endpoint,
-            model,
-            voice,
-            instructions,
-        }))
-    }
-
-    pub fn realtime_ready(&self) -> bool {
-        self.api_key.is_some()
-    }
-
-    pub fn authorization(&self) -> Option<String> {
-        self.api_key.as_ref().map(|key| format!("Bearer {key}"))
+impl OpenAiVoiceConfig {
+    pub fn authorization(&self) -> String {
+        format!("Bearer {}", self.api_key)
     }
 
     pub fn websocket_url(&self) -> String {
@@ -117,26 +79,208 @@ impl VoiceConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum VoiceBackendConfig {
+    Disabled,
+    Local(OfflineVoiceConfig),
+    OpenAi(OpenAiVoiceConfig),
+}
+
+/// One explicitly allowed Discord destination and one explicitly selected
+/// speech backend. Partial destinations and incomplete selected backends are
+/// startup errors.
+#[derive(Clone, Debug)]
+pub struct VoiceConfig {
+    pub guild_id: u64,
+    pub channel_id: u64,
+    pub backend: VoiceBackendConfig,
+    pub wake_word_required: bool,
+}
+
+#[derive(Default)]
+struct VoiceEnv {
+    guild: Option<String>,
+    channel: Option<String>,
+    mode: Option<String>,
+    openai_key: Option<String>,
+    openai_endpoint: Option<String>,
+    openai_model: Option<String>,
+    openai_voice: Option<String>,
+    instructions: Option<String>,
+    local_endpoint: Option<String>,
+    local_stt_model: Option<String>,
+    local_tts_model: Option<String>,
+    local_tts_voice: Option<String>,
+    local_language: Option<String>,
+    wake_word_required: Option<String>,
+}
+
+impl VoiceConfig {
+    pub fn from_env() -> Result<Option<Self>, String> {
+        Self::from_values(VoiceEnv {
+            guild: std::env::var("ABBEY_VOICE_GUILD_ID").ok(),
+            channel: std::env::var("ABBEY_VOICE_CHANNEL_ID").ok(),
+            mode: std::env::var("ABBEY_VOICE_MODE").ok(),
+            openai_key: std::env::var("OPENAI_API_KEY").ok(),
+            openai_endpoint: std::env::var("ABBEY_VOICE_REALTIME_ENDPOINT").ok(),
+            openai_model: std::env::var("ABBEY_VOICE_REALTIME_MODEL").ok(),
+            openai_voice: std::env::var("ABBEY_VOICE_NAME").ok(),
+            instructions: std::env::var("ABBEY_VOICE_INSTRUCTIONS").ok(),
+            local_endpoint: std::env::var("ABBEY_VOICE_LOCAL_ENDPOINT").ok(),
+            local_stt_model: std::env::var("ABBEY_VOICE_LOCAL_STT_MODEL").ok(),
+            local_tts_model: std::env::var("ABBEY_VOICE_LOCAL_TTS_MODEL").ok(),
+            local_tts_voice: std::env::var("ABBEY_VOICE_LOCAL_TTS_VOICE").ok(),
+            local_language: std::env::var("ABBEY_VOICE_LOCAL_LANGUAGE").ok(),
+            wake_word_required: std::env::var("ABBEY_VOICE_WAKE_WORD_REQUIRED").ok(),
+        })
+    }
+
+    fn from_values(values: VoiceEnv) -> Result<Option<Self>, String> {
+        let guild = nonblank(values.guild);
+        let channel = nonblank(values.channel);
+        if guild.is_none() && channel.is_none() {
+            if nonblank(values.mode).is_some_and(|mode| {
+                !matches!(mode.to_ascii_lowercase().as_str(), "off" | "disabled")
+            }) {
+                return Err(
+                    "ABBEY_VOICE_MODE requires ABBEY_VOICE_GUILD_ID and ABBEY_VOICE_CHANNEL_ID"
+                        .into(),
+                );
+            }
+            return Ok(None);
+        }
+        let guild_id = snowflake(guild, "ABBEY_VOICE_GUILD_ID")?;
+        let channel_id = snowflake(channel, "ABBEY_VOICE_CHANNEL_ID")?;
+        let mode = VoiceMode::parse(values.mode)?;
+        let backend = match mode {
+            VoiceMode::Disabled => VoiceBackendConfig::Disabled,
+            VoiceMode::Local => VoiceBackendConfig::Local(OfflineVoiceConfig::from_values(
+                values.local_endpoint,
+                values.local_stt_model,
+                values.local_tts_model,
+                values.local_tts_voice,
+                values.local_language,
+            )?),
+            VoiceMode::OpenAi => {
+                let api_key = nonblank(values.openai_key)
+                    .ok_or_else(|| "ABBEY_VOICE_MODE=openai requires OPENAI_API_KEY".to_string())?;
+                let endpoint = nonblank(values.openai_endpoint)
+                    .unwrap_or_else(|| DEFAULT_OPENAI_ENDPOINT.to_string());
+                validate_openai_endpoint(&endpoint)?;
+                let model = safe_name(
+                    nonblank(values.openai_model),
+                    DEFAULT_OPENAI_MODEL,
+                    "ABBEY_VOICE_REALTIME_MODEL",
+                )?;
+                let voice = safe_name(
+                    nonblank(values.openai_voice),
+                    DEFAULT_OPENAI_VOICE,
+                    "ABBEY_VOICE_NAME",
+                )?;
+                let instructions =
+                    nonblank(values.instructions).unwrap_or_else(default_instructions);
+                if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
+                    return Err(format!(
+                        "ABBEY_VOICE_INSTRUCTIONS must be at most {MAX_INSTRUCTIONS_CHARS} characters"
+                    ));
+                }
+                VoiceBackendConfig::OpenAi(OpenAiVoiceConfig {
+                    api_key,
+                    endpoint,
+                    model,
+                    voice,
+                    instructions,
+                })
+            }
+        };
+        Ok(Some(Self {
+            guild_id,
+            channel_id,
+            backend,
+            wake_word_required: parse_bool(
+                values.wake_word_required,
+                true,
+                "ABBEY_VOICE_WAKE_WORD_REQUIRED",
+            )?,
+        }))
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> VoiceMode {
+        match self.backend {
+            VoiceBackendConfig::Disabled => VoiceMode::Disabled,
+            VoiceBackendConfig::Local(_) => VoiceMode::Local,
+            VoiceBackendConfig::OpenAi(_) => VoiceMode::OpenAi,
+        }
+    }
+
+    #[must_use]
+    pub fn local(&self) -> Option<&OfflineVoiceConfig> {
+        match &self.backend {
+            VoiceBackendConfig::Local(config) => Some(config),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn openai(&self) -> Option<&OpenAiVoiceConfig> {
+        match &self.backend {
+            VoiceBackendConfig::OpenAi(config) => Some(config),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn model_label(&self) -> &str {
+        match &self.backend {
+            VoiceBackendConfig::Disabled => "none",
+            VoiceBackendConfig::Local(config) => &config.tts_model,
+            VoiceBackendConfig::OpenAi(config) => &config.model,
+        }
+    }
+
+    #[must_use]
+    pub fn voice_label(&self) -> &str {
+        match &self.backend {
+            VoiceBackendConfig::Disabled => "none",
+            VoiceBackendConfig::Local(config) => &config.voice,
+            VoiceBackendConfig::OpenAi(config) => &config.voice,
+        }
+    }
+}
+
 fn nonblank(value: Option<String>) -> Option<String> {
     value
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn snowflake(value: Option<String>, name: &str) -> Result<u64, String> {
-    let raw =
-        value.ok_or_else(|| format!("{name} is required when Abbey live voice is configured"))?;
+    let raw = value.ok_or_else(|| format!("{name} is required when Abbey voice is configured"))?;
     raw.parse::<u64>()
         .ok()
         .filter(|id| *id != 0)
         .ok_or_else(|| format!("{name} must be a non-zero numeric Discord snowflake"))
 }
 
+fn parse_bool(value: Option<String>, default: bool, name: &str) -> Result<bool, String> {
+    match nonblank(value).as_deref() {
+        None => Ok(default),
+        Some("1" | "true" | "yes" | "on") => Ok(true),
+        Some("0" | "false" | "no" | "off") => Ok(false),
+        Some(other) => Err(format!(
+            "{name} must be one of 1/0, true/false, yes/no, or on/off; got {other:?}"
+        )),
+    }
+}
+
 fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String, String> {
     let value = value.unwrap_or_else(|| default.to_string());
-    if value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    if !value.is_empty()
+        && value.len() <= 200
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
     {
         Ok(value)
     } else {
@@ -146,7 +290,7 @@ fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String,
     }
 }
 
-fn validate_endpoint(raw: &str) -> Result<(), String> {
+fn validate_openai_endpoint(raw: &str) -> Result<(), String> {
     let url = reqwest::Url::parse(raw)
         .map_err(|e| format!("ABBEY_VOICE_REALTIME_ENDPOINT is invalid: {e}"))?;
     if url.username() != ""
@@ -174,162 +318,106 @@ fn default_instructions() -> String {
     "You are Abbey, a warm, quick-witted engineering collaborator in a live Discord voice channel. Speak naturally, clearly, and concisely. Let people finish, handle interruptions gracefully, never pretend you saw a screen or stream you were not explicitly given, and never claim an external action succeeded without evidence.".to_string()
 }
 
-/// Mix synchronized Discord 48 kHz stereo PCM and downsample it to the
-/// Realtime API's 24 kHz mono PCM16. Inputs shorter than a full frame simply
-/// constrain the output; an empty tick becomes 20 ms of silence for VAD.
-pub fn discord_to_realtime(speakers: &[&[i16]]) -> Vec<i16> {
-    if speakers.is_empty() {
-        return vec![0; 480];
-    }
-    let frames = speakers.iter().map(|s| s.len() / 2).min().unwrap_or(0);
-    let mut output = Vec::with_capacity(frames.div_ceil(2));
-    for frame in (0..frames).step_by(2) {
-        let mixed = speakers
-            .iter()
-            .map(|samples| (i64::from(samples[frame * 2]) + i64::from(samples[frame * 2 + 1])) / 2)
-            .sum::<i64>()
-            / i64::try_from(speakers.len()).unwrap_or(1);
-        output.push(mixed.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16);
-    }
-    output
-}
-
-/// Convert Realtime 24 kHz mono PCM16 to the interleaved native-endian f32
-/// 48 kHz stereo stream expected by Songbird's `RawAdapter`.
-pub fn realtime_to_discord(pcm: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(pcm.len() * 8);
-    for pair in pcm.chunks_exact(2) {
-        let sample = f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0;
-        // Duplicate once in time (24 -> 48 kHz) and once across channels.
-        for _ in 0..4 {
-            output.extend_from_slice(&sample.to_ne_bytes());
-        }
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn destination() -> VoiceEnv {
+        VoiceEnv {
+            guild: Some("123".into()),
+            channel: Some("456".into()),
+            ..VoiceEnv::default()
+        }
+    }
+
     #[test]
-    fn voice_is_off_when_no_required_value_is_present() {
+    fn voice_is_off_without_a_destination() {
         assert!(
-            VoiceConfig::from_values(None, None, None, None, None, None, None)
+            VoiceConfig::from_values(VoiceEnv::default())
                 .unwrap()
                 .is_none()
         );
+        let values = VoiceEnv {
+            openai_key: Some("unrelated-key".into()),
+            ..VoiceEnv::default()
+        };
+        assert!(VoiceConfig::from_values(values).unwrap().is_none());
+    }
+
+    #[test]
+    fn partial_destination_fails_closed() {
+        let values = VoiceEnv {
+            guild: Some("123".into()),
+            ..VoiceEnv::default()
+        };
         assert!(
-            VoiceConfig::from_values(
-                None,
-                None,
-                Some("other-use-key".into()),
-                None,
-                None,
-                None,
-                None
-            )
-            .unwrap()
-            .is_none()
+            VoiceConfig::from_values(values)
+                .unwrap_err()
+                .contains("ABBEY_VOICE_CHANNEL_ID")
         );
     }
 
     #[test]
-    fn partial_voice_config_fails_closed() {
-        let error = VoiceConfig::from_values(
-            Some("123".into()),
-            None,
-            Some("secret".into()),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("ABBEY_VOICE_CHANNEL_ID"));
+    fn destination_defaults_to_local_even_when_a_cloud_key_exists() {
+        let mut values = destination();
+        values.openai_key = Some("must-not-select-cloud".into());
+        let config = VoiceConfig::from_values(values).unwrap().unwrap();
+        assert_eq!(config.mode(), VoiceMode::Local);
+        assert!(config.openai().is_none());
     }
 
     #[test]
-    fn destination_without_key_enables_only_connect_mode() {
-        let config = VoiceConfig::from_values(
-            Some("123".into()),
-            Some("456".into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap()
-        .unwrap();
-        assert!(!config.realtime_ready());
-        assert!(config.authorization().is_none());
-        assert!(format!("{config:?}").contains("NOT CONFIGURED"));
-    }
+    fn openai_is_explicit_and_requires_a_key() {
+        let mut values = destination();
+        values.mode = Some("openai".into());
+        assert!(
+            VoiceConfig::from_values(values)
+                .unwrap_err()
+                .contains("requires OPENAI_API_KEY")
+        );
 
-    #[test]
-    fn remote_plaintext_websocket_is_rejected() {
-        let error = VoiceConfig::from_values(
-            Some("123".into()),
-            Some("456".into()),
-            Some("secret".into()),
-            Some("ws://example.com/realtime".into()),
-            None,
-            None,
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("remote providers require wss"));
-    }
-
-    #[test]
-    fn endpoint_query_is_rejected_before_model_is_appended() {
-        let error = VoiceConfig::from_values(
-            Some("123".into()),
-            Some("456".into()),
-            Some("secret".into()),
-            Some("wss://example.com/realtime?other=value".into()),
-            None,
-            None,
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("query"));
-    }
-
-    #[test]
-    fn debug_never_prints_the_api_key() {
-        let config = VoiceConfig::from_values(
-            Some("123".into()),
-            Some("456".into()),
-            Some("super-secret".into()),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap()
-        .unwrap();
+        let mut values = destination();
+        values.mode = Some("openai".into());
+        values.openai_key = Some("super-secret".into());
+        let config = VoiceConfig::from_values(values).unwrap().unwrap();
         let rendered = format!("{config:?}");
+        assert_eq!(config.mode(), VoiceMode::OpenAi);
         assert!(!rendered.contains("super-secret"));
         assert!(rendered.contains("REDACTED"));
     }
 
     #[test]
-    fn discord_audio_is_mixed_and_downsampled() {
-        let left = [1000, 3000, 5000, 7000, 9000, 11000, 13000, 15000];
-        let right = [-1000, 1000, 3000, 5000, 7000, 9000, 11000, 13000];
-        assert_eq!(discord_to_realtime(&[&left, &right]), vec![1000, 9000]);
-        assert_eq!(discord_to_realtime(&[]).len(), 480);
+    fn disabled_mode_needs_no_provider() {
+        let mut values = destination();
+        values.mode = Some("disabled".into());
+        let config = VoiceConfig::from_values(values).unwrap().unwrap();
+        assert_eq!(config.mode(), VoiceMode::Disabled);
     }
 
     #[test]
-    fn realtime_audio_is_upsampled_to_stereo_f32() {
-        let output = realtime_to_discord(&32767_i16.to_le_bytes());
-        assert_eq!(output.len(), 16);
-        for bytes in output.chunks_exact(4) {
-            let value = f32::from_ne_bytes(bytes.try_into().unwrap());
-            assert!((value - (32767.0 / 32768.0)).abs() < f32::EPSILON);
-        }
+    fn remote_plaintext_openai_websocket_is_rejected() {
+        let mut values = destination();
+        values.mode = Some("openai".into());
+        values.openai_key = Some("secret".into());
+        values.openai_endpoint = Some("ws://example.com/realtime".into());
+        assert!(
+            VoiceConfig::from_values(values)
+                .unwrap_err()
+                .contains("remote providers require wss")
+        );
+    }
+
+    #[test]
+    fn mode_without_destination_fails_unless_disabled() {
+        let values = VoiceEnv {
+            mode: Some("local".into()),
+            ..VoiceEnv::default()
+        };
+        assert!(VoiceConfig::from_values(values).is_err());
+        let values = VoiceEnv {
+            mode: Some("disabled".into()),
+            ..VoiceEnv::default()
+        };
+        assert!(VoiceConfig::from_values(values).unwrap().is_none());
     }
 }

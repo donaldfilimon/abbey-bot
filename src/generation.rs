@@ -233,6 +233,26 @@ pub async fn generate<O: Outbound + Sync>(
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
 ) -> Result<(String, Option<String>, Persona), llm::LlmError> {
+    let Some(backend) = &state.backend else {
+        return Err(llm::LlmError("no generation backend is configured".into()));
+    };
+    generate_with_backend(state, backend, host, ask, delivery, None).await
+}
+
+/// Generate through an explicitly selected backend while preserving Abbey's
+/// normal Engine, persona routing, WDBX context, and tool loop.
+///
+/// The voice surface uses this seam to require a loopback backend even when a
+/// cloud text provider is configured as the process-wide default. The optional
+/// suffix adds presentation constraints without replacing persona policy.
+pub async fn generate_with_backend<O: Outbound + Sync>(
+    state: &AppState,
+    backend: &llm::Backend,
+    host: &mut crate::runtime::ToolScope<'_>,
+    ask: &Ask<'_>,
+    delivery: Option<Delivery<'_, O>>,
+    system_suffix: Option<&str>,
+) -> Result<(String, Option<String>, Persona), llm::LlmError> {
     use std::sync::atomic::Ordering;
     let Ask {
         scope,
@@ -241,15 +261,18 @@ pub async fn generate<O: Outbound + Sync>(
         offer_tools,
         now,
     } = *ask;
-    let Some(backend) = &state.backend else {
-        return Err(llm::LlmError("no generation backend is configured".into()));
-    };
     let vocabulary = crate::tools::abbey_tools();
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = host.persona;
         let prepared =
             AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
+        let system_prompt = match system_suffix {
+            Some(suffix) if !suffix.trim().is_empty() => {
+                format!("{}\n\n{}", prepared.system_prompt, suffix.trim())
+            }
+            _ => prepared.system_prompt.clone(),
+        };
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
         let offer = offer_tools
@@ -259,7 +282,7 @@ pub async fn generate<O: Outbound + Sync>(
 
         let round = Round {
             backend,
-            system_prompt: &prepared.system_prompt,
+            system_prompt: &system_prompt,
             turns: &turns,
             tools,
             persona,
@@ -272,7 +295,7 @@ pub async fn generate<O: Outbound + Sync>(
                     Err(e) => Err(e),
                 }
             }
-            _ => llm::chat_turn(&state.llm, backend, &prepared.system_prompt, &turns, tools)
+            _ => llm::chat_turn(&state.llm, backend, &system_prompt, &turns, tools)
                 .await
                 .map(|t| {
                     let text = if t.text.trim().is_empty() {
@@ -304,7 +327,10 @@ pub async fn generate<O: Outbound + Sync>(
         let mut results = Vec::with_capacity(calls.len());
         for call in &calls {
             let result = crate::tools::dispatch(call, host);
-            tracing::info!(tool = %call.name, scope, result = %result.content.chars().take(80).collect::<String>(), "tool call");
+            // Tool results can contain private recalled facts. Keep operational
+            // evidence (which scoped tool completed) without copying its
+            // payload into the durable process log.
+            tracing::info!(tool = %call.name, scope, "tool call completed");
             results.push(result);
         }
         extra_turns.push(llm::ChatTurn::assistant_calls(

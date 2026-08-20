@@ -26,10 +26,12 @@
 //! ## Namespacing
 //!
 //! [`Recall`] is the memory layer over the store. Every fact is keyed by the
-//! *scoped* guild id — `mem:{scoped_guild_id}:{vector_id}` — and every read
-//! filters on that prefix, so a fact stored for one guild is never returned for
-//! another. That is the multi-guild isolation invariant; the filter lives in one
-//! place (`Recall::fact_key_prefix`) so it cannot drift per call site.
+//! *scoped* guild id — `mem:{scoped_guild_id}:{vector_id}` — and inference/tool
+//! reads additionally filter by the scoped Discord user. Guild isolation keeps
+//! servers apart; guild-plus-user isolation is the privacy boundary between
+//! members of the same server. The only guild-wide query is a private helper
+//! used by storage-level tests, so production callers cannot accidentally opt
+//! back into cross-member recall.
 //!
 //! Nothing here imports serenity or poise, and nothing reads the clock: `at`
 //! timestamps come from the caller.
@@ -480,17 +482,57 @@ impl Recall {
     /// ownership — a vector alone says nothing about which guild it serves).
     fn guild_ids(&self, scoped_guild_id: &str) -> Vec<u64> {
         let prefix = Self::fact_key_prefix(scoped_guild_id);
-        self.store
+        let mut ids: Vec<u64> = self
+            .store
             .kv_with_prefix(&prefix)
             .filter_map(|(key, _)| key[prefix.len()..].parse().ok())
+            .collect();
+        // KV iteration is lexicographic (1, 10, 2), while search filters use
+        // numeric binary search. Keep the authority list numerically ordered.
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    /// Guild-wide storage query for administrative tests. Inference and tool
+    /// call sites must use [`Self::recall_for_user`]. Keeping this private makes
+    /// the privacy-safe boundary the only production API.
+    #[cfg(test)]
+    #[must_use]
+    fn recall_for_guild_admin(
+        &self,
+        scoped_guild_id: &str,
+        query_text: &str,
+        k: usize,
+    ) -> Vec<RecalledFact> {
+        let ids = self.guild_ids(scoped_guild_id);
+        let query = text_embedding(query_text);
+        self.store
+            .search(&query, k, |id| ids.binary_search(&id).is_ok())
+            .into_iter()
+            .filter_map(|(id, score)| self.fact(scoped_guild_id, id, score))
             .collect()
     }
 
-    /// The `k` facts in `scoped_guild_id` most similar to `query_text`, best
-    /// first. Never returns another guild's facts.
+    /// The `k` facts belonging to one person in one guild most similar to the
+    /// query. This is the safe context/tool boundary: a guild is not a privacy
+    /// boundary between its members.
     #[must_use]
-    pub fn recall(&self, scoped_guild_id: &str, query_text: &str, k: usize) -> Vec<RecalledFact> {
-        let ids = self.guild_ids(scoped_guild_id);
+    pub fn recall_for_user(
+        &self,
+        scoped_guild_id: &str,
+        user: &str,
+        query_text: &str,
+        k: usize,
+    ) -> Vec<RecalledFact> {
+        let ids: Vec<u64> = self
+            .guild_ids(scoped_guild_id)
+            .into_iter()
+            .filter(|id| {
+                self.fact(scoped_guild_id, *id, 0.0)
+                    .is_some_and(|fact| fact.user == user)
+            })
+            .collect();
         let query = text_embedding(query_text);
         self.store
             .search(&query, k, |id| ids.binary_search(&id).is_ok())
@@ -647,18 +689,22 @@ mod tests {
         let a_id = memory.remember("guild-a", "user-1", "abbey prefers earl grey", 10);
         memory.remember("guild-b", "user-1", "abbey prefers coffee", 11);
 
-        let in_a = memory.recall("guild-a", "abbey prefers earl grey", 10);
+        let in_a = memory.recall_for_guild_admin("guild-a", "abbey prefers earl grey", 10);
         assert_eq!(in_a.len(), 1);
         assert_eq!(in_a[0].id, a_id);
         assert_eq!(in_a[0].text, "abbey prefers earl grey");
         assert_eq!(in_a[0].user, "user-1");
         assert_eq!(in_a[0].at, 10);
 
-        let in_b = memory.recall("guild-b", "abbey prefers earl grey", 10);
+        let in_b = memory.recall_for_guild_admin("guild-b", "abbey prefers earl grey", 10);
         assert_eq!(in_b.len(), 1, "guild B sees only its own fact");
         assert_eq!(in_b[0].text, "abbey prefers coffee");
 
-        assert!(memory.recall("guild-c", "abbey", 10).is_empty());
+        assert!(
+            memory
+                .recall_for_guild_admin("guild-c", "abbey", 10)
+                .is_empty()
+        );
         assert_eq!(memory.count("guild-a"), 1);
         assert_eq!(memory.count("guild-b"), 1);
         assert_eq!(memory.count("guild-c"), 0);
@@ -672,10 +718,38 @@ mod tests {
         memory.remember("g", "u", "the weekly raid is on thursday", 1);
         let best = memory.remember("g", "u", "donald's favourite editor is helix", 2);
         memory.remember("g", "u", "welcome channel is #lobby", 3);
-        let hits = memory.recall("g", "favourite editor", 2);
+        let hits = memory.recall_for_guild_admin("g", "favourite editor", 2);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].id, best);
         assert!(hits[0].score >= hits[1].score);
+    }
+
+    #[test]
+    fn person_scoped_recall_never_crosses_users_in_one_guild() {
+        let mut memory = Recall::new();
+        let alice = memory.remember("g", "alice", "alice's launch code is violet", 1);
+        memory.remember("g", "bob", "bob's launch code is orange", 2);
+
+        let hits = memory.recall_for_user("g", "alice", "launch code", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, alice);
+        assert_eq!(hits[0].user, "alice");
+        assert_eq!(hits[0].text, "alice's launch code is violet");
+        assert!(
+            memory
+                .recall_for_user("g", "carol", "launch code", 10)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn numeric_fact_ids_remain_searchable_past_lexicographic_order() {
+        let mut memory = Recall::new();
+        for id in 1..=12 {
+            memory.remember("g", "u", &format!("fact number {id}"), id);
+        }
+        let hits = memory.recall_for_user("g", "u", "fact number 2", 20);
+        assert_eq!(hits.len(), 12, "all numeric ids pass the guild/user filter");
     }
 
     #[test]
@@ -687,7 +761,11 @@ mod tests {
         assert!(memory.forget("g1", id));
         assert!(!memory.forget("g1", id), "second forget reports absence");
         assert_eq!(memory.count("g1"), 0);
-        assert!(memory.recall("g1", "fact one", 5).is_empty());
+        assert!(
+            memory
+                .recall_for_guild_admin("g1", "fact one", 5)
+                .is_empty()
+        );
         assert_eq!(
             memory.store().vector_count(),
             0,
@@ -754,7 +832,7 @@ mod tests {
 
         let back = Recall::load(&path).expect("loads");
         assert_eq!(back, memory);
-        let hits = back.recall("g", "persisted fact", 1);
+        let hits = back.recall_for_guild_admin("g", "persisted fact", 1);
         assert_eq!(hits[0].id, id);
         assert_eq!(hits[0].at, 42);
 

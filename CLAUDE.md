@@ -73,6 +73,8 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `tools.rs` | The model-callable tool vocabulary, both wire shapes, both response parsers, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
 | `pipeline.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
 | `generation.rs` | How a reply is produced once the pipeline decides to speak: the bounded tool loop (`generate`), local-path streaming (`stream_reply`: post/edit pacing), typing re-broadcast, `Delivery`/`Ask`/`Round` |
+| `voice.rs`, `offline_voice.rs` | Explicit local/disabled/OpenAI voice policy; loopback MLX-Audio client, bounded PCM framing, VAD/segmentation, and spoken-text shaping |
+| `voice_session.rs`, `voice_local.rs`, `voice_openai.rs` | Epoch-bound consent/media lifecycle and the local cognition or explicit Realtime session actors |
 
 `llm.rs` is pure in the same sense — it imports neither serenity nor poise —
 but it is the one module that touches a network other than Discord: the single
@@ -430,7 +432,8 @@ disable the app's Activity — not this bot's call. Guild-scoped registration
 
 **The spec suite (`docs/spec/`) is implemented in Rust; residuals are recorded
 as Proposed in `tasks/goals.md`:** the Swift companion app and Apple on-device
-models (not a Rust concern), voice (no `voice.md` was supplied), Postgres
+models (not a Rust concern), consented live validation of the newer local voice
+path, Postgres
 (replaced by the file store above), and the Slack HTTP Events listener (Socket
 Mode is implemented instead). Tools shipped (PR #19) and are not a residual.
 

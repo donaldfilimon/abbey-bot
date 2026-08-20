@@ -1,44 +1,63 @@
 # Abbey Live Voice Design
 
 **Date:** 2026-08-20
-**Status:** self-deafened join and bounded output validated live; provider speech blocked on configuration
+**Status:** safe presence validated live; local speech candidate and loopback STT/TTS validated offline; consented Discord conversation pending
 
 ## Outcome
 
-Abbey can join one explicitly configured Discord voice channel and hold a
-full-duplex audio conversation through OpenAI Realtime. The
-feature is safe to deploy while disabled: no destination variables means no
-voice session, and an OpenAI key used elsewhere does not opt voice in.
+Abbey can hold one explicitly consented conversation in one configured Discord
+voice channel. Local Apple-silicon speech is the default: MLX-Audio performs
+Whisper STT and Kokoro TTS, while Abbey's existing loopback text backend runs
+canonical persona/cognition. OpenAI Realtime is an explicit backup only. The
+feature is safe to deploy with persistent presence because autojoin never
+creates a conversational actor or enables decoding, regardless of backend
+configuration. No destination means no voice surface, and a provider key never
+selects cloud audio by itself.
 
 ## Boundaries
 
 - Discord media uses Serenity 0.12 + Songbird 0.6 with `receive`. Songbird owns
   voice signaling, Opus, jitter buffering, transport encryption, and Discord's
   mandatory DAVE/MLS E2EE handshake.
-- The Discord shell stays in `commands.rs`/`main.rs`. `voice.rs` contains only
-  provider-neutral configuration policy and deterministic PCM transforms.
-- The Realtime server connection uses a standard backend API key over WSS.
-  Remote plaintext WS, credentials embedded in URLs, partial destination
-  configuration, zero snowflakes, and unsafe model/voice names fail at startup.
-- Discord's 48 kHz stereo PCM is mixed and decimated to Realtime 24 kHz mono
-  PCM16. Realtime PCM16 is converted to 48 kHz stereo f32 for Songbird.
-- The 20 ms Discord callback only mixes and `try_send`s. Both directions use
-  bounded 50-chunk queues; overflow drops and increments an observable counter
-  instead of blocking the audio deadline.
+- The Discord shell is `commands_voice.rs`; `voice.rs` owns provider-neutral
+  configuration, `offline_voice.rs` owns the loopback client and deterministic
+  framing/segmentation, `voice_session.rs` owns epochs and cancellation, and
+  `voice_local.rs` / `voice_openai.rs` own their respective actors.
+- Local speech endpoints must be credential-free loopback HTTP. Local voice
+  also refuses a remote text-generation backend. Cloud Realtime requires
+  `ABBEY_VOICE_MODE=openai`, a key, and WSS (loopback WS is test-only).
+- Conversational Songbird calls start in mono 24 kHz `Decode` mode because
+  Songbird 0.6 cannot promote a running `Pass` receiver to `Decode`. No receive
+  handler exists before public disclosure, and a separate atomic media epoch
+  keeps callbacks and playback closed until final activation.
+- The 20 ms callback performs mapping/attestation checks, bounded energy work,
+  and `try_send` only. Unknown speakers atomically revoke media before a frame
+  is forwarded; slow cancellation and Discord mute/deafen run in another task.
+- Utterances, provider messages, and output are duration/size bounded. Raw
+  audio is never written. Local voice turns are read-only: model tools and
+  durable memory changes are disabled; a safely attributed completed playback
+  may commit only its conversational transcript.
 
 ## Consent and control
 
-`/voice join`, `/voice leave`, and `/voice status` require Manage Server. Join
-works only in `ABBEY_VOICE_GUILD_ID` and only for the voice channel named by
-`ABBEY_VOICE_CHANNEL_ID`; Stage channels are rejected. The operations-only
-`ABBEY_VOICE_AUTOJOIN=1` path is permitted only when no provider key exists and
-immediately mutes and self-deafens, so it cannot consume or transmit call audio.
-Before connecting, it changes Songbird to `DecodeMode::Pass`; encrypted RTP may
-arrive at the transport, but it is not decrypted, decoded, or delivered to an
-audio handler. Leaving this setting enabled makes safe presence restart-resilient.
-Normal full-duplex mode still requires `/voice join`. Its response states that
-channel audio is sent to the configured provider and names `/voice leave` as
-the stop control.
+`/voice join consent:true`, `/voice resume consent:true`, and `/voice status`
+require Manage Server. Join/resume additionally require the caller to be in the
+configured voice channel. The boolean is an attestation that everyone currently
+present was notified and agreed; Abbey snapshots non-bot participants, joins
+muted/self-deafened, posts a public backend/retention disclosure, verifies the
+snapshot again, installs the actor, verifies again, and only then opens the
+software media epoch. A new, unknown, or unattested participant revokes the
+epoch before their frame is forwarded, stops queued work and playback, applies
+mute/self-deafen, and requires renewed consent via resume. Cache loss, a bot
+move, transport failure, public-notice failure, model failure, and replacement
+races all fail closed. `/voice leave` is available to a manager or someone in
+the channel and synchronously invalidates work before disconnecting.
+
+`ABBEY_VOICE_AUTOJOIN=1` is a separate operations presence path. It always
+constructs Songbird in `DecodeMode::Pass`, mutes and self-deafens before/after
+joining, installs no receive/playback actor, and is valid even when local or
+cloud conversation is configured. This keeps safe presence restart-resilient
+without treating deployment as consent.
 
 The code does not ingest Discord Go Live video. Realtime supports audio plus
 discrete image inputs, not video; Songbird's supported receive API is voice and
@@ -52,26 +71,33 @@ Required to opt in to the Discord connection:
 - `ABBEY_VOICE_GUILD_ID`
 - `ABBEY_VOICE_CHANNEL_ID`
 
-`OPENAI_API_KEY` is required for full-duplex Realtime speech. Without it,
-Abbey can connect only in muted, self-deafened, no-audio mode.
-
-Optional: `ABBEY_VOICE_AUTOJOIN` (persistent no-key muted/self-deafened presence),
-`ABBEY_VOICE_REALTIME_ENDPOINT` (default OpenAI WSS),
-`ABBEY_VOICE_REALTIME_MODEL` (current default `gpt-realtime-2.1`),
-`ABBEY_VOICE_NAME` (default `marin`), and `ABBEY_VOICE_INSTRUCTIONS`.
+`ABBEY_VOICE_MODE` is `local` by default, `disabled` for presence-only, or
+`openai` for the explicit backup. Local defaults are loopback port 8181,
+`mlx-community/whisper-large-v3-turbo-asr-fp16`,
+`mlx-community/Kokoro-82M-bf16`, voice `af_heart`, language `en`, and a required
+Abbey/Aviva/Abi wake name. `ABBEY_VOICE_LOCAL_*` overrides those values.
+`ABBEY_VOICE_AUTOJOIN` controls only safe presence. OpenAI mode alone consumes
+`OPENAI_API_KEY`, `ABBEY_VOICE_REALTIME_ENDPOINT`, `_MODEL`,
+`ABBEY_VOICE_NAME`, and `ABBEY_VOICE_INSTRUCTIONS`.
 
 ## Verification contract
 
-The offline gate covers fail-closed configuration, key redaction, endpoint
-policy, PCM channel/rate transforms, raw PCM codec registration, formatting,
-Clippy, all unit tests, and a locked release build. A self-deafened join and one
-bounded local greeting were observed on the earlier build; the greeting surface
-was then removed in favor of an explicitly muted and self-deafened no-key path.
-Full-duplex completion additionally requires a funded provider key, command
-registration in the target guild, in-channel consent, an observed spoken turn
-in each direction, provider-side VAD interruption behavior (including how much
-already buffered Discord playback remains audible), `/voice status`, and
-`/voice leave`.
+The offline gate covers fail-closed mode/endpoint policy, key redaction,
+participant/media epochs, stale-session cancellation, bounded PCM/segmentation,
+wake routing, spoken-text shaping, raw PCM codec registration, local client
+validation, OpenAI backup protocol handling, formatting, strict Clippy, tests,
+and a locked release build. A loopback MLX-Audio smoke generated a 24 kHz mono
+Kokoro `af_heart` WAV and Whisper transcribed it as the intended sentence. This
+proves local speech services, not Discord reception or a bidirectional turn.
+
+The earlier deployed build independently proved persistent and crash-recovered
+muted/self-deafened `DecodeMode::Pass` presence in Engineering, plus a removed
+one-shot output greeting. Completion of conversational voice still requires:
+deploying the exact gated candidate, observing it rejoin in safe presence,
+everyone then consenting in-channel, a manager invoking the consented command,
+an observed wake-word turn and interruption in both directions, membership
+pause/resume, `/voice status`, and `/voice leave`. Stream vision remains a
+separate slice.
 
 ## Dependency audit
 
