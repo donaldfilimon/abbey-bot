@@ -243,8 +243,9 @@ pub async fn generate<O: Outbound + Sync>(
 /// normal Engine, persona routing, WDBX context, and tool loop.
 ///
 /// The voice surface uses this seam to require a loopback backend even when a
-/// cloud text provider is configured as the process-wide default. The optional
-/// suffix adds presentation constraints without replacing persona policy.
+/// remote text provider is configured as the process-wide default. The
+/// optional suffix adds presentation constraints without replacing persona
+/// policy.
 pub async fn generate_with_backend<O: Outbound + Sync>(
     state: &AppState,
     backend: &llm::Backend,
@@ -323,15 +324,15 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
             }
             return Err(llm::LlmError("the response carried no answer text".into()));
         }
-        // Run the tools, append the round, go again.
-        let mut results = Vec::with_capacity(calls.len());
+        // A model is not an authority boundary. If this request did not offer
+        // tools, unsolicited calls must stop here before they can mutate
+        // memory, WDBX, persona state, or any future capability.
+        let results = dispatch_requested_calls(offer, &calls, host)?;
         for call in &calls {
-            let result = crate::tools::dispatch(call, host);
             // Tool results can contain private recalled facts. Keep operational
             // evidence (which scoped tool completed) without copying its
             // payload into the durable process log.
             tracing::info!(tool = %call.name, scope, "tool call completed");
-            results.push(result);
         }
         extra_turns.push(llm::ChatTurn::assistant_calls(
             text.unwrap_or_default(),
@@ -343,6 +344,22 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
         "the model kept calling tools for {} rounds without answering",
         crate::tools::MAX_TOOL_ROUNDS
     )))
+}
+
+fn dispatch_requested_calls(
+    offered: bool,
+    calls: &[crate::tools::ToolCall],
+    host: &mut dyn crate::tools::ToolHost,
+) -> Result<Vec<crate::tools::ToolResult>, llm::LlmError> {
+    if !offered && !calls.is_empty() {
+        return Err(llm::LlmError(
+            "backend returned unrequested tool calls".into(),
+        ));
+    }
+    Ok(calls
+        .iter()
+        .map(|call| crate::tools::dispatch(call, host))
+        .collect())
 }
 
 /// HTTP 4xx on a tooled request is how a backend without tool support says
@@ -377,6 +394,34 @@ pub async fn with_typing<O: Outbound + Sync, T>(
 mod tests {
     use super::*;
     use crate::pipeline::testing::FakeOut;
+
+    #[derive(Default)]
+    struct MutationRecordingHost {
+        remembered: Vec<String>,
+    }
+
+    impl crate::tools::ToolHost for MutationRecordingHost {
+        fn remember_fact(&mut self, fact: &str) -> String {
+            self.remembered.push(fact.to_string());
+            "stored".into()
+        }
+
+        fn lookup_reputation(&mut self, _user_id: Option<&str>) -> String {
+            "unused".into()
+        }
+
+        fn recent_messages(&mut self, _limit: usize) -> String {
+            "unused".into()
+        }
+
+        fn recall(&mut self, _query: &str) -> String {
+            "unused".into()
+        }
+
+        fn switch_persona(&mut self, _persona: Persona) -> String {
+            "unused".into()
+        }
+    }
 
     /// A streaming transport that replays canned deltas with small pauses.
     struct FakeStream {
@@ -420,6 +465,23 @@ mod tests {
             endpoint: "http://127.0.0.1:11434".into(),
             model: "gemma4:e4b".into(),
         }
+    }
+
+    #[test]
+    fn unsolicited_tool_calls_cannot_reach_the_host() {
+        let calls = vec![crate::tools::ToolCall {
+            id: "call_1".into(),
+            name: "remember_fact".into(),
+            arguments: serde_json::json!({"fact": "private voice statement"}),
+        }];
+        let mut host = MutationRecordingHost::default();
+        let error = dispatch_requested_calls(false, &calls, &mut host).unwrap_err();
+        assert_eq!(error.0, "backend returned unrequested tool calls");
+        assert!(host.remembered.is_empty(), "host must remain untouched");
+
+        let results = dispatch_requested_calls(true, &calls, &mut host).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(host.remembered, ["private voice statement"]);
     }
 
     #[tokio::test]
