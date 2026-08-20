@@ -133,6 +133,7 @@ pub async fn run(mut session: LocalSession) {
                 let Some(SessionEvent::PlaybackEnded(turn)) = lifecycle else { continue; };
                 if turn == turn_generation {
                     session.playback.lock().await.take();
+                    let mut committed = false;
                     if let Some(pending) = pending_commit.take()
                         && pending.turn == turn
                         && session.runtime.media_enabled(session.epoch)
@@ -144,7 +145,14 @@ pub async fn run(mut session: LocalSession) {
                             runtime::now(),
                         );
                         session.runtime.note_completed_turn();
+                        committed = true;
                     }
+                    tracing::info!(
+                        epoch = session.epoch,
+                        turn,
+                        committed,
+                        "local Abbey playback completed"
+                    );
                     session.runtime
                         .set_status(
                             session.epoch,
@@ -272,6 +280,12 @@ pub async fn run(mut session: LocalSession) {
                                     transcript,
                                     spoken_answer,
                                 });
+                                tracing::info!(
+                                    epoch = session.epoch,
+                                    turn,
+                                    committed_on_completion = persist,
+                                    "local Abbey playback started"
+                                );
                                 session.runtime
                                     .set_status(
                                         session.epoch,
@@ -469,7 +483,7 @@ fn contains_wake_name(text: &str) -> bool {
         .any(|word| {
             matches!(
                 word.to_ascii_lowercase().as_str(),
-                "abbey" | "aviva" | "abi"
+                "abbey" | "abby" | "aviva" | "abi"
             )
         })
 }
@@ -568,6 +582,7 @@ mod tests {
     #[test]
     fn wake_names_are_token_bounded_and_case_insensitive() {
         assert!(contains_wake_name("Abbey, can you help?"));
+        assert!(contains_wake_name("Abby, can you help?"));
         assert!(contains_wake_name("AVIVA be direct"));
         assert!(contains_wake_name("abi: orchestrate"));
         assert!(!contains_wake_name("an abbeylike building"));

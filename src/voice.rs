@@ -3,8 +3,9 @@
 //! The mode is explicit. Local inference is the default once a destination is
 //! configured, cloud audio is an opt-in backup, and neither mode is inferred
 //! from whether a provider key happens to exist. Discord still transports the
-//! call; `local` means speech recognition, reasoning, and synthesis stay on
-//! this Mac.
+//! call. `local` means the bot sends speech recognition, reasoning, and
+//! synthesis only to loopback services on this Mac; whether a separately
+//! configured loopback service proxies upstream remains operator-controlled.
 
 use std::fmt;
 

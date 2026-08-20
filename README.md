@@ -78,6 +78,29 @@ Kokoro, and `af_heart` voice-pack revisions, then launches MLX-Audio offline on
 Discord listening; that still requires everyone-present consent followed by
 `/voice join consent:true`.
 
+Audit the entire local speech and cognition chain without a Discord token,
+microphone, or call. Every AI request made by the bot is restricted to a
+configured loopback endpoint:
+
+```sh
+set -a
+. "$HOME/.config/abbey-bot/env"
+set +a
+"$HOME/.local/libexec/abbey-bot/abbey-bot" \
+  --voice-self-test "$HOME/abbey-local-audition.wav"
+```
+
+The fixed synthetic wake phrase runs through Kokoro TTS, Whisper STT, the same
+canonical Abbey/Abi/Aviva generation path used by local Discord voice, spoken
+text shaping, and Kokoro TTS again. It refuses non-loopback reasoning, fails if
+Whisper loses the wake name, never reads a microphone or joins Discord, and
+does not load production state, WDBX, rewards, or conversation history. It
+creates the output WAV owner-only without replacing an existing file.
+"Loopback-only" describes the bot's transport boundary; an arbitrary local
+OpenAI-compatible service could itself proxy upstream. For strictly offline
+operation, use locally resident models. The managed configuration documented
+here uses the pinned local MLX models and Ollama `gpt-oss:20b`.
+
 ## Configured backends
 
 `/persona ask` answers come from an external or local model, never from the

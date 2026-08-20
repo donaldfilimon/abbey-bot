@@ -74,7 +74,7 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `pipeline.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
 | `generation.rs` | How a reply is produced once the pipeline decides to speak: the bounded tool loop (`generate`), local-path streaming (`stream_reply`: post/edit pacing), typing re-broadcast, `Delivery`/`Ask`/`Round` |
 | `voice.rs`, `offline_voice.rs` | Explicit local/disabled/OpenAI voice policy; loopback MLX-Audio client, bounded PCM framing, VAD/segmentation, and spoken-text shaping |
-| `voice_session.rs`, `voice_local.rs`, `voice_openai.rs` | Epoch-bound consent/media lifecycle and the local cognition or explicit Realtime session actors |
+| `voice_session.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_self_test.rs` | Epoch-bound consent/media lifecycle, local cognition, the explicit Realtime actor, and the no-Discord full local-chain audition |
 
 `llm.rs` is pure in the same sense — it imports neither serenity nor poise —
 but it is the one module that touches a network other than Discord: the single
@@ -451,11 +451,11 @@ are the *how*. When the two disagree, the Rust code plus its tests are current
 and the spec is the record of intent — update the spec file only when Donald
 changes the design.
 
-**This repository has two live clones**: `~/dev/active/abbey-bot` and
-`~/sources/repos/abbey-bot`, both tracking `origin/main`
-(`donaldfilimon/abbey-bot`, private). Concurrent
-sessions have worked them simultaneously — `git fetch` before assuming either
-is current, and never reason about "the" working tree from memory of the other.
+**The authoritative live checkout is `~/dev/active/abbey-bot`.** The former
+`~/sources/repos/abbey-bot` path is absent; a discarded redundant clone under
+Trash is not an authority. Concurrent sessions can still share the active
+working tree, so inspect its current status before editing and fetch before
+making claims about `origin/main`.
 
 `~/dev/archive/swift-discord` is a home-grown **Swift** Discord library with its
 own gateway and REST targets. It shares no code with this crate and is not a

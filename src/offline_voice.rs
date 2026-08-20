@@ -509,7 +509,18 @@ impl MlxAudioClient {
 
     pub async fn transcribe(&self, pcm: &[i16]) -> Result<String, String> {
         let wav = encode_mono_pcm16_wav(pcm, INPUT_SAMPLE_RATE)?;
-        let part = reqwest::multipart::Part::bytes(wav)
+        self.transcribe_wav(&wav).await
+    }
+
+    /// Transcribe a validated PCM16 WAV. The ordinary Discord path first
+    /// wraps its bounded mono samples with [`encode_mono_pcm16_wav`]; the
+    /// offline voice self-test uses this entry point to feed synthesized test
+    /// speech through the exact same recognizer without a microphone.
+    pub async fn transcribe_wav(&self, wav: &[u8]) -> Result<String, String> {
+        // Reject malformed, empty, unexpectedly encoded, or overlong input
+        // before allocating a multipart body or involving the model server.
+        let _ = decode_pcm16_wav(wav)?;
+        let part = reqwest::multipart::Part::bytes(wav.to_vec())
             .file_name("utterance.wav")
             .mime_str("audio/wav")
             .map_err(|e| format!("building the local STT request failed: {e}"))?;
@@ -562,6 +573,19 @@ impl MlxAudioClient {
     }
 
     pub async fn synthesize(&self, text: &str) -> Result<DecodedAudio, String> {
+        let (audio, _) = self.synthesize_response(text).await?;
+        Ok(audio)
+    }
+
+    /// Synthesize and return the provider's validated PCM16 WAV. This is
+    /// intentionally separate from Discord playback so an operator can audit
+    /// Abbey's complete local voice without joining or recording a call.
+    pub async fn synthesize_wav(&self, text: &str) -> Result<Vec<u8>, String> {
+        let (_, wav) = self.synthesize_response(text).await?;
+        Ok(wav)
+    }
+
+    async fn synthesize_response(&self, text: &str) -> Result<(DecodedAudio, Vec<u8>), String> {
         let text = spoken_text(text);
         if text.is_empty() {
             return Err("Abbey's response had no speakable text".into());
@@ -599,7 +623,8 @@ impl MlxAudioClient {
         if !status.is_success() {
             return Err(format!("local speech synthesis returned HTTP {status}"));
         }
-        decode_pcm16_wav(&body)
+        let audio = decode_pcm16_wav(&body)?;
+        Ok((audio, body.to_vec()))
     }
 }
 
@@ -834,5 +859,13 @@ mod tests {
     fn spoken_copy_drops_formatting_and_raw_urls() {
         let spoken = spoken_text("**Abbey:** see https://example.com/a and `cargo test`");
         assert_eq!(spoken, "Abbey: see link and cargo test");
+    }
+
+    #[tokio::test]
+    async fn wav_transcription_rejects_malformed_input_before_network() {
+        let config = OfflineVoiceConfig::from_values(None, None, None, None, None).unwrap();
+        let client = MlxAudioClient::new(config).unwrap();
+        let error = client.transcribe_wav(b"not a wave file").await.unwrap_err();
+        assert!(error.contains("RIFF/WAVE"), "{error}");
     }
 }

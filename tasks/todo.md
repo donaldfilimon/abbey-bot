@@ -16,9 +16,9 @@
 - [x] README + CLAUDE.md/AGENTS.md updates, .env.example, gate green via ./check.sh
 
 ## Open (after this pass)
-- [x] Live smoke test: registration, mention reply, reaction reward settling all observed 2026-08-19 (`/admin brain` read still pending)
+- [x] Live smoke test: registration, mention reply, reaction reward settling, and `/admin brain` read observed
 - [x] Model-initiated tools — shipped PR #19 (both wire shapes)
-- [ ] voice.md was not supplied — voice remains out of scope
+- [x] Local-first DAVE voice — consent/media epochs, Whisper → canonical Abbey → Kokoro, explicit OpenAI backup, managed sidecar, and no-Discord full-chain audition; consented live acceptance remains tracked in `tasks/goals.md`
 
 ## DM / live (2026-08-19)
 - [x] ABBEY_BOT_LLM_MODEL, local max_tokens 4096, reasoning-only error
@@ -30,7 +30,7 @@
 - [x] C3–C4: 👍 on an Abbey reply → `Rewarded` → `reward settled into the replay buffer … loaded=true` (17:16Z)
 - [x] ABBEY_VISION_ENDPOINT=off sentinel
 - [x] ABBEY_BOT_LLM_TIMEOUT_SECS shipped; ABBEY_BOT_LLM_MAX_TOKENS deliberately not added (budget is per path: 1,024 Anthropic / 4,096 local)
-- [ ] Exercise `/reputation`, `/stats`, `/remember`, `/see` individually once the DM slash picker shows them; Telegram/Slack adapters need their tokens
+- [ ] Exercise `/stats`, `/remember`, and `/see` individually once the DM slash picker shows them; `/reputation` was observed live at 11:02Z; Telegram/Slack adapters need their tokens
 
 ## Guild learning loop (plan 2026-08-19)
 - [x] T1 brain/budget.rs
@@ -41,7 +41,7 @@
 - [x] T6 pipeline gates/budget/telemetry
 - [x] T7 /admin act, /admin budget, /admin brain, /stats
 - [x] T8 docs + PR
-- [ ] T9 live acceptance — `/admin act on`, policy decisions, reacts, cooldown, settle all observed; residual: an `OverBudget` refusal and a `/admin brain` read
+- [ ] T9 live acceptance — `/admin act on`, policy decisions, reacts, cooldown, settle, and `/admin brain` all observed; residual: an `OverBudget` refusal
 
 ## Reply quality & speed (2026-08-19)
 - [x] benchmark 5 local models with Abbey's prompt

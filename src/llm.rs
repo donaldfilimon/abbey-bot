@@ -150,8 +150,9 @@ impl Backend {
     }
 
     /// Whether this backend is an OpenAI-compatible service bound to this
-    /// machine. Local voice uses this guard so selecting offline speech can
-    /// never accidentally route a transcript to a remote text provider.
+    /// machine. Local voice uses this guard so its own HTTP hop cannot send a
+    /// transcript off-host. The operator still controls whether that local
+    /// service serves a resident model or proxies an upstream model.
     #[must_use]
     pub fn is_loopback_openai_compatible(&self) -> bool {
         let Self::OpenAiCompatible { endpoint, .. } = self else {

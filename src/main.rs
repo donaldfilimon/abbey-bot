@@ -21,8 +21,10 @@
 //! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
 //! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
 //!   admin-triggered, DAVE-capable Discord connection. `ABBEY_VOICE_AUTOJOIN=1`
-//!   provides persistent muted/self-deafened no-audio presence when no provider
-//!   key is configured; full-duplex Realtime voice still requires `/voice join`.
+//!   provides persistent muted/self-deafened no-audio presence. Conversational
+//!   local or Realtime voice still requires `/voice join consent:true`.
+//! - `--voice-self-test OUTPUT.wav` — run local TTS → STT → canonical Abbey
+//!   reasoning → TTS without a Discord token, microphone, or call.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
@@ -62,6 +64,7 @@ mod vision;
 mod voice;
 mod voice_local;
 mod voice_openai;
+mod voice_self_test;
 mod voice_session;
 mod wdbx;
 mod webhook;
@@ -101,6 +104,24 @@ async fn main() -> Result<(), Error> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    if let Some(output) = voice_self_test_output().map_err(runtime::StartupError)? {
+        let report = voice_self_test::run(&output)
+            .await
+            .map_err(runtime::StartupError)?;
+        println!(
+            "local voice self-test passed\nstimulus transcript: {}\nreply: {}\nreply transcript: {}\nround-trip word recall: {:.0}%\naudio: {} ({} Hz, {} channel(s), {} ms)",
+            report.transcript,
+            report.spoken_answer,
+            report.reply_transcript,
+            report.round_trip_word_recall * 100.0,
+            report.output.display(),
+            report.sample_rate,
+            report.channels,
+            report.duration_millis,
+        );
+        return Ok(());
+    }
 
     // Read before building anything else: a missing token should fail in the
     // first millisecond with a sentence you can act on, not inside a gateway
@@ -342,6 +363,35 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
+fn voice_self_test_output() -> Result<Option<std::path::PathBuf>, String> {
+    parse_startup_arguments(std::env::args_os().skip(1))
+}
+
+fn parse_startup_arguments(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(mode) = arguments.next() else {
+        return Ok(None);
+    };
+    if mode != std::ffi::OsStr::new("--voice-self-test") {
+        return Err(format!(
+            "unknown argument {:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav]",
+            mode
+        ));
+    }
+    let output = arguments.next().ok_or_else(|| {
+        "usage: abbey-bot --voice-self-test OUTPUT.wav (the output must not already exist)"
+            .to_string()
+    })?;
+    if arguments.next().is_some() {
+        return Err(
+            "usage: abbey-bot --voice-self-test OUTPUT.wav (exactly one output path is required)"
+                .into(),
+        );
+    }
+    Ok(Some(output.into()))
+}
+
 /// Global registration that survives Discord's Entry Point command.
 ///
 /// Apps with Activities enabled get an auto-created command of type
@@ -405,4 +455,34 @@ fn record_interaction(ctx: Context<'_>, succeeded: bool, error: Option<String>) 
         .memory
         .interactions
         .record(entry);
+}
+
+#[cfg(test)]
+mod startup_argument_tests {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<Option<std::path::PathBuf>, String> {
+        parse_startup_arguments(arguments.iter().map(std::ffi::OsString::from))
+    }
+
+    #[test]
+    fn no_arguments_starts_the_discord_service() {
+        assert_eq!(parse(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn exact_voice_self_test_has_one_create_new_output() {
+        assert_eq!(
+            parse(&["--voice-self-test", "audition.wav"]).unwrap(),
+            Some(std::path::PathBuf::from("audition.wav"))
+        );
+        assert!(parse(&["--voice-self-test"]).is_err());
+        assert!(parse(&["--voice-self-test", "one.wav", "two.wav"]).is_err());
+    }
+
+    #[test]
+    fn an_unknown_or_mistyped_mode_cannot_start_discord() {
+        assert!(parse(&["--voice-self-tset", "audition.wav"]).is_err());
+        assert!(parse(&["unexpected"]).is_err());
+    }
 }
