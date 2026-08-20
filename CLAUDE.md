@@ -41,11 +41,10 @@ depends on — do not remove the flag to "fix" a lock error; regenerate the lock
 `./check.sh` itself (fmt check, all-target Clippy with `--locked -D warnings`,
 locked tests, locked release build) on push and PR to `main`. The runner's
 rustup honours `rust-toolchain.toml`, so CI and local runs share exact stable
-Rust 1.97.1. Successful push and pull-request runs were observed on 2026-08-19;
-those runs predate the stable-toolchain/release-build extension, which is green
-locally and awaits its first CI run. Checks older than PR #4 vouch only for the
-workflow's original weaker `cargo build && cargo test`; run `./check.sh` locally
-before trusting a merge.
+Rust 1.97.1. The stable-toolchain/release-build gate passed in GitHub Actions on
+PR #24 on 2026-08-20. Checks older than PR #4 vouch only for the workflow's
+original weaker `cargo build && cargo test`; run `./check.sh` locally before
+trusting a merge.
 
 ## Architecture: a pure core with a thin Discord shell
 

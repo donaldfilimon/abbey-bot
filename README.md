@@ -242,9 +242,8 @@ summary, `/whois` `/perms` `/modcall` `/server` `/webhook` `/remember` `/forget`
 `/reputation` `/summarize` `/see` `/ocr` from a client — `tasks/goals.md` is the
 ledger of record.** This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
---locked` produces the binary they both wrap. Successful push and pull-request
-workflow runs were observed on 2026-08-19; those runs predate the new stable
-Rust + release-build gate, which is verified locally and awaits its first CI run.
+--locked` produces the binary they both wrap. The exact stable Rust + locked
+release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
 
 ## Gate
 

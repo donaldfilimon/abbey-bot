@@ -44,5 +44,6 @@ status: done
 - 2026-08-19: replay buffer (last 1,000 experiences) and pending rewards persist across restarts; rolling channel summaries for opted-in guilds/DMs every 30 messages (scheduler, 10 min), grounding replies. Gate 331 tests. Live observation of a refreshed summary needs 30 new messages in an invited channel — not yet seen.
 
 ## Modernize the Rust codebase and harden network boundaries
-status: in_progress
+status: done
 - Captured 2026-08-19 from "do all next steps and finish all codebase; merge all changes into main". Acceptance: exact supported Rust toolchain, compatible lock refresh, deployed release build in the gate, generated Discord mentions disabled, bounded/no-redirect model and vision responses, bounded shared Discord attachment downloads, pure hierarchy policy, clone-independent hooks, secret/data ignores, claim-honest docs, full green gate, and integration on `main`.
+- 2026-08-20 outcome: implementation commit `8da4717` merged through PR #24 as `24c95d2`; the exact stable Rust 1.97.1 GitHub gate passed (fmt, Clippy `-D warnings`, 335 passed + 1 intentionally ignored live-model test, locked release build). Startup rejects blank Discord tokens and remote plaintext model endpoints. `cargo audit` still reports the four documented `rustls-webpki` 0.102.8 advisories blocked on Serenity's Rustls 0.22 path, plus Poise's transitive unmaintained `derivative` warning; Docker/systemd and live mention/cooldown behavior remain explicitly unverified.
