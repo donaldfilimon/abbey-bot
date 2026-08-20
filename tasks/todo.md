@@ -159,8 +159,10 @@ a green source gate is not semantic, deployment, or live evidence.
 - [ ] Windows: same binary builds and tests, Gemma via Ollama or another qualified server,
       explicit data directory, Ctrl-C with a final persistence flush, PowerShell setup docs, no
       Windows Service
-- [ ] Expand CI to `macos` + `ubuntu` + `windows` on the pinned toolchain and locked dependencies
-- [ ] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
+- [x] Expand CI to `macos` + `ubuntu` + `windows` on the pinned toolchain and locked dependencies;
+      this records the checked-in matrix, while exact-head and post-merge run evidence remains a
+      release requirement outside the source ledger
+- [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
       traverse the common pipeline and select the same persona; a deterministic `ImageUnderstanding`
@@ -210,9 +212,9 @@ access logs, and historical consent are explicitly not acceptable substitutes.
 - [ ] All five tools against an isolated test user/guild scope, then remove any temporary fact
 
 ### Delivery
-- [ ] Docs distinguish source/test, provider-qualification, installed-binary, live-Discord,
+- [x] Docs distinguish source/test, provider-qualification, installed-binary, live-Discord,
       Linux/Windows CI, and untested-connector evidence; record that Go Live video is not ingested
-- [ ] Commit in reviewable groups (provider/deployment, safety/core, cross-platform tests/docs) and
+- [x] Commit in reviewable groups (provider/deployment, safety/core, cross-platform tests/docs) and
       push the branch **without merging**
 - [x] Keep `cargo audit` honest: the active root lock reports zero vulnerabilities after a
       provenance-checked, source-identical `openmls_rust_crypto` 0.5.1 compatibility patch moved

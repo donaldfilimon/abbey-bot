@@ -203,15 +203,45 @@ successful report atomically as a private manifest; never qualify PCC as a
 substitute:
 
 ```sh
-cargo build --release --locked
+./deploy/install-launchd.sh
+release_binary=$PWD/target/release/abbey-bot
+installed_binary=$HOME/.local/libexec/abbey-bot/abbey-bot
+release_sha=$(shasum -a 256 "$release_binary" | awk '{print $1}')
+installed_sha=$(shasum -a 256 "$installed_binary" | awk '{print $1}')
+test "$release_sha" = "$installed_sha"
+
+model_dir=$HOME/.local/share/abbey-bot/mlx-vlm/huggingface/hub/models--mlx-community--gemma-4-12B-it-4bit/snapshots/73bcf09092aa277861d5a191b989b666f7f32e8f
 manifest_dir=$HOME/.config/abbey-bot
+manifest=$manifest_dir/fm-capabilities.json
 mkdir -p "$manifest_dir"
 chmod 700 "$manifest_dir"
-ABBEY_FM_MODE=system ABBEY_FM_FALLBACK=1 \
+env \
+  -u ANTHROPIC_API_KEY \
+  -u ABBEY_VISION_KEY \
+  -u ABBEY_FM_ENDPOINT \
+  -u ABBEY_FM_CAPABILITY_MANIFEST \
+  -u ABBEY_DATA_DIR \
+  -u DISCORD_TOKEN \
+  -u OPENAI_API_KEY \
+  -u TELEGRAM_BOT_TOKEN \
+  -u SLACK_BOT_TOKEN \
+  -u SLACK_APP_TOKEN \
+  ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:8282 \
+  ABBEY_BOT_LLM_MODEL="$model_dir" \
+  ABBEY_BOT_LLM_TIMEOUT_SECS=600 \
+  ABBEY_BOT_LLM_TOOLS=on \
+  ABBEY_VISION_PROVIDER=remote \
+  ABBEY_VISION_ENDPOINT=http://127.0.0.1:8282/v1 \
+  ABBEY_VISION_MODEL="$model_dir" \
+  ABBEY_FM_MODE=system \
+  ABBEY_FM_CLI=/usr/bin/fm \
+  ABBEY_FM_FALLBACK=1 \
+  RUST_LOG=off \
   python3 deploy/publish-provider-qualification.py \
-    --binary "$PWD/target/release/abbey-bot" \
-    --output "$manifest_dir/fm-capabilities.json" \
-    --target fm
+    --binary "$installed_binary" \
+    --output "$manifest" \
+    --target all \
+    --timeout 900
 ```
 
 Re-run the qualification whenever the Abbey binary, `fm` executable, selected
@@ -223,16 +253,46 @@ and preserves an existing manifest on probe/validation failure. Publication is
 POSIX-only because it relies on effective-user ownership and mode bits. The
 Windows gate parses and privacy-checks the publisher and records its runtime
 tests as skipped; it does not claim that a Windows host published a manifest.
+Install through `install-launchd.sh` once while the previous known-good
+environment is still active, and require the installed/release hashes above to
+match before qualification. Qualify that already-installed binary so a later
+rebuild cannot silently stale the manifest. Do not rerun the installer or
+otherwise replace the binary between manifest publication and the complete
+acceptance sequence. The configurator rechecks its exact SHA-256.
+
 To atomically switch the owner environment to the pinned MLX primary while
-preserving secret values and a private rollback copy, validate first and then
-repeat without `--dry-run`:
+preserving secret values and a private rollback copy, validate first:
 
 ```sh
 python3 deploy/configure-mlx-primary.py \
-  --model-dir "$HOME/.local/share/abbey-bot/mlx-vlm/huggingface/hub/models--mlx-community--gemma-4-12B-it-4bit/snapshots/73bcf09092aa277861d5a191b989b666f7f32e8f" \
-  --manifest "$HOME/.config/abbey-bot/fm-capabilities.json" \
+  --binary "$installed_binary" \
+  --model-dir "$model_dir" \
+  --manifest "$manifest" \
   --dry-run
 ```
+
+Then repeat the same command with `--apply-and-restart` in place of
+`--dry-run`. Plain apply is intentionally unsupported. The apply mode publishes
+the owner environment, restarts the fixed Abbey launchd agent without replacing
+its binary, and requires one new PID to remain stable for a bounded window. If
+the candidate fails to start or remain stable, it atomically restores the
+byte-exact pre-cutover environment and verifies a second restart under the old
+configuration. The private backup is retained even after a successful rollback;
+a failed rollback restart is reported fail-closed and requires operator repair.
+Both configurator modes acquire the installer's existing owner-only
+`~/.local/share/abbey-bot/install.lock` before reading the environment, binary,
+or manifest and retain it through validation, publication, restart, and any
+rollback. Install, uninstall, and another cutover therefore cannot race this
+transaction. A preexisting lock is never stolen automatically; inspect its PID
+record and the owning process before any manual recovery.
+
+The generated environment explicitly blanks inherited Anthropic, vision-key,
+and `fm serve` values, pins `/usr/bin/fm`, and forces tools on. Prior secret
+assignments remain commented in the environment and byte-exact in the private
+rollback copy; neither dry-run nor apply-and-restart prints their values. Both
+modes reject fake, stale, non-`all`, wrong-binary, wrong-model, wrong-`fm`,
+wrong-OS, or capability-incomplete manifests before touching the owner
+environment.
 
 With neither set, `/persona ask` replies that no generation backend is
 configured, and the pipeline never speaks unsolicited (a mention gets the same
