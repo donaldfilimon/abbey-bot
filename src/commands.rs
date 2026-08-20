@@ -752,6 +752,7 @@ pub async fn autojoin_self_deafened(
             .await
             .map_err(|e| format!("replacing the existing voice session failed: {e}"))?;
     }
+    manager.set_config(no_audio_songbird_config(&songbird::Config::default()));
     let call = manager.get_or_insert(guild_id);
     disable_voice_decoding(&call).await;
     let generation = runtime.begin();
@@ -855,6 +856,7 @@ pub async fn voice_join(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     if !runtime.config.realtime_ready() {
+        manager.set_config(no_audio_songbird_config(&songbird::Config::default()));
         let call = manager.get_or_insert(guild_id);
         disable_voice_decoding(&call).await;
     }
