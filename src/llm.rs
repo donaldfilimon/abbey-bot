@@ -34,10 +34,10 @@ const MAX_TOKENS: u32 = 1024;
 /// an empty `content` — observed live 2026-08-19: "Say hi in three words"
 /// cost 739 tokens of reasoning for a four-word reply.
 const LOCAL_MAX_TOKENS: u32 = 4096;
-/// The model name sent when `ABBEY_BOT_LLM_MODEL` is unset. llama-server and
-/// mlx serve whatever they were started with and ignore the field; ollama
-/// resolves it and rejects an unknown name, which is why it is configurable.
-pub const DEFAULT_LOCAL_MODEL: &str = "default";
+/// The model name sent when `ABBEY_BOT_LLM_MODEL` is unset. OpenAI-compatible
+/// servers differ on whether they validate, resolve, or ignore this field;
+/// Ollama and MLX-VLM require the configured name to resolve to a served model.
+pub const DEFAULT_LOCAL_MODEL: &str = "gemma4:12b";
 /// Maximum JSON/SSE response retained from a generation backend.
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum diagnostic body retained from a failed backend response.
@@ -64,7 +64,7 @@ pub(crate) fn validate_remote_endpoint(value: &str, name: &str) -> Result<(), St
     }
 }
 
-fn url_is_loopback(url: &reqwest::Url) -> bool {
+pub(crate) fn url_is_loopback(url: &reqwest::Url) -> bool {
     url.host_str().is_some_and(|host| {
         let host = host.trim_start_matches('[').trim_end_matches(']');
         host.eq_ignore_ascii_case("localhost")

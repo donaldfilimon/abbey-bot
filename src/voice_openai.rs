@@ -5,6 +5,7 @@
 //! and truncates provider history to the audio actually heard after barge-in.
 
 use std::io::Cursor;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,6 +47,12 @@ pub async fn run(mut session: OpenAiSession) {
         if let Some(ready) = session.ready.take() {
             let _ = ready.send(Err("OpenAI Realtime connection or setup failed".into()));
         }
+        // Close this actor's exact software media epoch before any async
+        // cleanup, then stop Songbird's Decode driver before publishing the
+        // failed state. A stale actor cannot close a newer epoch through this
+        // compare/exchange.
+        let _ = session.runtime.revoke_media(session.epoch);
+        disconnect_call(&session.call).await;
         session
             .runtime
             .actor_failed(
@@ -53,7 +60,6 @@ pub async fn run(mut session: OpenAiSession) {
                 "OpenAI Realtime stopped; audio processing is closed",
             )
             .await;
-        mute_and_deafen(&session.call).await;
     }
     let track = { session.playback.lock().await.take() };
     if let Some(track) = track {
@@ -132,6 +138,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
     let mut silence_frames = 0_usize;
     let mut active_response: Option<ActiveResponse> = None;
     let mut playing_item_id: Option<String> = None;
+    let mut playing_turn: Option<u64> = None;
     let mut playback_turn = 0_u64;
 
     loop {
@@ -150,16 +157,24 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
             }
             lifecycle = session.lifecycle.recv() => {
                 let Some(SessionEvent::PlaybackEnded(turn)) = lifecycle else { continue; };
-                if turn == playback_turn {
+                if consume_natural_playback_end(&mut playing_turn, turn) {
                     session.playback.lock().await.take();
                     playing_item_id = None;
-                    session.runtime
-                        .set_status(
-                            session.epoch,
-                            VoicePhase::Listening,
-                            "direct OpenAI backup ready; buffered output; listening",
-                        )
-                        .await;
+                    if session
+                        .runtime
+                        .with_media_enabled(session.epoch, || {
+                            session.runtime.note_completed_turn();
+                        })
+                        .is_some()
+                    {
+                        session.runtime
+                            .set_status(
+                                session.epoch,
+                                VoicePhase::Listening,
+                                "direct OpenAI backup ready; buffered output; listening",
+                            )
+                            .await;
+                    }
                 }
             }
             frame = session.input.recv() => {
@@ -181,6 +196,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                         &mut active_response,
                         &session.playback,
                         &mut playing_item_id,
+                        &mut playing_turn,
                     ).await? {
                         session.runtime.note_barge_in();
                     }
@@ -194,12 +210,21 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                     }
                 }
                 let bytes: Vec<u8> = frame.samples.into_iter().flat_map(i16::to_le_bytes).collect();
-                writer.send(Message::Text(serde_json::json!({
+                let append = Message::Text(serde_json::json!({
                     "type": "input_audio_buffer.append",
                     "event_id": next_event_id(session.epoch, &mut event_sequence),
                     "audio": base64::engine::general_purpose::STANDARD.encode(bytes),
-                }).to_string())).await
-                    .map_err(|error| format!("sending live input audio failed: {error}"))?;
+                }).to_string());
+                if !send_media_message(
+                    &mut writer,
+                    &session.runtime,
+                    session.epoch,
+                    append,
+                )
+                .await?
+                {
+                    continue;
+                }
             }
             message = reader.next() => {
                 let message = message
@@ -219,10 +244,9 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                             let _ = ready.send(Ok(()));
                         }
                         session.runtime
-                            .set_status(
+                            .set_prepared_status(
                                 session.epoch,
-                                VoicePhase::Listening,
-                                "direct OpenAI backup ready; buffered output; listening",
+                                "direct OpenAI backup ready; awaiting final consent activation",
                             )
                             .await;
                     }
@@ -236,6 +260,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                             &mut active_response,
                             &session.playback,
                             &mut playing_item_id,
+                            &mut playing_turn,
                         ).await? {
                             session.runtime.note_barge_in();
                         }
@@ -252,6 +277,9 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                             });
                         }
                     }
+                    Some("response.output_item.added") => {
+                        let _ = capture_assistant_audio_item(&mut active_response, &event);
+                    }
                     Some("response.output_audio.delta" | "response.audio.delta") => {
                         let Some(response_id) = event.get("response_id")
                             .and_then(serde_json::Value::as_str) else { continue; };
@@ -260,14 +288,11 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                         let Some(delta) = event.get("delta").and_then(serde_json::Value::as_str) else {
                             continue;
                         };
-                        let decoded = base64::engine::general_purpose::STANDARD
-                            .decode(delta)
-                            .map_err(|error| format!("Realtime audio delta was not valid base64: {error}"))?;
-                        append_audio_delta(
+                        append_encoded_audio_delta(
                             &mut active_response,
                             response_id,
                             item_id,
-                            &decoded,
+                            delta,
                         )?;
                     }
                     Some("response.output_audio.done" | "response.audio.done") => {}
@@ -287,14 +312,20 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                         playback_turn = playback_turn.saturating_add(1);
                         let f32_pcm = pcm16_to_f32(&pcm);
                         playing_item_id = item_id;
-                        play_audio(
+                        let played = play_audio(
                             &session.call,
                             &session.playback,
                             &session.events,
+                            &session.runtime,
+                            session.epoch,
                             f32_pcm,
                             playback_turn,
                         ).await?;
-                        session.runtime.note_completed_turn();
+                        if !played {
+                            playing_item_id = None;
+                            continue;
+                        }
+                        playing_turn = Some(playback_turn);
                         session.runtime
                             .set_status(
                                 session.epoch,
@@ -326,6 +357,53 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
     }
 }
 
+/// Correlate the assistant message item while its content is still empty.
+/// This session requests audio as its only output modality, and Realtime emits
+/// `response.output_item.added` before it adds the audio content part/deltas.
+/// Recording the item here lets a pre-delta barge-in truncate unheard audio.
+fn capture_assistant_audio_item(
+    active_response: &mut Option<ActiveResponse>,
+    event: &serde_json::Value,
+) -> bool {
+    if event.get("type").and_then(serde_json::Value::as_str) != Some("response.output_item.added")
+        || event
+            .get("output_index")
+            .and_then(serde_json::Value::as_u64)
+            .is_none()
+    {
+        return false;
+    }
+    let Some(response_id) = event.get("response_id").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(item) = event.get("item") else {
+        return false;
+    };
+    let Some(active) = active_response.as_mut() else {
+        return false;
+    };
+    if active.cancelled || active.id != response_id {
+        return false;
+    }
+    if item.get("type").and_then(serde_json::Value::as_str) != Some("message")
+        || item.get("role").and_then(serde_json::Value::as_str) != Some("assistant")
+    {
+        return false;
+    }
+    let Some(item_id) = item
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
+        return false;
+    };
+    if active.item_id.as_deref().is_some_and(|id| id != item_id) {
+        return false;
+    }
+    active.item_id.get_or_insert_with(|| item_id.to_string());
+    true
+}
+
 fn append_audio_delta(
     active_response: &mut Option<ActiveResponse>,
     response_id: &str,
@@ -338,7 +416,10 @@ fn append_audio_delta(
     if active.cancelled || active.id != response_id {
         return Ok(false);
     }
-    if active.item_id.as_deref().is_some_and(|id| id != item_id) {
+    // WebSocket events are ordered: the matching assistant item must already
+    // have been announced. Never let a stale or unrelated delta choose which
+    // conversation item will later be truncated.
+    if active.item_id.as_deref() != Some(item_id) {
         return Ok(false);
     }
     if !decoded.len().is_multiple_of(2)
@@ -346,8 +427,54 @@ fn append_audio_delta(
     {
         return Err("Realtime audio exceeded the bounded PCM duration".into());
     }
-    active.item_id.get_or_insert_with(|| item_id.to_string());
     active.pcm.extend_from_slice(decoded);
+    Ok(true)
+}
+
+fn append_encoded_audio_delta(
+    active_response: &mut Option<ActiveResponse>,
+    response_id: &str,
+    item_id: &str,
+    encoded: &str,
+) -> Result<bool, String> {
+    let matches_active = active_response.as_ref().is_some_and(|active| {
+        !active.cancelled && active.id == response_id && active.item_id.as_deref() == Some(item_id)
+    });
+    if !matches_active {
+        return Ok(false);
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("Realtime audio delta was not valid base64: {error}"))?;
+    append_audio_delta(active_response, response_id, item_id, &decoded)
+}
+
+/// Wait for sink capacity without holding the consent mutex, then linearize
+/// the actual audio enqueue with media revocation. A withdrawal that wins this
+/// boundary drops the frame before it enters the WebSocket sink.
+async fn send_media_message<S>(
+    writer: &mut S,
+    runtime: &VoiceRuntime,
+    epoch: u64,
+    message: Message,
+) -> Result<bool, String>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    futures_util::future::poll_fn(|cx| Pin::new(&mut *writer).poll_ready(cx))
+        .await
+        .map_err(|error| format!("waiting to send live input audio failed: {error}"))?;
+    let Some(started) =
+        runtime.with_media_enabled(epoch, || Pin::new(&mut *writer).start_send(message))
+    else {
+        return Ok(false);
+    };
+    started.map_err(|error| format!("sending live input audio failed: {error}"))?;
+    writer
+        .flush()
+        .await
+        .map_err(|error| format!("flushing live input audio failed: {error}"))?;
     Ok(true)
 }
 
@@ -373,6 +500,7 @@ async fn interrupt_response<S>(
     active_response: &mut Option<ActiveResponse>,
     playback: &SharedPlayback,
     playing_item_id: &mut Option<String>,
+    playing_turn: &mut Option<u64>,
 ) -> Result<bool, String>
 where
     S: Sink<Message> + Unpin,
@@ -422,6 +550,9 @@ where
         }
     }
 
+    if playing_turn.take().is_some() {
+        interrupted = true;
+    }
     let track = { playback.lock().await.take() };
     if let Some(track) = track {
         interrupted = true;
@@ -452,6 +583,17 @@ where
         }
     }
     Ok(interrupted)
+}
+
+/// A Songbird `End` event also fires after `TrackHandle::stop()`. Only the
+/// still-armed matching turn represents audio that reached natural playback
+/// completion and may advance `/voice status`.
+fn consume_natural_playback_end(playing_turn: &mut Option<u64>, ended_turn: u64) -> bool {
+    if *playing_turn != Some(ended_turn) {
+        return false;
+    }
+    *playing_turn = None;
+    true
 }
 
 fn next_event_id(epoch: u64, sequence: &mut u64) -> String {
@@ -485,11 +627,17 @@ async fn play_audio(
     call: &Arc<Mutex<songbird::Call>>,
     playback: &SharedPlayback,
     events: &mpsc::UnboundedSender<SessionEvent>,
+    runtime: &VoiceRuntime,
+    epoch: u64,
     pcm_f32: Vec<u8>,
     turn: u64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let input: songbird::input::Input = RawAdapter::new(Cursor::new(pcm_f32), 24_000, 1).into();
-    let handle = call.lock().await.play_only_input(input);
+    let mut call = call.lock().await;
+    let Some(handle) = runtime.with_media_enabled(epoch, || call.play_only_input(input)) else {
+        return Ok(false);
+    };
+    drop(call);
     if let Err(error) = handle.add_event(
         Event::Track(TrackEvent::End),
         PlaybackEnd {
@@ -503,13 +651,15 @@ async fn play_audio(
         ));
     }
     *playback.lock().await = Some(handle);
-    Ok(())
+    Ok(true)
 }
 
-async fn mute_and_deafen(call: &Arc<Mutex<songbird::Call>>) {
+async fn disconnect_call(call: &Arc<Mutex<songbird::Call>>) {
     let mut call = call.lock().await;
-    let _ = call.deafen(true).await;
-    let _ = call.mute(true).await;
+    // The caller has already closed the software gate. Leave immediately to
+    // stop Songbird's Decode driver; mute/deafen gateway round trips would
+    // only delay the physical teardown.
+    let _ = call.leave().await;
 }
 
 fn brief(error: &str) -> String {
@@ -525,6 +675,15 @@ fn brief(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn output_item_added(response_id: &str, item: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "type": "response.output_item.added",
+            "response_id": response_id,
+            "output_index": 0,
+            "item": item,
+        })
+    }
 
     #[derive(Default)]
     struct RecordingSink(Vec<Message>);
@@ -560,6 +719,79 @@ mod tests {
         ) -> std::task::Poll<Result<(), Self::Error>> {
             std::task::Poll::Ready(Ok(()))
         }
+    }
+
+    struct RevokingReadySink {
+        messages: Vec<Message>,
+        runtime: Arc<VoiceRuntime>,
+        epoch: u64,
+        revoked: bool,
+    }
+
+    impl Sink<Message> for RevokingReadySink {
+        type Error = std::convert::Infallible;
+
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            let this = self.get_mut();
+            if !this.revoked {
+                assert!(this.runtime.revoke_media(this.epoch));
+                this.revoked = true;
+            }
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+            self.get_mut().messages.push(item);
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn withdrawal_between_socket_readiness_and_enqueue_drops_audio() {
+        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig {
+            guild_id: 1,
+            channel_id: 2,
+            backend: crate::voice::VoiceBackendConfig::Disabled,
+            wake_word_required: true,
+        }));
+        let generation = runtime.reserve_start();
+        let epoch = runtime.begin(std::collections::HashSet::new()).await;
+        assert!(runtime.activate(epoch, generation, "active").await);
+        let mut sink = RevokingReadySink {
+            messages: Vec::new(),
+            runtime: Arc::clone(&runtime),
+            epoch,
+            revoked: false,
+        };
+        assert!(
+            !send_media_message(
+                &mut sink,
+                &runtime,
+                epoch,
+                Message::Text("private audio".into())
+            )
+            .await
+            .expect("revocation is not a transport failure")
+        );
+        assert!(sink.messages.is_empty());
+        assert!(!runtime.media_enabled(epoch));
     }
 
     #[test]
@@ -604,23 +836,127 @@ mod tests {
             cancelled: false,
         });
         assert!(!append_audio_delta(&mut active, "old", "i0", &[0, 0]).unwrap());
+        assert!(capture_assistant_audio_item(
+            &mut active,
+            &output_item_added(
+                "new",
+                serde_json::json!({
+                    "id": "i1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": []
+                })
+            ),
+        ));
+        assert!(!append_audio_delta(&mut active, "new", "other", &[1, 0]).unwrap());
         assert!(append_audio_delta(&mut active, "new", "i1", &[1, 0]).unwrap());
         assert!(take_completed_audio(&mut active, "old", Some("completed")).is_none());
         assert!(take_completed_audio(&mut active, "new", Some("cancelled")).is_none());
     }
 
+    #[test]
+    fn malformed_stale_delta_is_ignored_before_base64_decode() {
+        let mut active = Some(ActiveResponse {
+            id: "current".into(),
+            item_id: Some("item-current".into()),
+            pcm: Vec::new(),
+            cancelled: false,
+        });
+        assert!(
+            !append_encoded_audio_delta(&mut active, "stale", "item-stale", "not base64!")
+                .expect("stale malformed payload is irrelevant")
+        );
+        assert!(
+            append_encoded_audio_delta(&mut active, "current", "item-current", "not base64!")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn output_item_correlation_rejects_stale_non_assistant_and_conflicting_items() {
+        let assistant = |response_id: &str, id: &str| {
+            output_item_added(
+                response_id,
+                serde_json::json!({
+                    "id": id,
+                    "type": "message",
+                    "role": "assistant",
+                    "content": []
+                }),
+            )
+        };
+        let mut active = Some(ActiveResponse {
+            id: "r1".into(),
+            item_id: None,
+            pcm: Vec::new(),
+            cancelled: false,
+        });
+        assert!(!capture_assistant_audio_item(
+            &mut active,
+            &assistant("stale", "old")
+        ));
+        assert!(!capture_assistant_audio_item(
+            &mut active,
+            &output_item_added(
+                "r1",
+                serde_json::json!({"id": "u1", "type": "message", "role": "user"})
+            )
+        ));
+        assert!(!capture_assistant_audio_item(
+            &mut active,
+            &output_item_added(
+                "r1",
+                serde_json::json!({"id": "f1", "type": "function_call"})
+            )
+        ));
+        assert!(!capture_assistant_audio_item(
+            &mut active,
+            &serde_json::json!({
+                "type": "response.output_item.added",
+                "response_id": "r1",
+                "item": {"id": "missing-index", "type": "message", "role": "assistant"}
+            })
+        ));
+        assert!(capture_assistant_audio_item(
+            &mut active,
+            &assistant("r1", "i1")
+        ));
+        assert!(capture_assistant_audio_item(
+            &mut active,
+            &assistant("r1", "i1")
+        ));
+        assert!(!capture_assistant_audio_item(
+            &mut active,
+            &assistant("r1", "i2")
+        ));
+        assert_eq!(active.unwrap().item_id.as_deref(), Some("i1"));
+    }
+
     #[tokio::test]
-    async fn interrupting_buffered_audio_cancels_then_truncates_to_zero() {
+    async fn interrupt_after_item_added_but_before_first_delta_cancels_and_truncates_to_zero() {
         let mut sink = RecordingSink::default();
         let mut sequence = 0;
         let mut active = Some(ActiveResponse {
             id: "r1".into(),
-            item_id: Some("i1".into()),
-            pcm: vec![1, 0, 2, 0],
+            item_id: None,
+            pcm: Vec::new(),
             cancelled: false,
         });
+        assert!(capture_assistant_audio_item(
+            &mut active,
+            &output_item_added(
+                "r1",
+                serde_json::json!({
+                    "id": "i1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": []
+                })
+            ),
+        ));
         let playback: SharedPlayback = Arc::new(Mutex::new(None));
         let mut playing_item = None;
+        let mut playing_turn = None;
 
         assert!(
             interrupt_response(
@@ -630,6 +966,7 @@ mod tests {
                 &mut active,
                 &playback,
                 &mut playing_item,
+                &mut playing_turn,
             )
             .await
             .unwrap()
@@ -648,5 +985,22 @@ mod tests {
         assert_eq!(events[1]["type"], "conversation.item.truncate");
         assert_eq!(events[1]["item_id"], "i1");
         assert_eq!(events[1]["audio_end_ms"], 0);
+        assert_eq!(playing_turn, None);
+    }
+
+    #[test]
+    fn only_natural_matching_playback_end_counts_as_complete() {
+        let mut playing_turn = Some(11);
+        assert!(!consume_natural_playback_end(&mut playing_turn, 10));
+        assert_eq!(playing_turn, Some(11));
+        assert!(consume_natural_playback_end(&mut playing_turn, 11));
+        assert_eq!(playing_turn, None);
+        assert!(!consume_natural_playback_end(&mut playing_turn, 11));
+
+        // Barge-in/teardown invalidates the armed turn before Songbird emits
+        // the End event caused by TrackHandle::stop().
+        let mut interrupted_turn = Some(12);
+        interrupted_turn.take();
+        assert!(!consume_natural_playback_end(&mut interrupted_turn, 12));
     }
 }

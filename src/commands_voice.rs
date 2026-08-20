@@ -25,6 +25,19 @@ const INPUT_QUEUE_FRAMES: usize = 64;
 const OPENAI_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const LOCAL_HEALTH_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Clear this exact slow-start reservation on every return path. A newer
+/// request is unaffected because `finish_start_attempt` compares generations.
+struct StartAttempt {
+    runtime: Arc<VoiceRuntime>,
+    generation: u64,
+}
+
+impl Drop for StartAttempt {
+    fn drop(&mut self) {
+        self.runtime.finish_start_attempt(self.generation);
+    }
+}
+
 /// `/voice join`, `/voice resume`, `/voice leave`, and `/voice status`.
 #[poise::command(
     slash_command,
@@ -90,6 +103,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
     let start_generation = runtime.reserve_start();
+    let _start_attempt = StartAttempt {
+        runtime: Arc::clone(&runtime),
+        generation: start_generation,
+    };
     let channel_id = ChannelId::new(runtime.config.channel_id);
     let (caller_present, participants) = match cached_participants(ctx, guild_id, channel_id) {
         Ok(snapshot) => snapshot,
@@ -123,7 +140,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
 
-    let local_backend = match runtime.config.mode() {
+    let local_runtime = match runtime.config.mode() {
         VoiceMode::Local => {
             let Some(config) = runtime.config.local().cloned() else {
                 ctx.say("Local speech configuration is incomplete.").await?;
@@ -157,7 +174,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
                 }
             }
             match select_local_backend(&ctx.data().state) {
-                Ok(backend) => Some(backend),
+                Ok(backend) => Some((client, backend)),
                 Err(error) => {
                     ctx.say(error).await?;
                     return Ok(());
@@ -236,10 +253,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     manager.set_config(initial_songbird_config(runtime.config.mode()));
     let prepared_call = manager.get_or_insert(guild_id);
     if let Err(error) = set_muted_self_deafened(&prepared_call).await {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("could not prepare the required muted/self-deafened state")
             .await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say(format!(
             "Could not prepare the required voice safety state: {error}"
@@ -255,23 +272,24 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     // decoded frame until disclosure and all final checks succeed.
     let (frames_tx, input) = mpsc::channel(INPUT_QUEUE_FRAMES);
     let (driver_disconnect_tx, driver_disconnect) = watch::channel(false);
-    install_receive_handlers(
-        &prepared_call,
-        &runtime,
+    install_receive_handlers(ReceiveHandlerInstall {
+        call: &prepared_call,
+        manager: Arc::downgrade(&manager),
+        guild_id,
+        runtime: &runtime,
         epoch,
-        participants.clone(),
-        frames_tx,
-        driver_disconnect_tx,
-    )
+        attested: participants.clone(),
+        tx: frames_tx,
+        driver_disconnect: driver_disconnect_tx,
+    })
     .await;
     let call = match manager.join(guild_id, channel_id).await {
         Ok(call) => call,
         Err(error) => {
+            let _ = manager.remove(guild_id).await;
             runtime
                 .fail_safe("Discord refused the configured voice join")
                 .await;
-            let _ = set_muted_self_deafened(&prepared_call).await;
-            let _ = manager.remove(guild_id).await;
             drop(transition);
             ctx.say(format!("Discord refused the voice join: {error}"))
                 .await?;
@@ -279,10 +297,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         }
     };
     if let Err(error) = set_muted_self_deafened(&call).await {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("could not establish the required muted/self-deafened state")
             .await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say(format!(
             "Joined Discord but could not establish the required safety state: {error}"
@@ -290,16 +308,18 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         .await?;
         return Ok(());
     }
-    if let Err(error) = wait_for_bot_voice_state(ctx, guild_id, channel_id).await {
-        runtime
-            .fail_safe("Discord did not confirm a speak-capable bot voice state")
-            .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
-        drop(transition);
-        ctx.say(format!("Voice stayed off: {error}")).await?;
-        return Ok(());
-    }
+    let joined_session_id = match wait_for_bot_voice_state(ctx, guild_id, channel_id).await {
+        Ok(session_id) => session_id,
+        Err(error) => {
+            let _ = manager.remove(guild_id).await;
+            runtime
+                .fail_safe("Discord did not confirm a speak-capable bot voice state")
+                .await;
+            drop(transition);
+            ctx.say(format!("Voice stayed off: {error}")).await?;
+            return Ok(());
+        }
+    };
 
     if runtime.config.mode() == VoiceMode::Disabled {
         runtime
@@ -319,11 +339,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     // required public disclosure succeeds.
     let notice = consent_notice(&runtime, channel_id, resumed);
     if let Err(error) = channel_id.say(ctx.http(), notice).await {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("public consent disclosure could not be posted")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say(format!(
             "Could not post the required public consent notice, so voice stayed off: {error}"
@@ -334,22 +353,24 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     let pre_enable_participants = match cached_participants(ctx, guild_id, channel_id) {
         Ok((_, participants)) => participants,
         Err(error) => {
+            remove_call_for_consent(&manager, guild_id).await;
             runtime.pause_for_consent(participants.clone()).await;
             drop(transition);
             ctx.say(format!(
-                "Voice stayed muted/self-deafened because the participant list could not be verified: {error}"
+                "Voice disconnected because the participant list could not be verified: {error}"
             ))
             .await?;
             return Ok(());
         }
     };
     if pre_enable_participants != participants {
+        remove_call_for_consent(&manager, guild_id).await;
         runtime.pause_for_consent(pre_enable_participants).await;
         drop(transition);
         channel_id
             .say(
                 ctx.http(),
-                "Abbey stayed muted/self-deafened because channel membership changed during startup. Notify everyone now present, then use `/voice resume consent:true`.",
+                "Abbey disconnected because channel membership changed during startup. Notify everyone now present, then use `/voice resume consent:true`.",
             )
             .await?;
         ctx.say(
@@ -362,11 +383,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     let (events, lifecycle) = mpsc::unbounded_channel();
     let driver_disconnected = *driver_disconnect.borrow();
     if driver_disconnected {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("Discord voice transport disconnected during startup")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say("Discord voice transport disconnected during startup; no audio was captured.")
             .await?;
@@ -375,12 +395,13 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     let playback: SharedPlayback = Arc::new(Mutex::new(None));
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let mut cloud_ready = None;
-    let task = match (&runtime.config.backend, local_backend) {
-        (VoiceBackendConfig::Local(_), Some(backend)) => {
+    let task = match (&runtime.config.backend, local_runtime) {
+        (VoiceBackendConfig::Local(_), Some((client, backend))) => {
             let session = LocalSession {
                 runtime: Arc::clone(&runtime),
                 state: Arc::clone(&ctx.data().state),
                 call: Arc::clone(&call),
+                client,
                 epoch,
                 input,
                 lifecycle,
@@ -410,10 +431,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
             tokio::spawn(crate::voice_openai::run(session))
         }
         _ => {
+            let _ = manager.remove(guild_id).await;
             runtime
                 .fail_safe("selected voice backend was unavailable")
                 .await;
-            let _ = manager.remove(guild_id).await;
             drop(transition);
             ctx.say("The selected voice backend was unavailable; no audio was captured.")
                 .await?;
@@ -442,11 +463,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         match tokio::time::timeout(OPENAI_READY_TIMEOUT, ready).await {
             Ok(Ok(Ok(()))) => {}
             Ok(Ok(Err(error))) => {
+                let _ = manager.remove(guild_id).await;
                 runtime
                     .fail_safe("OpenAI Realtime setup was rejected")
                     .await;
-                let _ = set_muted_self_deafened(&call).await;
-                let _ = manager.remove(guild_id).await;
                 drop(transition);
                 ctx.say(format!(
                     "OpenAI Realtime did not start: {}",
@@ -456,11 +476,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
                 return Ok(());
             }
             Ok(Err(_)) | Err(_) => {
+                let _ = manager.remove(guild_id).await;
                 runtime
                     .fail_safe("OpenAI Realtime readiness timed out")
                     .await;
-                let _ = set_muted_self_deafened(&call).await;
-                let _ = manager.remove(guild_id).await;
                 drop(transition);
                 ctx.say("OpenAI Realtime did not become ready within 20 seconds; no participant audio was captured.")
                     .await?;
@@ -470,11 +489,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     }
 
     if !runtime.start_is_current(start_generation) || !runtime.is_current(epoch) {
+        let _ = manager.remove(guild_id).await;
         runtime
             .disconnect_for_replace("voice start was superseded before activation")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say("This voice start was superseded or cancelled; no audio was captured.")
             .await?;
@@ -483,11 +501,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
 
     let bot_is_exact = call.lock().await.current_channel() == Some(channel_id.into());
     if !bot_is_exact {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("Discord moved or disconnected Abbey during startup")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say("Discord moved or disconnected Abbey during startup; no audio was captured.")
             .await?;
@@ -497,8 +514,8 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     let latest_participants = match cached_participants(ctx, guild_id, channel_id) {
         Ok((_, participants)) => participants,
         Err(error) => {
+            remove_call_for_consent(&manager, guild_id).await;
             runtime.pause_for_consent(participants.clone()).await;
-            pause_call_for_consent(&call).await;
             drop(transition);
             ctx.say(format!(
                 "Abbey stayed paused because the participant list could not be verified: {error}"
@@ -508,13 +525,13 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         }
     };
     if latest_participants != participants {
+        remove_call_for_consent(&manager, guild_id).await;
         runtime.pause_for_consent(latest_participants).await;
-        pause_call_for_consent(&call).await;
         drop(transition);
         let _ = channel_id
             .say(
                 ctx.http(),
-                "Abbey stayed muted/self-deafened because channel membership changed during startup. Notify everyone now present, then use `/voice resume consent:true`.",
+                "Abbey disconnected because channel membership changed during startup. Notify everyone now present, then use `/voice resume consent:true`.",
             )
             .await;
         ctx.say(
@@ -527,22 +544,20 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     if let Err(error) =
         verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
     {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("required Discord voice permissions could not be verified before activation")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say(error).await?;
         return Ok(());
     }
 
     if let Err(error) = enable_conversation(&call).await {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("could not leave the muted/self-deafened startup state")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say(format!(
             "The public notice was posted, but Discord could not enable the consented session: {error}"
@@ -552,13 +567,25 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     }
 
     if let Err(error) =
+        wait_for_enabled_bot_voice_state(ctx, guild_id, channel_id, joined_session_id.as_str())
+            .await
+    {
+        let _ = manager.remove(guild_id).await;
+        runtime
+            .fail_safe("Discord did not confirm Abbey was unmuted and undeafened")
+            .await;
+        drop(transition);
+        ctx.say(format!("Voice stayed off: {error}")).await?;
+        return Ok(());
+    }
+
+    if let Err(error) =
         verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
     {
+        let _ = manager.remove(guild_id).await;
         runtime
             .fail_safe("required Discord voice permissions changed during activation")
             .await;
-        let _ = set_muted_self_deafened(&call).await;
-        let _ = manager.remove(guild_id).await;
         drop(transition);
         ctx.say(error).await?;
         return Ok(());
@@ -567,8 +594,8 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     let post_enable_participants = match cached_participants(ctx, guild_id, channel_id) {
         Ok((_, participants)) => participants,
         Err(error) => {
+            remove_call_for_consent(&manager, guild_id).await;
             runtime.pause_for_consent(participants.clone()).await;
-            pause_call_for_consent(&call).await;
             drop(transition);
             ctx.say(format!(
                 "Abbey paused because the participant list could not be verified after activation: {error}"
@@ -578,7 +605,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         }
     };
     let bot_voice_state_ok = cached_bot_voice_state(ctx, guild_id).is_some_and(|state| {
-        state.channel_id == Some(channel_id) && !state.mute && !state.deaf && !state.suppress
+        bot_voice_state_allows_conversation(&state, channel_id, joined_session_id.as_str())
     });
     if post_enable_participants != participants
         || !runtime.start_is_current(start_generation)
@@ -586,13 +613,13 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         || call.lock().await.current_channel() != Some(channel_id.into())
         || !bot_voice_state_ok
     {
+        remove_call_for_consent(&manager, guild_id).await;
         runtime.pause_for_consent(post_enable_participants).await;
-        pause_call_for_consent(&call).await;
         drop(transition);
         channel_id
             .say(
                 ctx.http(),
-                "Abbey paused immediately because channel membership changed during startup. Notify everyone now present, then use `/voice resume consent:true`.",
+                "Abbey disconnected immediately because channel membership changed during startup. Notify everyone now present, then use `/voice resume consent:true`.",
             )
             .await?;
         ctx.say(
@@ -605,6 +632,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     if !runtime
         .activate(
             epoch,
+            start_generation,
             match runtime.config.mode() {
                 VoiceMode::Local => "local inference ready; listening for Abbey",
                 VoiceMode::OpenAi => "direct OpenAI backup ready; buffered output; listening",
@@ -613,7 +641,10 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         )
         .await
     {
-        pause_call_for_consent(&call).await;
+        remove_call_for_consent(&manager, guild_id).await;
+        if runtime.is_current(epoch) {
+            runtime.pause_for_consent(participants).await;
+        }
         drop(transition);
         ctx.say("The voice session changed at activation, so no participant audio was processed.")
             .await?;
@@ -632,7 +663,6 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
 /// Stop processing synchronously and leave Discord voice.
 #[poise::command(slash_command, guild_only, ephemeral, rename = "leave")]
 pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
     let Some(runtime) = ctx.data().voice.as_ref().cloned() else {
         ctx.say("Abbey voice is not configured.").await?;
         return Ok(());
@@ -647,37 +677,67 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let channel_id = ChannelId::new(runtime.config.channel_id);
-    let allowed = ctx.guild().is_some_and(|guild| {
-        let caller = ctx.author().id;
-        let present = guild
+    let caller = ctx.author().id;
+    let present = ctx.guild().is_some_and(|guild| {
+        guild
             .voice_states
             .get(&caller)
             .and_then(|state| state.channel_id)
-            == Some(channel_id);
-        let manages = guild
-            .members
-            .get(&caller)
-            .is_some_and(|member| guild.member_permissions(member).manage_guild());
-        present || manages
+            == Some(channel_id)
     });
-    if !allowed {
+    // Slash-command interactions carry the caller's computed permissions in
+    // their Member payload even when the guild member cache is incomplete.
+    // Using guild.members here falsely denied out-of-channel managers.
+    let interaction_permissions = if present {
+        None
+    } else {
+        ctx.author_member()
+            .await
+            .and_then(|member| member.permissions)
+    };
+    if !can_stop_voice(present, interaction_permissions) {
         ctx.say("Only someone currently in the configured voice channel or a member with Manage Server can stop Abbey voice.")
             .await?;
         return Ok(());
     }
-    // Cancel a slow model preflight before waiting for the serialized Discord
-    // transition. This makes `/voice leave` authoritative over an older join.
+    // An authorized stop closes the software media gate before any further
+    // await, including Songbird lookup and Discord acknowledgement.
     runtime.cancel_pending_start();
-    let transition = runtime.transition.lock().await;
-    let manager = songbird::get(ctx.serenity_context())
-        .await
-        .ok_or("Songbird was not registered in the Discord client")?;
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(manager) => manager,
+        None => {
+            runtime
+                .disconnect("voice stopped; Songbird runtime was unavailable")
+                .await;
+            return Err("Songbird was not registered in the Discord client".into());
+        }
+    };
+    let exact_call = manager.get(guild_id);
+    // The slow-start token and media gate were cancelled above, before lookup.
+    // Enqueue the transition lock immediately so any later `/voice join`
+    // waits behind this stop, while leaving the exact current Decode Call in
+    // parallel instead of waiting behind an older start's network work. The
+    // Discord acknowledgement is polled concurrently and cannot delay the
+    // physical leave.
+    let leave_exact = async {
+        if let Some(call) = exact_call {
+            pause_call_for_consent(&call).await;
+        }
+    };
+    let (transition, (), _) = tokio::join!(
+        runtime.transition.lock(),
+        leave_exact,
+        ctx.defer_ephemeral()
+    );
+    if let Some(call) = manager.get(guild_id) {
+        // The software gate was closed before `transition`; stop the Decode
+        // driver of any call that replaced the captured handle before the
+        // transition became ours.
+        pause_call_for_consent(&call).await;
+    }
     runtime
         .disconnect("configured; disconnected by /voice leave")
         .await;
-    if let Some(call) = manager.get(guild_id) {
-        let _ = set_muted_self_deafened(&call).await;
-    }
     let removed = manager.remove(guild_id).await;
     drop(transition);
     match removed {
@@ -739,9 +799,11 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         VoiceBackendConfig::Disabled => "Speech models: none".into(),
     };
     ctx.say(format!(
-        "Abbey voice: {current}\nMode: {}\nPhase: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
+        "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
         runtime.config.mode().label(),
         snapshot.phase.label(),
+        if snapshot.media_enabled { "open" } else { "closed" },
+        if snapshot.start_pending { "yes" } else { "no" },
         snapshot.status,
         snapshot.consent_epoch,
         snapshot.participant_count,
@@ -824,6 +886,77 @@ pub async fn autojoin_self_deafened(
     Ok(())
 }
 
+/// Honor an unambiguous natural-language withdrawal only for a human who is
+/// currently present in the configured voice channel. Positive prose never
+/// enters this path and can never start or resume voice.
+pub(crate) async fn withdraw_voice_from_text(
+    ctx: &serenity::all::Context,
+    runtime: &VoiceRuntime,
+    author_id: u64,
+) -> bool {
+    let guild_id = GuildId::new(runtime.config.guild_id);
+    let channel_id = ChannelId::new(runtime.config.channel_id);
+    let participants = cached_participants_from_serenity(ctx, guild_id, channel_id);
+    // A populated cache authorizes only a currently present human. If the
+    // guild cache is temporarily unavailable, fail closed for consent: an
+    // explicit withdrawal in the exact configured voice-chat channel may stop
+    // voice but still can never start it.
+    if participants
+        .as_ref()
+        .is_some_and(|participants| !participants.contains(&author_id))
+    {
+        return false;
+    }
+
+    // Cancel slow preflight and close any current media gate before the first
+    // await. Re-snapshot afterwards so a stale text event also stops a newer
+    // active replacement instead of merely targeting its old epoch.
+    runtime.cancel_pending_start();
+    let snapshot = runtime.snapshot().await;
+    if !matches!(
+        snapshot.phase,
+        VoicePhase::Connecting
+            | VoicePhase::Listening
+            | VoicePhase::Thinking
+            | VoicePhase::Speaking
+    ) {
+        return true;
+    }
+    let epoch = snapshot.epoch;
+    // Capture the Call while the retiring epoch is still current. A start
+    // advances the runtime epoch before replacing Songbird's Call: if it wins
+    // this race, the exact-epoch pause below fails and this Arc is untouched;
+    // if the pause wins, this Arc can never become a later replacement.
+    let manager = songbird::get(ctx).await;
+    let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
+    let Some(pause) = runtime
+        .begin_pause_epoch_for_consent(
+            epoch,
+            participants.unwrap_or_default(),
+            "audio stopped because a participant withdrew consent in voice chat",
+        )
+        .await
+    else {
+        return true;
+    };
+    if let Some(call) = exact_call {
+        // Stop the exact Decode driver before waiting for provider-task
+        // cancellation. The software gate is already closed above.
+        pause_call_for_consent(&call).await;
+    }
+    pause.finish().await;
+    let transition = runtime.transition.lock().await;
+    let current = runtime.snapshot().await;
+    if current.epoch == epoch.saturating_add(1)
+        && current.phase == VoicePhase::AwaitingConsent
+        && let Some(manager) = manager
+    {
+        remove_call_for_consent(&manager, guild_id).await;
+    }
+    drop(transition);
+    true
+}
+
 /// Fail closed when Discord moves/disconnects Abbey, or when someone joins an
 /// active consent epoch.
 pub async fn on_voice_state_update(
@@ -845,7 +978,13 @@ pub async fn on_voice_state_update(
     let bot_id = ctx.cache.current_user().id;
     if new.user_id == bot_id {
         let snapshot = runtime.snapshot().await;
-        if snapshot.phase == VoicePhase::Disconnected {
+        if matches!(
+            snapshot.phase,
+            VoicePhase::Disconnected | VoicePhase::AwaitingConsent | VoicePhase::Failed
+        ) {
+            // AwaitingConsent intentionally disconnects the Decode call. The
+            // resulting gateway update is not a new failure, and `/resume`
+            // will create a fresh DAVE session after renewed consent.
             return;
         }
         // Serenity spawns gateway callbacks independently after updating its
@@ -856,24 +995,16 @@ pub async fn on_voice_state_update(
         let moved = cached
             .as_ref()
             .is_none_or(|state| state.channel_id != Some(channel_id));
-        let blocked = cached.as_ref().is_some_and(|state| {
-            state.channel_id == Some(channel_id)
-                && (state.mute || state.deaf || state.suppress)
-                && matches!(
-                    snapshot.phase,
-                    VoicePhase::Connecting
-                        | VoicePhase::Listening
-                        | VoicePhase::Thinking
-                        | VoicePhase::Speaking
-                )
-        });
+        let blocked = cached
+            .as_ref()
+            .is_some_and(|state| bot_voice_state_is_blocked(state, channel_id, snapshot.phase));
         if !moved && !blocked {
             return;
         }
         let reason = if moved {
             "Discord moved or disconnected Abbey; audio stopped"
         } else {
-            "Discord server-muted, server-deafened, or suppressed Abbey; audio stopped"
+            "Discord muted, deafened, or suppressed Abbey; audio stopped"
         };
         if !runtime.media_enabled(snapshot.epoch) {
             // Connecting sessions have no readable/playable media and their
@@ -891,26 +1022,29 @@ pub async fn on_voice_state_update(
             let still_moved = cached
                 .as_ref()
                 .is_none_or(|state| state.channel_id != Some(channel_id));
-            let still_blocked = cached.as_ref().is_some_and(|state| {
-                state.channel_id == Some(channel_id) && (state.mute || state.deaf || state.suppress)
-            });
+            let still_blocked = cached
+                .as_ref()
+                .is_some_and(|state| bot_voice_state_is_blocked(state, channel_id, current.phase));
             if !still_moved && !still_blocked {
                 drop(transition);
                 return;
             }
-            if runtime.media_enabled(current.epoch) {
-                if !runtime
-                    .pause_epoch_for_consent(current.epoch, HashSet::new(), reason)
-                    .await
-                {
-                    drop(transition);
-                    return;
-                }
-            } else {
-                runtime.fail_safe(reason).await;
+            let manager = songbird::get(ctx).await;
+            let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
+            let Some(pause) = runtime
+                .begin_pause_epoch_for_consent(current.epoch, HashSet::new(), reason)
+                .await
+            else {
+                drop(transition);
+                return;
+            };
+            if let Some(call) = exact_call {
+                pause_call_for_consent(&call).await;
             }
-            if let Some(manager) = songbird::get(ctx).await {
-                let _ = manager.remove(guild_id).await;
+            pause.finish().await;
+            runtime.fail_safe(reason).await;
+            if let Some(manager) = manager {
+                remove_call_for_consent(&manager, guild_id).await;
             }
             drop(transition);
             let _ = channel_id
@@ -921,29 +1055,34 @@ pub async fn on_voice_state_update(
                 .await;
             return;
         }
-        if !runtime
-            .pause_epoch_for_consent(snapshot.epoch, HashSet::new(), reason)
-            .await
-        {
+        if !runtime.revoke_media(snapshot.epoch) {
             return;
         }
+        let manager = songbird::get(ctx).await;
+        let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
+        let Some(pause) = runtime
+            .begin_pause_epoch_for_consent(snapshot.epoch, HashSet::new(), reason)
+            .await
+        else {
+            return;
+        };
+        if let Some(call) = exact_call {
+            pause_call_for_consent(&call).await;
+        }
+        pause.finish().await;
         let transition = runtime.transition.lock().await;
         let expected_paused_epoch = snapshot.epoch.saturating_add(1);
         let current = runtime.snapshot().await;
-        let cached = cached_bot_voice_state_from_serenity(ctx, guild_id);
-        let still_moved = cached
-            .as_ref()
-            .is_none_or(|state| state.channel_id != Some(channel_id));
-        let still_blocked = cached.as_ref().is_some_and(|state| {
-            state.channel_id == Some(channel_id) && (state.mute || state.deaf || state.suppress)
-        });
-        if current.epoch != expected_paused_epoch || (!still_moved && !still_blocked) {
+        // The consent epoch was already closed before waiting for transition.
+        // A transient Discord recovery cannot reopen it, so teardown is
+        // unconditional while this remains the same paused epoch.
+        if current.epoch != expected_paused_epoch || current.phase != VoicePhase::AwaitingConsent {
             drop(transition);
             return;
         }
         runtime.fail_safe(reason).await;
-        if let Some(manager) = songbird::get(ctx).await {
-            let _ = manager.remove(guild_id).await;
+        if let Some(manager) = manager {
+            remove_call_for_consent(&manager, guild_id).await;
         }
         drop(transition);
         let _ = channel_id
@@ -983,27 +1122,43 @@ pub async fn on_voice_state_update(
         Some(participants) => participants,
         None => HashSet::from([new.user_id.get()]),
     };
-    if !runtime
-        .pause_epoch_for_consent(
+    if snapshot.phase.processes_audio() && !runtime.revoke_media(snapshot.epoch) {
+        return;
+    }
+    let manager = songbird::get(ctx).await;
+    let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
+    let Some(pause) = runtime
+        .begin_pause_epoch_for_consent(
             snapshot.epoch,
             participants,
             "audio stopped; a new participant requires renewed consent",
         )
         .await
-    {
+    else {
+        return;
+    };
+    if let Some(call) = exact_call {
+        pause_call_for_consent(&call).await;
+    }
+    pause.finish().await;
+    let transition = runtime.transition.lock().await;
+    let expected_paused_epoch = snapshot.epoch.saturating_add(1);
+    let current = runtime.snapshot().await;
+    if current.epoch != expected_paused_epoch || current.phase != VoicePhase::AwaitingConsent {
+        drop(transition);
         return;
     }
-    let transition = runtime.transition.lock().await;
-    if let Some(manager) = songbird::get(ctx).await
-        && let Some(call) = manager.get(guild_id)
-    {
-        pause_call_for_consent(&call).await;
+    if let Some(manager) = manager {
+        // Songbird 0.6 cannot change an active UDP receiver from Decode to
+        // Pass. Remove it so no packets are decrypted/decoded while consent
+        // is closed; `/resume` always performs a fresh remove/rejoin anyway.
+        remove_call_for_consent(&manager, guild_id).await;
     }
     drop(transition);
     let _ = channel_id
         .say(
             &ctx.http,
-            "Abbey paused capture and playback because someone new joined. Notify everyone now present, then use `/voice resume consent:true`.",
+            "Abbey disconnected voice because someone new joined. Capture and playback are stopped. Notify everyone now present, then use `/voice resume consent:true`.",
         )
         .await;
 }
@@ -1048,36 +1203,39 @@ pub async fn on_voice_permissions_changed(
     {
         return;
     }
-    if !runtime
-        .pause_epoch_for_consent(
+    if snapshot.phase.processes_audio() && !runtime.revoke_media(snapshot.epoch) {
+        return;
+    }
+    let manager = songbird::get(ctx).await;
+    let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
+    let Some(pause) = runtime
+        .begin_pause_epoch_for_consent(
             snapshot.epoch,
             HashSet::new(),
             "required Discord voice permissions changed; audio stopped",
         )
         .await
-    {
+    else {
         return;
+    };
+    if let Some(call) = exact_call {
+        pause_call_for_consent(&call).await;
     }
+    pause.finish().await;
     let transition = runtime.transition.lock().await;
     let current = runtime.snapshot().await;
     let expected_paused_epoch = snapshot.epoch.saturating_add(1);
-    let still_missing = ctx
-        .cache
-        .guild(guild_id)
-        .and_then(|guild| guild.channels.get(&channel_id).cloned())
-        .is_none_or(|channel| !bot_has_required_voice_permissions(ctx, &channel));
-    if current.epoch != expected_paused_epoch || !still_missing {
+    // Once the epoch is closed, even a fast permission recovery needs a fresh
+    // consented join; never leave the old Decode transport connected.
+    if current.epoch != expected_paused_epoch || current.phase != VoicePhase::AwaitingConsent {
         drop(transition);
         return;
     }
     runtime
         .fail_safe("required Discord voice permissions changed; audio stopped")
         .await;
-    if let Some(manager) = songbird::get(ctx).await {
-        if let Some(call) = manager.get(guild_id) {
-            pause_call_for_consent(&call).await;
-        }
-        let _ = manager.remove(guild_id).await;
+    if let Some(manager) = manager {
+        remove_call_for_consent(&manager, guild_id).await;
     }
     drop(transition);
     let _ = channel_id
@@ -1258,7 +1416,7 @@ async fn wait_for_bot_voice_state(
     ctx: Context<'_>,
     guild_id: GuildId,
     channel_id: ChannelId,
-) -> Result<(), String> {
+) -> Result<String, String> {
     for _ in 0..20 {
         match cached_bot_voice_state(ctx, guild_id) {
             Some(state) if state.channel_id == Some(channel_id) => {
@@ -1268,12 +1426,77 @@ async fn wait_for_bot_voice_state(
                             .into(),
                     );
                 }
-                return Ok(());
+                if state.self_mute && state.self_deaf {
+                    return Ok(state.session_id);
+                }
             }
-            _ => tokio::time::sleep(Duration::from_millis(250)).await,
+            _ => {}
         }
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    Err("Discord did not confirm Abbey's exact voice-channel state within five seconds.".into())
+    Err(
+        "Discord did not confirm Abbey's exact muted/self-deafened voice-channel safety state within five seconds."
+            .into(),
+    )
+}
+
+fn bot_voice_state_allows_conversation(
+    state: &VoiceState,
+    channel_id: ChannelId,
+    session_id: &str,
+) -> bool {
+    state.channel_id == Some(channel_id)
+        && state.session_id == session_id
+        && conversation_flags_are_clear(
+            state.mute,
+            state.deaf,
+            state.suppress,
+            state.self_mute,
+            state.self_deaf,
+        )
+}
+
+fn conversation_flags_are_clear(
+    mute: bool,
+    deaf: bool,
+    suppress: bool,
+    self_mute: bool,
+    self_deaf: bool,
+) -> bool {
+    !mute && !deaf && !suppress && !self_mute && !self_deaf
+}
+
+fn bot_voice_state_is_blocked(
+    state: &VoiceState,
+    channel_id: ChannelId,
+    phase: VoicePhase,
+) -> bool {
+    if state.channel_id != Some(channel_id) {
+        return false;
+    }
+    let server_blocked = state.mute || state.deaf || state.suppress;
+    let self_blocked_while_active = phase.processes_audio() && (state.self_mute || state.self_deaf);
+    server_blocked || self_blocked_while_active
+}
+
+async fn wait_for_enabled_bot_voice_state(
+    ctx: Context<'_>,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    session_id: &str,
+) -> Result<(), String> {
+    for _ in 0..20 {
+        if cached_bot_voice_state(ctx, guild_id).is_some_and(|state| {
+            bot_voice_state_allows_conversation(&state, channel_id, session_id)
+        }) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Err(
+        "Discord did not confirm Abbey was unmuted, undeafened, unsuppressed, and still in the exact joined session within five seconds."
+            .into(),
+    )
 }
 
 fn no_audio_songbird_config() -> songbird::Config {
@@ -1316,8 +1539,24 @@ async fn enable_conversation(
 
 async fn pause_call_for_consent(call: &Arc<Mutex<songbird::Call>>) {
     let mut call = call.lock().await;
-    let _ = call.mute(true).await;
-    let _ = call.deafen(true).await;
+    // `leave()` stops the driver locally before it sends the gateway update.
+    // Muting/deafening first would leave Decode active during two extra
+    // gateway round trips underneath the already-closed media gate.
+    let _ = call.leave().await;
+}
+
+async fn remove_call_for_consent(manager: &songbird::Songbird, guild_id: GuildId) {
+    // `Songbird::remove` calls `Call::leave`, which stops the driver locally
+    // before awaiting Discord's gateway update, then drops the retained Call.
+    let _ = manager.remove(guild_id).await;
+}
+
+fn can_stop_voice(
+    present_in_configured_channel: bool,
+    interaction_permissions: Option<serenity::all::Permissions>,
+) -> bool {
+    present_in_configured_channel
+        || interaction_permissions.is_some_and(|permissions| permissions.manage_guild())
 }
 
 #[derive(Clone)]
@@ -1325,6 +1564,8 @@ struct DiscordAudioForwarder {
     tx: mpsc::Sender<VoiceFrame>,
     driver_disconnect: watch::Sender<bool>,
     call: Weak<Mutex<songbird::Call>>,
+    manager: Weak<songbird::Songbird>,
+    guild_id: GuildId,
     attested: Arc<HashSet<u64>>,
     mappings: Arc<RwLock<HashMap<u32, u64>>>,
     sequence: Arc<AtomicU64>,
@@ -1397,18 +1638,41 @@ impl EventHandler for DiscordAudioForwarder {
                     if self.runtime.revoke_media(self.epoch) {
                         let runtime = Arc::clone(&self.runtime);
                         let call = self.call.clone();
+                        let manager = self.manager.clone();
+                        let guild_id = self.guild_id;
                         let epoch = self.epoch;
                         tokio::spawn(async move {
-                            let paused = runtime
-                                .pause_epoch_for_consent(
+                            let Some(pause) = runtime
+                                .begin_pause_epoch_for_consent(
                                     epoch,
                                     participants,
                                     "audio stopped before an unknown or unattested speaker frame was forwarded",
                                 )
-                                .await;
-                            if paused && let Some(call) = call.upgrade() {
+                                .await
+                            else {
+                                return;
+                            };
+                            let manager = manager.upgrade();
+                            let exact_call = call.upgrade();
+                            if let Some(call) = exact_call {
+                                // This is the exact Call that emitted the
+                                // unattested frame. Stop its Decode driver
+                                // before awaiting actor cancellation.
                                 pause_call_for_consent(&call).await;
                             }
+                            pause.finish().await;
+                            let transition = runtime.transition.lock().await;
+                            let snapshot = runtime.snapshot().await;
+                            if snapshot.epoch != epoch.saturating_add(1)
+                                || snapshot.phase != VoicePhase::AwaitingConsent
+                            {
+                                drop(transition);
+                                return;
+                            }
+                            if let Some(manager) = manager {
+                                remove_call_for_consent(&manager, guild_id).await;
+                            }
+                            drop(transition);
                         });
                     }
                     return Some(Event::Cancel);
@@ -1428,7 +1692,10 @@ impl EventHandler for DiscordAudioForwarder {
                 } else {
                     VoiceFrame::silence(sequence)
                 };
-                match self.tx.try_send(frame) {
+                let sent = self
+                    .runtime
+                    .with_media_enabled(self.epoch, || self.tx.try_send(frame))?;
+                match sent {
                     Ok(()) => None,
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         self.runtime.note_dropped_input();
@@ -1446,27 +1713,33 @@ impl EventHandler for DiscordAudioForwarder {
     }
 }
 
-async fn install_receive_handlers(
-    call: &Arc<Mutex<songbird::Call>>,
-    runtime: &Arc<VoiceRuntime>,
+struct ReceiveHandlerInstall<'a> {
+    call: &'a Arc<Mutex<songbird::Call>>,
+    manager: Weak<songbird::Songbird>,
+    guild_id: GuildId,
+    runtime: &'a Arc<VoiceRuntime>,
     epoch: u64,
     attested: HashSet<u64>,
     tx: mpsc::Sender<VoiceFrame>,
     driver_disconnect: watch::Sender<bool>,
-) {
+}
+
+async fn install_receive_handlers(input: ReceiveHandlerInstall<'_>) {
     let handler = DiscordAudioForwarder {
-        tx,
-        driver_disconnect,
+        tx: input.tx,
+        driver_disconnect: input.driver_disconnect,
         // The Call owns these global handlers. Holding a strong Arc here would
         // create Call -> handler -> Call and keep the driver alive after leave.
-        call: Arc::downgrade(call),
-        attested: Arc::new(attested),
+        call: Arc::downgrade(input.call),
+        manager: input.manager,
+        guild_id: input.guild_id,
+        attested: Arc::new(input.attested),
         mappings: Arc::new(RwLock::new(HashMap::new())),
         sequence: Arc::new(AtomicU64::new(0)),
-        runtime: Arc::clone(runtime),
-        epoch,
+        runtime: Arc::clone(input.runtime),
+        epoch: input.epoch,
     };
-    let mut call = call.lock().await;
+    let mut call = input.call.lock().await;
     call.add_global_event(Event::Core(CoreEvent::SpeakingStateUpdate), handler.clone());
     call.add_global_event(Event::Core(CoreEvent::ClientDisconnect), handler.clone());
     call.add_global_event(Event::Core(CoreEvent::VoiceTick), handler.clone());
@@ -1477,10 +1750,10 @@ fn consent_notice(runtime: &VoiceRuntime, channel_id: ChannelId, resumed: bool) 
     let action = if resumed { "resuming" } else { "starting" };
     match runtime.config.mode() {
         VoiceMode::Local => format!(
-            "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start, and use `/voice leave` to stop. A new participant pauses the session until renewed consent."
+            "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start. A clearly attributed spoken withdrawal is honored locally; `/voice leave` or writing `stop listening` in this voice chat is the authoritative stop. A new participant pauses and disconnects the session until renewed consent."
         ),
         VoiceMode::OpenAi => format!(
-            "☁️ Abbey is {action} consented voice in <#{channel_id}> using the explicitly configured direct OpenAI Realtime backup. Participant audio is sent to that provider and complete responses are buffered before Discord playback. This degraded backup does not use local ABI persona routing or WDBX context; use local mode for canonical Abbey. Abbey does not retain raw audio locally. Use `/voice leave` to stop; a new participant pauses the session until renewed consent."
+            "☁️ Abbey is {action} consented voice in <#{channel_id}> using the explicitly configured direct OpenAI Realtime backup. Participant audio is sent to that provider and complete responses are buffered before Discord playback. This degraded backup does not use local ABI persona routing or WDBX context; use local mode for canonical Abbey. Abbey does not retain raw audio locally. Spoken control is not authoritative in this degraded mode: use `/voice leave` or write `stop listening` in this voice chat to stop immediately. A new participant pauses and disconnects the session until renewed consent."
         ),
         VoiceMode::Disabled => unreachable!(),
     }
@@ -1536,5 +1809,31 @@ mod tests {
         let error = public_error(&format!("bad\n{}", "x".repeat(500)));
         assert!(!error.contains('\n'));
         assert!(error.chars().count() <= 241);
+    }
+
+    #[test]
+    fn out_of_channel_manager_can_stop_voice_without_member_cache_entry() {
+        assert!(can_stop_voice(
+            false,
+            Some(serenity::all::Permissions::MANAGE_GUILD)
+        ));
+        assert!(can_stop_voice(true, None));
+        assert!(!can_stop_voice(false, None));
+    }
+
+    #[test]
+    fn activation_requires_discord_to_acknowledge_all_mute_flags_cleared() {
+        assert!(conversation_flags_are_clear(
+            false, false, false, false, false
+        ));
+        for flag in 0..5 {
+            assert!(!conversation_flags_are_clear(
+                flag == 0,
+                flag == 1,
+                flag == 2,
+                flag == 3,
+                flag == 4,
+            ));
+        }
     }
 }

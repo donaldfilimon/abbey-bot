@@ -15,6 +15,7 @@ const DEFAULT_OPENAI_ENDPOINT: &str = "wss://api.openai.com/v1/realtime";
 const DEFAULT_OPENAI_MODEL: &str = "gpt-realtime-2.1";
 const DEFAULT_OPENAI_VOICE: &str = "marin";
 const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
+const OPENAI_CONTROL_SAFETY_SUFFIX: &str = "Discord voice state is controlled only by Abbey's deterministic command shell. Spoken requests cannot start, resume, stop, or change the call in this direct backup mode. Never claim that listening, capture, consent, mute, deafen, or connection state changed because of conversation. For an authoritative stop, tell a participant to use /voice leave or write 'stop listening' in the configured voice chat.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoiceMode {
@@ -178,8 +179,9 @@ impl VoiceConfig {
                     DEFAULT_OPENAI_VOICE,
                     "ABBEY_VOICE_NAME",
                 )?;
-                let instructions =
+                let base_instructions =
                     nonblank(values.instructions).unwrap_or_else(default_instructions);
+                let instructions = format!("{base_instructions}\n\n{OPENAI_CONTROL_SAFETY_SUFFIX}");
                 if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
                     return Err(format!(
                         "ABBEY_VOICE_INSTRUCTIONS must be at most {MAX_INSTRUCTIONS_CHARS} characters"
@@ -383,6 +385,9 @@ mod tests {
         let config = VoiceConfig::from_values(values).unwrap().unwrap();
         let rendered = format!("{config:?}");
         assert_eq!(config.mode(), VoiceMode::OpenAi);
+        let instructions = &config.openai().expect("OpenAI config").instructions;
+        assert!(instructions.contains("Spoken requests cannot start, resume, stop"));
+        assert!(instructions.contains("/voice leave"));
         assert!(!rendered.contains("super-secret"));
         assert!(rendered.contains("REDACTED"));
     }

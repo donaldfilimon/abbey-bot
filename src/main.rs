@@ -209,7 +209,7 @@ async fn main() -> Result<(), Error> {
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
-                    gateway::on_discord_event(ctx, event, &data.state).await;
+                    gateway::on_discord_event(ctx, event, &data.state, data.voice.as_deref()).await;
                     if let serenity::all::FullEvent::VoiceStateUpdate { old, new } = event {
                         commands_voice::on_voice_state_update(ctx, old, new, data).await;
                     }

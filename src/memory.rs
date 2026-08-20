@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 pub const RECENT_CAP: usize = 50;
 /// Facts one user may hold in one guild. Exact duplicates never count twice.
 pub const MAX_FACTS: usize = 100;
+/// Longest durable fact, measured in Unicode scalar values after whitespace
+/// normalization. This is shared by slash commands and model tools so every
+/// write path enforces the same storage/context bound.
+pub const MAX_FACT_CHARS: usize = 300;
 /// Interaction entries kept in process before the oldest fall off.
 pub const INTERACTION_CAP: usize = 1000;
 /// The standing a never-seen user starts with, per `MemoryAssembler`
@@ -34,6 +38,25 @@ pub const AUTOCOMPLETE_MAX_CHARS: usize = 100;
 
 fn default_reputation() -> f64 {
     DEFAULT_REPUTATION
+}
+
+/// Collapse all whitespace in a durable fact to single ASCII spaces.
+#[must_use]
+pub fn normalize_fact_text(fact: &str) -> String {
+    fact.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Normalize and validate one durable fact before it reaches either memory
+/// representation. The returned messages are safe, fixed user-facing copy.
+pub fn validated_fact(fact: &str) -> Result<String, &'static str> {
+    let normalized = normalize_fact_text(fact);
+    if normalized.is_empty() {
+        return Err("The fact must contain some text.");
+    }
+    if normalized.chars().count() > MAX_FACT_CHARS {
+        return Err("Keep one remembered fact to 300 characters or fewer.");
+    }
+    Ok(normalized)
 }
 
 /// Per-user fact store + reputation (bot-architecture.md `UserMemory`).
@@ -362,6 +385,23 @@ pub fn autocomplete_facts<'a>(facts: &'a [String], partial: &str) -> Vec<&'a str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_fact_validation_is_shared_and_unicode_bounded() {
+        assert_eq!(
+            validated_fact("  Donald\nlikes\tRust.  "),
+            Ok("Donald likes Rust.".to_string())
+        );
+        assert_eq!(
+            validated_fact(" \n\t "),
+            Err("The fact must contain some text.")
+        );
+        assert!(validated_fact(&"x".repeat(MAX_FACT_CHARS)).is_ok());
+        assert_eq!(
+            validated_fact(&"🦀".repeat(MAX_FACT_CHARS + 1)),
+            Err("Keep one remembered fact to 300 characters or fewer.")
+        );
+    }
 
     #[test]
     fn remember_dedupes_exact_duplicates() {
