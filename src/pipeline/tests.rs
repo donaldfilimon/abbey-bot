@@ -19,6 +19,18 @@ fn message(text: &str, guild: Option<&str>, from: &str) -> SocialEvent {
     }
 }
 
+fn network_message(
+    network: SocialNetwork,
+    text: &str,
+    guild: Option<&str>,
+    from: &str,
+) -> SocialEvent {
+    SocialEvent {
+        network,
+        ..message(text, guild, from)
+    }
+}
+
 #[tokio::test]
 async fn own_traffic_is_ignored() {
     let state = AppState::in_memory();
@@ -49,6 +61,157 @@ async fn a_mention_with_no_backend_gets_the_honest_degraded_reply() {
         sent[0].1.text
     );
     assert_eq!(sent[0].1.reply_to_native_message_id.as_deref(), Some("m1"));
+}
+
+#[tokio::test]
+async fn discord_telegram_and_slack_share_canonical_persona_tool_memory_and_vision_seams() {
+    let state = AppState::in_memory();
+    let out = FakeOut::default();
+    let networks = [
+        SocialNetwork::Discord,
+        SocialNetwork::Telegram,
+        SocialNetwork::Slack,
+    ];
+    let text = "Aviva, remember this image-backed fact";
+    let settings = GuildSettings::default();
+    let mut behavior = Vec::new();
+    let mut scopes = Vec::new();
+
+    for network in networks {
+        let event = network_message(network, text, Some("g"), "u");
+        let scoped_guild = event.scoped_guild_id();
+        let scoped_user = event.scoped_user_id();
+        let scoped_channel = event.scoped_channel_id();
+        assert_eq!(
+            handle(&state, &out, event.clone(), true, None).await,
+            Outcome::Replied
+        );
+
+        // With no configured backend, the fixed degraded reply still exposes
+        // the persona selected by the real pipeline. The explicit cue must be
+        // interpreted identically on every network.
+        let reply = out
+            .sent
+            .lock()
+            .unwrap()
+            .last()
+            .expect("the forced pipeline path replies")
+            .1
+            .text
+            .clone();
+        assert!(reply.starts_with("**Aviva** was routed"), "{reply}");
+
+        // Exercise image understanding at the canonical seam without a real
+        // endpoint. This is the same fold the pipeline applies before intent
+        // and persona selection after a configured provider describes bytes.
+        let vision =
+            crate::vision::RecordingVision::returning("a blue square beside the text ABBEY 427");
+        let description = vision
+            .describe(b"synthetic-network-parity-image".to_vec())
+            .await
+            .expect("recording vision succeeds");
+        assert_eq!(
+            vision.calls(),
+            [crate::vision::VisionTask::Describe],
+            "one description, no OCR or second-provider retry"
+        );
+        let enriched =
+            crate::vision::fold_descriptions(text, &[("fixture.png".into(), description)]);
+        let selected_persona = persona_for(&enriched, &settings);
+        assert_eq!(selected_persona, Persona::Aviva);
+
+        // Dispatch all five model-callable tools through the production
+        // ToolScope. Their results must be network-neutral while every read
+        // and mutation stays inside this event's network-prefixed scope.
+        let mut host = crate::runtime::ToolScope {
+            state: &state,
+            network,
+            scoped_guild: scoped_guild.clone(),
+            scoped_user: scoped_user.clone(),
+            scoped_channel: scoped_channel.clone(),
+            persona: selected_persona,
+        };
+        let calls = [
+            crate::tools::ToolCall {
+                id: "remember".into(),
+                name: "remember_fact".into(),
+                arguments: serde_json::json!({"fact": "  Sam\nlikes Rust.  "}),
+            },
+            crate::tools::ToolCall {
+                id: "recall".into(),
+                name: "recall".into(),
+                arguments: serde_json::json!({"query": "Sam likes Rust"}),
+            },
+            crate::tools::ToolCall {
+                id: "reputation".into(),
+                name: "lookup_reputation".into(),
+                arguments: serde_json::json!({"user_id": "u"}),
+            },
+            crate::tools::ToolCall {
+                id: "recent".into(),
+                name: "recent_messages".into(),
+                arguments: serde_json::json!({"limit": 1}),
+            },
+            crate::tools::ToolCall {
+                id: "persona".into(),
+                name: "switch_persona".into(),
+                arguments: serde_json::json!({"persona": "abi"}),
+            },
+        ];
+        let tool_results = calls
+            .iter()
+            .map(|call| crate::tools::dispatch(call, &mut host).content)
+            .collect::<Vec<_>>();
+        assert_eq!(tool_results[0], "Stored: Sam likes Rust.");
+        assert_eq!(tool_results[1], "• Sam likes Rust.");
+        assert_eq!(
+            tool_results[2],
+            "Reputation 0.50 (0 = poor, 1 = excellent)."
+        );
+        assert!(tool_results[3].contains(text), "{}", tool_results[3]);
+        assert!(tool_results[4].contains("Abi"), "{}", tool_results[4]);
+        assert_eq!(host.persona, Persona::Abi);
+        assert_eq!(
+            state.memory_service().facts(&scoped_guild, &scoped_user),
+            ["Sam likes Rust."]
+        );
+
+        behavior.push((reply, enriched, selected_persona, tool_results));
+        scopes.push((scoped_guild, scoped_user, scoped_channel));
+    }
+
+    assert!(
+        behavior.windows(2).all(|pair| pair[0] == pair[1]),
+        "canonical replies, enrichment, persona, and tool results must match"
+    );
+
+    let stores = AppState::lock(&state.stores);
+    for (index, (guild, user, channel_id)) in scopes.iter().enumerate() {
+        let channel = stores
+            .memory
+            .channels
+            .get(channel_id)
+            .expect("each network records its own channel context");
+        assert_eq!(channel.guild.as_deref(), Some(guild.as_str()));
+        assert_eq!(channel.recent.len(), 1);
+        for (other_index, (_, other_user, _)) in scopes.iter().enumerate() {
+            if index != other_index {
+                assert!(
+                    stores.memory.facts(guild, other_user).is_empty(),
+                    "a native-id collision on another network must not share facts"
+                );
+            }
+        }
+        assert_eq!(stores.memory.facts(guild, user), ["Sam likes Rust."]);
+    }
+    assert_eq!(stores.memory.channels.len(), networks.len());
+    assert_eq!(stores.memory.fact_records().len(), networks.len());
+    drop(stores);
+
+    assert_eq!(
+        AppState::lock(&state.brains).loaded_guilds(),
+        ["discord:g", "slack:g", "telegram:g"]
+    );
 }
 
 #[tokio::test]

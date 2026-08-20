@@ -232,10 +232,11 @@ impl std::fmt::Debug for LlmRequest {
                 (*name, shown)
             })
             .collect();
+        let body_bytes = self.body.to_string().len();
         f.debug_struct("LlmRequest")
             .field("url", &self.url)
             .field("headers", &headers)
-            .field("body", &self.body)
+            .field("body_bytes", &body_bytes)
             .finish()
     }
 }
@@ -442,9 +443,19 @@ mod tests {
         assert!(!shown.contains(SECRET), "backend leaked the key: {shown}");
         assert!(shown.contains("<redacted>"), "{shown}");
 
-        let request = build_request(&backend, "system", "question");
+        const SYSTEM_CANARY: &str = "PRIVATE_SYSTEM_PROMPT_CANARY";
+        const MESSAGE_CANARY: &str = "PRIVATE_MESSAGE_CANARY";
+        let request = build_request(&backend, SYSTEM_CANARY, MESSAGE_CANARY);
         let shown = format!("{request:?}");
         assert!(!shown.contains(SECRET), "request leaked the key: {shown}");
+        assert!(
+            !shown.contains(SYSTEM_CANARY),
+            "request leaked its prompt: {shown}"
+        );
+        assert!(
+            !shown.contains(MESSAGE_CANARY),
+            "request leaked its message: {shown}"
+        );
         assert!(shown.contains("<redacted>"), "{shown}");
         // Non-secret fields must still be legible, or the redaction has made
         // the type useless for the debugging it exists to serve.

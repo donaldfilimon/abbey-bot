@@ -221,6 +221,22 @@ mod tests {
                 .remember("g", "u", &"🦀".repeat(memory::MAX_FACT_CHARS + 1), 8),
             Err("Keep one remembered fact to 300 characters or fewer.")
         );
+        assert!(
+            state
+                .memory_service()
+                .forget("g", "u", " Donald   likes Rust. "),
+            "a whitespace variant selects the normalized canonical fact"
+        );
+        assert!(
+            state.memory_service().facts("g", "u").is_empty(),
+            "canonical JSON fact is deleted"
+        );
+        assert!(
+            AppState::lock(&state.recall)
+                .facts_for_user("g", "u")
+                .is_empty(),
+            "WDBX projection is reconciled in the same operation"
+        );
     }
 
     #[test]

@@ -95,14 +95,13 @@ impl Transport for HttpTransport {
                 .await
                 .map_err(|e| LlmError::backend(format!("HTTP {status}: {e}")))?;
             if !status.is_success() {
-                // Provider diagnostics are private and bounded. Lossy decoding
-                // is acceptable here because this text is never parsed.
-                let body = String::from_utf8_lossy(&body);
-                let mut brief: String = body.chars().take(300).collect();
-                if body.chars().count() > 300 {
-                    brief.push('…');
-                }
-                return Err(LlmError::backend(format!("HTTP {status}: {brief}")));
+                // Provider bodies can echo prompts, tool arguments, or private
+                // context. Drain them under the cap, but never put their bytes
+                // into an error that production callers may log.
+                drop(body);
+                return Err(LlmError::backend(format!(
+                    "HTTP {status}: the provider rejected the request"
+                )));
             }
             String::from_utf8(body).map_err(|_| {
                 LlmError::backend("the backend returned response bytes that were not UTF-8".into())

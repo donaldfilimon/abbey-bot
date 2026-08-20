@@ -341,9 +341,10 @@ impl StreamTransport for HttpTransport {
                 let body = crate::http_body::read_capped(response, MAX_ERROR_RESPONSE_BYTES)
                     .await
                     .map_err(|error| LlmError::backend(format!("HTTP {status}: {error}")))?;
-                let body = String::from_utf8_lossy(&body);
-                let brief: String = body.chars().take(300).collect();
-                return Err(LlmError::backend(format!("HTTP {status}: {brief}")));
+                drop(body);
+                return Err(LlmError::backend(format!(
+                    "HTTP {status}: the provider rejected the streaming request"
+                )));
             }
 
             let mut stream = response.bytes_stream();

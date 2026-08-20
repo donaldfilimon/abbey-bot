@@ -17,11 +17,13 @@ pub(super) const DEFAULT_REMOTE_MODEL: &str = "gpt-4o-mini";
 
 /// What is being asked of the image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VisionTask {
+pub(crate) enum VisionTask {
     /// A short natural-language description, for folding into chat.
     Describe,
     /// OCR only — verbatim text.
     ExtractText,
+    QualificationShapes,
+    QualificationOcr,
 }
 
 impl VisionTask {
@@ -32,6 +34,12 @@ impl VisionTask {
             }
             Self::ExtractText => {
                 "Transcribe all text visible in this image verbatim. Output only the text."
+            }
+            Self::QualificationShapes => {
+                "Identify the two colored shapes from left to right. Output only two lowercase color-and-shape labels separated by a comma and one space."
+            }
+            Self::QualificationOcr => {
+                "Transcribe the image. Output exactly the visible ASCII text and nothing else."
             }
         }
     }
@@ -209,7 +217,7 @@ impl VisionConfig {
         )
     }
 
-    fn request(&self, task: VisionTask, data_url: String) -> VisionRequest {
+    pub(crate) fn request(&self, task: VisionTask, data_url: String) -> VisionRequest {
         build_vision_request(&self.base_url, &self.model, &self.api_key, task, data_url)
     }
 }

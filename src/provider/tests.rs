@@ -1,5 +1,15 @@
 use super::*;
 
+#[cfg(windows)]
+const TEST_FM_CLI: &str = r"C:\Windows\System32\fm.exe";
+#[cfg(not(windows))]
+const TEST_FM_CLI: &str = "/usr/bin/fm";
+
+#[cfg(windows)]
+const TEST_PARENT_FM_CLI: &str = r"C:\Windows\..\Temp\fm.exe";
+#[cfg(not(windows))]
+const TEST_PARENT_FM_CLI: &str = "/usr/../tmp/fm";
+
 fn local() -> Backend {
     Backend::OpenAiCompatible {
         endpoint: "http://127.0.0.1:8282".into(),
@@ -38,14 +48,22 @@ fn fm_is_off_and_never_fallback_by_default() {
 
 #[test]
 fn pcc_is_only_selected_by_the_exact_explicit_mode() {
-    let pcc = FmConfig::from_values(Some("pcc".into()), None, None, Some("1".into()), None)
-        .unwrap()
-        .unwrap();
+    let pcc = FmConfig::from_values(
+        Some("pcc".into()),
+        None,
+        Some(TEST_FM_CLI.into()),
+        Some("1".into()),
+        None,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(pcc.mode, FmMode::Pcc);
-    assert_eq!(pcc.cli, Path::new(DEFAULT_FM_CLI));
+    assert_eq!(pcc.cli, Path::new(TEST_FM_CLI));
     assert!(
         FmConfig::from_values(Some("cloud".into()), None, None, Some("1".into()), None,).is_err()
     );
+    let error = verify_fm_manifest(Path::new("/manifest-is-never-read"), &pcc).unwrap_err();
+    assert!(error.contains("intentionally unqualified"), "{error}");
 }
 
 #[test]
@@ -59,13 +77,13 @@ fn endpoint_and_executable_fail_closed() {
             None,
         )
     };
-    assert!(enabled("http://127.0.0.1:1976", "/usr/bin/fm").is_ok());
-    assert!(enabled("http://models.example.com", "/usr/bin/fm").is_err());
-    assert!(enabled("https://models.example.com", "/usr/bin/fm").is_err());
-    assert!(enabled("http://user:secret@127.0.0.1", "/usr/bin/fm").is_err());
-    assert!(enabled("http://127.0.0.1:1976/v1", "/usr/bin/fm").is_err());
+    assert!(enabled("http://127.0.0.1:1976", TEST_FM_CLI).is_ok());
+    assert!(enabled("http://models.example.com", TEST_FM_CLI).is_err());
+    assert!(enabled("https://models.example.com", TEST_FM_CLI).is_err());
+    assert!(enabled("http://user:secret@127.0.0.1", TEST_FM_CLI).is_err());
+    assert!(enabled("http://127.0.0.1:1976/v1", TEST_FM_CLI).is_err());
     assert!(enabled("http://127.0.0.1:1976", "fm").is_err());
-    assert!(enabled("http://127.0.0.1:1976", "/usr/../tmp/fm").is_err());
+    assert!(enabled("http://127.0.0.1:1976", TEST_PARENT_FM_CLI).is_err());
     for timeout in ["0", "soon", "18446744073709551616"] {
         assert!(
             FmConfig::from_values(
@@ -166,6 +184,29 @@ fn invocation_uses_argv_and_stdin_without_transcript_saving() {
     assert!(!args.iter().any(|arg| arg.contains("favorite color")));
 }
 
+#[test]
+fn image_invocation_keeps_prompt_off_argv_and_enables_ocr_only_for_ocr() {
+    let cfg = config(FmMode::System);
+    let image = Path::new("/tmp/synthetic.png");
+    for (task, expected_ocr) in [
+        (FmImageTask::QualificationShapes, false),
+        (FmImageTask::QualificationOcr, true),
+    ] {
+        let invocation = CliInvocation::for_image(&cfg, task, image);
+        let args = invocation
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>();
+        assert!(args.iter().any(|arg| arg == "--image"));
+        assert!(args.iter().any(|arg| arg == "/tmp/synthetic.png"));
+        assert!(!args.iter().any(|arg| arg.contains("red square")));
+        assert!(!args.iter().any(|arg| arg == "--save-transcript"));
+        assert_eq!(args.iter().any(|arg| arg == "ocr"), expected_ocr);
+        assert!(!invocation.stdin.is_empty());
+    }
+}
+
 #[tokio::test]
 #[cfg(unix)]
 async fn child_environment_excludes_tokens_and_api_keys() {
@@ -186,6 +227,37 @@ async fn child_environment_excludes_tokens_and_api_keys() {
     assert!(!output.contains("DISCORD_TOKEN"), "{output}");
     assert!(!output.contains("API_KEY"), "{output}");
     assert!(!output.contains("secret"), "{output}");
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn cli_process_bounds_timeout_output_and_exit_status() {
+    let invocation = CliInvocation {
+        program: "/usr/bin/yes".into(),
+        args: Vec::new(),
+        stdin: Vec::new(),
+        environment: Vec::new(),
+    };
+    let error = invocation.run(5).await.unwrap_err();
+    assert!(error.to_string().contains("exceeded"), "{error}");
+
+    let invocation = CliInvocation {
+        program: "/bin/sleep".into(),
+        args: vec!["2".into()],
+        stdin: Vec::new(),
+        environment: Vec::new(),
+    };
+    let error = invocation.run(1).await.unwrap_err();
+    assert!(error.to_string().contains("timed out"), "{error}");
+
+    let invocation = CliInvocation {
+        program: "/usr/bin/false".into(),
+        args: Vec::new(),
+        stdin: Vec::new(),
+        environment: Vec::new(),
+    };
+    let error = invocation.run(5).await.unwrap_err();
+    assert!(error.to_string().contains("unsuccessfully"), "{error}");
 }
 
 #[test]
@@ -313,6 +385,25 @@ fn private_schema_file_is_owner_only_and_removed() {
         let file = PrivateSchemaFile::create(&decision_schema(&[]).unwrap()).unwrap();
         let path = file.path().to_path_buf();
         assert!(path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        path
+    };
+    assert!(!path.exists());
+}
+
+#[test]
+fn private_image_file_is_owner_only_and_removed() {
+    let path = {
+        let file = PrivateImageFile::create(b"synthetic image", "png").unwrap();
+        let path = file.path().to_path_buf();
+        assert_eq!(std::fs::read(&path).unwrap(), b"synthetic image");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;

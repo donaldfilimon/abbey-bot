@@ -675,8 +675,11 @@ pub async fn run_slack(state: Arc<AppState>, bot_token: String, app_token: Strin
                     .get("url")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string),
-                Ok(v) => {
-                    tracing::warn!(body = %v, "apps.connections.open refused");
+                Ok(_) => {
+                    // Slack's refusal object is provider-controlled and may
+                    // echo request or account detail. Keep it out of logs;
+                    // operators only need the stable failure category here.
+                    tracing::warn!("apps.connections.open refused");
                     None
                 }
                 Err(e) => {

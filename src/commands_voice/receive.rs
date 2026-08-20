@@ -12,6 +12,59 @@ use super::discord::{pause_call_for_consent, remove_call_for_consent};
 use crate::offline_voice::{FRAME_SAMPLES, VoiceFrame, frame_is_voice};
 use crate::voice_session::{VoicePhase, VoiceRuntime};
 
+#[derive(Debug, PartialEq, Eq)]
+enum TickDecision {
+    Forward(VoiceFrame),
+    RevokeForUnattested(Option<u64>),
+}
+
+/// Classify one decoded Songbird tick without touching Discord or the actor.
+/// Unknown SSRCs and speakers outside the immutable consent attestation win
+/// over every otherwise valid frame, so not even an attested speaker from the
+/// same tick can reach STT after the boundary is observed.
+fn classify_tick<'a>(
+    streams: impl IntoIterator<Item = (u32, Option<&'a [i16]>)>,
+    mappings: &HashMap<u32, u64>,
+    attested: &HashSet<u64>,
+    sequence: u64,
+) -> TickDecision {
+    let mut voiced: Vec<(u32, &[i16], u64, u64)> = Vec::new();
+    for (ssrc, decoded_voice) in streams {
+        let Some(user_id) = mappings.get(&ssrc).copied() else {
+            return TickDecision::RevokeForUnattested(None);
+        };
+        if !attested.contains(&user_id) {
+            return TickDecision::RevokeForUnattested(Some(user_id));
+        }
+        let Some(samples) = decoded_voice else {
+            continue;
+        };
+        if !frame_is_voice(samples) {
+            continue;
+        }
+        let energy = samples.iter().fold(0_u64, |sum, sample| {
+            let value = i64::from(*sample);
+            sum.saturating_add(value.unsigned_abs().saturating_mul(value.unsigned_abs()))
+        });
+        voiced.push((ssrc, samples, energy, user_id));
+    }
+    voiced.sort_unstable_by_key(|(_, _, energy, _)| std::cmp::Reverse(*energy));
+    let frame = if let Some((_ssrc, samples, _, user_id)) = voiced.first() {
+        let mut samples = samples.to_vec();
+        samples.resize(FRAME_SAMPLES, 0);
+        samples.truncate(FRAME_SAMPLES);
+        VoiceFrame {
+            sequence,
+            speaker_id: Some(*user_id),
+            samples,
+            overlap: voiced.len() > 1,
+        }
+    } else {
+        VoiceFrame::silence(sequence)
+    };
+    TickDecision::Forward(frame)
+}
+
 #[derive(Clone)]
 struct DiscordAudioForwarder {
     tx: mpsc::Sender<VoiceFrame>,
@@ -58,32 +111,15 @@ impl EventHandler for DiscordAudioForwarder {
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone();
-                let mut voiced: Vec<(u32, &[i16], u64, u64)> = Vec::new();
-                let mut unattested = None;
-                for (ssrc, data) in &tick.speaking {
-                    let Some(user_id) = mappings.get(ssrc).copied() else {
-                        unattested = Some(None);
-                        break;
-                    };
-                    if !self.attested.contains(&user_id) {
-                        unattested = Some(Some(user_id));
-                        break;
-                    }
-                    let Some(samples) = data.decoded_voice.as_deref() else {
-                        continue;
-                    };
-                    if !frame_is_voice(samples) {
-                        continue;
-                    }
-                    let energy = samples.iter().fold(0_u64, |sum, sample| {
-                        let value = i64::from(*sample);
-                        sum.saturating_add(
-                            value.unsigned_abs().saturating_mul(value.unsigned_abs()),
-                        )
-                    });
-                    voiced.push((*ssrc, samples, energy, user_id));
-                }
-                if let Some(user_id) = unattested {
+                let decision = classify_tick(
+                    tick.speaking
+                        .iter()
+                        .map(|(ssrc, data)| (*ssrc, data.decoded_voice.as_deref())),
+                    &mappings,
+                    &self.attested,
+                    0,
+                );
+                if let TickDecision::RevokeForUnattested(user_id) = decision {
                     let mut participants = self.attested.as_ref().clone();
                     if let Some(user_id) = user_id {
                         participants.insert(user_id);
@@ -125,21 +161,10 @@ impl EventHandler for DiscordAudioForwarder {
                     }
                     return Some(Event::Cancel);
                 }
-                voiced.sort_unstable_by_key(|(_, _, energy, _)| std::cmp::Reverse(*energy));
-                let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-                let frame = if let Some((_ssrc, samples, _, user_id)) = voiced.first() {
-                    let mut samples = samples.to_vec();
-                    samples.resize(FRAME_SAMPLES, 0);
-                    samples.truncate(FRAME_SAMPLES);
-                    VoiceFrame {
-                        sequence,
-                        speaker_id: Some(*user_id),
-                        samples,
-                        overlap: voiced.len() > 1,
-                    }
-                } else {
-                    VoiceFrame::silence(sequence)
+                let TickDecision::Forward(mut frame) = decision else {
+                    unreachable!("unattested tick returned above")
                 };
+                frame.sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
                 let sent = self
                     .runtime
                     .with_media_enabled(self.epoch, || self.tx.try_send(frame))?;
@@ -191,4 +216,67 @@ pub(super) async fn install_receive_handlers(input: ReceiveHandlerInstall<'_>) {
     call.add_global_event(Event::Core(CoreEvent::ClientDisconnect), handler.clone());
     call.add_global_event(Event::Core(CoreEvent::VoiceTick), handler.clone());
     call.add_global_event(Event::Core(CoreEvent::DriverDisconnect), handler);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn voiced() -> Vec<i16> {
+        vec![i16::MAX; FRAME_SAMPLES]
+    }
+
+    #[test]
+    fn unknown_or_unattested_stream_prevents_every_frame_from_reaching_stt() {
+        let audio = voiced();
+        let attested = HashSet::from([7]);
+
+        assert_eq!(
+            classify_tick(
+                [(11, Some(audio.as_slice()))],
+                &HashMap::new(),
+                &attested,
+                1
+            ),
+            TickDecision::RevokeForUnattested(None)
+        );
+
+        let mappings = HashMap::from([(11, 8)]);
+        assert_eq!(
+            classify_tick([(11, Some(audio.as_slice()))], &mappings, &attested, 2),
+            TickDecision::RevokeForUnattested(Some(8))
+        );
+
+        // One valid attested speaker must not be forwarded when any other
+        // stream in the same tick is unknown.
+        let mappings = HashMap::from([(10, 7)]);
+        assert_eq!(
+            classify_tick(
+                [(10, Some(audio.as_slice())), (11, Some(audio.as_slice())),],
+                &mappings,
+                &attested,
+                3,
+            ),
+            TickDecision::RevokeForUnattested(None)
+        );
+    }
+
+    #[test]
+    fn only_attested_speakers_are_forwarded_with_attribution() {
+        let audio = voiced();
+        let mappings = HashMap::from([(10, 7)]);
+        let decision = classify_tick(
+            [(10, Some(audio.as_slice()))],
+            &mappings,
+            &HashSet::from([7]),
+            9,
+        );
+        let TickDecision::Forward(frame) = decision else {
+            panic!("attested speaker must be forwarded")
+        };
+        assert_eq!(frame.sequence, 9);
+        assert_eq!(frame.speaker_id, Some(7));
+        assert!(!frame.overlap);
+        assert_eq!(frame.samples.len(), FRAME_SAMPLES);
+    }
 }

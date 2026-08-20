@@ -16,11 +16,14 @@
 use std::fmt;
 use std::future::Future;
 
-mod image;
+mod foundation_models;
+pub(crate) mod image;
 mod provider;
 mod render;
 
+pub use foundation_models::FmVision;
 pub use provider::{RemoteVision, VisionConfig, VisionRequest, VisionTransport};
+pub(crate) use provider::{VisionTask, extract_vision_text};
 pub use render::{fold_descriptions, render_ocr, render_see};
 
 #[cfg(test)]
@@ -33,7 +36,7 @@ use image::{
 };
 
 #[cfg(test)]
-use provider::{DEFAULT_REMOTE_MODEL, VisionTask, build_vision_request, extract_vision_text};
+use provider::{DEFAULT_REMOTE_MODEL, build_vision_request};
 
 /// Cap on fetched image size. Attachments are attacker-controlled; a fetcher
 /// must stop reading at this many bytes.
@@ -95,6 +98,53 @@ pub trait ImageUnderstanding {
         &self,
         image: Vec<u8>,
     ) -> impl Future<Output = Result<String, VisionError>> + Send;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionProviderChoice {
+    Remote,
+    FoundationModels,
+    Off,
+}
+
+impl VisionProviderChoice {
+    pub fn from_value(value: Option<String>) -> Result<Self, String> {
+        match value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            None | Some("remote") => Ok(Self::Remote),
+            Some("fm") => Ok(Self::FoundationModels),
+            Some("off") => Ok(Self::Off),
+            Some(_) => Err("ABBEY_VISION_PROVIDER must be remote, fm, or off".into()),
+        }
+    }
+
+    pub fn from_env() -> Result<Self, String> {
+        Self::from_value(std::env::var("ABBEY_VISION_PROVIDER").ok())
+    }
+}
+
+pub enum ConfiguredVision<T> {
+    Remote(RemoteVision<T>),
+    FoundationModels(FmVision),
+}
+
+impl<T: VisionTransport + Sync> ImageUnderstanding for ConfiguredVision<T> {
+    async fn describe(&self, image: Vec<u8>) -> Result<String, VisionError> {
+        match self {
+            Self::Remote(provider) => provider.describe(image).await,
+            Self::FoundationModels(provider) => provider.describe(image).await,
+        }
+    }
+
+    async fn extract_text(&self, image: Vec<u8>) -> Result<String, VisionError> {
+        match self {
+            Self::Remote(provider) => provider.extract_text(image).await,
+            Self::FoundationModels(provider) => provider.extract_text(image).await,
+        }
+    }
 }
 
 /// Test double: answers every call with canned text and records which task
@@ -496,6 +546,27 @@ mod tests {
         assert_eq!(default_remote.model, DEFAULT_REMOTE_MODEL);
     }
 
+    #[test]
+    fn provider_selector_is_explicit_and_remote_by_default() {
+        assert_eq!(
+            VisionProviderChoice::from_value(None).unwrap(),
+            VisionProviderChoice::Remote
+        );
+        assert_eq!(
+            VisionProviderChoice::from_value(Some(" remote ".into())).unwrap(),
+            VisionProviderChoice::Remote
+        );
+        assert_eq!(
+            VisionProviderChoice::from_value(Some("fm".into())).unwrap(),
+            VisionProviderChoice::FoundationModels
+        );
+        assert_eq!(
+            VisionProviderChoice::from_value(Some("off".into())).unwrap(),
+            VisionProviderChoice::Off
+        );
+        assert!(VisionProviderChoice::from_value(Some("auto".into())).is_err());
+    }
+
     #[tokio::test]
     async fn remote_vision_runs_the_whole_path_over_a_fake_transport() {
         let transport = RecordingTransport {
@@ -625,6 +696,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unsafe_non_supported_formats_are_rejected_before_transport() {
+        let cases: &[(&str, &[u8])] = &[
+            ("HEIC", b"\0\0\0\x18ftypheic\0\0\0\0"),
+            ("AVIF", b"\0\0\0\x18ftypavif\0\0\0\0"),
+            ("JXL container", b"\0\0\0\x0cJXL \r\n\x87\n"),
+            ("JXL codestream", &[0xff, 0x0a, 0x00, 0x01]),
+            ("SVG", b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"),
+            ("PDF", b"%PDF-1.7\n"),
+            ("HTML", b"<!doctype html><html></html>"),
+        ];
+        for (label, bytes) in cases {
+            let error = rejected_before_transport(bytes).await;
+            assert_eq!(
+                error.public_message(),
+                Some(UNSUPPORTED_IMAGE_PUBLIC),
+                "{label}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn oversized_canvases_in_every_supported_format_are_rejected_locally() {
         for bytes in [
             oversized_jpeg(),
@@ -669,6 +761,37 @@ mod tests {
                 .is_none(),
             "invalid input reached the provider"
         );
+    }
+
+    #[tokio::test]
+    async fn file_and_data_url_preparation_share_validation_and_gif_normalization() {
+        let prepared = image::prepare_file_bytes(GIF.to_vec())
+            .await
+            .expect("valid GIF normalizes");
+        assert_eq!(prepared.extension, "png");
+        assert!(prepared.bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+        let data_url = image::prepare_data_url(GIF.to_vec())
+            .await
+            .expect("same GIF reaches remote preparation");
+        assert!(data_url.starts_with("data:image/png;base64,"));
+
+        for (format, extension) in [
+            (::image::ImageFormat::Jpeg, "jpg"),
+            (::image::ImageFormat::Png, "png"),
+            (::image::ImageFormat::WebP, "webp"),
+        ] {
+            let prepared = image::prepare_file_bytes(encoded_pixel(format))
+                .await
+                .expect("supported file");
+            assert_eq!(prepared.extension, extension);
+        }
+
+        assert!(
+            image::prepare_file_bytes(vec![0; MAX_IMAGE_BYTES + 1])
+                .await
+                .is_err()
+        );
+        assert!(image::prepare_file_bytes(b"<svg/>".to_vec()).await.is_err());
     }
 
     #[tokio::test]

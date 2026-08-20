@@ -9,17 +9,20 @@ cd "$(dirname "$0")"
 echo "== fmt =="
 cargo fmt --all -- --check
 
-echo "== deploy syntax =="
+echo "== deployment and privacy validation =="
 sh -n deploy/install-launchd.sh
 sh -n deploy/install-mlx-audio-launchd.sh
 sh -n deploy/install-mlx-vlm-launchd.sh
 sh -n deploy/run-mlx-audio.sh
 sh -n deploy/run-mlx-vlm.sh
-python3 -c 'import ast, pathlib; ast.parse(pathlib.Path("deploy/smoke-mlx-vlm.py").read_text(encoding="utf-8"))'
+python3 scripts/check-python-syntax.py
 python3 deploy/check-python-locks.py \
   deploy/mlx-vlm-requirements.txt \
   deploy/mlx-audio-requirements.txt \
   deploy/mlx-audio-build-constraints.txt
+python3 deploy/test-configure-mlx-primary.py
+python3 deploy/test-publish-provider-qualification.py
+python3 scripts/check-privacy.py
 if command -v plutil >/dev/null 2>&1; then
   plutil -lint deploy/com.donaldfilimon.abbey-bot.plist
   plutil -lint deploy/com.donaldfilimon.abbey-mlx-audio.plist

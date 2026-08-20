@@ -14,8 +14,14 @@ header line differs. Apply any edit to both, or they drift.
 
 ```bash
 ./check.sh          # gate: fmt, deploy/lock validation, clippy -D warnings, tests, release build
+./check.ps1         # the same source gate on Windows (without POSIX/plist-only checks)
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
+
+# Synthetic provider qualification; runs before Discord/state initialization:
+./target/release/abbey-bot --provider-self-test primary --json
+./target/release/abbey-bot --provider-self-test fm --json
+./target/release/abbey-bot --provider-self-test all --json
 
 # Live run the way it is actually operated here (persists state; stop with SIGINT):
 #   set -a; . ./.env; set +a
@@ -37,15 +43,15 @@ before the gate did too, a Cargo.toml bump without a regenerated lock kept CI
 green while every deploy build died. The gate proves the property the deploy
 depends on — do not remove the flag to "fix" a lock error; regenerate the lock.
 
-**CI runs the real gate — since PR #4.** `.github/workflows/rust.yml` executes
-`./check.sh` itself (fmt and deploy-shell syntax, plist lint where available,
-all-target Clippy with `--locked -D warnings`, locked tests, locked release
-build) on push and PR to `main`. The runner's
-rustup honours `rust-toolchain.toml`, so CI and local runs share exact stable
-Rust 1.97.1. The stable-toolchain/release-build gate passed in GitHub Actions on
-PR #24 on 2026-08-20. Checks older than PR #4 vouch only for the workflow's
-original weaker `cargo build && cargo test`; run `./check.sh` locally before
-trusting a merge.
+**CI runs the platform's real gate.** `.github/workflows/rust.yml` runs a
+non-fail-fast Ubuntu/macOS/Windows matrix on every push and PR to `main`.
+Ubuntu and macOS execute `./check.sh`; Windows executes `./check.ps1`. Every
+lane checks formatting, Python locks/syntax, the privacy logging rule,
+all-target Clippy with `--locked -D warnings`, locked tests, and the locked
+release build. POSIX shell syntax runs on Ubuntu/macOS and plist lint runs when
+`plutil` is present. The runner's rustup honours `rust-toolchain.toml`, so CI
+and local runs share exact stable Rust 1.97.1. Historical CI runs prove only
+the commit and lanes they actually executed.
 
 ## Architecture: a pure core with a thin Discord shell
 
@@ -69,7 +75,7 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `memory.rs`, `runtime/memory_service.rs`, `engine.rs` | Canonical JSON facts + coordinated WDBX projection, channel context, interaction log, `PersonaContext`; per-scope multi-turn sessions that survive a persona switch |
 | `wyhash.rs`, `embedding.rs`, `wdbx.rs` | Zig-compatible wyhash (pinned to 188 reference vectors), abi's n-gram text embedding (pinned to abi's own vectors), a WDBX v1 JSONL store + guild-namespaced semantic recall |
 | `platform.rs`, `vision.rs`, `vision/*` | The network-agnostic event model and Telegram/Slack wire translation; image validation/normalization off the async runtime, the OpenAI-compatible provider contract, and pure rendering |
-| `provider.rs` | Explicit Foundation Models config, independent server/CLI capabilities, loopback-only routing, and the bounded schema-constrained `fm respond` adapter |
+| `provider.rs`, `provider_self_test.rs` | Explicit Foundation Models config, manifest-bound server/CLI capabilities, loopback-only routing, the bounded schema-constrained `fm respond` adapter, and synthetic provider qualification |
 | `persist.rs` | The one JSON document the registries' store traits read and write, atomically |
 | `tools.rs` | The model-callable tool vocabulary, both request wire shapes, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
 | `pipeline.rs`, `pipeline/tests.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
@@ -223,13 +229,47 @@ stream that dies after posting edits in the failure line). Model choice is
 measured, not guessed — `docs/benchmarks/2026-08-19-local-models.md`. That
 benchmark originally recommended `gpt-oss:20b`; Donald first selected
 `gemma4:e4b` for its stronger register, then selected the larger
-`gemma4:12b` as the cross-platform operational default on 2026-08-20.
+`gemma4:12b` as the source/config cross-platform deployment target on
+2026-08-20. That selection is not installed-service evidence.
 The Apple-silicon acceleration profile is a separate pinned `mlx_vlm.server`
 on loopback port 8282 with `mlx-community/gemma-4-12B-it-4bit`; Abbey must send
 the installer's exact local snapshot path as both request model values because
 MLX-VLM does not alias the portable Ollama name. `fm serve` is an optional
-text fallback with tools disabled; its vision/OCR path remains unqualified and
-disabled, and it is not the Gemma default.
+text fallback with tools structurally disabled. FM CLI tools/vision/OCR are
+usable only when the current owner-only qualification manifest binds passing
+semantic fixtures to the running Abbey binary, CLI, OS, mode, and fixture
+version. It is not the Gemma default.
+
+**Private request material never enters diagnostics.** Do not trace, print, or
+derive an unredacted debug representation for credentials, authorization
+headers, prompts, transcripts, request/response bodies, structured private
+context, data URLs, or image bytes. Log fixed categories and bounded metadata
+such as status, media type, byte count, and executable/binary hash instead.
+`scripts/check-privacy.py` statically rejects raw sensitive expressions in Rust
+tracing/log/print macros, Python output/log calls, shell output, and any
+`#[instrument]` that does not use `skip_all`.
+Keep runtime canary tests for redacted configuration/request representations;
+the static gate complements those tests rather than replacing them.
+
+**Evidence layers never collapse into one claim.** Source gates, provider
+self-test JSON, installed artifact/hash/PID/listener checks, observed live
+connector turns, and current participant-consented voice are separate
+acceptance layers. Telegram/Slack source parity is not a live connector claim;
+an offline WAV is not Discord voice proof; joined muted presence is not capture;
+and historical observations do not qualify a replaced binary, model, CLI, or
+OS build. Provider self-test uses synthetic fixtures and ephemeral state before
+Discord credentials and `ABBEY_DATA_DIR` are read.
+
+Publish provider evidence only through
+`deploy/publish-provider-qualification.py`; it validates the passing report and
+bound binary hash before an owner-only atomic replacement. Its ownership/mode
+publication tests are POSIX-only. Windows CI parses and privacy-checks that code
+and records the runtime test as skipped, never as publication evidence.
+
+**Local voice is a macOS adapter, not a portable default.** With no voice
+destination, voice is off on every platform. On Linux and Windows an explicit
+`ABBEY_VOICE_MODE=local` fails configuration; operators must select `disabled`
+or explicitly configure OpenAI Realtime. A cloud key alone never changes mode.
 
 **Generated Discord text never pings.** Poise responses and Serenity's HTTP
 client both default to an empty `CreateAllowedMentions`, and gateway posts and
@@ -446,7 +486,7 @@ refusal, a refreshed rolling summary.
 (HTTP 000 after 100 s); the benchmark's speed-first recommendation was
 gpt-oss:20b, while `gemma4:e4b` had the best register and became Donald's
 interim choice. Donald then selected the larger `gemma4:12b` as the
-cross-platform operational default on 2026-08-20
+source/config cross-platform deployment target on 2026-08-20
 (`docs/benchmarks/2026-08-19-local-models.md`). A "research …" DM
 exceeded 120 s under concurrent generation → the default backend timeout is
 300 s (`ABBEY_BOT_LLM_TIMEOUT_SECS`) and generation is serialised. Keystroke-
