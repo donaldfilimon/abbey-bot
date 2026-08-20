@@ -58,5 +58,5 @@
 - [x] Add mention suppression, endpoint validation, redirect refusal, streaming body caps, and shared bounded attachment downloads
 - [x] Add `/persona ask` cost/input controls and move hierarchy policy into the pure core
 - [x] Update CI, paired Docker images, ignores, hooks, and claim-honest docs
-- [ ] Run focused tests, the complete release gate, and final diff review
-- [ ] Integrate the verified modernization on `main`
+- [x] Run focused tests, the complete release gate, and final diff review
+- [x] Integrate the verified modernization on `main`
