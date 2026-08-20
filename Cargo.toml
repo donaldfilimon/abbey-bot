@@ -5,26 +5,25 @@ edition = "2024"
 rust-version = "1.97.1"
 
 [dependencies]
-poise = "0.6.2"
-# Already in the tree via serenity (which pins the rustls stack); promoted to a
-# direct dependency for the /persona ask backend call, with features matching
-# serenity's so no second TLS stack is pulled in.
+poise = { version = "0.6.2", default-features = false, features = ["cache", "chrono", "handle_panics"] }
+# Promoted to a direct dependency for the /persona ask backend call. This uses
+# the current Rustls stack independently; Serenity stays on its system-native
+# TLS backend because its 0.12 WebSocket line pins an older vulnerable WebPKI.
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.151"
-serenity = "0.12.5"
+serenity = { version = "0.12.5", default-features = false, features = ["default_no_backend", "native_tls_backend"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1.44"
-# Both already in the tree via serenity (same versions, same rustls features);
-# promoted to direct dependencies for the Slack Socket Mode adapter so no
-# second TLS or WebSocket stack is pulled in.
-tokio-tungstenite = { version = "0.21.0", features = ["rustls-tls-webpki-roots"] }
+# Promoted to a direct dependency for the Slack Socket Mode adapter, matching
+# Serenity's system-native TLS backend rather than enabling its old Rustls line.
+tokio-tungstenite = { version = "0.21.0", features = ["native-tls"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Discord voice. Songbird 0.6 is the first release line with the DAVE/MLS
 # support Discord requires in 2026; `receive` exposes decoded, jitter-buffered
 # 20 ms voice ticks for the Realtime bridge.
-songbird = { version = "0.6.0", features = ["receive"] }
+songbird = { version = "0.6.0", default-features = false, features = ["driver", "gateway", "native", "serenity", "tungstenite", "receive"] }
 # Songbird's RawAdapter registers its raw container but leaves Symphonia codec
 # features to the application. PCM is required to decode the f32 stream used by
 # consented live-voice output.
