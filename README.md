@@ -36,8 +36,9 @@ shape as appropriate; calls run against the same memory/WDBX/reputation the
 slash commands use, scoped to the server and person in the conversation, for
 at most three rounds before the answer. None of them post, moderate, or change
 config. A backend that rejects tooled requests is retried once without and
-remembered (`ABBEY_BOT_LLM_TOOLS=off` disables outright). Verified live
-2026-08-19 with gpt-oss:20b (`remember_fact` stored "favorite editor is Zed").
+remembered (`ABBEY_BOT_LLM_TOOLS=off` disables outright). A 2026-08-19
+gpt-oss:20b session exercised `remember_fact`; that dated observation is
+historical evidence, not proof about the currently installed service.
 
 **DMs work.** A DM to Abbey is always answered (through the backend), keeps a
 per-conversation transcript, and is its own one-person namespace
@@ -111,9 +112,9 @@ creates the output WAV owner-only without replacing an existing file.
 OpenAI-compatible service could itself proxy upstream. For strictly offline
 operation, use locally resident models. The managed speech configuration uses
 the pinned MLX-Audio Whisper and Kokoro models; that does not imply an MLX
-reasoning or vision backend. The current cross-platform reasoning/vision model
-name and deployment intent is `gemma4:12b` through the OpenAI-compatible
-endpoint seam. This latest operator choice supersedes both the interim
+reasoning or vision backend. The source/configuration target for the next
+cross-platform reasoning/vision deployment is `gemma4:12b` through the
+OpenAI-compatible endpoint seam. This operator choice supersedes both the interim
 `gemma4:e4b` choice and the earlier `gpt-oss:20b` benchmark recommendation;
 dated results below remain historical evidence.
 
@@ -141,9 +142,11 @@ ABBEY_VISION_MODEL=$HOME/.local/share/abbey-bot/mlx-vlm/huggingface/hub/models--
 
 The exact path matters: MLX-VLM uses each request's `model` value as a
 load/cache key and does not alias the portable Ollama name `gemma4:12b` to the
-preloaded snapshot. Apple `fm serve` remains an optional smaller text fallback
-(`model=system`, Abbey tools off); its vision/OCR path is not yet qualified and
-it is not the Gemma default.
+preloaded snapshot. Apple Foundation Models remains an optional secondary. Its
+server facade is text-only and tool-incapable; CLI capabilities are enabled
+only when a current, owner-only qualification manifest matches the Abbey
+binary, `fm` executable, OS build, mode, and fixture version. It is not the
+Gemma default.
 
 ## Configured backends
 
@@ -154,7 +157,7 @@ selected from the environment, first match wins:
 | Env var | Backend |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. A secret with `DISCORD_TOKEN`'s exact handling: env only, never in a commit or an image layer. |
-| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (for example Ollama or llama.cpp/llama-server). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. Plain HTTP is accepted only for loopback; remote endpoints require HTTPS, and credentials/query strings in the base URL are rejected. The cross-platform default model name and deployment intent is **`gemma4:12b`**. This latest operator choice supersedes both the interim `gemma4:e4b` choice and the 2026-08-19 benchmark's `gpt-oss:20b` recommendation. The dated benchmark remains historical timing evidence: gpt-oss answered in 7–25 s, e4b in 13–37 s, and 12b in 32–94 s on that host. Ollama uses the model field; a server bound to one model may ignore it. Local replies stream: the message appears within ~4 s and grows; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
+| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (for example Ollama or llama.cpp/llama-server). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. Plain HTTP is accepted only for loopback; remote endpoints require HTTPS, and credentials/query strings in the base URL are rejected. The source default model name and next cross-platform deployment target is **`gemma4:12b`**; this is not a claim about the currently installed service. The operator choice supersedes both the interim `gemma4:e4b` choice and the 2026-08-19 benchmark's `gpt-oss:20b` recommendation. The dated benchmark remains historical timing evidence: gpt-oss answered in 7–25 s, e4b in 13–37 s, and 12b in 32–94 s on that host. Ollama uses the model field; a server bound to one model may ignore it. Local replies stream: the message appears within ~4 s and grows; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
 
 The backend contract is intentionally portable. Linux and Windows retain the
 same OpenAI-compatible endpoint seam and may use Ollama, llama.cpp, or another
@@ -173,6 +176,7 @@ ABBEY_FM_MODE=system                 # off (default), system, or explicit pcc
 ABBEY_FM_ENDPOINT=http://127.0.0.1:1976
 ABBEY_FM_CLI=/usr/bin/fm
 ABBEY_FM_FALLBACK=1
+ABBEY_FM_CAPABILITY_MANIFEST=$HOME/.config/abbey-bot/fm-capabilities.json
 ```
 
 The endpoint must be loopback. Read-only fallback preserves the existing
@@ -192,6 +196,44 @@ session, in which case Abbey fails closed. These `fm` flags are qualified
 against the installed macOS 27 CLI and may need requalification after OS beta
 updates.
 
+Qualification runs before Abbey reads `DISCORD_TOKEN` or `ABBEY_DATA_DIR` and
+uses only synthetic prompts, a no-side-effect `probe_status` tool, generated
+shape/OCR images, and ephemeral turns. For the on-device route, publish the
+successful report atomically as a private manifest; never qualify PCC as a
+substitute:
+
+```sh
+cargo build --release --locked
+manifest_dir=$HOME/.config/abbey-bot
+mkdir -p "$manifest_dir"
+chmod 700 "$manifest_dir"
+ABBEY_FM_MODE=system ABBEY_FM_FALLBACK=1 \
+  python3 deploy/publish-provider-qualification.py \
+    --binary "$PWD/target/release/abbey-bot" \
+    --output "$manifest_dir/fm-capabilities.json" \
+    --target fm
+```
+
+Re-run the qualification whenever the Abbey binary, `fm` executable, selected
+mode, OS build, or fixture version changes. A stale, malformed, symlinked,
+oversized, wrong-owner, or group/world-readable manifest fails startup. To
+publish, always use the checked-in publisher above: it verifies the passing
+report and bound binary hash before an owner-only same-directory replacement,
+and preserves an existing manifest on probe/validation failure. Publication is
+POSIX-only because it relies on effective-user ownership and mode bits. The
+Windows gate parses and privacy-checks the publisher and records its runtime
+tests as skipped; it does not claim that a Windows host published a manifest.
+To atomically switch the owner environment to the pinned MLX primary while
+preserving secret values and a private rollback copy, validate first and then
+repeat without `--dry-run`:
+
+```sh
+python3 deploy/configure-mlx-primary.py \
+  --model-dir "$HOME/.local/share/abbey-bot/mlx-vlm/huggingface/hub/models--mlx-community--gemma-4-12B-it-4bit/snapshots/73bcf09092aa277861d5a191b989b666f7f32e8f" \
+  --manifest "$HOME/.config/abbey-bot/fm-capabilities.json" \
+  --dry-run
+```
+
 With neither set, `/persona ask` replies that no generation backend is
 configured, and the pipeline never speaks unsolicited (a mention gets the same
 honest reply). No test requires either variable, a network, or a key — the gate
@@ -201,13 +243,50 @@ runs fully offline.
 |---|---|
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
 | `ABBEY_BOT_LLM_TOOLS` | `off` disables model tool calls; default on. A tool-contract rejection degrades only that provider's tool route. |
-| `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. `system` is on-device and `pcc` is an explicit cloud selection. |
+| `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` / `_CAPABILITY_MANIFEST` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. Enabling fallback also requires a matching owner-only qualification manifest. `system` is on-device; `pcc` is an explicit cloud selection and is not qualified by this repository's system-mode evidence. |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
-| `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any verified OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`; `off` stops that. The current cross-platform model target is `gemma4:12b`, but the selected runtime must still prove its vision interface. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. Historical evidence from 2026-08-19: Ollama at `http://127.0.0.1:11434/v1` with `gemma4:e4b` described a screenshot in ~4–15 s. The hardened attachment path and the new 12b target still need fresh live `/see` validation after deployment. |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. `ABBEY_VOICE_MODE` is `local` by default, `disabled` for presence only, or `openai` as an explicit cloud backup. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend; model/voice/language overrides are in `.env.example`. OpenAI mode alone requires `OPENAI_API_KEY` and its Realtime overrides; it is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is not authoritative there—use `/voice leave` or write `stop listening` in the configured voice chat. A key never selects cloud mode. `ABBEY_VOICE_AUTOJOIN=1` always uses Songbird `DecodeMode::Pass`, mute, and self-deafen with no receive/playback actor. Conversation still requires `/voice join consent:true`; a consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
+| `ABBEY_VISION_PROVIDER` / `_ENDPOINT` / `_MODEL` / `_KEY` | `remote` (default) selects one verified OpenAI-compatible endpoint, `fm` selects only a manifest-qualified FM CLI, and `off` disables vision. Abbey never retries an image through another provider. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. A 2026-08-19 Ollama/e4b screenshot result is historical only; it does not qualify the current MLX-VLM target or an installed FM CLI. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
+
+## Verification and acceptance layers
+
+Abbey keeps these evidence layers separate; passing one never implies the next:
+
+1. `./check.sh` or `./check.ps1` proves the checked-out source on that host:
+   formatting, deployment/static validation, privacy logging rules, Clippy,
+   offline tests, and a locked release build. GitHub runs the corresponding
+   gate on Ubuntu, macOS, and Windows for every pull request and `main` push.
+2. `--provider-self-test primary|fm|all --json` probes configured providers
+   with synthetic fixtures and ephemeral state before Discord credentials or
+   production data are loaded. Its JSON binds capability results to provider,
+   binary, OS, and fixture identities; it is provider qualification, not a
+   deployed-service claim.
+3. Installer output, launchd PID/listener ownership, exact model identity,
+   artifact hashes, and offline restart are installed-artifact evidence.
+4. An observed Discord text/tool/image round trip is live Discord evidence.
+   Telegram and Slack share source and CI coverage, but are not live-qualified
+   unless their own connector round trips are explicitly recorded.
+5. Voice requires a separate, current everyone-present consent record and an
+   authorized consent-bearing `/voice` command. Source tests, an offline WAV,
+   muted presence, or an earlier session do not authorize live capture.
+
+Provider self-test exit codes are `0` when every capability required by the
+selected runtime configuration passes, `1` for a required probe failure, and
+`2` for invalid arguments, invalid configuration, or an unconfigured selected
+target. Version-1 reports expose separate `primary`, `fm_server`, and `fm_cli`
+entries; each text, streaming, structured-output, tools, vision, and OCR result
+is still recorded as `pass`, `fail`, `unsupported`, or `skipped`. With remote
+or disabled vision, FM text/schema/tools may qualify while failed FM vision/OCR
+remain unadvertised in the manifest-derived runtime capabilities. Selecting
+`ABBEY_VISION_PROVIDER=fm` makes both image probes required and fatal. Reports
+contain only fixed failure categories and safe identity metadata, never
+credentials, prompts, transcripts, image bytes, provider response bodies, or
+production state. Default-off builds work on every supported OS; explicitly
+configuring Foundation Models on a non-macOS host fails with an
+unsupported-platform error.
 
 Measured 2026-08-19 with Abbey's real prompt (full table and method in
 `docs/benchmarks/2026-08-19-local-models.md`):
@@ -216,7 +295,7 @@ Measured 2026-08-19 with Abbey's real prompt (full table and method in
 |---|---|---|---|
 | gpt-oss:20b | 7–25 s | light | 2026-08-19 benchmark winner; historical tool-calling evidence |
 | gemma4:e4b | 13–37 s | moderate | 2026-08-19 runner-up; later interim choice, now superseded |
-| **gemma4:12b** | 32–94 s | heavy | **current operational default**; dated latency retained |
+| **gemma4:12b** | 32–94 s | heavy | **source/config deployment target**; installed cutover requires separate evidence |
 | qwen3.5 / ornith:9b | 47–182 s | runaway | unusable here |
 
 ## Design notes
@@ -377,6 +456,7 @@ restart:
   `--uninstall` reverses it. The env file must carry everything the bot
   should know — at minimum `DISCORD_TOKEN`, and for a useful bot also
   `ABBEY_BOT_LLM_ENDPOINT`, `ABBEY_BOT_LLM_MODEL`, and (if you want images)
+  `ABBEY_VISION_PROVIDER=remote` plus
   `ABBEY_VISION_ENDPOINT`/`ABBEY_VISION_MODEL`; `ABBEY_GUILD_ID`,
   `ABBEY_MESSAGE_CONTENT`, `ABBEY_QUIET` as you ran it by hand. With only the
   token, every DM answers the honest "no backend" line. launchd always uses
@@ -387,12 +467,11 @@ restart:
   vision, and guild-scoped command registration in the sandbox guild. Updates
   stage and validate the replacement before a SIGTERM-driven graceful stop,
   then publish by same-directory renames with rollback. The service umask and
-  installer keep the env, learned state, WDBX segment, and logs owner-only. The current
-  offline-first voice/vision hardening candidate is newer than that installed
-  evidence and remains pending a gated launchd deployment with `gemma4:12b` as
-  the cross-platform reasoning/vision model target. The adapter remains the
-  verified OpenAI-compatible seam; this does not claim an MLX or `fm serve`
-  service is installed. Local source or WAV evidence is not a deployment claim.
+  installer keep the env, learned state, WDBX segment, and logs owner-only.
+  Those dated observations do not describe the current installation after a
+  subsequent cutover. Use a current acceptance record containing exact hashes,
+  PIDs, listeners, provider report, and model identities; source, CI, or WAV
+  evidence alone never establishes what is installed.
 - **Docker** — the multi-stage `Dockerfile`. Pass secrets with
   `docker run --env-file`; never bake a token into an image layer.
 
@@ -418,9 +497,9 @@ the `Decode` call whenever consent is invalidated. Its private owner-only
 full-chain audition proves local Kokoro → Whisper → canonical Abbey → Kokoro →
 Whisper plus Songbird-playable formatting without Discord, a microphone, or
 cloud credentials. It does not prove deployment, a reply heard by a human, or
-barge-in. The exact current candidate is not yet deployed; a fresh
-everyone-present consent epoch, renewed `/voice resume`, an audible wake/reply,
-and interruption acceptance remain deliberately unclaimed. OpenAI Realtime is
+barge-in. A fresh everyone-present consent epoch, renewed `/voice resume`, an
+audible wake/reply, and interruption acceptance require their own current
+record and remain unclaimed by source evidence. OpenAI Realtime is
 an explicit degraded backup, not an offline path, and its spoken control is not
 authoritative. `tasks/goals.md` remains the detailed evidence ledger, including
 the non-green DAVE/OpenMLS dependency audit.
@@ -433,13 +512,18 @@ release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
 
 ```sh
 ./check.sh
+# On Windows PowerShell:
+./check.ps1
 ```
 
-CI (`.github/workflows/rust.yml`) runs exactly this script with the exact Rust
-1.97.1 toolchain, so a green check means fmt, launchd shell syntax, Python lock
-hash validation (plus plist lint where `plutil` exists), clippy `-D warnings`, the test suite, and the
-locked release build used by deployment.
+CI (`.github/workflows/rust.yml`) runs Ubuntu and macOS through `check.sh` and
+Windows through `check.ps1`, all with the exact Rust 1.97.1 toolchain. Every
+lane proves formatting, Python syntax and hash locks, the static privacy gate,
+Clippy with warnings denied, the offline test suite, and the locked release
+build. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also runs
+where `plutil` exists.
 
-`cargo fmt --all -- --check`, deploy syntax, then
+The shared Rust sequence is
+`cargo fmt --all -- --check`, platform-appropriate deployment validation, then
 `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`,
 and `cargo build --release --locked`.

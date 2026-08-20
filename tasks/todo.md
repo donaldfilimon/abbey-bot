@@ -100,8 +100,11 @@ a green source gate is not semantic, deployment, or live evidence.
 - [ ] Re-prove the tool boundary end to end on the 12B backend: only `remember_fact`,
       `lookup_reputation`, `recall`, `switch_persona`, `recent_messages`, each still passing the
       allowlist, schema validation, round limit, and user/guild scoping
-- [ ] Re-prove voice stays read-only: spoken turns cannot invoke tools, mutate memory, or claim a
-      voice-control action occurred
+- [x] Re-prove voice stays read-only at the source boundary: local voice calls
+      `generate_without_delivery` with no `ToolHost`, disabled tool access rejects an injected
+      `remember_fact` call without mutation, and operational voice answers render fixed runtime
+      snapshots rather than generated/provider prose. Fresh audible acceptance remains in the
+      human-gated section below.
 
 ### 3. Capability-gated Apple Foundation Models provider
 - [x] Add `ProviderCapabilities { text, streaming, structured_output, tools, vision, ocr }` and
@@ -123,24 +126,34 @@ a green source gate is not semantic, deployment, or live evidence.
 - [x] Prove nothing reaches `pcc` unless `ABBEY_FM_MODE=pcc` was explicitly selected
 
 ### 4. Voice, vision, tool, and privacy safety
-- [ ] Re-verify consent invalidation synchronously closes the exact media epoch before slow
-      cleanup, cancels pending model work and playback, and disconnects the Songbird `Decode` call
-- [ ] Re-verify a new/unidentified/unattested participant never contributes a frame to STT
-- [ ] Re-verify written `stop listening` deterministically revokes the active epoch, and that
-      generated/Realtime prose can never claim listening state changed
-- [ ] Image safety across every transport: 10 MB fetch cap, full local decode, 8192x8192 and
+- [x] Deterministically re-verify consent invalidation: the exact active epoch advances and its
+      media/start gates close before deliberately blocked actor cleanup; cancellation reaches the
+      installed model/playback actor immediately. Every Discord withdrawal/participant/adverse-
+      payload path then leaves the exact Songbird call before reaping actor state and removes the
+      manager entry. Fresh physical-disconnect evidence remains a live acceptance item below.
+- [x] Re-verify a new/unidentified/unattested participant never contributes a frame to STT: the
+      receive classifier rejects an unknown SSRC or unattested user for the whole tick, including
+      a mixed tick that also contains valid attested speech, before channel send.
+- [x] Re-verify written `stop listening` authority: scoped human text is parsed before the social
+      pipeline, closes/cancels the active epoch, and replies from the post-transition runtime
+      snapshot; provider status/prose is excluded from authoritative copy and cannot activate,
+      resume, or report a control mutation.
+- [x] Image safety across every transport: 10 MB fetch cap, full local decode, 8192x8192 and
       96 MiB ceilings, preserved JPEG/PNG/WebP bytes, first-GIF-frame-to-PNG only, rejection of
       malformed/truncated/HEIC/AVIF/JXL/SVG/PDF/HTML before any provider call, safe fixed user copy
-      with detail confined to redacted logs
-- [ ] Memory privacy: `/remember`, `/forget`, `/recall` default to caller; cross-member access
-      requires current Manage Messages / Manage Guild / Administrator at invocation; facts
-      normalized, non-empty, <= 300 Unicode chars, removed from both plain memory and WDBX
-- [ ] Retitle tool descriptions from "Discord user id" to network-scoped identity language so
-      Telegram and Slack identities are not misrepresented as Discord ones
+      with detail confined to redacted logs. Deterministic remote/FM preparation tests cover every
+      listed format plus oversized files and canvases; live attachment acceptance remains below.
+- [x] Memory privacy: `/remember`, `/forget`, `/recall` default to caller; cross-member access
+      requires current Manage Messages / Manage Guild / Administrator at invocation; facts are
+      whitespace-normalized, non-empty, <= 300 Unicode characters, and deletion reconciles both
+      canonical JSON memory and its WDBX projection under one lock boundary.
+- [x] Retitle tool descriptions from "Discord user id" to network-scoped identity language so
+      Telegram and Slack identities are not misrepresented as Discord ones.
 
 ### 5. Cross-platform and transport
-- [ ] Keep the Rust core provider-neutral: no direct MLX or Foundation Models dependencies; Mac
-      services stay external loopback processes
+- [x] Keep the Rust core provider-neutral: no direct MLX or Foundation Models inference
+      dependencies; MLX remains an OpenAI-compatible external loopback service and Foundation
+      Models remains a bounded external CLI/server adapter.
 - [ ] Linux: same binary builds and tests, Gemma via the OpenAI-compatible seam, systemd and
       Docker retained, voice only via explicit OpenAI Realtime
 - [ ] Windows: same binary builds and tests, Gemma via Ollama or another qualified server,
@@ -149,13 +162,20 @@ a green source gate is not semantic, deployment, or live evidence.
 - [ ] Expand CI to `macos` + `ubuntu` + `windows` on the pinned toolchain and locked dependencies
 - [ ] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
-- [ ] Re-prove the shared Discord/Telegram/Slack pipeline reaches identical persona/tool/memory/
-      vision behavior with no identity leakage between networks
+- [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
+      traverse the common pipeline and select the same persona; a deterministic `ImageUnderstanding`
+      description is folded identically; all five tool calls return identical results while memory,
+      channel, guild, and user state remains network-prefixed. Explicit reputation ids are rebound
+      to the current network and conflicting prefixes cannot escape it. This is deterministic
+      source/seam evidence; live Telegram/Slack round trips remain unperformed without tokens.
 
 ### Provider-routing tests (source evidence)
 - [x] Capability-specific fallback; no fallback to an unqualified provider
 - [x] Loopback-only server endpoint; explicit PCC/cloud opt-in
-- [ ] Secrets and image payloads absent from `Debug` and logs
+- [x] Secrets and image payloads absent from `Debug` and logs: credential-bearing backend/voice/
+      vision configs and LLM/vision request types have canary tests, provider HTTP error bodies are
+      discarded behind fixed status categories, and the Rust/Python/shell static privacy gate
+      rejects sensitive named, captured, or positional logging expressions.
 - [x] Malformed FM structured output; prose falsely claiming a tool action
 - [x] Provider failure after a tool call but before continuation starts no second provider and
       cannot duplicate the completed mutation

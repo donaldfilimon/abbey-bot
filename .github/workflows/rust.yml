@@ -18,11 +18,25 @@ env:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    name: Gate (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu
+            os: ubuntu-24.04
+            command: ./check.sh
+          - name: macOS
+            os: macos-15
+            command: ./check.sh
+          - name: Windows
+            os: windows-2025
+            command: ./check.ps1
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The runner's rustup honours the exact stable release and components in
       # rust-toolchain.toml on the first Cargo invocation.
-      - name: Gate — fmt, clippy -D warnings, tests, release build
-        run: ./check.sh
+      - name: Gate — fmt, privacy, locks, clippy, tests, release build
+        run: ${{ matrix.command }}
