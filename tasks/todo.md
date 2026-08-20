@@ -195,3 +195,49 @@ access logs, and historical consent are explicitly not acceptable substitutes.
       push the branch **without merging**
 - [ ] Keep `cargo audit` honest and non-green: rustls-webpki plus DAVE/OpenMLS/libcrux advisories
       stay documented, with no hand-maintained cryptographic fork
+
+## Delayed-outcome reward — closing the learning loop (2026-08-20)
+
+Corrects a standing overstatement first: the loop was **not** a pure terminal contextual bandit
+on an immediate heuristic. `brain/reward.rs` already held each reply open for a 150 s settlement
+window and collected genuinely delayed evidence — reactions (±1), a human reply (+0.5), a
+deletion (−2) — persisted across restarts. What was missing is that the evidence was **untyped**:
+"perfect, thanks" and "no, that's wrong" both scored exactly +0.5, so the policy could not tell a
+reply that helped from one that had to be corrected. Attribution was also keyed on the sent
+message id alone, so a follow-up that was not a Discord reply-to could never reach the action
+that earned it.
+
+- [x] `brain/outcome.rs` — typed `ReplyOutcome` over observable Discord signals:
+      `ExplicitThanks` (+1.0), `FollowUpQuestion` (+0.4), `RephrasedSameAsk` (−0.5),
+      `Correction` (−1.0), `NoEngagement` (0.0). `NoEngagement` is deliberately weightless:
+      silence is weak evidence, the −0.2 reply baseline already charges for it, and charging
+      again would double-penalize it. `classify` is a deterministic lexicon plus content-word
+      overlap against the ask the turn answered — not a model, and not a claim that Abbey knows
+      whether she helped.
+- [x] `(scope, turn id)` attribution on the existing pending ledger rather than a second one:
+      `Pending` gained `scope` (scoped channel), `ask`, and `asker`, so `observe_in_scope`
+      credits the newest open turn in a channel with deterministic tie-breaking.
+      `ATTRIBUTION_TTL_SECS` is bound to `SETTLEMENT_WINDOW_SECS` so the two lifetimes cannot
+      drift; unattributed turns drain through the existing sweep rather than leaking. `ask`
+      stores the human's raw text, not the vision-enriched prompt — folding Abbey's own image
+      descriptions in would pad the ask and depress every later overlap ratio.
+- [x] Blended, not replaced: `outcome::blend(immediate, delayed_sum, delayed_count)` adds the
+      *mean* typed value to the untouched immediate accumulator and returns `immediate`
+      bit-identically when no outcome ever arrived. Every pre-existing `reward.rs` test passes
+      unmodified; a regression test asserts a legacy on-disk `Pending` row (no new fields) still
+      deserializes and settles at the number the old build produced.
+- [x] Wired for real: `pipeline.rs` classifies an incoming message against the ask of the turn it
+      answers and credits it — by exact reply-to when Discord supplies the pointer, otherwise by
+      channel scope.
+
+**Unwired, and not claimed.** Reactions still feed only the untyped path. Message edits, thread
+creation, pins, leaves, and voice carry no delayed signal. In-scope attribution remains a
+heuristic: a marker-only outcome (thanks/correction) is credited by scope only when it comes
+from the human the turn answered — so "thanks Carol!" from a bystander is dropped — but a
+*topical* follow-up from anyone in the channel is still credited on overlap alone, and that
+overlap is lexical, not semantic. Reply-to is the precise path. And there is no live evidence
+yet: no observed settle whose reward moved because of a typed outcome.
+- [ ] Live acceptance: observe `reward settled into the replay buffer` where the value reflects a
+      typed outcome (thanks and correction on comparable turns), and one same-channel follow-up
+      credited with no reply-to pointer. Until that lands in `tasks/goals.md`, this is a loop that
+      is **closable**, not a loop observed closing.
