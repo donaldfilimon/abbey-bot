@@ -1,5 +1,6 @@
 use super::*;
 use crate::voice::{VoiceBackendConfig, VoiceConfig};
+use std::sync::atomic::AtomicBool;
 
 #[test]
 fn only_active_conversation_phases_process_audio() {
@@ -563,6 +564,68 @@ async fn connecting_consent_pause_cannot_be_lost_to_activation() {
         assert!(!snapshot.start_pending);
         assert!(!runtime.start_is_current(start_generation));
     }
+}
+
+#[tokio::test]
+async fn exact_consent_epoch_closes_and_cancels_before_slow_actor_cleanup() {
+    let runtime = Arc::new(runtime());
+    let start_generation = runtime.reserve_start();
+    let epoch = runtime.begin(HashSet::from([7])).await;
+    assert!(runtime.activate(epoch, start_generation, "active").await);
+
+    let (cancel, mut cancellation) = watch::channel(false);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let actor = {
+        let cancelled = Arc::clone(&cancelled);
+        let release = Arc::clone(&release);
+        tokio::spawn(async move {
+            cancellation.changed().await.expect("runtime owns sender");
+            assert!(*cancellation.borrow(), "actor receives cancellation");
+            cancelled.store(true, Ordering::SeqCst);
+            // Model slow provider/playback cleanup after cancellation. The
+            // public epoch and media gate must already be closed while this
+            // actor remains alive.
+            release.notified().await;
+        })
+    };
+    assert!(
+        runtime
+            .install_control(
+                epoch,
+                SessionControl {
+                    cancel,
+                    task: actor,
+                    playback: Arc::new(Mutex::new(None)),
+                },
+            )
+            .await
+    );
+
+    let pause = runtime
+        .begin_pause_epoch_for_consent(epoch, HashSet::from([7, 8]), "consent withdrawn")
+        .await
+        .expect("exact live epoch pauses");
+    let snapshot = runtime.snapshot().await;
+    assert_eq!(snapshot.epoch, epoch + 1);
+    assert_eq!(snapshot.phase, VoicePhase::AwaitingConsent);
+    assert!(!snapshot.media_enabled);
+    assert!(!snapshot.start_pending);
+    assert!(!runtime.is_current(epoch));
+
+    tokio::time::timeout(Duration::from_millis(100), async {
+        while !cancelled.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("actor cancellation is immediate");
+
+    let finishing = tokio::spawn(pause.finish());
+    tokio::task::yield_now().await;
+    assert!(!finishing.is_finished(), "cleanup fixture is still slow");
+    release.notify_one();
+    finishing.await.expect("cleanup task");
 }
 
 #[test]

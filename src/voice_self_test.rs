@@ -26,9 +26,6 @@ const SELF_TEST_SYSTEM_SUFFIX: &str = "You are producing a private, local Abbey 
 #[derive(Debug)]
 pub struct VoiceSelfTestReport {
     pub output: PathBuf,
-    pub transcript: String,
-    pub spoken_answer: String,
-    pub reply_transcript: String,
     pub round_trip_word_recall: f32,
     pub sample_rate: u32,
     pub channels: u8,
@@ -58,9 +55,7 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
     let stimulus_wav = client.synthesize_wav(TEST_UTTERANCE).await?;
     let transcript = client.transcribe_wav(&stimulus_wav).await?;
     if !contains_wake_name(&transcript) {
-        return Err(format!(
-            "local Whisper did not preserve an Abbey/Abi/Aviva wake name: {transcript:?}"
-        ));
+        return Err("local Whisper did not preserve an Abbey/Abi/Aviva wake name".into());
     }
 
     let configured = crate::llm::Backend::from_env();
@@ -121,7 +116,7 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
     let round_trip_word_recall = word_recall(&spoken_answer, &reply_transcript);
     if round_trip_word_recall < 0.60 {
         return Err(format!(
-            "Abbey's synthesized reply did not survive the local TTS-to-STT quality check ({:.0}% word recall): {reply_transcript:?}",
+            "Abbey's synthesized reply did not survive the local TTS-to-STT quality check ({:.0}% word recall)",
             round_trip_word_recall * 100.0
         ));
     }
@@ -168,9 +163,6 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
 
     Ok(VoiceSelfTestReport {
         output: output.to_path_buf(),
-        transcript,
-        spoken_answer,
-        reply_transcript,
         round_trip_word_recall,
         sample_rate: decoded.sample_rate,
         channels: decoded.channels,

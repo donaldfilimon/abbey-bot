@@ -412,7 +412,7 @@ def main() -> None:
         }
     )
     if streamed != "MLX_READY":
-        fail(f"MLX-VLM streamed marker was not exact: {streamed[:200]!r}")
+        fail("MLX-VLM streamed marker was not exact")
 
     tools = [
         {
@@ -490,10 +490,7 @@ def main() -> None:
         or final_calls
         or final_finish_reason != "stop"
     ):
-        fail(
-            "MLX-VLM streamed tool-result continuation marker was not exact: "
-            f"{final_text[:200]!r}"
-        )
+        fail("MLX-VLM streamed tool-result continuation marker was not exact")
 
     vision = client.request(
         "POST",
@@ -527,7 +524,7 @@ def main() -> None:
     if not isinstance(vision_text, str) or not vision_text.strip():
         fail("MLX-VLM vision response was empty")
     if vision_text.strip().casefold() != "red square, blue circle":
-        fail(f"MLX-VLM colored-shape marker was not exact: {vision_text[:200]!r}")
+        fail("MLX-VLM colored-shape marker was not exact")
 
     ocr = client.request(
         "POST",
@@ -558,19 +555,21 @@ def main() -> None:
     )
     ocr_text = message(ocr).get("content")
     if not isinstance(ocr_text, str) or ocr_text.strip() != OCR_TEXT:
-        fail(f"MLX-VLM OCR mismatch: expected {OCR_TEXT!r}, got {ocr_text!r}")
+        fail("MLX-VLM OCR marker was not exact")
 
     print(
         json.dumps(
             {
-                "health": health,
+                "health_semantic_pass": True,
                 "model": args.model,
                 "configured_context_limit": args.expected_kv_size,
                 "stream_chars": len(streamed),
                 "tool": "probe_status",
                 "tool_round_trip_chars": len(final_text),
-                "vision": vision_text.strip()[:200],
-                "ocr": ocr_text.strip(),
+                "vision_semantic_pass": True,
+                "vision_chars": len(vision_text.strip()),
+                "ocr_semantic_pass": True,
+                "ocr_chars": len(ocr_text.strip()),
             },
             sort_keys=True,
         )

@@ -66,7 +66,7 @@ impl fmt::Debug for OpenAiVoiceConfig {
             .field("endpoint", &self.endpoint)
             .field("model", &self.model)
             .field("voice", &self.voice)
-            .field("instructions", &self.instructions)
+            .field("instructions_chars", &self.instructions.chars().count())
             .finish()
     }
 }
@@ -159,13 +159,16 @@ impl VoiceConfig {
         let mode = VoiceMode::parse(values.mode)?;
         let backend = match mode {
             VoiceMode::Disabled => VoiceBackendConfig::Disabled,
-            VoiceMode::Local => VoiceBackendConfig::Local(OfflineVoiceConfig::from_values(
-                values.local_endpoint,
-                values.local_stt_model,
-                values.local_tts_model,
-                values.local_tts_voice,
-                values.local_language,
-            )?),
+            VoiceMode::Local => {
+                validate_local_voice_platform()?;
+                VoiceBackendConfig::Local(OfflineVoiceConfig::from_values(
+                    values.local_endpoint,
+                    values.local_stt_model,
+                    values.local_tts_model,
+                    values.local_tts_voice,
+                    values.local_language,
+                )?)
+            }
             VoiceMode::OpenAi => {
                 let api_key = nonblank(values.openai_key)
                     .ok_or_else(|| "ABBEY_VOICE_MODE=openai requires OPENAI_API_KEY".to_string())?;
@@ -252,6 +255,17 @@ impl VoiceConfig {
             VoiceBackendConfig::Local(config) => &config.voice,
             VoiceBackendConfig::OpenAi(config) => &config.voice,
         }
+    }
+}
+
+fn validate_local_voice_platform() -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        Ok(())
+    } else {
+        Err(
+            "ABBEY_VOICE_MODE=local is supported only on macOS; use disabled or explicitly configure openai on this platform"
+                .into(),
+        )
     }
 }
 
@@ -389,9 +403,26 @@ mod tests {
     fn destination_defaults_to_local_even_when_a_cloud_key_exists() {
         let mut values = destination();
         values.openai_key = Some("must-not-select-cloud".into());
-        let config = VoiceConfig::from_values(values).unwrap().unwrap();
-        assert_eq!(config.mode(), VoiceMode::Local);
-        assert!(config.openai().is_none());
+        let result = VoiceConfig::from_values(values);
+        if cfg!(target_os = "macos") {
+            let config = result.unwrap().unwrap();
+            assert_eq!(config.mode(), VoiceMode::Local);
+            assert!(config.openai().is_none());
+        } else {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+        }
+    }
+
+    #[test]
+    fn local_voice_is_rejected_outside_macos() {
+        let mut values = destination();
+        values.mode = Some("local".into());
+        let result = VoiceConfig::from_values(values);
+        if cfg!(target_os = "macos") {
+            assert_eq!(result.unwrap().unwrap().mode(), VoiceMode::Local);
+        } else {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+        }
     }
 
     #[test]
@@ -407,6 +438,7 @@ mod tests {
         let mut values = destination();
         values.mode = Some("openai".into());
         values.openai_key = Some("super-secret".into());
+        values.instructions = Some("PRIVATE_VOICE_INSTRUCTIONS_CANARY".into());
         let config = VoiceConfig::from_values(values).unwrap().unwrap();
         let rendered = format!("{config:?}");
         assert_eq!(config.mode(), VoiceMode::OpenAi);
@@ -422,6 +454,7 @@ mod tests {
             .collect();
         assert_eq!(query, [("model".into(), DEFAULT_OPENAI_MODEL.into())]);
         assert!(!rendered.contains("super-secret"));
+        assert!(!rendered.contains("PRIVATE_VOICE_INSTRUCTIONS_CANARY"));
         assert!(rendered.contains("REDACTED"));
     }
 
