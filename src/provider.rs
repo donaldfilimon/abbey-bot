@@ -19,6 +19,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
+mod qualification;
+pub use qualification::{
+    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, ProbeStatus, ProviderEvidence,
+    ProviderIdentity, QUALIFICATION_VERSION, QualificationReport, QualificationTarget,
+    VerifiedFmCapabilities, fm_identity, primary_identity, unix_now, verify_fm_manifest,
+};
+
 const DEFAULT_FM_CLI: &str = "/usr/bin/fm";
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 const STATIC_FM_INSTRUCTIONS: &str = "Follow the policy and conversation JSON supplied on stdin. Return only the schema-guided decision.";
@@ -33,6 +40,34 @@ const ALLOWED_ENVIRONMENT: &[&str] = &[
     "__CF_USER_TEXT_ENCODING",
 ];
 static NEXT_SCHEMA_FILE: AtomicU64 = AtomicU64::new(0);
+static NEXT_IMAGE_FILE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FmImageTask {
+    Describe,
+    ExtractText,
+    QualificationShapes,
+    QualificationOcr,
+}
+
+impl FmImageTask {
+    const fn prompt(self) -> &'static str {
+        match self {
+            Self::Describe => {
+                "Describe this image in at most two short sentences. Factual, no preamble."
+            }
+            Self::ExtractText => {
+                "Transcribe all text visible in this image verbatim. Output only the text."
+            }
+            Self::QualificationShapes => {
+                "Identify the two colored shapes from left to right. Output only two lowercase color-and-shape labels separated by a comma and one space."
+            }
+            Self::QualificationOcr => {
+                "Transcribe the image. Output exactly the visible ASCII text and nothing else."
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -116,13 +151,20 @@ impl FmConfig {
     }
 
     pub fn from_env() -> Result<Option<Self>, String> {
-        Self::from_values(
+        let config = Self::from_values(
             std::env::var("ABBEY_FM_MODE").ok(),
             std::env::var("ABBEY_FM_ENDPOINT").ok(),
             std::env::var("ABBEY_FM_CLI").ok(),
             std::env::var("ABBEY_FM_FALLBACK").ok(),
             std::env::var("ABBEY_BOT_LLM_TIMEOUT_SECS").ok(),
-        )
+        )?;
+        #[cfg(not(target_os = "macos"))]
+        if config.is_some() {
+            return Err(
+                "Apple Foundation Models is supported only on macOS; set ABBEY_FM_MODE=off".into(),
+            );
+        }
+        Ok(config)
     }
 }
 
@@ -321,6 +363,23 @@ impl FoundationModels {
     }
 
     #[must_use]
+    pub fn new_qualified(
+        config: FmConfig,
+        primary_backend: Option<&Backend>,
+        primary_tools_enabled: bool,
+        qualified: VerifiedFmCapabilities,
+    ) -> Self {
+        let router = ProviderRouter::new(
+            primary_backend,
+            primary_tools_enabled,
+            qualified.server,
+            Some(qualified.cli),
+            config.fallback,
+        );
+        Self { config, router }
+    }
+
+    #[must_use]
     pub const fn label(&self) -> &'static str {
         match self.config.mode {
             FmMode::System => "Apple Foundation Models on-device model",
@@ -355,6 +414,36 @@ impl FoundationModels {
         let output = invocation.run(self.config.timeout_secs).await?;
         parse_cli_output(&output, tools, call_id)
     }
+
+    pub async fn image_turn(
+        &self,
+        task: FmImageTask,
+        bytes: &[u8],
+        extension: &str,
+    ) -> Result<String, LlmError> {
+        if !matches!(extension, "jpg" | "png" | "webp") {
+            return Err(LlmError::backend(
+                "the FM image adapter received an unsupported prepared format".into(),
+            ));
+        }
+        let file = PrivateImageFile::create(bytes, extension).map_err(|error| {
+            LlmError::backend(format!("could not prepare the private FM image: {error}"))
+        })?;
+        let invocation = CliInvocation::for_image(&self.config, task, file.path());
+        let output = invocation.run(self.config.timeout_secs).await?;
+        let output = output.trim();
+        if output.is_empty()
+            && !matches!(
+                task,
+                FmImageTask::ExtractText | FmImageTask::QualificationOcr
+            )
+        {
+            return Err(LlmError::backend(
+                "the FM CLI returned an empty image description".into(),
+            ));
+        }
+        Ok(output.to_string())
+    }
 }
 
 /// Fully separated program, argv, and stdin. There is deliberately no shell.
@@ -380,6 +469,31 @@ impl CliInvocation {
                 schema.as_os_str().to_owned(),
             ],
             stdin: prompt.as_bytes().to_vec(),
+            environment: filtered_environment(std::env::vars_os()),
+        }
+    }
+
+    fn for_image(config: &FmConfig, task: FmImageTask, image: &Path) -> Self {
+        let mut args = vec![
+            "respond".into(),
+            "--model".into(),
+            config.mode.as_str().into(),
+            "--no-stream".into(),
+            "--instructions".into(),
+            "Return only the requested image result without commentary.".into(),
+            "--image".into(),
+            image.as_os_str().to_owned(),
+        ];
+        if matches!(
+            task,
+            FmImageTask::ExtractText | FmImageTask::QualificationOcr
+        ) {
+            args.extend([OsString::from("--tool"), OsString::from("ocr")]);
+        }
+        Self {
+            program: config.cli.clone(),
+            args,
+            stdin: task.prompt().as_bytes().to_vec(),
             environment: filtered_environment(std::env::vars_os()),
         }
     }
@@ -504,6 +618,39 @@ impl Drop for PrivateSchemaFile {
     }
 }
 
+struct PrivateImageFile(PathBuf);
+
+impl PrivateImageFile {
+    fn create(bytes: &[u8], extension: &str) -> std::io::Result<Self> {
+        let serial = NEXT_IMAGE_FILE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            ".abbey-fm-image-{}-{serial}.{extension}",
+            std::process::id()
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for PrivateImageFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn render_transcript(system_prompt: &str, turns: &[ChatTurn]) -> Result<String, LlmError> {
     let transcript: Vec<Value> = turns
         .iter()
@@ -581,6 +728,10 @@ fn decision_schema(tools: &[crate::tools::ToolSpec]) -> Result<Value, LlmError> 
                 "RecentMessages",
                 json!({"type": "integer", "minimum": 1, "maximum": crate::tools::MAX_RECENT}),
             ),
+            "probe_status" => (
+                "ProbeStatus",
+                json!({"type": "string", "enum": ["abbey-provider-probe-v1"]}),
+            ),
             other => {
                 return Err(LlmError::backend(format!(
                     "FM has no schema adapter for tool {other}"
@@ -605,7 +756,7 @@ fn decision_schema(tools: &[crate::tools::ToolSpec]) -> Result<Value, LlmError> 
     }))
 }
 
-fn parse_cli_output(
+pub(crate) fn parse_cli_output(
     raw: &str,
     offered_tools: &[crate::tools::ToolSpec],
     call_id: &str,
@@ -669,6 +820,15 @@ fn parse_cli_output(
                 )));
             }
             json!({"limit": limit})
+        }
+        "probe_status" => {
+            let nonce = required_string(payload, name)?;
+            if nonce != "abbey-provider-probe-v1" {
+                return Err(LlmError::backend(
+                    "the FM probe_status nonce did not match the qualification fixture".into(),
+                ));
+            }
+            json!({"nonce": nonce})
         }
         _ => unreachable!("availability check restricts names to the known vocabulary"),
     };

@@ -15,19 +15,23 @@
 //!   set, `/persona ask` replies that no generation backend is configured.
 //! - `ABBEY_FM_MODE`, `ABBEY_FM_ENDPOINT`, `ABBEY_FM_CLI`, and
 //!   `ABBEY_FM_FALLBACK` (optional) — explicit Apple Foundation Models
-//!   secondary routing; off by default.
+//!   secondary routing; off by default. Enabled routes also require the
+//!   exact-bound owner-only capability manifest described in `.env.example`.
 //! - `ABBEY_QUIET` (optional) — `1` forbids unsolicited replies everywhere.
 //! - `ABBEY_DATA_DIR` (optional) — where learning, memory, and config persist.
 //!   Unset means in-memory only.
 //! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
 //!   MESSAGE_CONTENT intent (must also be enabled in the Dev Portal).
-//! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
+//! - `ABBEY_VISION_PROVIDER=remote|fm|off`, other `ABBEY_VISION_*`, and
+//!   `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
 //! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
 //!   admin-triggered, DAVE-capable Discord connection. `ABBEY_VOICE_AUTOJOIN=1`
 //!   provides persistent muted/self-deafened no-audio presence. Conversational
 //!   local or Realtime voice still requires `/voice join consent:true`.
 //! - `--voice-self-test OUTPUT.wav` — run local TTS → STT → canonical Abbey
 //!   reasoning → TTS without a Discord token, microphone, or call.
+//! - `--provider-self-test primary|fm|all --json` — qualify configured routes
+//!   with synthetic, non-persistent fixtures before reading Discord or state.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
@@ -62,6 +66,7 @@ mod pipeline;
 mod platform;
 mod profile;
 mod provider;
+mod provider_self_test;
 mod recall;
 mod routing_signals;
 mod runtime;
@@ -112,22 +117,41 @@ async fn main() -> Result<(), Error> {
         )
         .init();
 
-    if let Some(output) = voice_self_test_output().map_err(runtime::StartupError)? {
-        let report = voice_self_test::run(&output)
-            .await
-            .map_err(runtime::StartupError)?;
-        println!(
-            "local voice self-test passed\nstimulus transcript: {}\nreply: {}\nreply transcript: {}\nround-trip word recall: {:.0}%\naudio: {} ({} Hz, {} channel(s), {} ms)",
-            report.transcript,
-            report.spoken_answer,
-            report.reply_transcript,
-            report.round_trip_word_recall * 100.0,
-            report.output.display(),
-            report.sample_rate,
-            report.channels,
-            report.duration_millis,
-        );
-        return Ok(());
+    let startup = match startup_action() {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    match startup {
+        StartupAction::Discord => {}
+        StartupAction::VoiceSelfTest(output) => {
+            let report = voice_self_test::run(&output)
+                .await
+                .map_err(runtime::StartupError)?;
+            println!(
+                "local voice self-test passed\nround-trip word recall: {:.0}%\naudio: {} ({} Hz, {} channel(s), {} ms)",
+                report.round_trip_word_recall * 100.0,
+                report.output.display(),
+                report.sample_rate,
+                report.channels,
+                report.duration_millis,
+            );
+            return Ok(());
+        }
+        StartupAction::ProviderSelfTest(target) => {
+            let outcome = provider_self_test::run(target).await;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&outcome.report)
+                    .map_err(|error| runtime::StartupError(error.to_string()))?
+            );
+            if outcome.exit != provider_self_test::SelfTestExit::Success {
+                std::process::exit(outcome.exit.code());
+            }
+            return Ok(());
+        }
     }
 
     // Read before building anything else: a missing token should fail in the
@@ -347,33 +371,58 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-fn voice_self_test_output() -> Result<Option<std::path::PathBuf>, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StartupAction {
+    Discord,
+    VoiceSelfTest(std::path::PathBuf),
+    ProviderSelfTest(provider::QualificationTarget),
+}
+
+fn startup_action() -> Result<StartupAction, String> {
     parse_startup_arguments(std::env::args_os().skip(1))
 }
 
 fn parse_startup_arguments(
     mut arguments: impl Iterator<Item = std::ffi::OsString>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<StartupAction, String> {
     let Some(mode) = arguments.next() else {
-        return Ok(None);
+        return Ok(StartupAction::Discord);
     };
-    if mode != std::ffi::OsStr::new("--voice-self-test") {
-        return Err(format!(
-            "unknown argument {:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav]",
-            mode
-        ));
+    if mode == std::ffi::OsStr::new("--voice-self-test") {
+        let output = arguments.next().ok_or_else(|| {
+            "usage: abbey-bot --voice-self-test OUTPUT.wav (the output must not already exist)"
+                .to_string()
+        })?;
+        if arguments.next().is_some() {
+            return Err(
+                "usage: abbey-bot --voice-self-test OUTPUT.wav (exactly one output path is required)"
+                    .into(),
+            );
+        }
+        return Ok(StartupAction::VoiceSelfTest(output.into()));
     }
-    let output = arguments.next().ok_or_else(|| {
-        "usage: abbey-bot --voice-self-test OUTPUT.wav (the output must not already exist)"
-            .to_string()
-    })?;
-    if arguments.next().is_some() {
-        return Err(
-            "usage: abbey-bot --voice-self-test OUTPUT.wav (exactly one output path is required)"
-                .into(),
-        );
+    if mode == std::ffi::OsStr::new("--provider-self-test") {
+        let target = arguments.next().ok_or_else(provider_self_test_usage)?;
+        let target = match target.to_str() {
+            Some("primary") => provider::QualificationTarget::Primary,
+            Some("fm") => provider::QualificationTarget::Fm,
+            Some("all") => provider::QualificationTarget::All,
+            _ => return Err(provider_self_test_usage()),
+        };
+        if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--json"))
+            || arguments.next().is_some()
+        {
+            return Err(provider_self_test_usage());
+        }
+        return Ok(StartupAction::ProviderSelfTest(target));
     }
-    Ok(Some(output.into()))
+    Err(format!(
+        "unknown argument {mode:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav | --provider-self-test primary|fm|all --json]"
+    ))
+}
+
+fn provider_self_test_usage() -> String {
+    "usage: abbey-bot --provider-self-test primary|fm|all --json".into()
 }
 
 /// Global registration that survives Discord's Entry Point command.
@@ -445,20 +494,20 @@ fn record_interaction(ctx: Context<'_>, succeeded: bool, error: Option<String>) 
 mod startup_argument_tests {
     use super::*;
 
-    fn parse(arguments: &[&str]) -> Result<Option<std::path::PathBuf>, String> {
+    fn parse(arguments: &[&str]) -> Result<StartupAction, String> {
         parse_startup_arguments(arguments.iter().map(std::ffi::OsString::from))
     }
 
     #[test]
     fn no_arguments_starts_the_discord_service() {
-        assert_eq!(parse(&[]).unwrap(), None);
+        assert_eq!(parse(&[]).unwrap(), StartupAction::Discord);
     }
 
     #[test]
     fn exact_voice_self_test_has_one_create_new_output() {
         assert_eq!(
             parse(&["--voice-self-test", "audition.wav"]).unwrap(),
-            Some(std::path::PathBuf::from("audition.wav"))
+            StartupAction::VoiceSelfTest(std::path::PathBuf::from("audition.wav"))
         );
         assert!(parse(&["--voice-self-test"]).is_err());
         assert!(parse(&["--voice-self-test", "one.wav", "two.wav"]).is_err());
@@ -468,5 +517,29 @@ mod startup_argument_tests {
     fn an_unknown_or_mistyped_mode_cannot_start_discord() {
         assert!(parse(&["--voice-self-tset", "audition.wav"]).is_err());
         assert!(parse(&["unexpected"]).is_err());
+    }
+
+    #[test]
+    fn provider_self_test_requires_exact_target_and_json_mode() {
+        assert_eq!(
+            parse(&["--provider-self-test", "primary", "--json"]).unwrap(),
+            StartupAction::ProviderSelfTest(provider::QualificationTarget::Primary)
+        );
+        assert_eq!(
+            parse(&["--provider-self-test", "fm", "--json"]).unwrap(),
+            StartupAction::ProviderSelfTest(provider::QualificationTarget::Fm)
+        );
+        assert_eq!(
+            parse(&["--provider-self-test", "all", "--json"]).unwrap(),
+            StartupAction::ProviderSelfTest(provider::QualificationTarget::All)
+        );
+        for invalid in [
+            &["--provider-self-test"][..],
+            &["--provider-self-test", "pcc", "--json"],
+            &["--provider-self-test", "fm"],
+            &["--provider-self-test", "fm", "--json", "extra"],
+        ] {
+            assert!(parse(invalid).is_err(), "accepted {invalid:?}");
+        }
     }
 }

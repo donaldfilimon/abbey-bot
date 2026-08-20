@@ -26,11 +26,12 @@ use crate::guild::{GuildRegistry, ReplyCooldown};
 use crate::llm::{Backend, HttpTransport};
 use crate::persist::Stores;
 use crate::platform::SocialNetwork;
-use crate::provider::{FmConfig, FoundationModels, ProviderCapabilities, ProviderRoute};
-use crate::vision::{RemoteVision, VisionConfig, VisionError, VisionRequest, VisionTransport};
+use crate::provider::{FoundationModels, ProviderCapabilities, ProviderRoute};
+use crate::vision::{ConfiguredVision, VisionError, VisionRequest, VisionTransport};
 use crate::wdbx::Recall;
 
 mod memory_service;
+mod provider_setup;
 pub use memory_service::{MemoryService, RememberOutcome};
 
 /// Hidden-layer widths per `docs/spec/adaptivelearning.md`: `[18, 64, 32, 3]`.
@@ -160,12 +161,15 @@ impl VisionTransport for HttpVisionTransport {
             let body = crate::http_body::read_capped(response, 2 * 1024 * 1024)
                 .await
                 .map_err(|e| VisionError::internal(e.to_string()))?;
-            let body = String::from_utf8_lossy(&body).into_owned();
             if !status.is_success() {
-                let brief: String = body.chars().take(300).collect();
-                return Err(VisionError::internal(format!("HTTP {status}: {brief}")));
+                drop(body);
+                return Err(VisionError::internal(format!(
+                    "HTTP {status}: the vision provider rejected the request"
+                )));
             }
-            Ok(body)
+            String::from_utf8(body).map_err(|_| {
+                VisionError::internal("the vision provider returned non-UTF-8 response bytes")
+            })
         }
     }
 }
@@ -216,7 +220,7 @@ pub struct AppState {
     pub llm: HttpTransport,
     /// Shared, timeout-bounded client for Discord attachment downloads.
     pub attachments: reqwest::Client,
-    pub vision: Option<RemoteVision<HttpVisionTransport>>,
+    pub vision: Option<ConfiguredVision<HttpVisionTransport>>,
     pub data_dir: Option<PathBuf>,
     /// The bot's own user id per platform (`"discord:123"`), filled in at
     /// ready time; needed to tell a mention from a message and to ignore
@@ -370,15 +374,6 @@ impl AppState {
                 .validate()
                 .map_err(|e| StartupError(e.to_string()))?;
         }
-        let vision_config = VisionConfig::from_env();
-        if let Some(config) = &vision_config {
-            crate::llm::validate_remote_endpoint(&config.base_url, "ABBEY_VISION_ENDPOINT")
-                .map_err(StartupError)?;
-        }
-        let vision = vision_config.map(|config| RemoteVision {
-            config,
-            transport: HttpVisionTransport::default(),
-        });
         let mut rewards = RewardCollector::new();
         rewards.restore(stores.pending_rewards.clone());
         let fallback = match &backend {
@@ -396,9 +391,7 @@ impl AppState {
         }
         let tools_enabled = !std::env::var("ABBEY_BOT_LLM_TOOLS")
             .is_ok_and(|value| value.trim().eq_ignore_ascii_case("off"));
-        let foundation_models = FmConfig::from_env()
-            .map_err(StartupError)?
-            .map(|config| FoundationModels::new(config, backend.as_ref(), tools_enabled));
+        let provider_setup = provider_setup::from_env(backend.as_ref(), tools_enabled)?;
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -414,12 +407,12 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             backend,
             fallback,
-            foundation_models,
+            foundation_models: provider_setup.foundation_models,
             tools_enabled: std::sync::atomic::AtomicBool::new(tools_enabled),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
             attachments: attachment_client(),
-            vision,
+            vision: provider_setup.vision,
             data_dir,
             self_ids: Mutex::new(Vec::new()),
         }))

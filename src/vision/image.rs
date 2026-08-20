@@ -68,6 +68,43 @@ pub(super) async fn prepare_data_url(bytes: Vec<u8>) -> Result<String, VisionErr
     prepare_data_url_with_limiter(bytes, global_limiter()).await
 }
 
+pub(super) struct PreparedImage {
+    pub bytes: Vec<u8>,
+    pub extension: &'static str,
+}
+
+/// Validate and normalize bytes for a file-based provider. The exact same
+/// decoder and allocation ceilings protect both the remote and FM transports.
+pub(super) async fn prepare_file_bytes(bytes: Vec<u8>) -> Result<PreparedImage, VisionError> {
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(VisionError::invalid_image(
+            format!(
+                "the image is {} bytes; the cap is {MAX_IMAGE_BYTES}",
+                bytes.len()
+            ),
+            OVERSIZED_IMAGE_PUBLIC,
+        ));
+    }
+    run_bounded_blocking(global_limiter(), move || {
+        let prepared = prepare_image(bytes)?;
+        let extension = match sniff_mime(&prepared) {
+            "image/jpeg" => "jpg",
+            "image/png" => "png",
+            "image/webp" => "webp",
+            _ => {
+                return Err(VisionError::internal(
+                    "the validated image had no provider-safe file extension",
+                ));
+            }
+        };
+        Ok(PreparedImage {
+            bytes: prepared,
+            extension,
+        })
+    })
+    .await
+}
+
 async fn prepare_data_url_with_limiter(
     bytes: Vec<u8>,
     limiter: Arc<Semaphore>,
@@ -184,7 +221,7 @@ fn normalize_gif_first_frame(bytes: &[u8]) -> Result<Vec<u8>, VisionError> {
 
 /// Standard RFC 4648 base64 with padding, supplied by the audited dependency
 /// already shared with the voice providers.
-pub(super) fn data_url_unchecked(bytes: &[u8]) -> String {
+pub(crate) fn data_url_unchecked(bytes: &[u8]) -> String {
     let mime = sniff_mime(bytes);
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     format!("data:{mime};base64,{encoded}")

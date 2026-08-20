@@ -46,6 +46,8 @@ fn pcc_is_only_selected_by_the_exact_explicit_mode() {
     assert!(
         FmConfig::from_values(Some("cloud".into()), None, None, Some("1".into()), None,).is_err()
     );
+    let error = verify_fm_manifest(Path::new("/manifest-is-never-read"), &pcc).unwrap_err();
+    assert!(error.contains("intentionally unqualified"), "{error}");
 }
 
 #[test]
@@ -166,6 +168,29 @@ fn invocation_uses_argv_and_stdin_without_transcript_saving() {
     assert!(!args.iter().any(|arg| arg.contains("favorite color")));
 }
 
+#[test]
+fn image_invocation_keeps_prompt_off_argv_and_enables_ocr_only_for_ocr() {
+    let cfg = config(FmMode::System);
+    let image = Path::new("/tmp/synthetic.png");
+    for (task, expected_ocr) in [
+        (FmImageTask::QualificationShapes, false),
+        (FmImageTask::QualificationOcr, true),
+    ] {
+        let invocation = CliInvocation::for_image(&cfg, task, image);
+        let args = invocation
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>();
+        assert!(args.iter().any(|arg| arg == "--image"));
+        assert!(args.iter().any(|arg| arg == "/tmp/synthetic.png"));
+        assert!(!args.iter().any(|arg| arg.contains("red square")));
+        assert!(!args.iter().any(|arg| arg == "--save-transcript"));
+        assert_eq!(args.iter().any(|arg| arg == "ocr"), expected_ocr);
+        assert!(!invocation.stdin.is_empty());
+    }
+}
+
 #[tokio::test]
 #[cfg(unix)]
 async fn child_environment_excludes_tokens_and_api_keys() {
@@ -186,6 +211,37 @@ async fn child_environment_excludes_tokens_and_api_keys() {
     assert!(!output.contains("DISCORD_TOKEN"), "{output}");
     assert!(!output.contains("API_KEY"), "{output}");
     assert!(!output.contains("secret"), "{output}");
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn cli_process_bounds_timeout_output_and_exit_status() {
+    let invocation = CliInvocation {
+        program: "/usr/bin/yes".into(),
+        args: Vec::new(),
+        stdin: Vec::new(),
+        environment: Vec::new(),
+    };
+    let error = invocation.run(5).await.unwrap_err();
+    assert!(error.to_string().contains("exceeded"), "{error}");
+
+    let invocation = CliInvocation {
+        program: "/bin/sleep".into(),
+        args: vec!["2".into()],
+        stdin: Vec::new(),
+        environment: Vec::new(),
+    };
+    let error = invocation.run(1).await.unwrap_err();
+    assert!(error.to_string().contains("timed out"), "{error}");
+
+    let invocation = CliInvocation {
+        program: "/usr/bin/false".into(),
+        args: Vec::new(),
+        stdin: Vec::new(),
+        environment: Vec::new(),
+    };
+    let error = invocation.run(5).await.unwrap_err();
+    assert!(error.to_string().contains("unsuccessfully"), "{error}");
 }
 
 #[test]
@@ -313,6 +369,25 @@ fn private_schema_file_is_owner_only_and_removed() {
         let file = PrivateSchemaFile::create(&decision_schema(&[]).unwrap()).unwrap();
         let path = file.path().to_path_buf();
         assert!(path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        path
+    };
+    assert!(!path.exists());
+}
+
+#[test]
+fn private_image_file_is_owner_only_and_removed() {
+    let path = {
+        let file = PrivateImageFile::create(b"synthetic image", "png").unwrap();
+        let path = file.path().to_path_buf();
+        assert_eq!(std::fs::read(&path).unwrap(), b"synthetic image");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
