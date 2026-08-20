@@ -1,3 +1,3 @@
 # Isolated PEP 517 build environment for webrtcvad's legacy setup.py sdist.
 # Keep this exact version aligned with the runtime lock.
-setuptools==80.10.2
+setuptools==83.0.0
