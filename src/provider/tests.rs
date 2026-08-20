@@ -1,5 +1,15 @@
 use super::*;
 
+#[cfg(windows)]
+const TEST_FM_CLI: &str = r"C:\Windows\System32\fm.exe";
+#[cfg(not(windows))]
+const TEST_FM_CLI: &str = "/usr/bin/fm";
+
+#[cfg(windows)]
+const TEST_PARENT_FM_CLI: &str = r"C:\Windows\..\Temp\fm.exe";
+#[cfg(not(windows))]
+const TEST_PARENT_FM_CLI: &str = "/usr/../tmp/fm";
+
 fn local() -> Backend {
     Backend::OpenAiCompatible {
         endpoint: "http://127.0.0.1:8282".into(),
@@ -38,11 +48,17 @@ fn fm_is_off_and_never_fallback_by_default() {
 
 #[test]
 fn pcc_is_only_selected_by_the_exact_explicit_mode() {
-    let pcc = FmConfig::from_values(Some("pcc".into()), None, None, Some("1".into()), None)
-        .unwrap()
-        .unwrap();
+    let pcc = FmConfig::from_values(
+        Some("pcc".into()),
+        None,
+        Some(TEST_FM_CLI.into()),
+        Some("1".into()),
+        None,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(pcc.mode, FmMode::Pcc);
-    assert_eq!(pcc.cli, Path::new(DEFAULT_FM_CLI));
+    assert_eq!(pcc.cli, Path::new(TEST_FM_CLI));
     assert!(
         FmConfig::from_values(Some("cloud".into()), None, None, Some("1".into()), None,).is_err()
     );
@@ -61,13 +77,13 @@ fn endpoint_and_executable_fail_closed() {
             None,
         )
     };
-    assert!(enabled("http://127.0.0.1:1976", "/usr/bin/fm").is_ok());
-    assert!(enabled("http://models.example.com", "/usr/bin/fm").is_err());
-    assert!(enabled("https://models.example.com", "/usr/bin/fm").is_err());
-    assert!(enabled("http://user:secret@127.0.0.1", "/usr/bin/fm").is_err());
-    assert!(enabled("http://127.0.0.1:1976/v1", "/usr/bin/fm").is_err());
+    assert!(enabled("http://127.0.0.1:1976", TEST_FM_CLI).is_ok());
+    assert!(enabled("http://models.example.com", TEST_FM_CLI).is_err());
+    assert!(enabled("https://models.example.com", TEST_FM_CLI).is_err());
+    assert!(enabled("http://user:secret@127.0.0.1", TEST_FM_CLI).is_err());
+    assert!(enabled("http://127.0.0.1:1976/v1", TEST_FM_CLI).is_err());
     assert!(enabled("http://127.0.0.1:1976", "fm").is_err());
-    assert!(enabled("http://127.0.0.1:1976", "/usr/../tmp/fm").is_err());
+    assert!(enabled("http://127.0.0.1:1976", TEST_PARENT_FM_CLI).is_err());
     for timeout in ["0", "soon", "18446744073709551616"] {
         assert!(
             FmConfig::from_values(
