@@ -83,10 +83,17 @@ microphone, or call. Every AI request made by the bot is restricted to a
 configured loopback endpoint:
 
 ```sh
+cargo build --locked --release
 set -a
 . "$HOME/.config/abbey-bot/env"
 set +a
-"$HOME/.local/libexec/abbey-bot/abbey-bot" \
+env \
+  -u DISCORD_TOKEN \
+  -u ANTHROPIC_API_KEY \
+  -u OPENAI_API_KEY \
+  ABBEY_DATA_DIR= \
+  ABBEY_VISION_ENDPOINT=off \
+  ./target/release/abbey-bot \
   --voice-self-test "$HOME/abbey-local-audition.wav"
 ```
 
