@@ -195,3 +195,19 @@ access logs, and historical consent are explicitly not acceptable substitutes.
       push the branch **without merging**
 - [ ] Keep `cargo audit` honest and non-green: rustls-webpki plus DAVE/OpenMLS/libcrux advisories
       stay documented, with no hand-maintained cryptographic fork
+
+## Memory relevance and intelligence layers (2026-08-20)
+
+- [x] `src/recall.rs` — deterministic relevance selection with count + character budgets, rarity
+      weighting, recency tiebreak, and an explicit stopword list (regression test: function words
+      must not outrank real terms; counter-test: `go`/`ai`/`js`/`c`/`os` stay usable keys)
+- [x] `PersonaContext::render(query)` focuses facts on the message and discloses the trim
+- [x] `Engine::prepare` passes the user's message as the relevance query
+- [x] Short fact lists render whole regardless of wording — focusing never becomes forgetting
+- [ ] Fact supersession — needs an explicit `replaces` parameter or a model-judged path; NOT
+      inferred from free text (see the goals note for why)
+- [ ] Retrieval currently ranks lexically; embedding-backed ranking via `wdbx`/`embedding.rs` is a
+      later slice and must stay off the hot path
+- [x] Cross-guild isolation asserted by a dedicated test, not merely inherited from the
+      `"{guild}:{user}"` key: a highly relevant fact in another guild stays invisible, and the same
+      user still sees their own facts in the guild that owns them

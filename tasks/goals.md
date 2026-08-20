@@ -135,3 +135,32 @@ status: in_progress
   access logs, or historical consent. `cargo audit` stays deliberately non-green: the
   `rustls-webpki` and DAVE/OpenMLS/libcrux advisories remain documented, not hidden behind a
   hand-maintained cryptographic fork.
+- **2026-08-20 slice 2 — memory relevance (branch `codex/memory-revision-20260820`).** Fixed a
+  concrete defect rather than adding a layer: `PersonaContext::render` joined *every* stored fact
+  into every prompt, so at the hundred-fact cap a message like "what time is it" carried up to
+  30,000 characters of unrelated biography. New pure `src/recall.rs` ranks facts against the
+  message being answered — lexical overlap weighted by term rarity across that user's own facts —
+  with no embedding call, no network, and nothing on the hot path that can stall. Ranking is not
+  forgetting, enforced three ways: the prompt discloses held-back facts as "(+N more remembered
+  facts not shown for this message)" so the model never mistakes a partial view for the whole
+  file; a short fact list renders whole regardless of wording; `/recall` still lists everything and
+  `/forget` remains the only deletion. A snapshot test caught a real flaw in the ranking itself —
+  rarity weighting made the "a" in "a rust question" look maximally distinctive because it
+  appeared in exactly one fact, floating an unrelated fact to the top; the cheap fix (drop tokens
+  under three characters) would have destroyed `go`, `ai`, `js`, `c`, and `os` as retrieval keys,
+  so it is an explicit stopword list with regression tests in both directions. Gate: 428 passed /
+  0 failed / 1 ignored, exit 0 (was 415).
+- **Deliberately not built, with the reason recorded:** automatic contradiction detection ("I use
+  Rust" superseded by "I moved to Zig"). Deterministic supersession over free text mis-supersedes
+  real facts, and silently losing a user's memory is a worse failure than showing one stale line.
+  It needs either an explicit `replaces` parameter or a model-judged path — each its own decision,
+  neither a guess to slip in under "smarter memory".
+- **2026-08-20 parallel dispatch (three isolated worktrees, results pending):** (1) a routing
+  signal layer composing *on top* of the canonical `persona.rs` — its keyword table, weights,
+  prior, and tie order are a verbatim abi-ai transcription and must not drift, so distress and
+  urgency detection is additive and explicit selectors stay absolute; (2) a delayed-outcome reward
+  path in `src/brain/*`, since the DQN currently learns only from its own immediate heuristic and
+  never observes what the human did next; (3) a lexical grounding guard flagging specifics
+  (versions, dates, statistics, quotes) asserted in a reply but absent from the supplied grounding
+  — explicitly a lexical check, not a hallucination detector, and required to test the
+  false-positive direction because a guard that flags numbers the user supplied is worse than none.

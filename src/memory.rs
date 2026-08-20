@@ -636,6 +636,30 @@ mod tests {
     }
 
     #[test]
+    fn relevance_selection_never_reaches_across_guilds() {
+        // The privacy boundary. Facts are keyed "{guild}:{user}", so isolation
+        // is a property of the key — but ranking is new machinery reading those
+        // facts, and "the key happens to separate them" is not the same as a
+        // test that fails if it ever stops. A highly relevant fact in another
+        // guild must stay invisible no matter how well it matches.
+        let mut bank = MemoryBank::default();
+        bank.remember("guild-a", "u", "runs the kubernetes cluster", 1);
+        bank.remember("guild-b", "u", "mundane unrelated detail", 1);
+
+        let context = bank.context_for("guild-b", "u", "chan");
+        let rendered = context.render("kubernetes cluster question");
+        assert!(
+            !rendered.contains("kubernetes"),
+            "guild-a's fact leaked into guild-b's context: {rendered}"
+        );
+        assert!(rendered.contains("mundane unrelated detail"));
+
+        // And the same user in the other guild still sees their own.
+        let own = bank.context_for("guild-a", "u", "chan");
+        assert!(own.render("kubernetes").contains("kubernetes"));
+    }
+
+    #[test]
     fn a_short_fact_list_is_never_trimmed_by_focusing() {
         // The common case — a handful of facts — must behave exactly as it did
         // before relevance selection existed, whatever the message says.
