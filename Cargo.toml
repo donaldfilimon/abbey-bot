@@ -25,4 +25,8 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # support Discord requires in 2026; `receive` exposes decoded, jitter-buffered
 # 20 ms voice ticks for the Realtime bridge.
 songbird = { version = "0.6.0", features = ["receive"] }
+# Songbird's RawAdapter registers its raw container but leaves Symphonia codec
+# features to the application. PCM is required to decode the f32 stream used by
+# both Realtime output and the privacy-safe self-deafened greeting.
+symphonia = { version = "0.5.5", default-features = false, features = ["pcm"] }
 base64 = "0.22.1"

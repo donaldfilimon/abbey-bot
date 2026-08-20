@@ -704,12 +704,14 @@ impl VoiceRuntime {
     }
 }
 
-/// Establish the explicitly configured no-audio connection during an operator
-/// requested deployment. This path refuses to run when a provider key exists:
-/// a restart must never begin transmitting participant audio automatically.
+/// Establish the explicitly configured no-receive connection during an
+/// operator-requested deployment. This path refuses to run when a provider key
+/// exists: a restart must never begin transmitting participant audio
+/// automatically. It may emit one prevalidated local greeting.
 pub async fn autojoin_self_deafened(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
+    greeting_file: Option<std::path::PathBuf>,
 ) -> Result<(), String> {
     if runtime.config.realtime_ready() {
         return Err(
@@ -719,6 +721,22 @@ pub async fn autojoin_self_deafened(
     }
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
+    let greeting_file = if let Some(path) = greeting_file {
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|e| format!("reading the greeting audio metadata failed: {e}"))?;
+        if !metadata.is_file() {
+            return Err("ABBEY_VOICE_GREETING_FILE must name a regular file".into());
+        }
+        if metadata.len() > 10 * 1024 * 1024 {
+            return Err("ABBEY_VOICE_GREETING_FILE must be at most 10 MiB".into());
+        }
+        let file = std::fs::File::open(&path)
+            .map_err(|e| format!("opening the greeting PCM failed: {e}"))?;
+        Some((file, path))
+    } else {
+        None
+    };
     let channel = channel_id
         .to_channel(&ctx.http)
         .await
@@ -745,16 +763,35 @@ pub async fn autojoin_self_deafened(
         runtime.set_status(generation, format!("Discord join failed: {e}"));
         format!("Discord refused the voice join: {e}")
     })?;
-    let result = {
+    let (deafen_result, greeting_track) = {
         let mut call = call.lock().await;
-        call.deafen(true).await
+        let result = call.deafen(true).await;
+        let track = if result.is_ok() {
+            greeting_file.map(|(file, path)| {
+                (
+                    call.play_only_input(RawAdapter::new(file, 48_000, 2).into()),
+                    path,
+                )
+            })
+        } else {
+            None
+        };
+        (result, track)
     };
-    if let Err(error) = result {
+    if let Err(error) = deafen_result {
         runtime.set_status(generation, format!("Discord self-deafen failed: {error}"));
         let _ = manager.remove(guild_id).await;
         return Err(format!(
             "entering the required self-deafened state failed: {error}"
         ));
+    }
+    if let Some((track, path)) = greeting_track {
+        if let Err(error) = track.make_playable_async().await {
+            let _ = manager.remove(guild_id).await;
+            runtime.set_status(generation, format!("greeting audio failed: {error}"));
+            return Err(format!("preparing the greeting audio failed: {error}"));
+        }
+        tracing::info!(path = %path.display(), "self-deafened greeting audio is playable and queued for Discord output");
     }
     runtime.set_status(
         generation,
@@ -1327,6 +1364,21 @@ mod tests {
             reply.ends_with("limit)"),
             "truncation must be stated, not silent"
         );
+    }
+
+    #[tokio::test]
+    async fn songbird_raw_pcm_input_has_a_registered_decoder() {
+        let samples = vec![0_u8; 480 * 2 * std::mem::size_of::<f32>()];
+        let input: songbird::input::Input =
+            RawAdapter::new(std::io::Cursor::new(samples), 48_000, 2).into();
+        let playable = input
+            .make_playable_async(
+                songbird::input::codecs::get_codec_registry(),
+                songbird::input::codecs::get_probe(),
+            )
+            .await
+            .expect("RawAdapter f32 PCM must be decodable by the deployed registry");
+        assert!(playable.is_playable());
     }
 
     #[tokio::test]

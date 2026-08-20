@@ -232,15 +232,30 @@ async fn main() -> Result<(), Error> {
                         );
                     }
                 }
-                if std::env::var("ABBEY_VOICE_AUTOJOIN")
+                let voice_autojoin = std::env::var("ABBEY_VOICE_AUTOJOIN")
                     .map(|value| value.trim() == "1")
-                    .unwrap_or(false)
-                {
+                    .unwrap_or(false);
+                let voice_greeting_file = std::env::var("ABBEY_VOICE_GREETING_FILE")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from);
+                if voice_greeting_file.is_some() && !voice_autojoin {
+                    return Err(runtime::StartupError(
+                        "ABBEY_VOICE_GREETING_FILE requires ABBEY_VOICE_AUTOJOIN=1".into(),
+                    )
+                    .into());
+                }
+                if voice_autojoin {
                     match voice_runtime.as_ref() {
                         Some(runtime) => {
-                            commands::autojoin_self_deafened(ctx, std::sync::Arc::clone(runtime))
-                                .await
-                                .map_err(runtime::StartupError)?;
+                            commands::autojoin_self_deafened(
+                                ctx,
+                                std::sync::Arc::clone(runtime),
+                                voice_greeting_file,
+                            )
+                            .await
+                            .map_err(runtime::StartupError)?;
                         }
                         None => {
                             return Err(runtime::StartupError(

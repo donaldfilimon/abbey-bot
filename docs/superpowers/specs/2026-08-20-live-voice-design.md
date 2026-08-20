@@ -1,7 +1,7 @@
 # Abbey Live Voice Design
 
-**Date:** 2026-08-20  
-**Status:** self-deafened Discord join validated live; provider speech blocked on configuration
+**Date:** 2026-08-20
+**Status:** self-deafened join and bounded output validated live; provider speech blocked on configuration
 
 ## Outcome
 
@@ -32,10 +32,12 @@ voice session, and an OpenAI key used elsewhere does not opt voice in.
 works only in `ABBEY_VOICE_GUILD_ID` and only for the voice channel named by
 `ABBEY_VOICE_CHANNEL_ID`; Stage channels are rejected. The operations-only
 `ABBEY_VOICE_AUTOJOIN=1` path is permitted only when no provider key exists and
-immediately self-deafens, so it cannot receive or transmit call audio. Normal
-full-duplex mode still requires `/voice join`. Its response states that channel
-audio is sent to the configured provider and names `/voice leave` as the stop
-control.
+immediately self-deafens, so it cannot receive or provider-stream call audio.
+It may play one prevalidated, size-bounded local PCM greeting when
+`ABBEY_VOICE_GREETING_FILE` is set; this is output-only and makes no provider
+request. Normal full-duplex mode still requires `/voice join`. Its response
+states that channel audio is sent to the configured provider and names
+`/voice leave` as the stop control.
 
 The code does not ingest Discord Go Live video. Realtime supports audio plus
 discrete image inputs, not video; Songbird's supported receive API is voice and
@@ -50,9 +52,12 @@ Required to opt in to the Discord connection:
 - `ABBEY_VOICE_CHANNEL_ID`
 
 `OPENAI_API_KEY` is required for full-duplex Realtime speech. Without it,
-Abbey can connect only in self-deafened, audio-free mode.
+Abbey can connect only in self-deafened mode; the optional local greeting is
+the sole audio output available on the autojoin path.
 
 Optional: `ABBEY_VOICE_AUTOJOIN` (no-key/self-deafened only),
+`ABBEY_VOICE_GREETING_FILE` (one raw 48 kHz stereo f32 PCM file, at most 10
+MiB, output-only and valid only with the self-deafened autojoin path),
 `ABBEY_VOICE_REALTIME_ENDPOINT` (default OpenAI WSS),
 `ABBEY_VOICE_REALTIME_MODEL` (current default `gpt-realtime-2.1`),
 `ABBEY_VOICE_NAME` (default `marin`), and `ABBEY_VOICE_INSTRUCTIONS`.
@@ -60,12 +65,13 @@ Optional: `ABBEY_VOICE_AUTOJOIN` (no-key/self-deafened only),
 ## Verification contract
 
 The offline gate covers fail-closed configuration, key redaction, endpoint
-policy, PCM channel/rate transforms, formatting, Clippy, all unit tests, and a
-locked release build. Live completion additionally requires a funded provider
-key, command registration in the target guild, bot Connect/Speak permission,
-in-channel consent, an observed DAVE join, an observed spoken turn in each
-direction, provider-side VAD interruption behavior (including how much already
-buffered Discord playback remains audible), `/voice status`, and `/voice leave`.
+policy, PCM channel/rate transforms, raw PCM codec registration, formatting,
+Clippy, all unit tests, and a locked release build. The self-deafened join and
+one bounded local greeting have been observed live. Full-duplex completion
+additionally requires a funded provider key, command registration in the target
+guild, in-channel consent, an observed spoken turn in each direction,
+provider-side VAD interruption behavior (including how much already buffered
+Discord playback remains audible), `/voice status`, and `/voice leave`.
 
 ## Dependency audit
 
