@@ -974,6 +974,39 @@ mod tests {
     use super::*;
     use crate::voice::{VoiceBackendConfig, VoiceConfig};
 
+    #[test]
+    fn only_active_conversation_phases_process_audio() {
+        // `processes_audio` is the gate that decides whether a frame may reach
+        // STT, so the paused states are the safety-critical half of this
+        // assertion. `AwaitingConsent` in particular exists precisely because
+        // consent was revoked or membership changed: if it ever starts
+        // reporting true, revocation silently stops muting the microphone.
+        for active in [
+            VoicePhase::Listening,
+            VoicePhase::Thinking,
+            VoicePhase::Speaking,
+        ] {
+            assert!(
+                active.processes_audio(),
+                "{} must process audio",
+                active.label()
+            );
+        }
+        for paused in [
+            VoicePhase::Disconnected,
+            VoicePhase::PresenceOnly,
+            VoicePhase::Connecting,
+            VoicePhase::AwaitingConsent,
+            VoicePhase::Failed,
+        ] {
+            assert!(
+                !paused.processes_audio(),
+                "{} must never process audio",
+                paused.label()
+            );
+        }
+    }
+
     fn runtime() -> VoiceRuntime {
         VoiceRuntime::new(VoiceConfig {
             guild_id: 1,

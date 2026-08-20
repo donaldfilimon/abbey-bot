@@ -1773,6 +1773,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_conversation_flag_independently_blocks_audio() {
+        // The consent contract is "all five clear", not "most are clear".
+        // Each flag is asserted alone so a future edit that drops one from the
+        // conjunction fails here rather than in a live call.
+        assert!(conversation_flags_are_clear(
+            false, false, false, false, false
+        ));
+        for (index, blocked) in [
+            conversation_flags_are_clear(true, false, false, false, false),
+            conversation_flags_are_clear(false, true, false, false, false),
+            conversation_flags_are_clear(false, false, true, false, false),
+            conversation_flags_are_clear(false, false, false, true, false),
+            conversation_flags_are_clear(false, false, false, false, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(!blocked, "flag {index} alone must block conversation");
+        }
+    }
+
+    #[test]
+    fn stopping_voice_needs_presence_or_manage_guild() {
+        // Presence in the configured channel is sufficient on its own.
+        assert!(can_stop_voice(true, None));
+        assert!(can_stop_voice(true, Some(Permissions::empty())));
+        // Otherwise it takes Manage Guild specifically — not merely holding
+        // some permission, and not the voice permissions Abbey itself needs.
+        assert!(can_stop_voice(false, Some(Permissions::MANAGE_GUILD)));
+        assert!(!can_stop_voice(false, Some(required_voice_permissions())));
+        assert!(!can_stop_voice(false, Some(Permissions::empty())));
+        assert!(!can_stop_voice(false, None));
+    }
+
+    #[test]
+    fn required_voice_permissions_stay_least_privilege() {
+        let required = required_voice_permissions();
+        for expected in [
+            Permissions::VIEW_CHANNEL,
+            Permissions::SEND_MESSAGES,
+            Permissions::CONNECT,
+            Permissions::SPEAK,
+        ] {
+            assert!(required.contains(expected), "missing {expected:?}");
+        }
+        // Joining a voice channel must never quietly require moderator-grade
+        // permissions; those gate the commands, not the connection.
+        for forbidden in [
+            Permissions::ADMINISTRATOR,
+            Permissions::MANAGE_GUILD,
+            Permissions::MANAGE_MESSAGES,
+            Permissions::MUTE_MEMBERS,
+            Permissions::MOVE_MEMBERS,
+        ] {
+            assert!(
+                !required.contains(forbidden),
+                "unexpectedly requires {forbidden:?}"
+            );
+        }
+    }
+
+    #[test]
     fn no_audio_config_disables_decryption_and_decoding() {
         let config = no_audio_songbird_config();
         assert_eq!(config.decode_mode, songbird::driver::DecodeMode::Pass);
