@@ -21,8 +21,20 @@ pub(super) const MEMORY_PROJECTION_VERSION: u32 = 1;
 
 /// Reconcile loaded state before it becomes observable through `AppState`.
 /// A successful subsequent JSON save atomically publishes version 1; crashes
-/// before that simply repeat the idempotent legacy union next startup.
-pub(super) fn reconcile_loaded(mut stores: Stores, mut recall: Recall) -> (Stores, Recall) {
+/// before that simply repeat the idempotent legacy union next startup. A
+/// future projection is rejected before either in-memory document is mutated:
+/// an older binary cannot safely infer which representation that version made
+/// authoritative, so starting would risk erasing facts during reconciliation.
+pub(super) fn reconcile_loaded(
+    mut stores: Stores,
+    mut recall: Recall,
+) -> Result<(Stores, Recall), String> {
+    if stores.memory_projection_version > MEMORY_PROJECTION_VERSION {
+        return Err(format!(
+            "state uses unsupported memory projection version {}; this binary supports up to {}",
+            stores.memory_projection_version, MEMORY_PROJECTION_VERSION
+        ));
+    }
     stores.memory.migrate_legacy_user_keys();
     if stores.memory_projection_version < MEMORY_PROJECTION_VERSION {
         for (guild, fact) in recall.all_memory_facts() {
@@ -33,7 +45,7 @@ pub(super) fn reconcile_loaded(mut stores: Stores, mut recall: Recall) -> (Store
         stores.memory_projection_version = MEMORY_PROJECTION_VERSION;
     }
     reconcile_projection(&stores, &mut recall);
-    (stores, recall)
+    Ok((stores, recall))
 }
 
 fn reconcile_projection(stores: &Stores, recall: &mut Recall) {
@@ -267,7 +279,7 @@ mod tests {
         let mut recall = Recall::new();
         recall.remember("g", "u", "semantic legacy", 2);
 
-        let (stores, recall) = reconcile_loaded(stores, recall);
+        let (stores, recall) = reconcile_loaded(stores, recall).expect("legacy migration");
         assert_eq!(stores.memory_projection_version, MEMORY_PROJECTION_VERSION);
         assert_eq!(stores.memory.facts("g", "u"), ["plain", "semantic legacy"]);
         assert_eq!(
@@ -290,7 +302,7 @@ mod tests {
         let mut recall = Recall::new();
         recall.remember("g", "u", "deleted before crash", 1);
 
-        let (stores, recall) = reconcile_loaded(stores, recall);
+        let (stores, recall) = reconcile_loaded(stores, recall).expect("canonical repair");
         assert_eq!(stores.memory.facts("g", "u"), ["survives"]);
         assert_eq!(
             recall
@@ -315,5 +327,21 @@ mod tests {
             .context_for("g", "u", "c", "anything", 3, 0.83);
 
         assert_eq!(context.reputation, 0.83);
+    }
+
+    #[test]
+    fn a_future_projection_version_fails_closed_before_reconciliation() {
+        let mut stores = Stores {
+            memory_projection_version: MEMORY_PROJECTION_VERSION + 1,
+            ..Stores::default()
+        };
+        stores.memory.remember("g", "u", "future canonical fact", 2);
+        let mut recall = Recall::new();
+        recall.remember("g", "u", "future semantic fact", 3);
+
+        let error = reconcile_loaded(stores, recall).expect_err("future schema must not start");
+
+        assert!(error.contains("unsupported memory projection version 2"));
+        assert!(error.contains("supports up to 1"));
     }
 }

@@ -359,7 +359,8 @@ impl AppState {
             }
             None => (Stores::default(), Recall::new()),
         };
-        let (stores, recall) = memory_service::reconcile_loaded(stores, recall);
+        let (stores, recall) =
+            memory_service::reconcile_loaded(stores, recall).map_err(StartupError)?;
         let backend = Backend::from_env();
         if let Some(backend) = &backend {
             backend
