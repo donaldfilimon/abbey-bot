@@ -90,7 +90,6 @@ pub async fn voice_resume(
 }
 
 async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
     if !consent {
         ctx.say("Voice stayed off. Set `consent:true` only after everyone currently in the configured channel was notified and agreed.")
             .await?;
@@ -126,6 +125,12 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
 
+    // Make this issued start visible to later stop/withdrawal operations
+    // before Discord's first await, without yet superseding a legitimate
+    // pending preflight. Publication happens only after remote channel and
+    // permission validation, if this lifecycle generation is still current.
+    let start_operation = runtime.start_operation_token();
+    ctx.defer_ephemeral().await?;
     let channel = channel_id.to_channel(ctx.http()).await?;
     let Some(channel) = channel.guild() else {
         ctx.say("The configured voice destination is not a server channel.")
@@ -143,9 +148,14 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
 
-    // Invalid callers/channels must not cancel or advertise a slow start.
-    // Reserve only after all cheap cache/channel/permission validation passes.
-    let start_generation = runtime.reserve_start();
+    // Invalid callers/channels must not cancel or advertise a slow start. At
+    // the same time, an authorized stop that crossed either Discord await must
+    // prevent this older request from publishing a fresh reservation.
+    let Some(start_generation) = runtime.reserve_start_if_unchanged(start_operation) else {
+        ctx.say("This voice start was cancelled while Discord validated the channel; no audio was captured.")
+            .await?;
+        return Ok(());
+    };
     let _start_attempt = StartAttempt {
         runtime: Arc::clone(&runtime),
         generation: start_generation,

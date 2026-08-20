@@ -431,6 +431,19 @@ fn finishing_an_old_start_cannot_clear_its_replacement() {
 }
 
 #[tokio::test]
+async fn a_stop_between_start_entry_and_reservation_invalidates_the_older_operation() {
+    let runtime = runtime();
+    let issued_start = runtime.start_operation_token();
+
+    // Models `/voice leave` or a text withdrawal completing while the join
+    // command is suspended in its defer/channel REST awaits.
+    runtime.cancel_pending_start();
+
+    assert_eq!(runtime.reserve_start_if_unchanged(issued_start), None);
+    assert!(!runtime.snapshot().await.start_pending);
+}
+
+#[tokio::test]
 async fn provider_readiness_cannot_publish_listening_before_activation() {
     let runtime = runtime();
     let start_generation = runtime.reserve_start();

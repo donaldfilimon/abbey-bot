@@ -320,6 +320,38 @@ impl VoiceRuntime {
         generation
     }
 
+    /// Capture the lifecycle generation before a validated start performs its
+    /// first await. This is deliberately not a pending-start reservation:
+    /// channel and permission validation may still reject the request without
+    /// superseding a legitimate preflight already in progress.
+    #[must_use]
+    pub fn start_operation_token(&self) -> u64 {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.start_generation.load(Ordering::SeqCst)
+    }
+
+    /// Publish a pending start only if no stop, withdrawal, safety event, or
+    /// newer start crossed the caller's pre-await operation token. The check
+    /// and reservation share the activation lock with cancellation, so an
+    /// older request cannot resume after `/voice leave` and become a new start.
+    pub fn reserve_start_if_unchanged(&self, operation_token: u64) -> Option<u64> {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.start_generation.load(Ordering::SeqCst) != operation_token {
+            return None;
+        }
+        let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.pending_start_generation
+            .store(generation, Ordering::SeqCst);
+        self.start_changes.send_replace(generation);
+        Some(generation)
+    }
+
     /// Cancel a pending start and synchronously close any media gate it may
     /// have just opened. The same non-async mutex guards activation's final
     /// generation check and media store, so a stop request can never be
