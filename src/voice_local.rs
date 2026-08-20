@@ -474,53 +474,43 @@ async fn process_turn(work: TurnWork) -> TurnOutcome {
         |id| format!("discord:{id}"),
     );
     let context = if safely_attributed {
+        let reputation = work.state.reputation_snapshot(&scoped_guild, &scoped_user);
         pipeline::assemble_context(
             &work.state,
             &scoped_guild,
             &scoped_user,
             &scope,
             &transcript,
+            reputation,
         )
     } else {
         PersonaContext::empty()
     };
-    let mut host = crate::runtime::ToolScope {
-        state: &work.state,
-        scoped_guild,
-        scoped_user,
-        scoped_channel: scope.clone(),
-        persona,
-    };
     let generation = match work.state.acquire_generation().await {
-        Err(error) => Err(crate::llm::LlmError(error)),
+        Err(error) => Err(error),
         Ok(_slot) => {
-            generation::generate_with_backend::<generation::NoDelivery>(
+            generation::generate_without_delivery(
                 &work.state,
                 &work.backend,
-                &mut host,
+                persona,
                 &generation::Ask {
                     scope: &scope,
                     context: &context,
                     user_input: &transcript,
-                    // A canceled task cannot roll back a tool that already
-                    // mutated memory. Voice therefore receives WDBX/persona
-                    // context but never side-effecting model tools.
-                    offer_tools: false,
                     now: runtime::now(),
                 },
-                None,
                 Some(VOICE_SYSTEM_SUFFIX),
             )
             .await
         }
     };
-    let (answer, _, _) = match generation {
+    let (answer, _) = match generation {
         Ok(answer) => answer,
         Err(error) => {
             return TurnOutcome::Failed {
                 turn: work.turn,
                 stage: "Abbey reasoning",
-                error: error.0,
+                error: error.to_string(),
             };
         }
     };

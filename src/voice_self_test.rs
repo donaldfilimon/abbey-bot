@@ -93,31 +93,25 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
     let state = AppState::in_memory();
     let selected_persona = persona::route(&transcript, None).persona;
     let scope = "discord:voice:self-test";
-    let mut host = runtime::ToolScope {
-        state: &state,
-        scoped_guild: scope.into(),
-        scoped_user: scope.into(),
-        scoped_channel: scope.into(),
-        persona: selected_persona,
-    };
     let context = PersonaContext::empty();
-    let _slot = state.acquire_generation().await?;
-    let (answer, _, _) = generation::generate_with_backend::<generation::NoDelivery>(
+    let _slot = state
+        .acquire_generation()
+        .await
+        .map_err(|error| error.to_string())?;
+    let (answer, _) = generation::generate_without_delivery(
         &state,
         &backend,
-        &mut host,
+        selected_persona,
         &generation::Ask {
             scope,
             context: &context,
             user_input: &transcript,
-            offer_tools: false,
             now: runtime::now(),
         },
-        None,
         Some(SELF_TEST_SYSTEM_SUFFIX),
     )
     .await
-    .map_err(|error| error.0)?;
+    .map_err(|error| error.to_string())?;
     let spoken_answer = spoken_text(&answer);
     if spoken_answer.is_empty() {
         return Err("Abbey's local reasoning returned no speakable answer".into());

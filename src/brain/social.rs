@@ -23,6 +23,14 @@ const EMA_GAIN: f64 = 0.05;
 /// Flat deduction applied by [`SocialBrain::penalize`].
 const PENALTY: f64 = 0.1;
 
+fn normalized_reputation(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        DEFAULT_REPUTATION
+    }
+}
+
 /// One append-only audit row: how a member's standing moved and why.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReputationEvent {
@@ -90,6 +98,7 @@ impl SocialBrain {
         }
         let value = store
             .load_reputation(guild, user)
+            .map(normalized_reputation)
             .unwrap_or(DEFAULT_REPUTATION);
         self.scores.insert(key, value);
         value
@@ -161,7 +170,8 @@ impl SocialBrain {
 
     fn set(&mut self, guild: &str, user: &str, value: f64) {
         let key = Key::new(guild, user);
-        self.scores.insert(key.clone(), value);
+        self.scores
+            .insert(key.clone(), normalized_reputation(value));
         self.dirty.insert(key);
     }
 }
@@ -241,6 +251,21 @@ mod tests {
         assert!(close(brain.reputation(U, G, &store), 0.9));
         // Reading never dirties.
         assert_eq!(brain.dirty_len(), 0);
+    }
+
+    #[test]
+    fn malformed_persisted_scores_are_normalized_at_the_authority_boundary() {
+        for (stored, expected) in [
+            (-0.4, 0.0),
+            (1.7, 1.0),
+            (f64::NAN, DEFAULT_REPUTATION),
+            (f64::INFINITY, DEFAULT_REPUTATION),
+        ] {
+            let mut store = InMemoryReputationStore::new();
+            store.store_reputation(G, U, stored, 0);
+            let mut brain = SocialBrain::new();
+            assert!(close(brain.reputation(U, G, &store), expected));
+        }
     }
 
     #[test]

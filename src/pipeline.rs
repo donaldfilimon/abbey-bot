@@ -16,7 +16,7 @@ use crate::ask;
 use crate::brain::intent;
 use crate::brain::state::{self, BotAction, StateInput};
 use crate::engine;
-use crate::generation::{Ask, Delivery, generate, with_typing};
+use crate::generation::{Ask, Delivery, generate_read_only, generate_with_tools, with_typing};
 use crate::guild::GuildSettings;
 use crate::llm;
 use crate::memory::PersonaContext;
@@ -187,10 +187,7 @@ pub async fn handle<O: Outbound + Sync>(
 
     let enriched = enrich_with_vision(state, out, &settings, &text, &attachments).await;
     let intent = intent::classify(&enriched);
-    let reputation = {
-        let stores = AppState::lock(&state.stores);
-        AppState::lock(&state.social).reputation(&scoped_user, &scoped_guild, &*stores)
-    };
+    let reputation = state.reputation_snapshot(&scoped_guild, &scoped_user);
     let encoded = state::encode(&StateInput {
         text: &enriched,
         intent,
@@ -349,54 +346,55 @@ pub async fn handle<O: Outbound + Sync>(
         &scoped_user,
         &scoped_channel,
         &enriched,
+        reputation,
     );
     let reply_to = Some(event.native_message_id.clone());
-    let mut host = crate::runtime::ToolScope {
-        state,
-        scoped_guild: scoped_guild.clone(),
-        scoped_user: scoped_user.clone(),
-        scoped_channel: scoped_channel.clone(),
-        persona: initial_persona,
-    };
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
         // while this turn waits for its slot. Tools are offered only when
         // someone addressed Abbey — budgeted policy replies stay single-shot.
-        let _slot = state.acquire_generation().await.map_err(llm::LlmError)?;
-        generate(
-            state,
-            &mut host,
-            &Ask {
-                scope: &scoped_channel,
-                context: &context,
-                user_input: &enriched,
-                offer_tools: forced,
-                now,
-            },
-            Some(Delivery {
-                out,
-                native_channel_id: &event.native_channel_id,
-                reply_to: reply_to.as_deref(),
-            }),
-        )
-        .await
+        let _slot = state.acquire_generation().await?;
+        let ask = Ask {
+            scope: &scoped_channel,
+            context: &context,
+            user_input: &enriched,
+            now,
+        };
+        let delivery = Some(Delivery {
+            out,
+            native_channel_id: &event.native_channel_id,
+            reply_to: reply_to.as_deref(),
+        });
+        if forced {
+            let mut host = crate::runtime::ToolScope {
+                state,
+                network: event.network,
+                scoped_guild: scoped_guild.clone(),
+                scoped_user: scoped_user.clone(),
+                scoped_channel: scoped_channel.clone(),
+                persona: initial_persona,
+            };
+            generate_with_tools(state, &mut host, &ask, delivery).await
+        } else {
+            generate_read_only(state, initial_persona, &ask, delivery).await
+        }
     })
     .await;
     let (answer, already_sent, persona) = match generated {
         Ok(triple) => triple,
         Err(e) => {
-            tracing::warn!(error = %e.0, backend = backend.label(), "reply generation failed");
+            tracing::warn!(error = %e, backend = backend.label(), "reply generation failed");
             if forced {
                 // Someone addressed Abbey and waited; dead air is worse than
                 // the same honest failure line `/persona ask` already posts.
                 let failure = OutboundMessage {
-                    text: ask::render_failure(initial_persona, backend.label(), &e.0),
+                    text: ask::render_failure(initial_persona, backend.label(), &e),
                     reply_to_native_message_id: reply_to.clone(),
                     ..OutboundMessage::default()
                 };
                 let _ = out.send(&event.native_channel_id, &failure).await;
             }
-            return Outcome::ReplyFailed(e.0);
+            return Outcome::ReplyFailed(e.to_string());
         }
     };
     // A tool may have switched the persona; the transcript keeps its history
@@ -455,19 +453,16 @@ pub fn assemble_context(
     scoped_user: &str,
     scoped_channel: &str,
     query: &str,
+    reputation: f64,
 ) -> PersonaContext {
-    let mut context =
-        AppState::lock(&state.stores)
-            .memory
-            .context_for(scoped_guild, scoped_user, scoped_channel);
-    let recalled =
-        AppState::lock(&state.recall).recall_for_user(scoped_guild, scoped_user, query, RECALL_K);
-    for fact in recalled {
-        if !context.user_facts.contains(&fact.text) {
-            context.user_facts.push(fact.text);
-        }
-    }
-    context
+    state.memory_service().context_for(
+        scoped_guild,
+        scoped_user,
+        scoped_channel,
+        query,
+        RECALL_K,
+        reputation,
+    )
 }
 
 /// Describe image attachments and fold the descriptions into the text (max 3),
@@ -495,7 +490,7 @@ async fn enrich_with_vision<O: Outbound + Sync>(
         let Ok(bytes) = out.fetch(&att.url, vision::MAX_IMAGE_BYTES).await else {
             continue;
         };
-        if let Ok(desc) = vision_client.describe(&bytes).await {
+        if let Ok(desc) = vision_client.describe(bytes).await {
             described.push((att.filename.clone(), desc));
         }
     }
@@ -522,7 +517,7 @@ async fn welcome<O: Outbound + Sync>(
     };
     let text = match llm::ask_backend(&state.llm, backend, &system, "Say hello.").await {
         Ok(t) => ask::tidy_reply(Persona::Abi, &t),
-        Err(e) => return Outcome::ReplyFailed(e.0),
+        Err(e) => return Outcome::ReplyFailed(e.to_string()),
     };
     match out
         .send(
@@ -580,500 +575,5 @@ pub(crate) mod testing {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::testing::FakeOut;
-    use super::*;
-    use crate::platform::{EventKind, SocialNetwork};
-
-    fn message(text: &str, guild: Option<&str>, from: &str) -> SocialEvent {
-        SocialEvent {
-            network: SocialNetwork::Discord,
-            kind: EventKind::Message {
-                text: text.into(),
-                attachments: vec![],
-            },
-            native_message_id: "m1".into(),
-            native_channel_id: "c1".into(),
-            native_guild_id: guild.map(Into::into),
-            native_user_id: from.into(),
-            user_display_name: "Sam".into(),
-            is_bot: false,
-            timestamp: 0,
-        }
-    }
-
-    #[tokio::test]
-    async fn own_traffic_is_ignored() {
-        let state = AppState::in_memory();
-        state.register_self("discord:bot".into());
-        let out = FakeOut::default();
-        let outcome = handle(&state, &out, message("hi", Some("g"), "bot"), false, None).await;
-        assert_eq!(outcome, Outcome::Ignored("own traffic"));
-    }
-
-    #[tokio::test]
-    async fn a_mention_with_no_backend_gets_the_honest_degraded_reply() {
-        let state = AppState::in_memory();
-        let out = FakeOut::default();
-        let outcome = handle(
-            &state,
-            &out,
-            message("hey abbey?", Some("g"), "u1"),
-            true,
-            None,
-        )
-        .await;
-        assert_eq!(outcome, Outcome::Replied);
-        let sent = out.sent.lock().unwrap();
-        assert_eq!(sent.len(), 1);
-        assert!(
-            sent[0].1.text.contains("no generation backend"),
-            "{}",
-            sent[0].1.text
-        );
-        assert_eq!(sent[0].1.reply_to_native_message_id.as_deref(), Some("m1"));
-    }
-
-    #[tokio::test]
-    async fn a_reaction_feeds_the_reward_collector() {
-        let state = AppState::in_memory();
-        let out = FakeOut::default();
-        AppState::lock(&state.rewards).register_reply(
-            vec![0.0; 18],
-            1,
-            "abbey-msg",
-            "discord:g",
-            0,
-        );
-        let event = SocialEvent {
-            kind: EventKind::Reaction {
-                emoji: "🔥".into(),
-                target_message_id: "abbey-msg".into(),
-                added: true,
-            },
-            ..message("", Some("g"), "u2")
-        };
-        assert_eq!(
-            handle(&state, &out, event, false, None).await,
-            Outcome::Rewarded
-        );
-        let settled = AppState::lock(&state.rewards).settle_expired(10_000);
-        assert_eq!(settled.len(), 1);
-        assert!((settled[0].1.reward - 0.8).abs() < 1e-6, "−0.2 + 1.0");
-    }
-
-    #[tokio::test]
-    async fn blank_unsolicited_content_is_not_learned_from() {
-        let state = AppState::in_memory();
-        let out = FakeOut::default();
-        let outcome = handle(&state, &out, message("", Some("g"), "u1"), false, None).await;
-        assert_eq!(outcome, Outcome::Ignored("no content available"));
-        assert!(AppState::lock(&state.brains).loaded_guilds().is_empty());
-    }
-
-    #[tokio::test]
-    async fn unsolicited_text_consults_the_policy_and_never_speaks_without_a_backend() {
-        let state = AppState::in_memory();
-        opt_in(&state, "discord:g", 6);
-        let out = FakeOut::default();
-        for _ in 0..20 {
-            let outcome = handle(
-                &state,
-                &out,
-                message("lol nice one", Some("g"), "u1"),
-                false,
-                None,
-            )
-            .await;
-            assert!(
-                matches!(
-                    outcome,
-                    Outcome::Stayed | Outcome::Reacted | Outcome::CooledDown | Outcome::OverBudget
-                ),
-                "{outcome:?}"
-            );
-        }
-        assert!(
-            out.sent.lock().unwrap().is_empty(),
-            "no backend → no text ever"
-        );
-        assert_eq!(AppState::lock(&state.brains).loaded_guilds(), ["discord:g"]);
-    }
-
-    #[tokio::test]
-    async fn a_disabled_guild_is_ignored_even_when_mentioned() {
-        let state = AppState::in_memory();
-        {
-            let mut stores = AppState::lock(&state.stores);
-            AppState::lock(&state.guilds).update("discord:g", &mut *stores, |s| s.enabled = false);
-        }
-        let out = FakeOut::default();
-        let outcome = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
-        assert_eq!(outcome, Outcome::Ignored("triage"));
-    }
-
-    /// Live: a DM through the real pipeline against whatever
-    /// `ABBEY_BOT_LLM_ENDPOINT` / `ABBEY_BOT_LLM_MODEL` name. Ignored by
-    /// default so the gate stays offline; run with
-    /// `cargo test live_dm -- --ignored --nocapture` when a backend is up.
-    #[tokio::test]
-    #[ignore = "needs a running generation backend"]
-    async fn live_dm_round_trip_against_the_configured_backend() {
-        let Some(backend) = crate::llm::Backend::from_env() else {
-            panic!("set ABBEY_BOT_LLM_ENDPOINT (and ABBEY_BOT_LLM_MODEL) to run this");
-        };
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().backend = Some(backend);
-        let out = FakeOut::default();
-        let first = handle(
-            &state,
-            &out,
-            message("hey abbey", None, "donald"),
-            false,
-            None,
-        )
-        .await;
-        assert_eq!(first, Outcome::Replied);
-        let mut second_event = message("remember that I build in nightly Rust", None, "donald");
-        second_event.native_message_id = "m2".into();
-        let second = handle(&state, &out, second_event, false, None).await;
-        assert_eq!(second, Outcome::Replied);
-        let mut third_event = message("so what toolchain am I on?", None, "donald");
-        third_event.native_message_id = "m3".into();
-        let third = handle(&state, &out, third_event, false, None).await;
-        assert_eq!(third, Outcome::Replied);
-        let sent = out.sent.lock().unwrap();
-        for (i, (_, m)) in sent.iter().enumerate() {
-            eprintln!(
-                "--- reply {} ({} chars):\n{}",
-                i + 1,
-                m.text.chars().count(),
-                m.text
-            );
-            assert!(!m.text.contains("no generation backend"));
-            assert!(m.text.chars().count() <= 2000);
-        }
-        assert_eq!(sent.len(), 3);
-        assert_eq!(
-            AppState::lock(&state.engine).session_len("discord:c1"),
-            6,
-            "three exchanges committed to one transcript"
-        );
-        assert!(
-            sent[2].1.text.to_lowercase().contains("nightly"),
-            "the transcript should carry the toolchain fact: {}",
-            sent[2].1.text
-        );
-    }
-
-    #[tokio::test]
-    async fn quiet_and_learning_off_gate_unsolicited_speech_before_the_policy() {
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().quiet = true;
-        let out = FakeOut::default();
-        let outcome = handle(
-            &state,
-            &out,
-            message("lol nice", Some("g"), "u1"),
-            false,
-            None,
-        )
-        .await;
-        assert_eq!(outcome, Outcome::Ignored("quiet"));
-        assert!(
-            AppState::lock(&state.brains).loaded_guilds().is_empty(),
-            "nothing learned"
-        );
-        // A mention still answers under quiet (degraded — no backend).
-        let outcome = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
-        assert_eq!(outcome, Outcome::Replied);
-
-        let state = AppState::in_memory();
-        {
-            let mut stores = AppState::lock(&state.stores);
-            AppState::lock(&state.guilds).update("discord:g", &mut *stores, |s| {
-                s.unsolicited = true;
-                s.learning_enabled = false;
-            });
-        }
-        let outcome = handle(
-            &state,
-            &out,
-            message("lol nice", Some("g"), "u1"),
-            false,
-            None,
-        )
-        .await;
-        assert_eq!(outcome, Outcome::Ignored("learning off"));
-    }
-
-    #[tokio::test]
-    async fn a_forced_reply_loads_the_brain_so_its_reward_is_not_dropped() {
-        let state = AppState::in_memory();
-        let out = FakeOut::default();
-        // No backend → degraded reply, but the brain must already be loaded.
-        let outcome = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
-        assert_eq!(outcome, Outcome::Replied);
-        assert_eq!(AppState::lock(&state.brains).loaded_guilds(), ["discord:g"]);
-        // Simulate a settled reward for that guild: it lands in the buffer.
-        AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "sent-1", "discord:g", 0);
-        AppState::lock(&state.rewards).reaction("👍", "sent-1", true);
-        let settled = AppState::lock(&state.rewards).settle_expired(1_000);
-        let mut brains = AppState::lock(&state.brains);
-        for (g, exp) in settled {
-            brains.remember(&g, exp);
-        }
-        assert_eq!(brains.get("discord:g").map(|b| b.buffer_len()), Some(1));
-    }
-
-    fn opt_in(state: &AppState, guild: &str, per_hour: u32) {
-        let mut stores = AppState::lock(&state.stores);
-        AppState::lock(&state.guilds).update(guild, &mut *stores, |s| {
-            s.unsolicited = true;
-            s.unsolicited_per_hour = per_hour;
-            s.reply_cooldown_seconds = 0;
-        });
-    }
-
-    #[tokio::test]
-    async fn a_guild_that_has_not_opted_in_is_ignored_before_the_policy() {
-        let state = AppState::in_memory();
-        let out = FakeOut::default();
-        let outcome = handle(
-            &state,
-            &out,
-            message("lol nice", Some("g"), "u1"),
-            false,
-            None,
-        )
-        .await;
-        assert_eq!(outcome, Outcome::Ignored("act off"));
-        assert!(
-            AppState::lock(&state.brains).loaded_guilds().is_empty(),
-            "no brain, no experience"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_opted_in_guild_consults_the_policy_and_records_the_decision() {
-        let state = AppState::in_memory();
-        opt_in(&state, "discord:g", 6);
-        let out = FakeOut::default();
-        let outcome = handle(
-            &state,
-            &out,
-            message("lol nice", Some("g"), "u1"),
-            false,
-            None,
-        )
-        .await;
-        assert!(
-            matches!(
-                outcome,
-                Outcome::Stayed | Outcome::Reacted | Outcome::OverBudget
-            ),
-            "{outcome:?} (no backend → reply degrades to Stayed)"
-        );
-        let brains = AppState::lock(&state.brains);
-        let stats = brains
-            .stats("discord:g")
-            .expect("brain loaded by the decision");
-        assert_eq!(
-            stats.action_counts.iter().sum::<u64>(),
-            1,
-            "exactly one policy decision"
-        );
-        assert_eq!(stats.last_q.len(), 3);
-        assert_eq!(stats.forced_replies, 0);
-    }
-
-    #[tokio::test]
-    async fn a_mention_counts_as_forced_not_as_a_decision() {
-        let state = AppState::in_memory();
-        let out = FakeOut::default();
-        let _ = handle(&state, &out, message("abbey?", Some("g"), "u1"), true, None).await;
-        let brains = AppState::lock(&state.brains);
-        let stats = brains.stats("discord:g").unwrap();
-        assert_eq!(stats.forced_replies, 1);
-        assert_eq!(stats.action_counts, [0, 0, 0]);
-    }
-
-    #[tokio::test]
-    async fn over_budget_is_silent_and_unlearned() {
-        let state = AppState::in_memory();
-        opt_in(&state, "discord:g", 1);
-        assert!(AppState::lock(&state.budget).try_take("discord:g", 1, runtime::now()));
-        let out = FakeOut::default();
-        let mut saw_over_budget = false;
-        for i in 0..400 {
-            let mut m = message("lol nice", Some("g"), "u1");
-            m.native_message_id = format!("m{i}");
-            match handle(&state, &out, m, false, None).await {
-                Outcome::OverBudget => {
-                    saw_over_budget = true;
-                    break;
-                }
-                Outcome::Stayed => continue,
-                other => panic!("acted past the budget: {other:?}"),
-            }
-        }
-        assert!(
-            saw_over_budget,
-            "the policy never picked reply/react in 400 tries"
-        );
-        assert!(out.reacted.lock().unwrap().is_empty());
-        assert!(out.sent.lock().unwrap().is_empty());
-        let brains = AppState::lock(&state.brains);
-        let stats = brains.stats("discord:g").unwrap();
-        let stays = stats.action_counts[BotAction::Stay.index()];
-        assert_eq!(brains.get("discord:g").unwrap().buffer_len() as u64, stays);
-    }
-
-    #[tokio::test]
-    async fn a_reply_the_bot_cannot_make_does_not_burn_budget() {
-        let state = AppState::in_memory();
-        opt_in(&state, "discord:g", 6);
-        let out = FakeOut::default();
-        // Walk the policy until it picks Reply at least a few times; with no
-        // backend each one degrades to Stayed — and must leave the budget full
-        // minus only the reacts that actually went out.
-        let mut reacted = 0u32;
-        for i in 0..60 {
-            let mut m = message("lol nice", Some("g"), "u1");
-            m.native_message_id = format!("m{i}");
-            match handle(&state, &out, m, false, None).await {
-                Outcome::Reacted => reacted += 1,
-                Outcome::Stayed | Outcome::OverBudget => {}
-                other => panic!("{other:?}"),
-            }
-        }
-        let left = AppState::lock(&state.budget).tokens_left("discord:g", 6, runtime::now());
-        assert!(
-            (6.0 - left - reacted as f32).abs() < 0.05,
-            "tokens spent ({}) should equal reacts sent ({reacted}); phantom replies must not cost quota",
-            6.0 - left
-        );
-    }
-
-    #[tokio::test]
-    async fn a_member_join_welcome_is_gated_like_any_unsolicited_speech() {
-        let out = FakeOut::default();
-        let join = |guild: &str| SocialEvent {
-            kind: EventKind::MemberJoined,
-            ..message("", Some(guild), "newbie")
-        };
-        // Quiet wins.
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().quiet = true;
-        assert_eq!(
-            handle(&state, &out, join("g"), false, None).await,
-            Outcome::Ignored("quiet")
-        );
-        // Not opted in.
-        let state = AppState::in_memory();
-        assert_eq!(
-            handle(&state, &out, join("g"), false, None).await,
-            Outcome::Ignored("act off")
-        );
-        // Opted in, no backend → honest silence, nothing sent.
-        opt_in(&state, "discord:g", 6);
-        assert_eq!(
-            handle(&state, &out, join("g"), false, None).await,
-            Outcome::Ignored("welcome needs a backend")
-        );
-        assert!(out.sent.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn two_dm_users_never_share_recall_or_facts() {
-        let state = AppState::in_memory();
-        let alice = message("hi", None, "alice");
-        let bob = message("hi", None, "bob");
-        assert_ne!(alice.scoped_guild_id(), bob.scoped_guild_id());
-        AppState::lock(&state.recall).remember(
-            &alice.scoped_guild_id(),
-            &alice.scoped_user_id(),
-            "alice likes rust",
-            1,
-        );
-        let for_bob = assemble_context(
-            &state,
-            &bob.scoped_guild_id(),
-            &bob.scoped_user_id(),
-            &bob.scoped_channel_id(),
-            "rust",
-        );
-        assert!(for_bob.user_facts.is_empty(), "{:?}", for_bob.user_facts);
-        let for_alice = assemble_context(
-            &state,
-            &alice.scoped_guild_id(),
-            &alice.scoped_user_id(),
-            &alice.scoped_channel_id(),
-            "rust",
-        );
-        assert_eq!(for_alice.user_facts, ["alice likes rust"]);
-    }
-
-    #[test]
-    fn two_users_in_one_guild_never_share_semantic_recall() {
-        let state = AppState::in_memory();
-        AppState::lock(&state.recall).remember(
-            "discord:g",
-            "discord:alice",
-            "alice's private editor preference is helix",
-            1,
-        );
-        AppState::lock(&state.recall).remember(
-            "discord:g",
-            "discord:bob",
-            "bob's private editor preference is vim",
-            2,
-        );
-        let alice = assemble_context(
-            &state,
-            "discord:g",
-            "discord:alice",
-            "discord:c",
-            "editor preference",
-        );
-        let bob = assemble_context(
-            &state,
-            "discord:g",
-            "discord:bob",
-            "discord:c",
-            "editor preference",
-        );
-        assert_eq!(
-            alice.user_facts,
-            ["alice's private editor preference is helix"]
-        );
-        assert_eq!(bob.user_facts, ["bob's private editor preference is vim"]);
-    }
-
-    #[test]
-    fn persona_routing_follows_the_canonical_abi_router() {
-        let s = GuildSettings::default();
-        assert_eq!(persona_for("hello there", &s), Persona::Abbey);
-        assert_eq!(
-            persona_for("execute the deploy quickly", &s),
-            Persona::Aviva
-        );
-        assert_eq!(persona_for("ABI: review governance risk", &s), Persona::Abi);
-        let aviva = GuildSettings {
-            default_persona: Persona::Aviva,
-            ..GuildSettings::default()
-        };
-        assert_eq!(persona_for("hello there", &aviva), Persona::Aviva);
-        assert_eq!(persona_for("Abbey, help me", &aviva), Persona::Abbey);
-        assert_eq!(
-            persona_for_session("and what about tomorrow?", &s, Some(Persona::Aviva)),
-            Persona::Aviva,
-            "a neutral follow-up keeps a tool-selected persona"
-        );
-        assert_eq!(
-            persona_for_session("Abbey, take this one", &s, Some(Persona::Aviva)),
-            Persona::Abbey,
-            "an explicit canonical name still overrides sticky state"
-        );
-    }
-}
+#[path = "pipeline/tests.rs"]
+mod tests;

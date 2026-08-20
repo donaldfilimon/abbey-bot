@@ -214,8 +214,9 @@ fn select(weights: ProfileWeights) -> Persona {
 }
 
 fn starts_with_ignore_case(haystack: &str, needle: &str) -> bool {
-    haystack.len() >= needle.len()
-        && haystack.as_bytes()[..needle.len()].eq_ignore_ascii_case(needle.as_bytes())
+    haystack
+        .get(..needle.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
 }
 
 #[must_use]
@@ -314,6 +315,7 @@ mod tests {
         assert!(analyze("running").aviva > ProfileWeights::prior().aviva);
         assert_eq!(analyze("overrun"), ProfileWeights::prior());
         assert_eq!(route("unsafe", None).reason, Reason::Default);
+        assert_eq!(route("🙂🙂 please help", None).persona, Persona::Abbey);
     }
 
     #[test]

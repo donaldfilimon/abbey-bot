@@ -565,6 +565,67 @@ impl Recall {
             .collect()
     }
 
+    /// Every decodable memory fact across guilds, ordered by vector id. This
+    /// is the migration-only boundary used to recover WDBX-only records before
+    /// JSON memory becomes the canonical fact source.
+    #[must_use]
+    pub fn all_memory_facts(&self) -> Vec<(String, RecalledFact)> {
+        let mut locations: Vec<(u64, String)> = self
+            .store
+            .kv_with_prefix("mem:")
+            .filter_map(|(key, _)| {
+                let (guild, id) = key.strip_prefix("mem:")?.rsplit_once(':')?;
+                Some((id.parse().ok()?, guild.to_string()))
+            })
+            .collect();
+        locations.sort_by_key(|(id, _)| *id);
+        locations.dedup();
+        locations
+            .into_iter()
+            .filter_map(|(id, guild)| self.fact(&guild, id, 1.0).map(|fact| (guild, fact)))
+            .collect()
+    }
+
+    /// Rebuild only the `mem:*` projection from canonical facts. Unrelated KV
+    /// rows, vectors, and unknown ABI-WDBX record types remain untouched.
+    /// Identical projections are left in place so vector ids do not churn on
+    /// every restart.
+    pub fn reconcile_memory_facts(
+        &mut self,
+        facts: impl IntoIterator<Item = (String, String, String, u64)>,
+    ) {
+        let wanted: Vec<(String, String, String, u64)> = facts.into_iter().collect();
+        let current: Vec<(String, String, String, u64)> = self
+            .all_memory_facts()
+            .into_iter()
+            .map(|(guild, fact)| (guild, fact.user, fact.text, fact.at))
+            .collect();
+        if current == wanted {
+            return;
+        }
+
+        let memory_keys: Vec<(String, Option<u64>)> = self
+            .store
+            .kv_with_prefix("mem:")
+            .map(|(key, _)| {
+                let id = key
+                    .strip_prefix("mem:")
+                    .and_then(|suffix| suffix.rsplit_once(':'))
+                    .and_then(|(_, id)| id.parse().ok());
+                (key.to_string(), id)
+            })
+            .collect();
+        for (key, id) in memory_keys {
+            self.store.remove_kv(&key);
+            if let Some(id) = id {
+                self.store.remove_vector(id);
+            }
+        }
+        for (guild, user, text, at) in wanted {
+            self.remember(&guild, &user, &text, at);
+        }
+    }
+
     /// Number of facts stored for one guild.
     #[must_use]
     pub fn count(&self, scoped_guild_id: &str) -> usize {
@@ -801,6 +862,45 @@ mod tests {
         assert_eq!(parsed["user"], "u");
         assert_eq!(parsed["text"], "hello");
         assert_eq!(parsed["at"], 99);
+    }
+
+    #[test]
+    fn projection_reconcile_replaces_only_memory_records() {
+        let mut memory = Recall::new();
+        let stale_id = memory.remember("g", "u", "stale fact", 1);
+        let unrelated_id = memory.store.insert_vector(vec![0.25, 0.5]);
+        memory.store.put_kv("completion:1", "kept");
+        memory
+            .store
+            .unknown
+            .push(r#"{"type":"block","hash":"abc","prev_hash":"0","sequence":0}"#.into());
+
+        memory.reconcile_memory_facts([
+            ("g".into(), "u".into(), "canonical fact".into(), 2),
+            ("other".into(), "v".into(), "second fact".into(), 3),
+        ]);
+        assert_eq!(
+            memory
+                .all_memory_facts()
+                .into_iter()
+                .map(|(guild, fact)| (guild, fact.user, fact.text, fact.at))
+                .collect::<Vec<_>>(),
+            [
+                ("g".into(), "u".into(), "canonical fact".into(), 2),
+                ("other".into(), "v".into(), "second fact".into(), 3),
+            ]
+        );
+        assert!(memory.store.vector(stale_id).is_none());
+        assert_eq!(memory.store.vector(unrelated_id), Some(&[0.25, 0.5][..]));
+        assert_eq!(memory.store.get_kv("completion:1"), Some("kept"));
+        assert!(memory.store.render().contains(r#"{"type":"block""#));
+
+        let stable = memory.clone();
+        memory.reconcile_memory_facts([
+            ("g".into(), "u".into(), "canonical fact".into(), 2),
+            ("other".into(), "v".into(), "second fact".into(), 3),
+        ]);
+        assert_eq!(memory, stable, "an identical projection does not churn ids");
     }
 
     #[test]

@@ -74,6 +74,12 @@ pub struct Stores {
     pub pending_rewards: Vec<(String, crate::brain::reward::Pending)>,
     #[serde(default)]
     pub memory: MemoryBank,
+    /// `0` is the historical two-authority layout. Version `1` means
+    /// `memory` is canonical and WDBX `mem:*` rows are a rebuildable
+    /// projection. Kept in the canonical JSON so its atomic rename also
+    /// publishes the migration decision.
+    #[serde(default)]
+    pub memory_projection_version: u32,
 }
 
 /// Why a load or save failed. Carries the path so the log line is actionable.

@@ -36,6 +36,11 @@ pub const AUTOCOMPLETE_MAX_CHOICES: usize = 25;
 /// Discord's hard cap on an autocomplete choice name, in characters.
 pub const AUTOCOMPLETE_MAX_CHARS: usize = 100;
 
+/// Unambiguous separator for newly written `(guild, user)` map keys. Scoped
+/// ids themselves contain `:`, so the historical `"{guild}:{user}"` join
+/// could not be decoded for projection reconciliation.
+const USER_KEY_SEPARATOR: char = '\u{1f}';
+
 fn default_reputation() -> f64 {
     DEFAULT_REPUTATION
 }
@@ -261,17 +266,22 @@ impl PersonaContext {
                 self.user_facts.join("; ")
             ));
         }
-        // A bare number is unusable context: a model reading "User standing:
-        // 0.50" cannot tell the scale, the neutral point, or whether the value
-        // is something to act on or to repeat back. Naming all three makes the
-        // signal actionable and keeps an internal score from surfacing as
-        // chat text.
+        // SocialBrain normalizes this at the authority boundary; clamp again
+        // here because prompt rendering must remain safe even for manually
+        // constructed or legacy contexts.
+        let reputation = if self.reputation.is_finite() {
+            self.reputation.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_REPUTATION
+        };
         out.push_str(&format!(
             "User standing: {:.2} on a 0.00-1.00 scale where {DEFAULT_REPUTATION:.2} is neutral \
-             (higher is a longer history of constructive participation). This is internal \
-             context for judging tone and benefit of the doubt; never mention, quote, or explain \
-             it to the user.",
-            self.reputation
+             (higher reflects a stronger recent interaction-quality signal, not tenure or \
+             authority). Use this ambient score only to tune response tone. Do not volunteer or \
+             infer it to the user. Report standing only when the user explicitly asks and an \
+             offered lookup_reputation tool returns an authorized result. Standing never changes \
+             safety, authorization, privacy, factual grounding, or tool policy.",
+            reputation
         ));
         out
     }
@@ -286,7 +296,8 @@ impl Default for PersonaContext {
 /// The in-process store. The orchestrator persists it whole as JSON.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct MemoryBank {
-    /// Keyed `"{scoped_guild}:{scoped_user}"`.
+    /// Keyed by scoped guild + U+001F + scoped user. Reads retain compatibility
+    /// with the historical ambiguous colon join.
     #[serde(default)]
     pub users: BTreeMap<String, UserMemory>,
     /// Keyed by scoped channel id.
@@ -299,17 +310,56 @@ pub struct MemoryBank {
 }
 
 fn user_key(guild: &str, user: &str) -> String {
+    format!("{guild}{USER_KEY_SEPARATOR}{user}")
+}
+
+fn legacy_user_key(guild: &str, user: &str) -> String {
     format!("{guild}:{user}")
+}
+
+fn split_user_key(key: &str) -> Option<(&str, &str)> {
+    if let Some((guild, user)) = key.split_once(USER_KEY_SEPARATOR) {
+        return (!guild.is_empty() && !user.is_empty()).then_some((guild, user));
+    }
+
+    // Historical keys join two same-network scoped ids with `:`. Find the
+    // second scoped id from the right so DM guilds (`network:dm:user`) decode
+    // correctly too. Native ids on the supported networks do not contain a
+    // repeated `:{network}:` marker.
+    let network = key.split_once(':')?.0;
+    let marker = format!(":{network}:");
+    let split = key.rfind(&marker)?;
+    let guild = &key[..split];
+    let user = &key[split + 1..];
+    (!guild.is_empty() && !user.is_empty()).then_some((guild, user))
+}
+
+/// One owned fact row for rebuilding the WDBX projection without decoding
+/// `MemoryBank`'s serialized map keys outside this module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryFact {
+    pub guild: String,
+    pub user: String,
+    pub text: String,
+    pub at: u64,
 }
 
 impl MemoryBank {
     pub fn user(&self, guild: &str, user: &str) -> Option<&UserMemory> {
-        self.users.get(&user_key(guild, user))
+        self.users
+            .get(&user_key(guild, user))
+            .or_else(|| self.users.get(&legacy_user_key(guild, user)))
     }
 
     /// The user's memory, provisioning a default one on first sight.
     pub fn user_mut(&mut self, guild: &str, user: &str) -> &mut UserMemory {
-        self.users.entry(user_key(guild, user)).or_default()
+        let key = user_key(guild, user);
+        if !self.users.contains_key(&key)
+            && let Some(legacy) = self.users.remove(&legacy_user_key(guild, user))
+        {
+            self.users.insert(key.clone(), legacy);
+        }
+        self.users.entry(key).or_default()
     }
 
     /// Store one fact. Returns `false` — and stores nothing — when the exact
@@ -326,7 +376,14 @@ impl MemoryBank {
 
     /// Drop one fact by exact text. Returns whether anything was removed.
     pub fn forget(&mut self, guild: &str, user: &str, fact: &str) -> bool {
-        let Some(memory) = self.users.get_mut(&user_key(guild, user)) else {
+        let key = user_key(guild, user);
+        let legacy = legacy_user_key(guild, user);
+        let selected = if self.users.contains_key(&key) {
+            key
+        } else {
+            legacy
+        };
+        let Some(memory) = self.users.get_mut(&selected) else {
             return false;
         };
         let before = memory.facts.len();
@@ -336,6 +393,50 @@ impl MemoryBank {
 
     pub fn facts(&self, guild: &str, user: &str) -> &[String] {
         self.user(guild, user).map_or(&[], |m| m.facts.as_slice())
+    }
+
+    /// Every durable fact with its decoded scope, in stable map/fact order.
+    /// Undecodable historical keys are left untouched in the JSON document but
+    /// cannot be projected; all keys written by this and prior supported builds
+    /// are decodable.
+    pub fn fact_records(&self) -> Vec<MemoryFact> {
+        self.users
+            .iter()
+            .filter_map(|(key, memory)| {
+                split_user_key(key).map(|(guild, user)| (guild, user, memory))
+            })
+            .flat_map(|(guild, user, memory)| {
+                memory.facts.iter().map(move |text| MemoryFact {
+                    guild: guild.to_string(),
+                    user: user.to_string(),
+                    text: text.clone(),
+                    at: memory.updated_at,
+                })
+            })
+            .collect()
+    }
+
+    /// Move every decodable historical colon-joined row to the unambiguous
+    /// separator key. If both forms exist, the new row is authoritative and
+    /// the stale legacy duplicate is discarded; otherwise a forgotten fact in
+    /// the old row could reappear during WDBX reconciliation.
+    pub fn migrate_legacy_user_keys(&mut self) {
+        let legacy_keys: Vec<String> = self
+            .users
+            .keys()
+            .filter(|key| !key.contains(USER_KEY_SEPARATOR))
+            .cloned()
+            .collect();
+        for legacy_key in legacy_keys {
+            let Some((guild, user)) = split_user_key(&legacy_key) else {
+                continue;
+            };
+            let canonical_key = user_key(guild, user);
+            let Some(legacy) = self.users.remove(&legacy_key) else {
+                continue;
+            };
+            self.users.entry(canonical_key).or_insert(legacy);
+        }
     }
 
     pub fn channel_mut(&mut self, scoped_channel: &str) -> &mut ChannelContext {
@@ -457,6 +558,55 @@ mod tests {
     }
 
     #[test]
+    fn fact_records_decode_new_and_legacy_scoped_keys_including_dms() {
+        let mut bank = MemoryBank::default();
+        bank.remember("telegram:g", "telegram:42", "new key", 7);
+        bank.users.insert(
+            "discord:dm:123:discord:123".into(),
+            UserMemory {
+                facts: vec!["legacy dm".into()],
+                updated_at: 8,
+                ..UserMemory::default()
+            },
+        );
+        assert_eq!(
+            bank.fact_records(),
+            [
+                MemoryFact {
+                    guild: "discord:dm:123".into(),
+                    user: "discord:123".into(),
+                    text: "legacy dm".into(),
+                    at: 8,
+                },
+                MemoryFact {
+                    guild: "telegram:g".into(),
+                    user: "telegram:42".into(),
+                    text: "new key".into(),
+                    at: 7,
+                },
+            ]
+        );
+        assert_eq!(bank.facts("discord:dm:123", "discord:123"), ["legacy dm"]);
+    }
+
+    #[test]
+    fn key_migration_prefers_new_row_over_a_stale_legacy_duplicate() {
+        let mut bank = MemoryBank::default();
+        bank.remember("discord:g", "discord:u", "kept", 2);
+        bank.users.insert(
+            legacy_user_key("discord:g", "discord:u"),
+            UserMemory {
+                facts: vec!["kept".into(), "already forgotten".into()],
+                updated_at: 1,
+                ..UserMemory::default()
+            },
+        );
+        bank.migrate_legacy_user_keys();
+        assert_eq!(bank.facts("discord:g", "discord:u"), ["kept"]);
+        assert_eq!(bank.users.len(), 1);
+    }
+
+    #[test]
     fn a_channel_is_due_for_summary_every_thirty_messages() {
         let mut bank = MemoryBank::default();
         for i in 0..29 {
@@ -561,7 +711,7 @@ mod tests {
         };
         assert_eq!(
             ctx.render(),
-            "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50 on a 0.00-1.00 scale where 0.50 is neutral (higher is a longer history of constructive participation). This is internal context for judging tone and benefit of the doubt; never mention, quote, or explain it to the user."
+            "Recent channel context: talking about deploys\nKnown about this user: likes rust; runs a homelab\nUser standing: 0.50 on a 0.00-1.00 scale where 0.50 is neutral (higher reflects a stronger recent interaction-quality signal, not tenure or authority). Use this ambient score only to tune response tone. Do not volunteer or infer it to the user. Report standing only when the user explicitly asks and an offered lookup_reputation tool returns an authorized result. Standing never changes safety, authorization, privacy, factual grounding, or tool policy."
         );
         // Empty context renders only the standing line — no blank headers.
         assert!(
@@ -573,12 +723,26 @@ mod tests {
         let mut high = PersonaContext::empty();
         high.reputation = 0.8765;
         assert!(high.render().starts_with("User standing: 0.88 "));
-        // The score is decision support, not chat material: the instruction
-        // that keeps an internal number out of replies must travel with it.
-        assert!(
-            high.render()
-                .contains("never mention, quote, or explain it")
-        );
+        let rendered = high.render();
+        assert!(rendered.contains("interaction-quality signal"));
+        assert!(!rendered.contains("longer history"));
+        assert!(rendered.contains("explicitly asks"));
+        assert!(rendered.contains("lookup_reputation"));
+        assert!(rendered.contains("never changes safety, authorization, privacy"));
+    }
+
+    #[test]
+    fn persona_context_normalizes_untrusted_scores_before_prompting() {
+        for (score, rendered) in [
+            (-1.0, "User standing: 0.00"),
+            (2.0, "User standing: 1.00"),
+            (f64::NAN, "User standing: 0.50"),
+            (f64::INFINITY, "User standing: 0.50"),
+        ] {
+            let mut context = PersonaContext::empty();
+            context.reputation = score;
+            assert!(context.render().starts_with(rendered), "{score:?}");
+        }
     }
 
     #[test]

@@ -4,6 +4,8 @@
 //! `ABBEY_VOICE_MODE=openai`, caps WebSocket/audio memory, owns cancellation,
 //! and truncates provider history to the audio actually heard after barge-in.
 
+mod protocol;
+
 use std::io::Cursor;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -20,11 +22,14 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-use crate::offline_voice::frame_is_voice;
+use crate::offline_voice::{FrameSequence, frame_is_voice};
 use crate::voice_session::{SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime};
+use protocol::{
+    ResponseBuffer, cancel_response, capture_output_item, next_event_id, pcm16_to_f32,
+    truncate_event,
+};
 
 const MAX_WS_MESSAGE_BYTES: usize = 512 * 1024;
-const MAX_OUTPUT_PCM_BYTES: usize = 24_000 * 2 * 45;
 const SPEECH_END_SILENCE_FRAMES: usize = 15;
 
 pub struct OpenAiSession {
@@ -65,13 +70,6 @@ pub async fn run(mut session: OpenAiSession) {
     if let Some(track) = track {
         let _ = track.stop();
     }
-}
-
-struct ActiveResponse {
-    id: String,
-    item_id: Option<String>,
-    pcm: Vec<u8>,
-    cancelled: bool,
 }
 
 async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
@@ -136,14 +134,17 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
 
     let mut human_speaking = false;
     let mut silence_frames = 0_usize;
-    let mut active_response: Option<ActiveResponse> = None;
+    let mut responses = ResponseBuffer::default();
+    let mut frame_sequence = FrameSequence::default();
     let mut playing_item_id: Option<String> = None;
     let mut playing_turn: Option<u64> = None;
     let mut playback_turn = 0_u64;
 
     loop {
+        // Keep Tokio's fair branch ordering. The bounded audio receiver can be
+        // continuously ready; biased polling would starve provider events and
+        // delay cancellation, item correlation, and playback indefinitely.
         tokio::select! {
-            biased;
             changed = session.cancel.changed() => {
                 if changed.is_err() || *session.cancel.borrow() {
                     let _ = writer.close().await;
@@ -185,6 +186,11 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                 if !session.runtime.media_enabled(session.epoch) {
                     continue;
                 }
+                enforce_input_sequence(
+                    &mut frame_sequence,
+                    &session.runtime,
+                    frame.sequence,
+                )?;
                 let voiced = frame_is_voice(&frame.samples);
                 if voiced && !human_speaking {
                     human_speaking = true;
@@ -193,7 +199,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                         &mut writer,
                         session.epoch,
                         &mut event_sequence,
-                        &mut active_response,
+                        &mut responses,
                         &session.playback,
                         &mut playing_item_id,
                         &mut playing_turn,
@@ -257,7 +263,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                             &mut writer,
                             session.epoch,
                             &mut event_sequence,
-                            &mut active_response,
+                            &mut responses,
                             &session.playback,
                             &mut playing_item_id,
                             &mut playing_turn,
@@ -269,16 +275,17 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                         if let Some(id) = event.pointer("/response/id")
                             .and_then(serde_json::Value::as_str)
                         {
-                            active_response = Some(ActiveResponse {
-                                id: id.to_string(),
-                                item_id: None,
-                                pcm: Vec::new(),
-                                cancelled: false,
-                            });
+                            responses.start(id)?;
                         }
                     }
                     Some("response.output_item.added") => {
-                        let _ = capture_assistant_audio_item(&mut active_response, &event);
+                        let _ = capture_output_item(
+                            &mut writer,
+                            session.epoch,
+                            &mut event_sequence,
+                            &mut responses,
+                            &event,
+                        ).await?;
                     }
                     Some("response.output_audio.delta" | "response.audio.delta") => {
                         let Some(response_id) = event.get("response_id")
@@ -288,12 +295,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                         let Some(delta) = event.get("delta").and_then(serde_json::Value::as_str) else {
                             continue;
                         };
-                        append_encoded_audio_delta(
-                            &mut active_response,
-                            response_id,
-                            item_id,
-                            delta,
-                        )?;
+                        responses.append_encoded_audio(response_id, item_id, delta)?;
                     }
                     Some("response.output_audio.done" | "response.audio.done") => {}
                     Some("response.done") => {
@@ -301,11 +303,8 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                             .and_then(serde_json::Value::as_str) else { continue; };
                         let status = event.pointer("/response/status")
                             .and_then(serde_json::Value::as_str);
-                        let Some((item_id, pcm)) = take_completed_audio(
-                            &mut active_response,
-                            response_id,
-                            status,
-                        ) else { continue; };
+                        let Some((item_id, pcm)) = responses
+                            .take_completed_audio(response_id, status) else { continue; };
                         if !session.runtime.media_enabled(session.epoch) {
                             continue;
                         }
@@ -357,96 +356,18 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
     }
 }
 
-/// Correlate the assistant message item while its content is still empty.
-/// This session requests audio as its only output modality, and Realtime emits
-/// `response.output_item.added` before it adds the audio content part/deltas.
-/// Recording the item here lets a pre-delta barge-in truncate unheard audio.
-fn capture_assistant_audio_item(
-    active_response: &mut Option<ActiveResponse>,
-    event: &serde_json::Value,
-) -> bool {
-    if event.get("type").and_then(serde_json::Value::as_str) != Some("response.output_item.added")
-        || event
-            .get("output_index")
-            .and_then(serde_json::Value::as_u64)
-            .is_none()
-    {
-        return false;
-    }
-    let Some(response_id) = event.get("response_id").and_then(serde_json::Value::as_str) else {
-        return false;
-    };
-    let Some(item) = event.get("item") else {
-        return false;
-    };
-    let Some(active) = active_response.as_mut() else {
-        return false;
-    };
-    if active.cancelled || active.id != response_id {
-        return false;
-    }
-    if item.get("type").and_then(serde_json::Value::as_str) != Some("message")
-        || item.get("role").and_then(serde_json::Value::as_str) != Some("assistant")
-    {
-        return false;
-    }
-    let Some(item_id) = item
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .filter(|id| !id.is_empty())
-    else {
-        return false;
-    };
-    if active.item_id.as_deref().is_some_and(|id| id != item_id) {
-        return false;
-    }
-    active.item_id.get_or_insert_with(|| item_id.to_string());
-    true
-}
-
-fn append_audio_delta(
-    active_response: &mut Option<ActiveResponse>,
-    response_id: &str,
-    item_id: &str,
-    decoded: &[u8],
-) -> Result<bool, String> {
-    let Some(active) = active_response.as_mut() else {
-        return Ok(false);
-    };
-    if active.cancelled || active.id != response_id {
-        return Ok(false);
-    }
-    // WebSocket events are ordered: the matching assistant item must already
-    // have been announced. Never let a stale or unrelated delta choose which
-    // conversation item will later be truncated.
-    if active.item_id.as_deref() != Some(item_id) {
-        return Ok(false);
-    }
-    if !decoded.len().is_multiple_of(2)
-        || active.pcm.len().saturating_add(decoded.len()) > MAX_OUTPUT_PCM_BYTES
-    {
-        return Err("Realtime audio exceeded the bounded PCM duration".into());
-    }
-    active.pcm.extend_from_slice(decoded);
-    Ok(true)
-}
-
-fn append_encoded_audio_delta(
-    active_response: &mut Option<ActiveResponse>,
-    response_id: &str,
-    item_id: &str,
-    encoded: &str,
-) -> Result<bool, String> {
-    let matches_active = active_response.as_ref().is_some_and(|active| {
-        !active.cancelled && active.id == response_id && active.item_id.as_deref() == Some(item_id)
-    });
-    if !matches_active {
-        return Ok(false);
-    }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|error| format!("Realtime audio delta was not valid base64: {error}"))?;
-    append_audio_delta(active_response, response_id, item_id, &decoded)
+fn enforce_input_sequence(
+    sequence: &mut FrameSequence,
+    runtime: &VoiceRuntime,
+    actual: u64,
+) -> Result<(), String> {
+    sequence.observe(actual).map_err(|gap| {
+        runtime.note_overrun();
+        format!(
+            "Realtime input sequence gap (expected {}, received {}); closing rather than splicing PCM",
+            gap.expected, gap.actual
+        )
+    })
 }
 
 /// Wait for sink capacity without holding the consent mutex, then linearize
@@ -478,26 +399,11 @@ where
     Ok(true)
 }
 
-fn take_completed_audio(
-    active_response: &mut Option<ActiveResponse>,
-    response_id: &str,
-    status: Option<&str>,
-) -> Option<(Option<String>, Vec<u8>)> {
-    if active_response.as_ref()?.id != response_id {
-        return None;
-    }
-    let active = active_response.take()?;
-    if active.cancelled || status != Some("completed") || active.pcm.is_empty() {
-        return None;
-    }
-    Some((active.item_id, active.pcm))
-}
-
 async fn interrupt_response<S>(
     writer: &mut S,
     epoch: u64,
     event_sequence: &mut u64,
-    active_response: &mut Option<ActiveResponse>,
+    responses: &mut ResponseBuffer,
     playback: &SharedPlayback,
     playing_item_id: &mut Option<String>,
     playing_turn: &mut Option<u64>,
@@ -506,49 +412,7 @@ where
     S: Sink<Message> + Unpin,
     S::Error: std::fmt::Display,
 {
-    let mut interrupted = false;
-    let response_to_cancel = active_response.as_mut().and_then(|active| {
-        if active.cancelled {
-            None
-        } else {
-            active.cancelled = true;
-            active.pcm.clear();
-            interrupted = true;
-            Some((active.id.clone(), active.item_id.clone()))
-        }
-    });
-    if let Some((response_id, buffered_item_id)) = response_to_cancel {
-        writer
-            .send(Message::Text(
-                serde_json::json!({
-                    "type": "response.cancel",
-                    "event_id": next_event_id(epoch, event_sequence),
-                    "response_id": response_id,
-                })
-                .to_string(),
-            ))
-            .await
-            .map_err(|error| format!("cancelling the Realtime response failed: {error}"))?;
-        // Output is intentionally whole-response buffered in this backup path.
-        // If speech arrives before playback starts, none of the already-created
-        // assistant item was heard; truncate it to zero so provider history
-        // cannot retain an answer Discord participants never received.
-        if let Some(item_id) = buffered_item_id {
-            writer
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "conversation.item.truncate",
-                        "event_id": next_event_id(epoch, event_sequence),
-                        "item_id": item_id,
-                        "content_index": 0,
-                        "audio_end_ms": 0,
-                    })
-                    .to_string(),
-                ))
-                .await
-                .map_err(|error| format!("truncating buffered Realtime audio failed: {error}"))?;
-        }
-    }
+    let mut interrupted = cancel_response(writer, epoch, event_sequence, responses).await?;
 
     if playing_turn.take().is_some() {
         interrupted = true;
@@ -568,16 +432,7 @@ where
         let _ = track.stop();
         if let Some(item_id) = playing_item_id.take() {
             writer
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "conversation.item.truncate",
-                        "event_id": next_event_id(epoch, event_sequence),
-                        "item_id": item_id,
-                        "content_index": 0,
-                        "audio_end_ms": played_ms,
-                    })
-                    .to_string(),
-                ))
+                .send(truncate_event(epoch, event_sequence, &item_id, played_ms))
                 .await
                 .map_err(|error| format!("truncating unheard Realtime audio failed: {error}"))?;
         }
@@ -594,20 +449,6 @@ fn consume_natural_playback_end(playing_turn: &mut Option<u64>, ended_turn: u64)
     }
     *playing_turn = None;
     true
-}
-
-fn next_event_id(epoch: u64, sequence: &mut u64) -> String {
-    *sequence = sequence.saturating_add(1);
-    format!("abbey-{epoch}-{sequence}")
-}
-
-fn pcm16_to_f32(pcm: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(pcm.len() * 2);
-    for pair in pcm.chunks_exact(2) {
-        let sample = f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0;
-        output.extend_from_slice(&sample.to_le_bytes());
-    }
-    output
 }
 
 struct PlaybackEnd {
@@ -675,51 +516,6 @@ fn brief(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn output_item_added(response_id: &str, item: serde_json::Value) -> serde_json::Value {
-        serde_json::json!({
-            "type": "response.output_item.added",
-            "response_id": response_id,
-            "output_index": 0,
-            "item": item,
-        })
-    }
-
-    #[derive(Default)]
-    struct RecordingSink(Vec<Message>);
-
-    impl Sink<Message> for RecordingSink {
-        type Error = std::convert::Infallible;
-
-        fn poll_ready(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-
-        fn start_send(
-            mut self: std::pin::Pin<&mut Self>,
-            item: Message,
-        ) -> Result<(), Self::Error> {
-            self.0.push(item);
-            Ok(())
-        }
-
-        fn poll_flush(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-
-        fn poll_close(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-    }
 
     struct RevokingReadySink {
         messages: Vec<Message>,
@@ -794,198 +590,19 @@ mod tests {
         assert!(!runtime.media_enabled(epoch));
     }
 
-    #[test]
-    fn pcm16_conversion_does_not_duplicate_samples_or_channels() {
-        let bytes = [
-            i16::MIN.to_le_bytes(),
-            0_i16.to_le_bytes(),
-            i16::MAX.to_le_bytes(),
-        ]
-        .concat();
-        let output = pcm16_to_f32(&bytes);
-        assert_eq!(output.len(), 3 * size_of::<f32>());
-        let samples: Vec<f32> = output
-            .chunks_exact(4)
-            .map(|chunk| f32::from_ne_bytes(chunk.try_into().unwrap()))
-            .collect();
-        assert_eq!(samples[0], -1.0);
-        assert_eq!(samples[1], 0.0);
-        assert!((samples[2] - (32767.0 / 32768.0)).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn output_duration_cap_is_explicit() {
-        assert_eq!(MAX_OUTPUT_PCM_BYTES, 2_160_000);
-    }
-
-    #[test]
-    fn cancelled_and_stale_response_audio_can_never_be_played() {
-        let mut active = Some(ActiveResponse {
-            id: "r1".into(),
-            item_id: None,
-            pcm: Vec::new(),
-            cancelled: true,
-        });
-        assert!(!append_audio_delta(&mut active, "r1", "i1", &[0, 0]).unwrap());
-        assert!(take_completed_audio(&mut active, "r1", Some("completed")).is_none());
-
-        let mut active = Some(ActiveResponse {
-            id: "new".into(),
-            item_id: None,
-            pcm: Vec::new(),
-            cancelled: false,
-        });
-        assert!(!append_audio_delta(&mut active, "old", "i0", &[0, 0]).unwrap());
-        assert!(capture_assistant_audio_item(
-            &mut active,
-            &output_item_added(
-                "new",
-                serde_json::json!({
-                    "id": "i1",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": []
-                })
-            ),
-        ));
-        assert!(!append_audio_delta(&mut active, "new", "other", &[1, 0]).unwrap());
-        assert!(append_audio_delta(&mut active, "new", "i1", &[1, 0]).unwrap());
-        assert!(take_completed_audio(&mut active, "old", Some("completed")).is_none());
-        assert!(take_completed_audio(&mut active, "new", Some("cancelled")).is_none());
-    }
-
-    #[test]
-    fn malformed_stale_delta_is_ignored_before_base64_decode() {
-        let mut active = Some(ActiveResponse {
-            id: "current".into(),
-            item_id: Some("item-current".into()),
-            pcm: Vec::new(),
-            cancelled: false,
-        });
-        assert!(
-            !append_encoded_audio_delta(&mut active, "stale", "item-stale", "not base64!")
-                .expect("stale malformed payload is irrelevant")
-        );
-        assert!(
-            append_encoded_audio_delta(&mut active, "current", "item-current", "not base64!")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn output_item_correlation_rejects_stale_non_assistant_and_conflicting_items() {
-        let assistant = |response_id: &str, id: &str| {
-            output_item_added(
-                response_id,
-                serde_json::json!({
-                    "id": id,
-                    "type": "message",
-                    "role": "assistant",
-                    "content": []
-                }),
-            )
-        };
-        let mut active = Some(ActiveResponse {
-            id: "r1".into(),
-            item_id: None,
-            pcm: Vec::new(),
-            cancelled: false,
-        });
-        assert!(!capture_assistant_audio_item(
-            &mut active,
-            &assistant("stale", "old")
-        ));
-        assert!(!capture_assistant_audio_item(
-            &mut active,
-            &output_item_added(
-                "r1",
-                serde_json::json!({"id": "u1", "type": "message", "role": "user"})
-            )
-        ));
-        assert!(!capture_assistant_audio_item(
-            &mut active,
-            &output_item_added(
-                "r1",
-                serde_json::json!({"id": "f1", "type": "function_call"})
-            )
-        ));
-        assert!(!capture_assistant_audio_item(
-            &mut active,
-            &serde_json::json!({
-                "type": "response.output_item.added",
-                "response_id": "r1",
-                "item": {"id": "missing-index", "type": "message", "role": "assistant"}
-            })
-        ));
-        assert!(capture_assistant_audio_item(
-            &mut active,
-            &assistant("r1", "i1")
-        ));
-        assert!(capture_assistant_audio_item(
-            &mut active,
-            &assistant("r1", "i1")
-        ));
-        assert!(!capture_assistant_audio_item(
-            &mut active,
-            &assistant("r1", "i2")
-        ));
-        assert_eq!(active.unwrap().item_id.as_deref(), Some("i1"));
-    }
-
     #[tokio::test]
-    async fn interrupt_after_item_added_but_before_first_delta_cancels_and_truncates_to_zero() {
-        let mut sink = RecordingSink::default();
-        let mut sequence = 0;
-        let mut active = Some(ActiveResponse {
-            id: "r1".into(),
-            item_id: None,
-            pcm: Vec::new(),
-            cancelled: false,
+    async fn input_sequence_gap_counts_overrun_and_fails_closed() {
+        let runtime = VoiceRuntime::new(crate::voice::VoiceConfig {
+            guild_id: 1,
+            channel_id: 2,
+            backend: crate::voice::VoiceBackendConfig::Disabled,
+            wake_word_required: true,
         });
-        assert!(capture_assistant_audio_item(
-            &mut active,
-            &output_item_added(
-                "r1",
-                serde_json::json!({
-                    "id": "i1",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": []
-                })
-            ),
-        ));
-        let playback: SharedPlayback = Arc::new(Mutex::new(None));
-        let mut playing_item = None;
-        let mut playing_turn = None;
-
-        assert!(
-            interrupt_response(
-                &mut sink,
-                7,
-                &mut sequence,
-                &mut active,
-                &playback,
-                &mut playing_item,
-                &mut playing_turn,
-            )
-            .await
-            .unwrap()
-        );
-        let events: Vec<serde_json::Value> = sink
-            .0
-            .into_iter()
-            .map(|message| match message {
-                Message::Text(text) => serde_json::from_str(&text).unwrap(),
-                other => panic!("unexpected event: {other:?}"),
-            })
-            .collect();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0]["type"], "response.cancel");
-        assert_eq!(events[0]["response_id"], "r1");
-        assert_eq!(events[1]["type"], "conversation.item.truncate");
-        assert_eq!(events[1]["item_id"], "i1");
-        assert_eq!(events[1]["audio_end_ms"], 0);
-        assert_eq!(playing_turn, None);
+        let mut sequence = FrameSequence::default();
+        enforce_input_sequence(&mut sequence, &runtime, 10).unwrap();
+        let error = enforce_input_sequence(&mut sequence, &runtime, 12).unwrap_err();
+        assert!(error.contains("expected 11, received 12"), "{error}");
+        assert_eq!(runtime.snapshot().await.aborted_overruns, 1);
     }
 
     #[test]
