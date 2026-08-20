@@ -353,7 +353,7 @@ pub async fn handle<O: Outbound + Sync>(
         || persona_for(&enriched, &settings),
         |persona| persona_for_session(&enriched, &settings, Some(persona)),
     );
-    let Some(backend) = &state.backend else {
+    let Some(backend_label) = state.generation_label() else {
         if !forced {
             // A policy that wants to speak with nothing to speak through is a
             // policy we cannot follow; treat it as silence without learning.
@@ -424,15 +424,15 @@ pub async fn handle<O: Outbound + Sync>(
         }
     })
     .await;
-    let (answer, already_sent, persona) = match generated {
+    let (answer, already_sent, persona, _provider_label) = match generated {
         Ok(triple) => triple,
         Err(e) => {
-            tracing::warn!(error = %e, backend = backend.label(), "reply generation failed");
+            tracing::warn!(error = %e, backend = backend_label, "reply generation failed");
             if forced {
                 // Someone addressed Abbey and waited; dead air is worse than
                 // the same honest failure line `/persona ask` already posts.
                 let failure = OutboundMessage {
-                    text: ask::render_failure(initial_persona, backend.label(), &e),
+                    text: ask::render_failure(initial_persona, backend_label, &e),
                     reply_to_native_message_id: reply_to.clone(),
                     ..OutboundMessage::default()
                 };

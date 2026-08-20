@@ -13,6 +13,9 @@
 //! - `ABBEY_BOT_LLM_ENDPOINT` + `ABBEY_BOT_LLM_MODEL` (optional) — answer via an
 //!   OpenAI-compatible server, usually loopback. With neither this nor the key
 //!   set, `/persona ask` replies that no generation backend is configured.
+//! - `ABBEY_FM_MODE`, `ABBEY_FM_ENDPOINT`, `ABBEY_FM_CLI`, and
+//!   `ABBEY_FM_FALLBACK` (optional) — explicit Apple Foundation Models
+//!   secondary routing; off by default.
 //! - `ABBEY_QUIET` (optional) — `1` forbids unsolicited replies everywhere.
 //! - `ABBEY_DATA_DIR` (optional) — where learning, memory, and config persist.
 //!   Unset means in-memory only.
@@ -58,6 +61,7 @@ mod persona;
 mod pipeline;
 mod platform;
 mod profile;
+mod provider;
 mod recall;
 mod routing_signals;
 mod runtime;
@@ -161,9 +165,17 @@ async fn main() -> Result<(), Error> {
         Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),
         None => tracing::warn!("ABBEY_DATA_DIR unset — learning and memory are in-memory only"),
     }
-    match &state.backend {
-        Some(b) => tracing::info!(backend = b.label(), "generation backend configured"),
+    match state.generation_label() {
+        Some(label) => tracing::info!(backend = label, "generation backend configured"),
         None => tracing::warn!("no generation backend — Abbey answers honestly that she cannot"),
+    }
+    if let Some(fm) = &state.foundation_models {
+        tracing::info!(
+            mode = fm.config.mode.as_str(),
+            fallback = fm.config.fallback,
+            server = fm.config.endpoint.is_some(),
+            "Apple Foundation Models secondary configured"
+        );
     }
     if state.quiet {
         tracing::info!(

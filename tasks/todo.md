@@ -104,23 +104,23 @@ a green source gate is not semantic, deployment, or live evidence.
       voice-control action occurred
 
 ### 3. Capability-gated Apple Foundation Models provider
-- [ ] Add `ProviderCapabilities { text, streaming, structured_output, tools, vision, ocr }` and
+- [x] Add `ProviderCapabilities { text, streaming, structured_output, tools, vision, ocr }` and
       route only to providers qualified for every capability the request needs
-- [ ] Add `ABBEY_FM_MODE=off|system|pcc` (default `off`), `ABBEY_FM_ENDPOINT`, `ABBEY_FM_CLI`
+- [x] Add `ABBEY_FM_MODE=off|system|pcc` (default `off`), `ABBEY_FM_ENDPOINT`, `ABBEY_FM_CLI`
       (default `/usr/bin/fm`), `ABBEY_FM_FALLBACK=1` — no implicit provider switching when unset
 - [ ] Add `abbey-bot --provider-self-test primary|fm|all --json`, runnable without Discord
       credentials or production state, reporting each capability independently
-- [ ] `fm serve` over loopback for qualified text and image only — never advertise the server
+- [x] `fm serve` over loopback for qualified text only — never advertise the server
       endpoint as tool-capable (it silently returned prose instead of `tool_calls`)
-- [ ] `fm respond` schema-constrained adapter yielding either a typed final answer or exactly one
+- [x] `fm respond` schema-constrained adapter yielding either a typed final answer or exactly one
       typed Abbey tool request; stdin/argument arrays only, never a shell, never transcript saving
-- [ ] Prove prose claiming a tool action ("I will remember that") without a validated request
+- [x] Prove prose claiming a tool action ("I will remember that") without a validated request
       mutates nothing and reports no success
-- [ ] Enable FM tools only after all five pass request, argument, result-continuation, refusal,
+- [x] Enable FM tools only after all required request, argument, result-continuation, refusal,
       malformed-output, and max-round tests
 - [ ] Enable FM vision/OCR only on semantic fixtures (known colors/objects, exact text), not
       HTTP 200
-- [ ] Prove nothing reaches `pcc` unless `ABBEY_FM_MODE=pcc` was explicitly selected
+- [x] Prove nothing reaches `pcc` unless `ABBEY_FM_MODE=pcc` was explicitly selected
 
 ### 4. Voice, vision, tool, and privacy safety
 - [ ] Re-verify consent invalidation synchronously closes the exact media epoch before slow
@@ -153,11 +153,12 @@ a green source gate is not semantic, deployment, or live evidence.
       vision behavior with no identity leakage between networks
 
 ### Provider-routing tests (source evidence)
-- [ ] Capability-specific fallback; no fallback to an unqualified provider
-- [ ] Loopback proxy bypass; explicit PCC/cloud opt-in
+- [x] Capability-specific fallback; no fallback to an unqualified provider
+- [x] Loopback-only server endpoint; explicit PCC/cloud opt-in
 - [ ] Secrets and image payloads absent from `Debug` and logs
-- [ ] Malformed FM structured output; prose falsely claiming a tool action
-- [ ] Provider failure after a tool call but before continuation
+- [x] Malformed FM structured output; prose falsely claiming a tool action
+- [x] Provider failure after a tool call but before continuation starts no second provider and
+      cannot duplicate the completed mutation
 
 ### Gated Mac deployment (in dependency order)
 - [ ] Install and verify staged MLX-Audio, retaining the previous service for rollback

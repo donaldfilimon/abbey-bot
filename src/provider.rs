@@ -1,17 +1,143 @@
-//! Provider capabilities and deterministic routing.
+//! Explicit Apple Foundation Models fallback and capability routing.
 //!
-//! A configured endpoint is not evidence that it can satisfy a request.  The
-//! runtime therefore routes against a semantic capability set, and a provider
-//! must satisfy every bit required by the current operation.  Foundation
-//! Models is considered only when the operator explicitly enables fallback;
-//! its server and schema-constrained CLI are separate routes because `fm
-//! serve` must never be advertised as tool-capable.
+//! Foundation Models is never selected merely because `/usr/bin/fm` or a
+//! server happens to exist. The operator must select `system` or `pcc` and
+//! separately enable fallback. The HTTP server and `fm respond` CLI are also
+//! separate capabilities: the server is text-only here and can never inherit
+//! CLI tool capability.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ffi::OsString;
+use std::io::Write as _;
+use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use crate::llm::Backend;
+use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
+
+const DEFAULT_FM_CLI: &str = "/usr/bin/fm";
+const DEFAULT_TIMEOUT_SECS: u64 = 300;
+const STATIC_FM_INSTRUCTIONS: &str = "Follow the policy and conversation JSON supplied on stdin. Return only the schema-guided decision.";
+const MAX_STDOUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_STDERR_BYTES: usize = 4 * 1024;
+const ALLOWED_ENVIRONMENT: &[&str] = &[
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "__CF_USER_TEXT_ENCODING",
+];
+static NEXT_SCHEMA_FILE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FmMode {
+    System,
+    Pcc,
+}
+
+impl FmMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Pcc => "pcc",
+        }
+    }
+}
+
+/// Validated operator configuration. This type contains no credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmConfig {
+    pub mode: FmMode,
+    pub endpoint: Option<String>,
+    pub cli: PathBuf,
+    pub fallback: bool,
+    pub timeout_secs: u64,
+}
+
+impl FmConfig {
+    pub fn from_values(
+        mode: Option<String>,
+        endpoint: Option<String>,
+        cli: Option<String>,
+        fallback: Option<String>,
+        timeout_secs: Option<String>,
+    ) -> Result<Option<Self>, String> {
+        let value = |raw: Option<String>| {
+            raw.map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+        let fallback = match value(fallback).as_deref() {
+            None | Some("0" | "false" | "off") => false,
+            Some("1" | "true" | "on") => true,
+            Some(_) => return Err("ABBEY_FM_FALLBACK must be 1 or 0".into()),
+        };
+        let mode = match value(mode).as_deref() {
+            None | Some("off") => {
+                if fallback {
+                    return Err("ABBEY_FM_FALLBACK=1 requires ABBEY_FM_MODE=system or pcc".into());
+                }
+                return Ok(None);
+            }
+            Some("system") => FmMode::System,
+            Some("pcc") => FmMode::Pcc,
+            Some(_) => return Err("ABBEY_FM_MODE must be off, system, or pcc".into()),
+        };
+
+        let endpoint = value(endpoint)
+            .map(|endpoint| validate_fm_endpoint(&endpoint).map(|()| endpoint))
+            .transpose()?;
+        let cli = PathBuf::from(value(cli).unwrap_or_else(|| DEFAULT_FM_CLI.to_string()));
+        if !cli.is_absolute() || cli.components().any(|part| part == Component::ParentDir) {
+            return Err("ABBEY_FM_CLI must be an absolute path without `..`".into());
+        }
+        let timeout_secs = match value(timeout_secs) {
+            None => DEFAULT_TIMEOUT_SECS,
+            Some(raw) => raw
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| *seconds > 0)
+                .ok_or_else(|| {
+                    "ABBEY_BOT_LLM_TIMEOUT_SECS must be a positive integer for FM".to_string()
+                })?,
+        };
+        Ok(Some(Self {
+            mode,
+            endpoint,
+            cli,
+            fallback,
+            timeout_secs,
+        }))
+    }
+
+    pub fn from_env() -> Result<Option<Self>, String> {
+        Self::from_values(
+            std::env::var("ABBEY_FM_MODE").ok(),
+            std::env::var("ABBEY_FM_ENDPOINT").ok(),
+            std::env::var("ABBEY_FM_CLI").ok(),
+            std::env::var("ABBEY_FM_FALLBACK").ok(),
+            std::env::var("ABBEY_BOT_LLM_TIMEOUT_SECS").ok(),
+        )
+    }
+}
+
+fn validate_fm_endpoint(raw: &str) -> Result<(), String> {
+    crate::llm::validate_remote_endpoint(raw, "ABBEY_FM_ENDPOINT")?;
+    let url = reqwest::Url::parse(raw)
+        .map_err(|_| "ABBEY_FM_ENDPOINT must be a valid absolute URL".to_string())?;
+    if !crate::llm::url_is_loopback(&url) {
+        return Err("ABBEY_FM_ENDPOINT must target loopback".into());
+    }
+    if url.path() != "/" && !url.path().is_empty() {
+        return Err("ABBEY_FM_ENDPOINT must be a server base URL without a path".into());
+    }
+    Ok(())
+}
 
 /// Independently qualified provider behavior.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +151,6 @@ pub struct ProviderCapabilities {
 }
 
 impl ProviderCapabilities {
-    /// Whether this capability set is a superset of the request.
     #[must_use]
     pub const fn satisfies(self, required: Self) -> bool {
         (!required.text || self.text)
@@ -36,9 +161,6 @@ impl ProviderCapabilities {
             && (!required.ocr || self.ocr)
     }
 
-    /// Capabilities of Abbey's existing text backend contract. Vision remains
-    /// separately qualified, and the Anthropic path is intentionally not
-    /// described as streamed by this crate.
     #[must_use]
     pub const fn primary(backend: &Backend, tools: bool) -> Self {
         Self {
@@ -76,8 +198,6 @@ impl ProviderCapabilities {
     }
 }
 
-/// A concrete transport path. The FM server and CLI are deliberately distinct
-/// so qualification of one can never inflate the other's privileges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderRoute {
@@ -86,14 +206,14 @@ pub enum ProviderRoute {
     FoundationModelsCli,
 }
 
-/// Immutable capability evidence plus per-provider runtime feature state.
+/// Immutable transport evidence plus provider-local runtime feature state.
 pub struct ProviderRouter {
     primary: Option<ProviderCapabilities>,
     fm_server: Option<ProviderCapabilities>,
     fm_cli: Option<ProviderCapabilities>,
     fm_fallback: bool,
     primary_tools_enabled: AtomicBool,
-    fm_tools_enabled: AtomicBool,
+    fm_cli_tools_enabled: AtomicBool,
 }
 
 impl ProviderRouter {
@@ -101,168 +221,476 @@ impl ProviderRouter {
     pub fn new(
         primary_backend: Option<&Backend>,
         primary_tools_enabled: bool,
-        fm_capabilities: Option<ProviderCapabilities>,
+        fm_server: Option<ProviderCapabilities>,
+        fm_cli: Option<ProviderCapabilities>,
         fm_fallback: bool,
     ) -> Self {
-        let primary = primary_backend
-            .map(|backend| ProviderCapabilities::primary(backend, primary_tools_enabled));
-        // The OpenAI-compatible server path is never tool-capable. Structured
-        // output and Abbey tool selection belong exclusively to `fm respond`.
-        let fm_server = fm_capabilities.map(|caps| ProviderCapabilities {
-            structured_output: false,
-            tools: false,
-            ..caps
-        });
-        // The CLI adapter is not a streamed/image transport. It is selected
-        // only for typed final answers and typed Abbey tool requests.
-        let fm_cli = fm_capabilities.map(|caps| ProviderCapabilities {
-            streaming: false,
-            vision: false,
-            ocr: false,
-            ..caps
-        });
         Self {
-            primary,
-            fm_server,
+            primary: primary_backend
+                .map(|backend| ProviderCapabilities::primary(backend, primary_tools_enabled)),
+            fm_server: fm_server.map(|caps| ProviderCapabilities {
+                structured_output: false,
+                tools: false,
+                ..caps
+            }),
             fm_cli,
             fm_fallback,
             primary_tools_enabled: AtomicBool::new(primary_tools_enabled),
-            fm_tools_enabled: AtomicBool::new(
-                fm_capabilities.is_some_and(|capabilities| capabilities.tools),
+            fm_cli_tools_enabled: AtomicBool::new(
+                fm_cli.is_some_and(|capabilities| capabilities.tools),
             ),
         }
     }
 
-    /// Ordered eligible routes. FM is absent unless explicit fallback is on,
-    /// and only routes satisfying every requested capability are returned.
     #[must_use]
     pub fn candidates(&self, required: ProviderCapabilities) -> Vec<ProviderRoute> {
-        let mut routes = Vec::with_capacity(2);
-        if self
-            .effective_capabilities(ProviderRoute::Primary)
-            .is_some_and(|caps| caps.satisfies(required))
-        {
-            routes.push(ProviderRoute::Primary);
-        }
-        if !self.fm_fallback {
-            return routes;
-        }
-        let fm_route = if required.tools || required.structured_output {
-            ProviderRoute::FoundationModelsCli
-        } else {
-            ProviderRoute::FoundationModelsServer
-        };
-        if self
-            .effective_capabilities(fm_route)
-            .is_some_and(|caps| caps.satisfies(required))
-        {
-            routes.push(fm_route);
+        let mut routes = Vec::with_capacity(3);
+        for route in [
+            ProviderRoute::Primary,
+            ProviderRoute::FoundationModelsServer,
+            ProviderRoute::FoundationModelsCli,
+        ] {
+            if !self.fm_fallback && !matches!(route, ProviderRoute::Primary) {
+                continue;
+            }
+            if self
+                .effective_capabilities(route)
+                .is_some_and(|capabilities| capabilities.satisfies(required))
+            {
+                routes.push(route);
+            }
         }
         routes
     }
 
-    /// The current capabilities after a provider-specific runtime rejection.
     #[must_use]
     pub fn effective_capabilities(&self, route: ProviderRoute) -> Option<ProviderCapabilities> {
-        let mut caps = match route {
+        let mut capabilities = match route {
             ProviderRoute::Primary => self.primary?,
             ProviderRoute::FoundationModelsServer => self.fm_server?,
             ProviderRoute::FoundationModelsCli => self.fm_cli?,
         };
         let tools_enabled = match route {
             ProviderRoute::Primary => self.primary_tools_enabled.load(Ordering::Relaxed),
-            ProviderRoute::FoundationModelsCli => self.fm_tools_enabled.load(Ordering::Relaxed),
+            ProviderRoute::FoundationModelsCli => self.fm_cli_tools_enabled.load(Ordering::Relaxed),
             ProviderRoute::FoundationModelsServer => false,
         };
         if !tools_enabled {
-            caps.tools = false;
-            if matches!(route, ProviderRoute::Primary) {
-                caps.structured_output = false;
-            }
+            capabilities.tools = false;
         }
-        Some(caps)
+        Some(capabilities)
     }
 
-    /// Disable only the provider that rejected Abbey's tool contract.
     pub fn disable_tools(&self, route: ProviderRoute) {
         match route {
             ProviderRoute::Primary => self.primary_tools_enabled.store(false, Ordering::Relaxed),
             ProviderRoute::FoundationModelsCli => {
-                self.fm_tools_enabled.store(false, Ordering::Relaxed);
+                self.fm_cli_tools_enabled.store(false, Ordering::Relaxed);
             }
             ProviderRoute::FoundationModelsServer => {}
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct FoundationModels {
+    pub config: FmConfig,
+    pub router: ProviderRouter,
+}
 
-    fn local() -> Backend {
-        Backend::OpenAiCompatible {
-            endpoint: "http://127.0.0.1:8282".into(),
-            model: "gemma".into(),
-        }
-    }
-
-    fn qualified_fm() -> ProviderCapabilities {
-        ProviderCapabilities {
+impl FoundationModels {
+    #[must_use]
+    pub fn new(
+        config: FmConfig,
+        primary_backend: Option<&Backend>,
+        primary_tools_enabled: bool,
+    ) -> Self {
+        let server = config.endpoint.as_ref().map(|_| ProviderCapabilities {
             text: true,
             streaming: true,
-            structured_output: true,
-            tools: true,
-            vision: true,
-            ocr: false,
+            ..ProviderCapabilities::default()
+        });
+        let cli = Some(ProviderCapabilities::text_with_tools());
+        let router = ProviderRouter::new(
+            primary_backend,
+            primary_tools_enabled,
+            server,
+            cli,
+            config.fallback,
+        );
+        Self { config, router }
+    }
+
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self.config.mode {
+            FmMode::System => "Apple Foundation Models on-device model",
+            FmMode::Pcc => "Apple Foundation Models Private Cloud Compute",
         }
     }
 
-    #[test]
-    fn capability_selection_requires_the_full_requested_set() {
-        let router = ProviderRouter::new(Some(&local()), true, Some(qualified_fm()), true);
-        assert_eq!(
-            router.candidates(ProviderCapabilities::text()),
-            [
-                ProviderRoute::Primary,
-                ProviderRoute::FoundationModelsServer
-            ]
-        );
-        assert_eq!(
-            router.candidates(ProviderCapabilities::text_with_tools()),
-            [ProviderRoute::Primary, ProviderRoute::FoundationModelsCli]
-        );
-        let ocr = ProviderCapabilities {
-            text: true,
-            ocr: true,
-            ..ProviderCapabilities::default()
-        };
-        assert!(router.candidates(ocr).is_empty());
+    #[must_use]
+    pub fn server_backend(&self) -> Option<Backend> {
+        self.config
+            .endpoint
+            .as_ref()
+            .map(|endpoint| Backend::OpenAiCompatible {
+                endpoint: endpoint.clone(),
+                model: self.config.mode.as_str().to_string(),
+            })
     }
 
-    #[test]
-    fn fm_is_never_an_implicit_fallback() {
-        let router = ProviderRouter::new(None, true, Some(qualified_fm()), false);
-        assert!(router.candidates(ProviderCapabilities::text()).is_empty());
-        let router = ProviderRouter::new(None, true, Some(qualified_fm()), true);
-        assert_eq!(
-            router.candidates(ProviderCapabilities::text()),
-            [ProviderRoute::FoundationModelsServer]
-        );
-    }
-
-    #[test]
-    fn a_rejection_disables_only_that_providers_tools() {
-        let router = ProviderRouter::new(Some(&local()), true, Some(qualified_fm()), true);
-        router.disable_tools(ProviderRoute::Primary);
-        assert_eq!(
-            router.candidates(ProviderCapabilities::text_with_tools()),
-            [ProviderRoute::FoundationModelsCli]
-        );
-        assert!(
-            router
-                .effective_capabilities(ProviderRoute::FoundationModelsServer)
-                .is_some_and(|caps| !caps.tools),
-            "fm serve can never inherit CLI tool qualification"
-        );
+    pub async fn cli_turn(
+        &self,
+        system_prompt: &str,
+        turns: &[ChatTurn],
+        tools: &[crate::tools::ToolSpec],
+        call_id: &str,
+    ) -> Result<ModelTurn, LlmError> {
+        let schema = decision_schema(tools)?;
+        let transcript = render_transcript(system_prompt, turns)?;
+        let file = PrivateSchemaFile::create(&schema).map_err(|error| {
+            LlmError::backend(format!("could not prepare the FM response schema: {error}"))
+        })?;
+        let invocation = CliInvocation::new(&self.config, &transcript, file.path());
+        let output = invocation.run(self.config.timeout_secs).await?;
+        parse_cli_output(&output, tools, call_id)
     }
 }
+
+/// Fully separated program, argv, and stdin. There is deliberately no shell.
+struct CliInvocation {
+    program: PathBuf,
+    args: Vec<OsString>,
+    stdin: Vec<u8>,
+    environment: Vec<(OsString, OsString)>,
+}
+
+impl CliInvocation {
+    fn new(config: &FmConfig, prompt: &str, schema: &Path) -> Self {
+        Self {
+            program: config.cli.clone(),
+            args: vec![
+                "respond".into(),
+                "--model".into(),
+                config.mode.as_str().into(),
+                "--no-stream".into(),
+                "--instructions".into(),
+                STATIC_FM_INSTRUCTIONS.into(),
+                "--schema".into(),
+                schema.as_os_str().to_owned(),
+            ],
+            stdin: prompt.as_bytes().to_vec(),
+            environment: filtered_environment(std::env::vars_os()),
+        }
+    }
+
+    async fn run(self, timeout_secs: u64) -> Result<String, LlmError> {
+        let mut command = tokio::process::Command::new(&self.program);
+        command
+            .args(&self.args)
+            .env_clear()
+            .envs(self.environment.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command.spawn().map_err(|error| {
+            LlmError::backend(format!("could not start the configured FM CLI: {error}"))
+        })?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| LlmError::backend("the FM CLI stdin pipe was unavailable".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| LlmError::backend("the FM CLI stdout pipe was unavailable".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| LlmError::backend("the FM CLI stderr pipe was unavailable".into()))?;
+        let input = self.stdin;
+        let operation = async {
+            let write = async move {
+                stdin.write_all(&input).await?;
+                stdin.shutdown().await
+            };
+            let ((), stdout, _stderr, status) = tokio::try_join!(
+                async { write.await.map_err(|error| error.to_string()) },
+                read_capped(stdout, MAX_STDOUT_BYTES),
+                read_capped(stderr, MAX_STDERR_BYTES),
+                async { child.wait().await.map_err(|error| error.to_string()) },
+            )?;
+            if !status.success() {
+                return Err(format!(
+                    "the FM CLI exited unsuccessfully ({})",
+                    status
+                        .code()
+                        .map_or_else(|| "signal".into(), |code| code.to_string())
+                ));
+            }
+            String::from_utf8(stdout)
+                .map_err(|_| "the FM CLI returned stdout that was not UTF-8".to_string())
+        };
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), operation).await {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(error)) => Err(LlmError::backend(error)),
+            Err(_) => Err(LlmError::backend("the FM CLI timed out".into())),
+        }
+    }
+}
+
+fn filtered_environment(
+    values: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Vec<(OsString, OsString)> {
+    values
+        .into_iter()
+        .filter(|(name, _)| {
+            ALLOWED_ENVIRONMENT
+                .iter()
+                .any(|allowed| name == std::ffi::OsStr::new(allowed))
+        })
+        .collect()
+}
+
+async fn read_capped(mut reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(limit.min(8192));
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let count = reader
+            .read(&mut chunk)
+            .await
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Ok(bytes);
+        }
+        if bytes.len().saturating_add(count) > limit {
+            return Err(format!("the FM CLI output exceeded {limit} bytes"));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+}
+
+struct PrivateSchemaFile(PathBuf);
+
+impl PrivateSchemaFile {
+    fn create(schema: &Value) -> std::io::Result<Self> {
+        let serial = NEXT_SCHEMA_FILE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            ".abbey-fm-schema-{}-{serial}.json",
+            std::process::id()
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path)?;
+        serde_json::to_writer(&mut file, schema)?;
+        file.flush()?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for PrivateSchemaFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn render_transcript(system_prompt: &str, turns: &[ChatTurn]) -> Result<String, LlmError> {
+    let transcript: Vec<Value> = turns
+        .iter()
+        .map(|turn| {
+            let mut object = Map::new();
+            object.insert(
+                "role".into(),
+                json!(match turn.role {
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "tool",
+                }),
+            );
+            object.insert("text".into(), json!(turn.text));
+            if !turn.tool_calls.is_empty() {
+                object.insert(
+                    "tool_calls".into(),
+                    Value::Array(
+                        turn.tool_calls
+                            .iter()
+                            .map(|call| {
+                                json!({"id": call.id, "name": call.name, "arguments": call.arguments})
+                            })
+                            .collect(),
+                    ),
+                );
+            }
+            if let Some(id) = &turn.tool_call_id {
+                object.insert("tool_call_id".into(), json!(id));
+            }
+            Value::Object(object)
+        })
+        .collect();
+    serde_json::to_string(&json!({
+        "instruction": "Continue this conversation. Return either a final answer or one schema-selected tool request. Text claiming an action is not a tool request.",
+        "system_policy": system_prompt,
+        "turns": transcript,
+    }))
+    .map_err(|error| LlmError::backend(format!("could not serialize the FM transcript: {error}")))
+}
+
+fn object_schema(title: &str, name: &str, value: Value) -> Value {
+    json!({
+        "type": "object",
+        "title": title,
+        "properties": {name: value},
+        "required": [name],
+        "x-order": [name],
+        "additionalProperties": false,
+    })
+}
+
+fn decision_schema(tools: &[crate::tools::ToolSpec]) -> Result<Value, LlmError> {
+    let mut definitions = Map::new();
+    definitions.insert(
+        "FinalAnswer".into(),
+        object_schema("FinalAnswer", "answer", json!({"type": "string"})),
+    );
+    for tool in tools {
+        let (title, value) = match tool.name {
+            "remember_fact" => (
+                "RememberFact",
+                json!({"type": "string", "maxLength": crate::memory::MAX_FACT_CHARS}),
+            ),
+            // `fm`'s schema dialect does not accept a nested object with no
+            // required members. A string keeps the branch guided and typed;
+            // the sentinel `self` represents the optional argument.
+            "lookup_reputation" => ("LookupReputation", json!({"type": "string"})),
+            "recall" => ("Recall", json!({"type": "string"})),
+            "switch_persona" => (
+                "SwitchPersona",
+                json!({"type": "string", "enum": ["abbey", "aviva", "abi"]}),
+            ),
+            "recent_messages" => (
+                "RecentMessages",
+                json!({"type": "integer", "minimum": 1, "maximum": crate::tools::MAX_RECENT}),
+            ),
+            other => {
+                return Err(LlmError::backend(format!(
+                    "FM has no schema adapter for tool {other}"
+                )));
+            }
+        };
+        definitions.insert(title.into(), object_schema(title, tool.name, value));
+    }
+    if tools.is_empty() {
+        return Ok(definitions
+            .remove("FinalAnswer")
+            .expect("the final answer schema is always present"));
+    }
+    let choices = definitions
+        .keys()
+        .map(|name| json!({"$ref": format!("#/$defs/{name}")}))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "anyOf": choices,
+        "title": "AbbeyDecision",
+        "$defs": definitions,
+    }))
+}
+
+fn parse_cli_output(
+    raw: &str,
+    offered_tools: &[crate::tools::ToolSpec],
+    call_id: &str,
+) -> Result<ModelTurn, LlmError> {
+    let value: Value = serde_json::from_str(raw.trim())
+        .map_err(|_| LlmError::backend("the FM CLI returned malformed structured output".into()))?;
+    let object = value.as_object().ok_or_else(|| {
+        LlmError::backend("the FM CLI structured output was not an object".into())
+    })?;
+    if object.len() != 1 {
+        return Err(LlmError::backend(
+            "the FM CLI returned more than one decision".into(),
+        ));
+    }
+    let (name, payload) = object.iter().next().expect("one entry checked above");
+    if name == "answer" {
+        let answer = payload
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .ok_or_else(|| LlmError::backend("the FM CLI returned an empty final answer".into()))?;
+        return Ok(ModelTurn {
+            text: answer.to_string(),
+            calls: Vec::new(),
+        });
+    }
+    if !offered_tools.iter().any(|tool| tool.name == name) {
+        return Err(LlmError::backend(format!(
+            "the FM CLI requested an unavailable tool {name}"
+        )));
+    }
+    let arguments = match name.as_str() {
+        "remember_fact" => {
+            let fact = required_string(payload, name)?;
+            let fact = crate::memory::validated_fact(fact)
+                .map_err(|_| LlmError::backend("the FM remember_fact value was invalid".into()))?;
+            json!({"fact": fact})
+        }
+        "lookup_reputation" => match required_string(payload, name)? {
+            value if value.eq_ignore_ascii_case("self") => json!({}),
+            user_id => json!({"user_id": user_id}),
+        },
+        "recall" => json!({"query": required_string(payload, name)?}),
+        "switch_persona" => {
+            let persona = required_string(payload, name)?;
+            if crate::guild::parse_persona(persona).is_none() {
+                return Err(LlmError::backend(
+                    "the FM switch_persona value was not abbey, aviva, or abi".into(),
+                ));
+            }
+            json!({"persona": persona})
+        }
+        "recent_messages" => {
+            let limit = payload.as_u64().ok_or_else(|| {
+                LlmError::backend("the FM recent_messages limit was not an integer".into())
+            })?;
+            if !(1..=crate::tools::MAX_RECENT as u64).contains(&limit) {
+                return Err(LlmError::backend(format!(
+                    "the FM recent_messages limit must be between 1 and {}",
+                    crate::tools::MAX_RECENT
+                )));
+            }
+            json!({"limit": limit})
+        }
+        _ => unreachable!("availability check restricts names to the known vocabulary"),
+    };
+    Ok(ModelTurn {
+        text: String::new(),
+        calls: vec![crate::tools::ToolCall {
+            id: call_id.to_string(),
+            name: name.clone(),
+            arguments,
+        }],
+    })
+}
+
+fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, LlmError> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| {
+            LlmError::backend(format!("the FM {field} value was not a non-empty string"))
+        })
+}
+
+#[cfg(test)]
+mod tests;

@@ -69,6 +69,7 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `memory.rs`, `runtime/memory_service.rs`, `engine.rs` | Canonical JSON facts + coordinated WDBX projection, channel context, interaction log, `PersonaContext`; per-scope multi-turn sessions that survive a persona switch |
 | `wyhash.rs`, `embedding.rs`, `wdbx.rs` | Zig-compatible wyhash (pinned to 188 reference vectors), abi's n-gram text embedding (pinned to abi's own vectors), a WDBX v1 JSONL store + guild-namespaced semantic recall |
 | `platform.rs`, `vision.rs`, `vision/*` | The network-agnostic event model and Telegram/Slack wire translation; image validation/normalization off the async runtime, the OpenAI-compatible provider contract, and pure rendering |
+| `provider.rs` | Explicit Foundation Models config, independent server/CLI capabilities, loopback-only routing, and the bounded schema-constrained `fm respond` adapter |
 | `persist.rs` | The one JSON document the registries' store traits read and write, atomically |
 | `tools.rs` | The model-callable tool vocabulary, both request wire shapes, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
 | `pipeline.rs`, `pipeline/tests.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
@@ -204,8 +205,8 @@ unsolicited policy replies, voice, and `/summarize` enter a read-only function
 with an explicit persona and never construct the vocabulary or host. The loop
 is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
 local path (`StreamEnd::Calls` means "run the tools and stream again"), retries
-once without tools on a 4xx and clears `AppState.tools_enabled` for the
-process. Every tool result is a short string (`tools::truncate`); no tool posts,
+once without tools on a 4xx and disables only that provider's tool route for
+the process. Every tool result is a short string (`tools::truncate`); no tool posts,
 moderates, or changes config; `switch_persona` changes only the conversation's
 persona and keeps the transcript. Adding a tool means: a `ToolSpec` in
 `abbey_tools`, a `ToolHost` method, a `dispatch` arm, and a test — nothing in
@@ -227,7 +228,8 @@ The Apple-silicon acceleration profile is a separate pinned `mlx_vlm.server`
 on loopback port 8282 with `mlx-community/gemma-4-12B-it-4bit`; Abbey must send
 the installer's exact local snapshot path as both request model values because
 MLX-VLM does not alias the portable Ollama name. `fm serve` is an optional
-text/vision fallback with tools disabled, not the Gemma default.
+text fallback with tools disabled; its vision/OCR path remains unqualified and
+disabled, and it is not the Gemma default.
 
 **Generated Discord text never pings.** Poise responses and Serenity's HTTP
 client both default to an empty `CreateAllowedMentions`, and gateway posts and

@@ -286,9 +286,9 @@ pub async fn ask(
         ctx.say(ASK_COOLDOWN_REPLY).await?;
         return Ok(());
     }
-    let reply = match &state.backend {
+    let reply = match state.generation_label() {
         None => ask::degraded_reply(routed),
-        Some(backend) => {
+        Some(backend_label) => {
             // Same per-channel transcript, memory context, and tool loop the
             // pipeline uses, so a slash-command question and a DM continue
             // one thread. No streaming: an interaction followup is one post.
@@ -326,13 +326,13 @@ pub async fn ask(
                 }
             };
             match outcome {
-                Ok((answer, persona)) => {
+                Ok((answer, persona, provider_label)) => {
                     AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
-                    ask::render_answer(persona, backend.label(), &answer)
+                    ask::render_answer(persona, provider_label, &answer)
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error, backend = backend.label(), "slash-command generation failed");
-                    ask::render_failure(routed, backend.label(), &error)
+                    tracing::warn!(error = %error, backend = backend_label, "slash-command generation failed");
+                    ask::render_failure(routed, backend_label, &error)
                 }
             }
         }
