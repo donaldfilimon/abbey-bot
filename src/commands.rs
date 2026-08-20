@@ -704,14 +704,12 @@ impl VoiceRuntime {
     }
 }
 
-/// Establish the explicitly configured no-receive connection during an
+/// Establish the explicitly configured no-audio connection during an
 /// operator-requested deployment. This path refuses to run when a provider key
-/// exists: a restart must never begin transmitting participant audio
-/// automatically. It may emit one prevalidated local greeting.
+/// exists: a restart must never begin receiving or transmitting audio.
 pub async fn autojoin_self_deafened(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
-    greeting_file: Option<std::path::PathBuf>,
 ) -> Result<(), String> {
     if runtime.config.realtime_ready() {
         return Err(
@@ -721,22 +719,6 @@ pub async fn autojoin_self_deafened(
     }
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
-    let greeting_file = if let Some(path) = greeting_file {
-        let metadata = tokio::fs::metadata(&path)
-            .await
-            .map_err(|e| format!("reading the greeting audio metadata failed: {e}"))?;
-        if !metadata.is_file() {
-            return Err("ABBEY_VOICE_GREETING_FILE must name a regular file".into());
-        }
-        if metadata.len() > 10 * 1024 * 1024 {
-            return Err("ABBEY_VOICE_GREETING_FILE must be at most 10 MiB".into());
-        }
-        let file = std::fs::File::open(&path)
-            .map_err(|e| format!("opening the greeting PCM failed: {e}"))?;
-        Some((file, path))
-    } else {
-        None
-    };
     let channel = channel_id
         .to_channel(&ctx.http)
         .await
@@ -763,41 +745,28 @@ pub async fn autojoin_self_deafened(
         runtime.set_status(generation, format!("Discord join failed: {e}"));
         format!("Discord refused the voice join: {e}")
     })?;
-    let (deafen_result, greeting_track) = {
+    let safety_result = {
         let mut call = call.lock().await;
-        let result = call.deafen(true).await;
-        let track = if result.is_ok() {
-            greeting_file.map(|(file, path)| {
-                (
-                    call.play_only_input(RawAdapter::new(file, 48_000, 2).into()),
-                    path,
-                )
-            })
-        } else {
-            None
-        };
-        (result, track)
+        match call.deafen(true).await {
+            Ok(()) => call.mute(true).await,
+            Err(error) => Err(error),
+        }
     };
-    if let Err(error) = deafen_result {
-        runtime.set_status(generation, format!("Discord self-deafen failed: {error}"));
+    if let Err(error) = safety_result {
+        runtime.set_status(
+            generation,
+            format!("Discord mute/deafen safety state failed: {error}"),
+        );
         let _ = manager.remove(guild_id).await;
         return Err(format!(
-            "entering the required self-deafened state failed: {error}"
+            "entering the required muted and self-deafened state failed: {error}"
         ));
-    }
-    if let Some((track, path)) = greeting_track {
-        if let Err(error) = track.make_playable_async().await {
-            let _ = manager.remove(guild_id).await;
-            runtime.set_status(generation, format!("greeting audio failed: {error}"));
-            return Err(format!("preparing the greeting audio failed: {error}"));
-        }
-        tracing::info!(path = %path.display(), "self-deafened greeting audio is playable and queued for Discord output");
     }
     runtime.set_status(
         generation,
-        "Discord connected, self-deafened; Realtime unavailable (OPENAI_API_KEY missing)",
+        "Discord connected, muted and self-deafened; live speech is unavailable",
     );
-    tracing::info!(guild = %guild_id, channel = %channel_id, "joined Discord voice self-deafened; audio receive and provider streaming are disabled");
+    tracing::info!(guild = %guild_id, channel = %channel_id, "joined Discord voice muted and self-deafened; audio receive and transmission are disabled");
     Ok(())
 }
 
@@ -884,25 +853,31 @@ pub async fn voice_join(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     if !runtime.config.realtime_ready() {
-        let deafen_result = {
+        let safety_result = {
             let mut call = call.lock().await;
-            call.deafen(true).await
+            match call.deafen(true).await {
+                Ok(()) => call.mute(true).await,
+                Err(error) => Err(error),
+            }
         };
-        if let Err(error) = deafen_result {
-            runtime.set_status(generation, format!("Discord self-deafen failed: {error}"));
+        if let Err(error) = safety_result {
+            runtime.set_status(
+                generation,
+                format!("Discord mute/deafen safety state failed: {error}"),
+            );
             let _ = manager.remove(guild_id).await;
             ctx.say(format!(
-                "Joined Discord, but could not enter the required self-deafened state: {error}"
+                "Joined Discord, but could not enter the required muted and self-deafened state: {error}"
             ))
             .await?;
             return Ok(());
         }
         runtime.set_status(
             generation,
-            "Discord connected, self-deafened; Realtime unavailable (OPENAI_API_KEY missing)",
+            "Discord connected, muted and self-deafened; live speech is unavailable",
         );
         ctx.say(format!(
-            "Joined <#{channel_id}> self-deafened. I cannot receive anyone's audio or speak until OPENAI_API_KEY is configured; `/voice leave` disconnects me."
+            "Joined <#{channel_id}> muted and self-deafened. I cannot receive anyone's audio or speak; `/voice leave` disconnects me."
         ))
         .await?;
         return Ok(());
