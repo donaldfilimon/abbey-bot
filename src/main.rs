@@ -45,6 +45,7 @@ mod embedding;
 mod engine;
 mod gateway;
 mod generation;
+mod grounding;
 mod guild;
 mod http_body;
 mod llm;
