@@ -14,6 +14,8 @@ use std::future::Future;
 
 use crate::ask;
 use crate::brain::intent;
+use crate::brain::outcome::{self, ReplyOutcome};
+use crate::brain::reward::ReplyTurn;
 use crate::brain::state::{self, BotAction, StateInput};
 use crate::engine;
 use crate::generation::{Ask, Delivery, generate, with_typing};
@@ -149,8 +151,44 @@ pub async fn handle<O: Outbound + Sync>(
     };
 
     // Bookkeeping that happens whether or not Abbey speaks.
-    if let Some(id) = reply_to {
-        AppState::lock(&state.rewards).human_replied(id);
+    //
+    // Two reward channels, deliberately separate. `human_replied` is the
+    // existing untyped heuristic — "a human bothered to reply", +0.5 whatever
+    // they said. `observe_*` feeds the delayed channel: *what* they said,
+    // typed. A Discord reply-to legitimately feeds both; that is the blend, not
+    // a double count. See `brain::reward`.
+    //
+    // Claim-honest: this is the only place real Discord observations reach the
+    // delayed channel today. It covers a reply-to and a same-channel follow-up.
+    // Reactions still land on the untyped path, and edits, threads, and voice
+    // are not observed at all.
+    {
+        let mut rewards = AppState::lock(&state.rewards);
+        if let Some(id) = reply_to {
+            rewards.human_replied(id);
+        }
+        let prior_ask = match reply_to {
+            Some(id) => rewards.open_ask(id),
+            None => rewards.open_ask_in_scope(&scoped_channel, now),
+        }
+        .map(str::to_owned);
+        // An unreadable or off-topic message means the human moved on without
+        // engaging: weak evidence, worth exactly nothing, never a penalty.
+        let observed =
+            outcome::classify(&text, prior_ask.as_deref()).unwrap_or(ReplyOutcome::NoEngagement);
+        let credited = match reply_to {
+            Some(id) => rewards
+                .observe_reply_to(id, observed)
+                .then(|| id.to_owned()),
+            None => rewards.observe_in_scope(&scoped_channel, &scoped_user, observed, now),
+        };
+        if let Some(turn) = credited {
+            tracing::debug!(
+                turn = %turn,
+                outcome = ?observed,
+                "delayed outcome attributed to an open turn"
+            );
+        }
     }
     let heat = {
         let mut stores = AppState::lock(&state.stores);
@@ -434,13 +472,22 @@ pub async fn handle<O: Outbound + Sync>(
         }
     };
 
-    AppState::lock(&state.rewards).register_reply(
-        encoded.to_vec(),
-        BotAction::Reply.index(),
-        sent_id,
-        scoped_guild.clone(),
+    // The full turn: scope and ask travel with it so a later follow-up in this
+    // channel — one with no reply-to pointer — can still be attributed back to
+    // this exact action.
+    AppState::lock(&state.rewards).register_turn(ReplyTurn {
+        state: encoded.to_vec(),
+        action: BotAction::Reply.index(),
+        sent_native_message_id: sent_id,
+        scope: scoped_channel.clone(),
+        scoped_guild_id: scoped_guild.clone(),
+        // The human's own words, not `enriched`: vision folds Abbey-written
+        // image descriptions into the prompt text, and padding the ask with
+        // them would depress every later topic-overlap ratio.
+        ask: text.clone(),
+        asker: scoped_user.clone(),
         now,
-    );
+    });
     {
         let mut stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).record_interaction(
@@ -666,6 +713,139 @@ mod tests {
         let settled = AppState::lock(&state.rewards).settle_expired(10_000);
         assert_eq!(settled.len(), 1);
         assert!((settled[0].1.reward - 0.8).abs() < 1e-6, "−0.2 + 1.0");
+    }
+
+    /// An open Abbey turn in `discord:c1`, the scope `message()` produces,
+    /// answering `discord:u1` — the user the tests below speak as.
+    fn open_turn(state: &AppState, now: u64) {
+        AppState::lock(&state.rewards).register_turn(ReplyTurn {
+            state: vec![0.0; 18],
+            action: BotAction::Reply.index(),
+            sent_native_message_id: "abbey-msg".into(),
+            scope: "discord:c1".into(),
+            scoped_guild_id: "discord:g".into(),
+            ask: "how do I configure the voice gateway timeout?".into(),
+            asker: "discord:u1".into(),
+            now,
+        });
+    }
+
+    fn only_settled_reward(state: &AppState, now: u64) -> f32 {
+        let settled = AppState::lock(&state.rewards).settle_expired(now);
+        assert_eq!(settled.len(), 1);
+        settled[0].1.reward
+    }
+
+    #[tokio::test]
+    async fn a_thanks_in_reply_to_abbey_reaches_the_delayed_channel() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        open_turn(&state, 0);
+        // The guild has not opted in, so Abbey stays silent — but reward
+        // bookkeeping for a turn she already took runs before the gates.
+        let outcome = handle(
+            &state,
+            &out,
+            message("thanks, that worked", Some("g"), "u1"),
+            false,
+            Some("abbey-msg"),
+        )
+        .await;
+        assert_eq!(outcome, Outcome::Ignored("act off"));
+        // −0.2 baseline + 0.5 untyped engagement + 1.0 typed thanks.
+        let reward = only_settled_reward(&state, 10_000);
+        assert!((reward - 1.3).abs() < 1e-6, "{reward}");
+    }
+
+    #[tokio::test]
+    async fn a_correction_in_reply_to_abbey_costs_more_than_silence() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        open_turn(&state, 0);
+        let _ = handle(
+            &state,
+            &out,
+            message("no, that's not the right port", Some("g"), "u1"),
+            false,
+            Some("abbey-msg"),
+        )
+        .await;
+        // −0.2 + 0.5 engaged − 1.0 typed correction: below the −0.2 a turn
+        // nobody answered would have settled at.
+        let reward = only_settled_reward(&state, 10_000);
+        assert!((reward + 0.7).abs() < 1e-6, "{reward}");
+        assert!(reward < -0.2);
+    }
+
+    #[tokio::test]
+    async fn a_same_channel_follow_up_needs_no_reply_pointer() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let now = runtime::now();
+        open_turn(&state, now);
+        let _ = handle(
+            &state,
+            &out,
+            message("does the gateway retry after a timeout?", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        // −0.2 + 0.4 topical follow-up. No untyped +0.5: there was no reply-to,
+        // which is exactly the gap scope attribution exists to cover.
+        let reward = only_settled_reward(
+            &state,
+            now + crate::brain::reward::SETTLEMENT_WINDOW_SECS + 1,
+        );
+        assert!((reward - 0.2).abs() < 1e-6, "{reward}");
+    }
+
+    #[tokio::test]
+    async fn a_bystanders_thanks_in_the_same_channel_is_not_credited() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let now = runtime::now();
+        open_turn(&state, now);
+        // u2 was never answered by Abbey — this is "thanks Carol!", not
+        // feedback, and it must not move the turn u1's ask earned.
+        let _ = handle(
+            &state,
+            &out,
+            message("thanks, that worked", Some("g"), "u2"),
+            false,
+            None,
+        )
+        .await;
+        let reward = only_settled_reward(
+            &state,
+            now + crate::brain::reward::SETTLEMENT_WINDOW_SECS + 1,
+        );
+        assert_eq!(reward.to_bits(), (-0.2f32).to_bits(), "{reward}");
+    }
+
+    #[tokio::test]
+    async fn unrelated_chatter_leaves_the_turn_exactly_as_it_was() {
+        let state = AppState::in_memory();
+        let out = FakeOut::default();
+        let now = runtime::now();
+        open_turn(&state, now);
+        let _ = handle(
+            &state,
+            &out,
+            message("anyone up for lunch?", Some("g"), "u1"),
+            false,
+            None,
+        )
+        .await;
+        let reward = only_settled_reward(
+            &state,
+            now + crate::brain::reward::SETTLEMENT_WINDOW_SECS + 1,
+        );
+        assert_eq!(
+            reward.to_bits(),
+            (-0.2f32).to_bits(),
+            "an off-topic message is no engagement, and no engagement is free"
+        );
     }
 
     #[tokio::test]

@@ -7,6 +7,7 @@ pub mod budget;
 pub mod dqn;
 pub mod intent;
 pub mod nn;
+pub mod outcome;
 pub mod registry;
 pub mod replay;
 pub mod reward;
