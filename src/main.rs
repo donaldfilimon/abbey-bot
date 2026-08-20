@@ -58,6 +58,7 @@ mod pipeline;
 mod platform;
 mod profile;
 mod recall;
+mod routing_signals;
 mod runtime;
 mod server;
 mod tools;
