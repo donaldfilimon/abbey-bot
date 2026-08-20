@@ -19,6 +19,8 @@
 //! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
 //!   MESSAGE_CONTENT intent (must also be enabled in the Dev Portal).
 //! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
+//! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` + `OPENAI_API_KEY`
+//!   (optional) — enable admin-triggered, DAVE-capable Discord/Realtime voice.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
@@ -53,6 +55,7 @@ mod runtime;
 mod server;
 mod tools;
 mod vision;
+mod voice;
 mod wdbx;
 mod webhook;
 mod wyhash;
@@ -63,6 +66,7 @@ use serenity::all::{GatewayIntents, GuildId};
 /// not mean touching every command signature.
 pub struct Data {
     pub state: std::sync::Arc<runtime::AppState>,
+    pub voice: Option<std::sync::Arc<commands::VoiceRuntime>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -118,6 +122,10 @@ async fn main() -> Result<(), Error> {
     };
 
     let state = runtime::AppState::from_env()?;
+    let voice_runtime = voice::VoiceConfig::from_env()
+        .map_err(runtime::StartupError)?
+        .map(commands::VoiceRuntime::new)
+        .map(std::sync::Arc::new);
     match &state.data_dir {
         Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),
         None => tracing::warn!("ABBEY_DATA_DIR unset — learning and memory are in-memory only"),
@@ -142,9 +150,11 @@ async fn main() -> Result<(), Error> {
         tracing::info!(
             "requesting the privileged MESSAGE_CONTENT intent (must be enabled in the Dev Portal too)"
         );
-        GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT
-    } else {
         GatewayIntents::non_privileged()
+            | GatewayIntents::GUILD_VOICE_STATES
+            | GatewayIntents::MESSAGE_CONTENT
+    } else {
+        GatewayIntents::non_privileged() | GatewayIntents::GUILD_VOICE_STATES
     };
 
     let shell_state = std::sync::Arc::clone(&state);
@@ -166,6 +176,7 @@ async fn main() -> Result<(), Error> {
                 commands_brain::ocr(),
                 commands_brain::stats(),
                 commands_brain::admin(),
+                commands::voice(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
@@ -222,7 +233,10 @@ async fn main() -> Result<(), Error> {
                 }
                 tracing::info!(user = %ready.user.name, "connected");
                 shell_state.register_self(format!("discord:{}", ready.user.id.get()));
-                Ok(Data { state: shell_state })
+                Ok(Data {
+                    state: shell_state,
+                    voice: voice_runtime,
+                })
             })
         })
         .build();
@@ -230,8 +244,12 @@ async fn main() -> Result<(), Error> {
     let http = serenity::http::HttpBuilder::new(&token)
         .default_allowed_mentions(gateway::no_mentions())
         .build();
+    use songbird::SerenityInit;
     let mut client = serenity::client::ClientBuilder::new_with_http(http, intents)
         .framework(framework)
+        .register_songbird_from_config(songbird::Config::default().decode_mode(
+            songbird::driver::DecodeMode::Decode(songbird::driver::DecodeConfig::default()),
+        ))
         .await?;
 
     // Persist on interactive Ctrl-C and service-manager SIGTERM before taking

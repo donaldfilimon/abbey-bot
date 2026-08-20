@@ -18,10 +18,24 @@
 //! touches Discord types, and its job is translation: fetch over REST, build
 //! the plain struct, hand it to a pure function, post the string back.
 
+use std::collections::VecDeque;
+use std::io::{ErrorKind as IoErrorKind, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use base64::Engine as _;
+use futures_util::{SinkExt, StreamExt};
 use serenity::all::{
     ChannelId, ChannelType, GuildId, Member, PartialGuild, PermissionOverwriteType, Permissions,
     User,
 };
+use songbird::events::{CoreEvent, Event, EventContext, EventHandler};
+use songbird::input::RawAdapter;
+use songbird::input::core::io::MediaSource;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
 use crate::ask;
 use crate::generation;
@@ -33,6 +47,7 @@ use crate::pipeline;
 use crate::profile::{self, ProfileFacts};
 use crate::runtime::{self, AppState};
 use crate::server::{self, Archetype};
+use crate::voice::VoiceConfig;
 use crate::webhook;
 use crate::{Context, Error};
 
@@ -630,6 +645,474 @@ pub async fn webhook(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Live voice
+// ---------------------------------------------------------------------------
+
+/// Process-wide status for the one explicitly configured live voice session.
+/// The key remains inside [`VoiceConfig`], whose Debug implementation redacts
+/// it; status copy never includes a credential or provider payload.
+pub struct VoiceRuntime {
+    config: VoiceConfig,
+    generation: AtomicU64,
+    dropped_input: AtomicU64,
+    dropped_output: AtomicU64,
+    status: Mutex<String>,
+}
+
+impl VoiceRuntime {
+    pub fn new(config: VoiceConfig) -> Self {
+        Self {
+            config,
+            generation: AtomicU64::new(0),
+            dropped_input: AtomicU64::new(0),
+            dropped_output: AtomicU64::new(0),
+            status: Mutex::new("configured; disconnected".into()),
+        }
+    }
+
+    fn begin(&self) -> u64 {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.dropped_input.store(0, Ordering::Relaxed);
+        self.dropped_output.store(0, Ordering::Relaxed);
+        self.set_status(generation, "joining Discord voice");
+        generation
+    }
+
+    fn stop(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = "configured; disconnected".into();
+    }
+
+    fn set_status(&self, generation: u64, status: impl Into<String>) {
+        if self.generation.load(Ordering::SeqCst) == generation {
+            *self
+                .status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = status.into();
+        }
+    }
+
+    fn status(&self) -> String {
+        self.status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// `/voice join`, `/voice leave`, and `/voice status`.
+///
+/// Voice is deliberately admin-triggered and bound to one env-configured
+/// guild/channel. Merely deploying the code can never make Abbey listen.
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MANAGE_GUILD",
+    subcommands("voice_join", "voice_leave", "voice_status")
+)]
+pub async fn voice(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+/// Join the configured channel and start a full-duplex Realtime session.
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MANAGE_GUILD",
+    rename = "join"
+)]
+pub async fn voice_join(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let Some(runtime) = ctx.data().voice.as_ref().cloned() else {
+        ctx.say("Live voice is off. Configure ABBEY_VOICE_GUILD_ID, ABBEY_VOICE_CHANNEL_ID, and OPENAI_API_KEY, then restart Abbey.")
+            .await?;
+        return Ok(());
+    };
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("This one only works inside a server.").await?;
+        return Ok(());
+    };
+    if guild_id.get() != runtime.config.guild_id {
+        ctx.say("Live voice is locked to a different server by the deployment configuration.")
+            .await?;
+        return Ok(());
+    }
+
+    let channel_id = ChannelId::new(runtime.config.channel_id);
+    let channel = channel_id.to_channel(ctx.http()).await?;
+    let Some(channel) = channel.guild() else {
+        ctx.say("The configured voice destination is not a server channel.")
+            .await?;
+        return Ok(());
+    };
+    if channel.guild_id != guild_id || channel.kind != ChannelType::Voice {
+        ctx.say("The configured destination must be a voice channel in this server (Stage channels are not supported).")
+            .await?;
+        return Ok(());
+    }
+
+    let manager = songbird::get(ctx.serenity_context())
+        .await
+        .ok_or("Songbird was not registered in the Discord client")?;
+    // A repeated join is a clean session replacement. This removes the old
+    // receive handler and output source before a new generation can publish
+    // status, so a late WebSocket close cannot overwrite the new session.
+    if manager.get(guild_id).is_some()
+        && let Err(error) = manager.remove(guild_id).await
+    {
+        ctx.say(format!(
+            "Could not replace the existing voice session cleanly: {error}"
+        ))
+        .await?;
+        return Ok(());
+    }
+    let generation = runtime.begin();
+    let call = match manager.join(guild_id, channel_id).await {
+        Ok(call) => call,
+        Err(error) => {
+            runtime.set_status(generation, format!("Discord join failed: {error}"));
+            let _ = manager.remove(guild_id).await;
+            ctx.say(format!("Discord refused the voice join: {error}"))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let (input_tx, input_rx) = tokio::sync::mpsc::channel(50);
+    let (output_tx, output_rx) = std::sync::mpsc::sync_channel(50);
+    {
+        let mut call = call.lock().await;
+        call.add_global_event(
+            Event::Core(CoreEvent::VoiceTick),
+            DiscordVoiceReceiver {
+                tx: input_tx,
+                trailing_silence: AtomicUsize::new(0),
+                runtime: Arc::clone(&runtime),
+                generation,
+            },
+        );
+        call.play_only_input(RawAdapter::new(PcmOutput::new(output_rx), 48_000, 2).into());
+    }
+
+    runtime.set_status(generation, "Discord connected; opening Realtime session");
+    let task_runtime = Arc::clone(&runtime);
+    tokio::spawn(async move {
+        let result = run_realtime(&task_runtime, generation, input_rx, output_tx).await;
+        if let Err(error) = result {
+            tracing::error!(error = %error, "live voice Realtime session ended");
+            task_runtime.set_status(generation, format!("Realtime stopped: {error}"));
+        }
+    });
+
+    ctx.say(format!(
+        "Joined <#{channel_id}> and am opening Abbey's Realtime session. Everyone in the channel should know that audio will be sent to the configured provider. Check `/voice status`; use `/voice leave` to stop it."
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Stop the Realtime session and leave Discord voice.
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MANAGE_GUILD",
+    rename = "leave"
+)]
+pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("This one only works inside a server.").await?;
+        return Ok(());
+    };
+    let Some(runtime) = ctx.data().voice.as_ref() else {
+        ctx.say("Live voice is not configured.").await?;
+        return Ok(());
+    };
+    if guild_id.get() != runtime.config.guild_id {
+        ctx.say("Live voice is locked to a different server by the deployment configuration.")
+            .await?;
+        return Ok(());
+    }
+    let manager = songbird::get(ctx.serenity_context())
+        .await
+        .ok_or("Songbird was not registered in the Discord client")?;
+    match manager.remove(guild_id).await {
+        Ok(()) => {
+            runtime.stop();
+            ctx.say("Left voice and stopped the Realtime session.")
+                .await?
+        }
+        Err(songbird::error::JoinError::NoCall) => {
+            runtime.stop();
+            ctx.say("Abbey is not in voice.").await?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    Ok(())
+}
+
+/// Show destination, connection health, and bounded-queue drops.
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MANAGE_GUILD",
+    rename = "status"
+)]
+pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let Some(runtime) = ctx.data().voice.as_ref() else {
+        ctx.say("Live voice is off (no complete voice configuration at startup).")
+            .await?;
+        return Ok(());
+    };
+    if ctx
+        .guild_id()
+        .is_none_or(|id| id.get() != runtime.config.guild_id)
+    {
+        ctx.say("Live voice is locked to a different server by the deployment configuration.")
+            .await?;
+        return Ok(());
+    }
+    let current = if let Some(manager) = songbird::get(ctx.serenity_context()).await {
+        if let Some(call) = manager.get(GuildId::new(runtime.config.guild_id)) {
+            call.lock()
+                .await
+                .current_channel()
+                .map(|channel| format!("connected to <#{channel}>"))
+                .unwrap_or_else(|| "not connected".into())
+        } else {
+            "not connected".into()
+        }
+    } else {
+        "voice manager unavailable".into()
+    };
+    ctx.say(format!(
+        "Abbey voice: {current}\nRealtime: {}\nModel: `{}` · voice: `{}`\nDropped bounded-queue chunks: input {} · output {}",
+        runtime.status(),
+        runtime.config.model,
+        runtime.config.voice,
+        runtime.dropped_input.load(Ordering::Relaxed),
+        runtime.dropped_output.load(Ordering::Relaxed),
+    ))
+    .await?;
+    Ok(())
+}
+
+struct DiscordVoiceReceiver {
+    tx: tokio::sync::mpsc::Sender<Vec<i16>>,
+    trailing_silence: AtomicUsize,
+    runtime: Arc<VoiceRuntime>,
+    generation: u64,
+}
+
+#[serenity::async_trait]
+impl EventHandler for DiscordVoiceReceiver {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        if self.runtime.generation.load(Ordering::SeqCst) != self.generation {
+            return Some(Event::Cancel);
+        }
+        let EventContext::VoiceTick(tick) = ctx else {
+            return None;
+        };
+        let speakers: Vec<&[i16]> = tick
+            .speaking
+            .values()
+            .filter_map(|voice| voice.decoded_voice.as_deref())
+            .filter(|samples| !samples.is_empty())
+            .collect();
+        if speakers.is_empty() {
+            let had_tail = self
+                .trailing_silence
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                .is_ok();
+            if !had_tail {
+                return None;
+            }
+        } else {
+            // One second of zero PCM lets server/semantic VAD close the turn.
+            self.trailing_silence.store(50, Ordering::Relaxed);
+        }
+        match self
+            .tx
+            .try_send(crate::voice::discord_to_realtime(&speakers))
+        {
+            Ok(()) => None,
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                self.runtime.dropped_input.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Some(Event::Cancel),
+        }
+    }
+}
+
+/// Blocking source consumed by Songbird's input parsing worker. The bounded
+/// producer never blocks the async WebSocket task; dropping it ends the track.
+struct PcmOutput {
+    receiver: Mutex<std::sync::mpsc::Receiver<Vec<u8>>>,
+    pending: VecDeque<u8>,
+}
+
+impl PcmOutput {
+    fn new(receiver: std::sync::mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            receiver: Mutex::new(receiver),
+            pending: VecDeque::new(),
+        }
+    }
+}
+
+impl Read for PcmOutput {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        if self.pending.is_empty() {
+            let chunk = self
+                .receiver
+                .lock()
+                .map_err(|_| std::io::Error::other("voice PCM receiver lock poisoned"))?
+                .recv()
+                .map_err(|_| std::io::Error::from(IoErrorKind::UnexpectedEof))?;
+            self.pending.extend(chunk);
+        }
+        let count = output.len().min(self.pending.len());
+        for byte in &mut output[..count] {
+            *byte = self.pending.pop_front().unwrap_or(0);
+        }
+        Ok(count)
+    }
+}
+
+impl Seek for PcmOutput {
+    fn seek(&mut self, _position: SeekFrom) -> std::io::Result<u64> {
+        Err(IoErrorKind::Unsupported.into())
+    }
+}
+
+impl MediaSource for PcmOutput {
+    fn is_seekable(&self) -> bool {
+        false
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        None
+    }
+}
+
+async fn run_realtime(
+    runtime: &Arc<VoiceRuntime>,
+    generation: u64,
+    mut input: tokio::sync::mpsc::Receiver<Vec<i16>>,
+    output: std::sync::mpsc::SyncSender<Vec<u8>>,
+) -> Result<(), String> {
+    let mut request = runtime
+        .config
+        .websocket_url()
+        .into_client_request()
+        .map_err(|e| format!("building the Realtime request failed: {e}"))?;
+    request.headers_mut().insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&runtime.config.authorization())
+            .map_err(|_| "OPENAI_API_KEY contains invalid header bytes".to_string())?,
+    );
+    let (socket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| format!("Realtime WebSocket connection failed: {e}"))?;
+    let (mut writer, mut reader) = socket.split();
+    let session = serde_json::json!({
+        "type": "session.update",
+        "session": {
+            "type": "realtime",
+            "model": runtime.config.model,
+            "output_modalities": ["audio"],
+            "instructions": runtime.config.instructions,
+            "audio": {
+                "input": {
+                    "format": {"type": "audio/pcm", "rate": 24000},
+                    "turn_detection": {"type": "semantic_vad"}
+                },
+                "output": {
+                    "format": {"type": "audio/pcm"},
+                    "voice": runtime.config.voice
+                }
+            }
+        }
+    });
+    writer
+        .send(Message::Text(session.to_string()))
+        .await
+        .map_err(|e| format!("sending Realtime session configuration failed: {e}"))?;
+
+    loop {
+        tokio::select! {
+            maybe_pcm = input.recv() => {
+                let Some(pcm) = maybe_pcm else {
+                    let _ = writer.close().await;
+                    return Ok(());
+                };
+                let bytes: Vec<u8> = pcm.into_iter().flat_map(i16::to_le_bytes).collect();
+                let event = serde_json::json!({
+                    "type": "input_audio_buffer.append",
+                    "audio": base64::engine::general_purpose::STANDARD.encode(bytes),
+                });
+                writer.send(Message::Text(event.to_string())).await
+                    .map_err(|e| format!("sending live input audio failed: {e}"))?;
+            }
+            message = reader.next() => {
+                let message = message
+                    .ok_or_else(|| "Realtime WebSocket closed".to_string())?
+                    .map_err(|e| format!("reading the Realtime WebSocket failed: {e}"))?;
+                let Message::Text(text) = message else {
+                    if matches!(message, Message::Close(_)) {
+                        return Err("Realtime provider closed the session".into());
+                    }
+                    continue;
+                };
+                let event: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| format!("Realtime provider sent invalid JSON: {e}"))?;
+                match event.get("type").and_then(serde_json::Value::as_str) {
+                    Some("session.updated") => {
+                        runtime.set_status(generation, "live; listening and speaking");
+                    }
+                    Some("response.output_audio.delta" | "response.audio.delta") => {
+                        let Some(delta) = event.get("delta").and_then(serde_json::Value::as_str) else {
+                            continue;
+                        };
+                        let pcm = base64::engine::general_purpose::STANDARD
+                            .decode(delta)
+                            .map_err(|e| format!("Realtime audio delta was not valid base64: {e}"))?;
+                        let discord = crate::voice::realtime_to_discord(&pcm);
+                        match output.try_send(discord) {
+                            Ok(()) => {},
+                            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                                runtime.dropped_output.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return Ok(()),
+                        }
+                    }
+                    Some("error") => {
+                        let message = event
+                            .pointer("/error/message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unspecified provider error");
+                        return Err(format!("Realtime provider error: {message}"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,6 +1236,112 @@ mod tests {
             reply.ends_with("limit)"),
             "truncation must be stated, not silent"
         );
+    }
+
+    #[tokio::test]
+    async fn realtime_websocket_exchanges_session_input_and_output_audio() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback fake");
+        let address = listener.local_addr().expect("fake address");
+        let config = VoiceConfig::from_values(
+            Some("123".into()),
+            Some("456".into()),
+            Some("test-secret".into()),
+            Some(format!("ws://{address}/realtime")),
+            Some("test-model".into()),
+            Some("marin".into()),
+            Some("Be Abbey.".into()),
+        )
+        .expect("valid test config")
+        .expect("voice enabled");
+        let runtime = Arc::new(VoiceRuntime::new(config));
+        let generation = runtime.begin();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept fake client");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("accept websocket");
+            let session = socket
+                .next()
+                .await
+                .expect("session event")
+                .expect("session frame")
+                .into_text()
+                .expect("session text");
+            let session: serde_json::Value = serde_json::from_str(&session).expect("session JSON");
+            assert_eq!(session["type"], "session.update");
+            assert_eq!(session["session"]["model"], "test-model");
+            assert_eq!(
+                session["session"]["audio"]["input"]["format"]["rate"],
+                24_000
+            );
+            socket
+                .send(Message::Text(
+                    serde_json::json!({"type": "session.updated"}).to_string(),
+                ))
+                .await
+                .expect("session acknowledgement");
+
+            let input = socket
+                .next()
+                .await
+                .expect("input event")
+                .expect("input frame")
+                .into_text()
+                .expect("input text");
+            let input: serde_json::Value = serde_json::from_str(&input).expect("input JSON");
+            assert_eq!(input["type"], "input_audio_buffer.append");
+            assert!(
+                input["audio"]
+                    .as_str()
+                    .is_some_and(|audio| !audio.is_empty())
+            );
+
+            socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "response.output_audio.delta",
+                        "delta": base64::engine::general_purpose::STANDARD.encode(32767_i16.to_le_bytes())
+                    })
+                    .to_string(),
+                ))
+                .await
+                .expect("output delta");
+            while let Some(Ok(message)) = socket.next().await {
+                if message.is_close() {
+                    break;
+                }
+            }
+        });
+
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(2);
+        let (output_tx, output_rx) = std::sync::mpsc::sync_channel(2);
+        let client_runtime = Arc::clone(&runtime);
+        let client = tokio::spawn(async move {
+            run_realtime(&client_runtime, generation, input_rx, output_tx).await
+        });
+        input_tx
+            .send(vec![1000; 480])
+            .await
+            .expect("send fake voice tick");
+        let output = tokio::task::spawn_blocking(move || {
+            output_rx.recv_timeout(std::time::Duration::from_secs(5))
+        })
+        .await
+        .expect("output wait task")
+        .expect("receive converted audio");
+        assert_eq!(
+            output.len(),
+            16,
+            "one mono sample becomes two stereo frames"
+        );
+        assert_eq!(runtime.status(), "live; listening and speaking");
+
+        drop(input_tx);
+        client.await.expect("client task").expect("client exit");
+        server.await.expect("server task");
     }
 
     #[test]

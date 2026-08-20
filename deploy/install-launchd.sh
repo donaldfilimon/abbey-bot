@@ -98,7 +98,8 @@ missing $ENV_FILE — create it (chmod 600) from .env.example. At least:
 and for a bot that answers (not the honest 'no backend' line):
   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434  ABBEY_BOT_LLM_MODEL=gpt-oss:20b
 optional, as you ran it by hand: ABBEY_VISION_ENDPOINT/ABBEY_VISION_MODEL,
-  ABBEY_GUILD_ID, ABBEY_MESSAGE_CONTENT, ABBEY_QUIET, RUST_LOG
+  ABBEY_GUILD_ID, ABBEY_MESSAGE_CONTENT, ABBEY_QUIET, RUST_LOG; live voice also
+  needs ABBEY_VOICE_GUILD_ID, ABBEY_VOICE_CHANNEL_ID, and OPENAI_API_KEY
 (launchd always uses $DATA_DIR; ABBEY_DATA_DIR in this file is ignored.)
 MSG
   exit 1

@@ -21,3 +21,8 @@ tracing = "0.1.44"
 tokio-tungstenite = { version = "0.21.0", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# Discord voice. Songbird 0.6 is the first release line with the DAVE/MLS
+# support Discord requires in 2026; `receive` exposes decoded, jitter-buffered
+# 20 ms voice ticks for the Realtime bridge.
+songbird = { version = "0.6.0", features = ["receive"] }
+base64 = "0.22.1"
