@@ -211,8 +211,11 @@ pub async fn route(
 ) -> Result<(), Error> {
     ctx.defer().await?;
 
-    // Explains the route actually taken, signal layer included — otherwise the
-    // bot explains a choice the message pipeline did not make.
+    // Explains both layers — canonical weights and the signal layer — so the
+    // explanation matches how the same text would route. Guild defaults and
+    // session stickiness are not visible from a slash command, so a message
+    // neutral to both layers is still described by its prior here while the
+    // pipeline would hand it to the sticky or guild persona.
     let route = routing_signals::route(&request, r#as.map(Into::into));
     ctx.say(clamp_message(routing_signals::describe(&route)))
         .await?;

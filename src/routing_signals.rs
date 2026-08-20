@@ -51,7 +51,7 @@ const TERSE_WORDS: usize = 12;
 
 /// Multi-word cues of emotional distress — the family the keyword bag misses
 /// most, because every entry here is longer than one token.
-const DISTRESS_PHRASES: [(&str, i32); 30] = [
+const DISTRESS_PHRASES: [(&str, i32); 34] = [
     ("losing my mind", 3),
     ("lost my mind", 3),
     ("out of my mind", 3),
@@ -82,6 +82,14 @@ const DISTRESS_PHRASES: [(&str, i32); 30] = [
     ("been at this for hours", 3),
     ("been stuck", 3),
     ("breaking point", 3),
+    // First-person scoping. "stuck" and "struggling" are machine words as
+    // often as human ones — "the job is stuck", "the query is struggling
+    // under load" — so they score 1 on their own and only reach FIRE when a
+    // person says it about themselves.
+    ("im stuck", 2),
+    ("i am stuck", 2),
+    ("im struggling", 2),
+    ("i am struggling", 2),
 ];
 
 /// Single-token distress cues. `frustrated` is deliberately absent: it is
@@ -89,7 +97,7 @@ const DISTRESS_PHRASES: [(&str, i32); 30] = [
 /// prefix match tests whether the token starts with `frustrated`, which
 /// "frustrating" and "frustration" do not.
 const DISTRESS_WORDS: [(&str, i32); 26] = [
-    ("stuck", 2),
+    ("stuck", 1),
     ("overwhelmed", 2),
     ("hopeless", 2),
     ("exhausted", 2),
@@ -109,7 +117,7 @@ const DISTRESS_WORDS: [(&str, i32); 26] = [
     ("upset", 2),
     ("furious", 2),
     ("livid", 2),
-    ("struggling", 2),
+    ("struggling", 1),
     ("suffering", 2),
     ("anxious", 2),
     ("stressed", 2),
@@ -618,6 +626,7 @@ mod tests {
             "I am at my wits end with this thing",
             "this is so frustrating, I want to cry",
             "I'm overwhelmed",
+            "I'm stuck",
             "honestly I'm about to give up",
         ] {
             let canonical = persona::route(input, None);
@@ -764,6 +773,9 @@ mod tests {
             "restart the pod when you get a chance",
             "this only happens in production",
             "the critical section needs a lock",
+            "the job is stuck",
+            "the queue is stuck in pending",
+            "the query is struggling under load",
             "morning",
         ] {
             let composed = route(input, None);
