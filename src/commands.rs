@@ -28,9 +28,10 @@ use crate::generation;
 use crate::llm;
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
-use crate::persona::{self, Persona};
+use crate::persona::Persona;
 use crate::pipeline;
 use crate::profile::{self, ProfileFacts};
+use crate::routing_signals;
 use crate::runtime::{self, AppState};
 use crate::server::{self, Archetype};
 use crate::webhook;
@@ -210,8 +211,11 @@ pub async fn route(
 ) -> Result<(), Error> {
     ctx.defer().await?;
 
-    let route = persona::route(&request, r#as.map(Into::into));
-    ctx.say(clamp_message(persona::describe(&route))).await?;
+    // Explains the route actually taken, signal layer included — otherwise the
+    // bot explains a choice the message pipeline did not make.
+    let route = routing_signals::route(&request, r#as.map(Into::into));
+    ctx.say(clamp_message(routing_signals::describe(&route)))
+        .await?;
     Ok(())
 }
 
@@ -257,13 +261,16 @@ pub async fn ask(
     // answer, which is backwards.
     let state = &ctx.data().state;
     let scope = format!("discord:{}", ctx.channel_id().get());
-    let route = persona::route(&question, r#as.map(Into::into));
-    let routed = if matches!(route.reason, persona::Reason::Default) {
+    // Same composition the message pipeline uses, so `/persona ask` and an
+    // ordinary message never disagree about identical text. Session stickiness
+    // still applies, but only to text neither layer has an opinion about.
+    let route = routing_signals::route(&question, r#as.map(Into::into));
+    let routed = if route.is_decisive() {
+        route.persona
+    } else {
         AppState::lock(&state.engine)
             .session_persona(&scope)
             .unwrap_or(route.persona)
-    } else {
-        route.persona
     };
     let scoped_guild = match ctx.guild_id() {
         Some(g) => format!("discord:{}", g.get()),

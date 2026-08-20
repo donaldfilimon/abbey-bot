@@ -57,6 +57,7 @@ mod persona;
 mod pipeline;
 mod platform;
 mod profile;
+mod routing_signals;
 mod runtime;
 mod server;
 mod tools;

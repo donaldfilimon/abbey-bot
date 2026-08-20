@@ -20,8 +20,9 @@ use crate::generation::{Ask, Delivery, generate, with_typing};
 use crate::guild::GuildSettings;
 use crate::llm;
 use crate::memory::PersonaContext;
-use crate::persona::{self, Persona};
+use crate::persona::Persona;
 use crate::platform::{OutboundMessage, RemoteAttachment, RouteDecision, SocialEvent, triage};
+use crate::routing_signals;
 use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
 
@@ -79,20 +80,25 @@ pub fn persona_for(text: &str, settings: &GuildSettings) -> Persona {
     persona_for_session(text, settings, None)
 }
 
-/// Explicit names and weighted ABI cues always win. A neutral follow-up keeps
-/// the persona already attached to this transcript; only a new session falls
-/// back to the guild default. This makes `switch_persona` a real conversational
-/// handoff instead of a one-response costume change.
+/// Explicit names and weighted ABI cues always win. A message the canonical
+/// keyword table is blind to but that carries distress, confusion, or terse
+/// urgency is decided by [`routing_signals`] — the message where routing
+/// matters most is exactly the one with no keyword in it. Only a message
+/// neutral to *both* layers keeps the persona already attached to this
+/// transcript, falling back to the guild default on a new session. This makes
+/// `switch_persona` a real conversational handoff instead of a one-response
+/// costume change, without letting stickiness answer a distress signal in
+/// Aviva's register.
 fn persona_for_session(
     text: &str,
     settings: &GuildSettings,
     session_persona: Option<Persona>,
 ) -> Persona {
-    let route = persona::route(text, None);
-    if matches!(route.reason, persona::Reason::Default) {
-        session_persona.unwrap_or(settings.default_persona)
+    let composed = routing_signals::route(text, None);
+    if composed.is_decisive() {
+        composed.persona
     } else {
-        route.persona
+        session_persona.unwrap_or(settings.default_persona)
     }
 }
 
@@ -1074,6 +1080,39 @@ mod tests {
             persona_for_session("Abbey, take this one", &s, Some(Persona::Aviva)),
             Persona::Abbey,
             "an explicit canonical name still overrides sticky state"
+        );
+    }
+
+    /// The signal layer is only worth having if it survives the `Default`
+    /// sentinel: before it, a distressed message carried no canonical evidence,
+    /// so its route was discarded and the guild (or sticky) persona answered —
+    /// which is the one case where the wrong register hurts most.
+    #[test]
+    fn distress_outranks_the_guild_default_and_sticky_state() {
+        let aviva = GuildSettings {
+            default_persona: Persona::Aviva,
+            ..GuildSettings::default()
+        };
+        let distressed = "I'm completely stuck and losing my mind on this";
+        assert_eq!(
+            crate::persona::route(distressed, None).reason,
+            crate::persona::Reason::Default,
+            "precondition: the canonical keyword table sees nothing here"
+        );
+        assert_eq!(persona_for(distressed, &aviva), Persona::Abbey);
+        assert_eq!(
+            persona_for_session(distressed, &aviva, Some(Persona::Abi)),
+            Persona::Abbey,
+            "distress is a handoff, not a follow-up"
+        );
+
+        // Terse urgency goes the other way, and neutral text still sticks.
+        let s = GuildSettings::default();
+        assert_eq!(persona_for("restart it now", &s), Persona::Aviva);
+        assert_eq!(
+            persona_for_session("and what about tomorrow?", &aviva, Some(Persona::Abi)),
+            Persona::Abi,
+            "text neutral to both layers keeps the sticky persona"
         );
     }
 }
