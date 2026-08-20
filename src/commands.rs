@@ -704,6 +704,18 @@ impl VoiceRuntime {
     }
 }
 
+fn no_audio_songbird_config(config: &songbird::Config) -> songbird::Config {
+    config
+        .clone()
+        .decode_mode(songbird::driver::DecodeMode::Pass)
+}
+
+async fn disable_voice_decoding(call: &Arc<tokio::sync::Mutex<songbird::Call>>) {
+    let mut call = call.lock().await;
+    let config = no_audio_songbird_config(call.config());
+    call.set_config(config);
+}
+
 /// Establish the explicitly configured no-audio connection during an
 /// operator-requested deployment. This path refuses to run when a provider key
 /// exists: a restart must never begin receiving or transmitting audio.
@@ -740,6 +752,8 @@ pub async fn autojoin_self_deafened(
             .await
             .map_err(|e| format!("replacing the existing voice session failed: {e}"))?;
     }
+    let call = manager.get_or_insert(guild_id);
+    disable_voice_decoding(&call).await;
     let generation = runtime.begin();
     let call = manager.join(guild_id, channel_id).await.map_err(|e| {
         runtime.set_status(generation, format!("Discord join failed: {e}"));
@@ -766,7 +780,7 @@ pub async fn autojoin_self_deafened(
         generation,
         "Discord connected, muted and self-deafened; live speech is unavailable",
     );
-    tracing::info!(guild = %guild_id, channel = %channel_id, "joined Discord voice muted and self-deafened; audio receive and transmission are disabled");
+    tracing::info!(guild = %guild_id, channel = %channel_id, "joined Discord voice muted and self-deafened; media decryption, audio decoding, receive delivery, and transmission are disabled");
     Ok(())
 }
 
@@ -839,6 +853,10 @@ pub async fn voice_join(ctx: Context<'_>) -> Result<(), Error> {
         ))
         .await?;
         return Ok(());
+    }
+    if !runtime.config.realtime_ready() {
+        let call = manager.get_or_insert(guild_id);
+        disable_voice_decoding(&call).await;
     }
     let generation = runtime.begin();
     let call = match manager.join(guild_id, channel_id).await {
@@ -1339,6 +1357,20 @@ mod tests {
             reply.ends_with("limit)"),
             "truncation must be stated, not silent"
         );
+    }
+
+    #[test]
+    fn no_audio_songbird_config_disables_decryption_and_decoding() {
+        let base = songbird::Config::default().decode_mode(songbird::driver::DecodeMode::Decode(
+            songbird::driver::DecodeConfig::default(),
+        ));
+        let no_audio = no_audio_songbird_config(&base);
+
+        assert_eq!(no_audio.decode_mode, songbird::driver::DecodeMode::Pass);
+        assert!(matches!(
+            base.decode_mode,
+            songbird::driver::DecodeMode::Decode(_)
+        ));
     }
 
     #[tokio::test]

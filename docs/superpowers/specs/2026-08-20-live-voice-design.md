@@ -32,7 +32,10 @@ voice session, and an OpenAI key used elsewhere does not opt voice in.
 works only in `ABBEY_VOICE_GUILD_ID` and only for the voice channel named by
 `ABBEY_VOICE_CHANNEL_ID`; Stage channels are rejected. The operations-only
 `ABBEY_VOICE_AUTOJOIN=1` path is permitted only when no provider key exists and
-immediately mutes and self-deafens, so it cannot receive or transmit call audio.
+immediately mutes and self-deafens, so it cannot consume or transmit call audio.
+Before connecting, it changes Songbird to `DecodeMode::Pass`; encrypted RTP may
+arrive at the transport, but it is not decrypted, decoded, or delivered to an
+audio handler. Leaving this setting enabled makes safe presence restart-resilient.
 Normal full-duplex mode still requires `/voice join`. Its response states that
 channel audio is sent to the configured provider and names `/voice leave` as
 the stop control.
@@ -52,7 +55,7 @@ Required to opt in to the Discord connection:
 `OPENAI_API_KEY` is required for full-duplex Realtime speech. Without it,
 Abbey can connect only in muted, self-deafened, no-audio mode.
 
-Optional: `ABBEY_VOICE_AUTOJOIN` (no-key/self-deafened only),
+Optional: `ABBEY_VOICE_AUTOJOIN` (persistent no-key muted/self-deafened presence),
 `ABBEY_VOICE_REALTIME_ENDPOINT` (default OpenAI WSS),
 `ABBEY_VOICE_REALTIME_MODEL` (current default `gpt-realtime-2.1`),
 `ABBEY_VOICE_NAME` (default `marin`), and `ABBEY_VOICE_INSTRUCTIONS`.

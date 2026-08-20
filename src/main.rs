@@ -20,8 +20,9 @@
 //!   MESSAGE_CONTENT intent (must also be enabled in the Dev Portal).
 //! - `ABBEY_VISION_*`, `TELEGRAM_BOT_TOKEN` (optional) — see `.env.example`.
 //! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
-//!   admin-triggered, DAVE-capable Discord connection. It stays self-deafened
-//!   until `OPENAI_API_KEY` enables full-duplex Realtime voice.
+//!   admin-triggered, DAVE-capable Discord connection. `ABBEY_VOICE_AUTOJOIN=1`
+//!   provides persistent muted/self-deafened no-audio presence when no provider
+//!   key is configured; full-duplex Realtime voice still requires `/voice join`.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
