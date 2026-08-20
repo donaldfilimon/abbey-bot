@@ -26,6 +26,7 @@ use crate::guild::{GuildRegistry, ReplyCooldown};
 use crate::llm::{Backend, HttpTransport};
 use crate::persist::Stores;
 use crate::platform::SocialNetwork;
+use crate::provider::{FmConfig, FoundationModels, ProviderCapabilities, ProviderRoute};
 use crate::vision::{RemoteVision, VisionConfig, VisionError, VisionRequest, VisionTransport};
 use crate::wdbx::Recall;
 
@@ -200,11 +201,13 @@ pub struct AppState {
     /// The local backend kept as a one-shot fallback when Anthropic is primary
     /// and `ABBEY_BOT_LLM_ENDPOINT` is also set. `None` otherwise.
     pub fallback: Option<Backend>,
+    /// Explicit Apple Foundation Models fallback. `None` unless the operator
+    /// selected a mode; its own `fallback` bit still gates every route.
+    pub foundation_models: Option<FoundationModels>,
     /// `ABBEY_BOT_LLM_TOOLS`: `off` disables tool calling; anything else
     /// (default `auto`) offers Abbey's tools on mention/DM replies and
-    /// `/persona ask`. Flips to false for the process if the backend rejects
-    /// a tooled request (4xx), so a model without tool support degrades once
-    /// and then stays plain.
+    /// `/persona ask`. Provider-specific runtime rejection state lives in the
+    /// provider router, so one backend cannot disable another backend's tools.
     pub tools_enabled: std::sync::atomic::AtomicBool,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
@@ -391,6 +394,11 @@ impl AppState {
                 .validate()
                 .map_err(|e| StartupError(e.to_string()))?;
         }
+        let tools_enabled = !std::env::var("ABBEY_BOT_LLM_TOOLS")
+            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("off"));
+        let foundation_models = FmConfig::from_env()
+            .map_err(StartupError)?
+            .map(|config| FoundationModels::new(config, backend.as_ref(), tools_enabled));
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -406,10 +414,8 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             backend,
             fallback,
-            tools_enabled: std::sync::atomic::AtomicBool::new(
-                !std::env::var("ABBEY_BOT_LLM_TOOLS")
-                    .is_ok_and(|v| v.trim().eq_ignore_ascii_case("off")),
-            ),
+            foundation_models,
+            tools_enabled: std::sync::atomic::AtomicBool::new(tools_enabled),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             llm: HttpTransport::default(),
             attachments: attachment_client(),
@@ -438,6 +444,7 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             backend: None,
             fallback: None,
+            foundation_models: None,
             tools_enabled: std::sync::atomic::AtomicBool::new(true),
             quiet: false,
             llm: HttpTransport::default(),
@@ -477,23 +484,47 @@ impl AppState {
         system_prompt: &str,
         turns: &[crate::llm::ChatTurn],
     ) -> Result<(String, &'static str), crate::llm::LlmError> {
-        let Some(primary) = &self.backend else {
-            return Err(crate::llm::LlmError::backend(
-                "no generation backend is configured".into(),
-            ));
-        };
-        match crate::llm::chat_backend(&self.llm, primary, system_prompt, turns).await {
-            Ok(text) => Ok((text, primary.label())),
-            Err(e) => match &self.fallback {
-                Some(local) => {
-                    tracing::warn!(error = %e, "primary backend failed; falling back to the local endpoint");
-                    crate::llm::chat_backend(&self.llm, local, system_prompt, turns)
-                        .await
-                        .map(|text| (text, local.label()))
+        let mut last_error =
+            crate::llm::LlmError::backend("no generation backend is configured".into());
+        if let Some(primary) = &self.backend {
+            match crate::llm::chat_backend(&self.llm, primary, system_prompt, turns).await {
+                Ok(text) => return Ok((text, primary.label())),
+                Err(error) => last_error = error,
+            }
+            if let Some(local) = &self.fallback {
+                tracing::warn!(error = %last_error, "primary backend failed; falling back to the local endpoint");
+                match crate::llm::chat_backend(&self.llm, local, system_prompt, turns).await {
+                    Ok(text) => return Ok((text, local.label())),
+                    Err(error) => last_error = error,
                 }
-                None => Err(e),
-            },
+            }
         }
+        let Some(fm) = &self.foundation_models else {
+            return Err(last_error);
+        };
+        if !fm
+            .router
+            .candidates(ProviderCapabilities::text())
+            .contains(&ProviderRoute::FoundationModelsCli)
+        {
+            return Err(last_error);
+        }
+        tracing::warn!(error = %last_error, "configured backends failed; trying explicit Foundation Models CLI fallback");
+        let turn = fm
+            .cli_turn(system_prompt, turns, &[], "fm-runtime-read-only")
+            .await?;
+        Ok((turn.text, fm.label()))
+    }
+
+    /// Label for the first configured generation route, used only for honest
+    /// failure/degraded copy before a concrete successful route is known.
+    pub fn generation_label(&self) -> Option<&'static str> {
+        self.backend.as_ref().map(Backend::label).or_else(|| {
+            self.foundation_models
+                .as_ref()
+                .filter(|fm| fm.config.fallback)
+                .map(FoundationModels::label)
+        })
     }
 
     /// Lock helper: a poisoned mutex means a panic elsewhere already took the

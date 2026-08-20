@@ -141,8 +141,9 @@ ABBEY_VISION_MODEL=$HOME/.local/share/abbey-bot/mlx-vlm/huggingface/hub/models--
 
 The exact path matters: MLX-VLM uses each request's `model` value as a
 load/cache key and does not alias the portable Ollama name `gemma4:12b` to the
-preloaded snapshot. Apple `fm serve` remains an optional smaller text/vision
-fallback (`model=system`, Abbey tools off), not the Gemma default.
+preloaded snapshot. Apple `fm serve` remains an optional smaller text fallback
+(`model=system`, Abbey tools off); its vision/OCR path is not yet qualified and
+it is not the Gemma default.
 
 ## Configured backends
 
@@ -164,6 +165,33 @@ offline. Apple `fm serve` is an optional OpenAI-compatible adapter, not the
 cross-platform default; its current facade is suitable only with Abbey tools
 disabled.
 
+Apple Foundation Models can also be configured as an explicit secondary, and
+is never discovered or selected implicitly:
+
+```sh
+ABBEY_FM_MODE=system                 # off (default), system, or explicit pcc
+ABBEY_FM_ENDPOINT=http://127.0.0.1:1976
+ABBEY_FM_CLI=/usr/bin/fm
+ABBEY_FM_FALLBACK=1
+```
+
+The endpoint must be loopback. Read-only fallback preserves the existing
+Anthropic → configured local endpoint order before trying Foundation Models.
+With no primary configured, plain streamed text may use `fm serve`; after a
+streamed provider failure Abbey fails closed instead of risking a failure edit
+followed by a second provider post. A tool-capable primary failure also fails
+closed because a tool may already have run; Abbey does not restart the request
+on a second provider without typed no-side-effect evidence. The server route is
+structurally tool-incapable: a current macOS 27 probe returned
+prose rather than an OpenAI `tool_calls` record. Tool-capable turns instead use
+`fm respond --no-stream --schema` through an argument array and stdin, with a
+private temporary schema, bounded output and timeout, strict final-or-one-tool
+parsing, and no transcript-saving flag. `pcc` is a cloud route and occurs only
+when `ABBEY_FM_MODE=pcc`; Apple may reject it outside an attributed Terminal
+session, in which case Abbey fails closed. These `fm` flags are qualified
+against the installed macOS 27 CLI and may need requalification after OS beta
+updates.
+
 With neither set, `/persona ask` replies that no generation backend is
 configured, and the pipeline never speaks unsolicited (a mention gets the same
 honest reply). No test requires either variable, a network, or a key — the gate
@@ -172,7 +200,8 @@ runs fully offline.
 | Env var | What it enables |
 |---|---|
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
-| `ABBEY_BOT_LLM_TOOLS` | `off` disables model tool calls; default on (auto-degrades on a 4xx). |
+| `ABBEY_BOT_LLM_TOOLS` | `off` disables model tool calls; default on. A tool-contract rejection degrades only that provider's tool route. |
+| `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. `system` is on-device and `pcc` is an explicit cloud selection. |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any verified OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`; `off` stops that. The current cross-platform model target is `gemma4:12b`, but the selected runtime must still prove its vision interface. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. Historical evidence from 2026-08-19: Ollama at `http://127.0.0.1:11434/v1` with `gemma4:e4b` described a screenshot in ~4–15 s. The hardened attachment path and the new 12b target still need fresh live `/see` validation after deployment. |
