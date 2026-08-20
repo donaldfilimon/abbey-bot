@@ -15,14 +15,16 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>set -a; . "$HOME/.config/abbey-bot/env"; set +a; exec "$HOME/.local/libexec/abbey-bot/abbey-bot"</string>
+    <string>set -a; . "$HOME/.config/abbey-bot/env"; set +a; export ABBEY_DATA_DIR="$HOME/.local/share/abbey-bot/data"; exec "$HOME/.local/libexec/abbey-bot/abbey-bot"</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__HOME__/.local/share/abbey-bot</string>
+  <!-- State contains learned guild/member data; new files and logs stay
+       owner-only even when launchd's inherited umask is permissive. -->
+  <key>Umask</key>
+  <integer>63</integer>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>ABBEY_DATA_DIR</key>
-    <string>__HOME__/.local/share/abbey-bot/data</string>
     <key>RUST_LOG</key>
     <string>info</string>
   </dict>

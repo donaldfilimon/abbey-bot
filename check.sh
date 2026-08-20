@@ -9,6 +9,12 @@ cd "$(dirname "$0")"
 echo "== fmt =="
 cargo fmt --all -- --check
 
+echo "== deploy syntax =="
+sh -n deploy/install-launchd.sh
+if command -v plutil >/dev/null 2>&1; then
+  plutil -lint deploy/com.donaldfilimon.abbey-bot.plist
+fi
+
 echo "== clippy =="
 cargo clippy --all-targets --locked -- -D warnings
 

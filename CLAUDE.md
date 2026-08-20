@@ -13,7 +13,7 @@ header line differs. Apply any edit to both, or they drift.
 ## Commands
 
 ```bash
-./check.sh          # gate: fmt, clippy -D warnings, tests, release build; all locked
+./check.sh          # gate: fmt, deploy syntax, clippy -D warnings, tests, release build; all locked
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
 
@@ -38,8 +38,9 @@ green while every deploy build died. The gate proves the property the deploy
 depends on — do not remove the flag to "fix" a lock error; regenerate the lock.
 
 **CI runs the real gate — since PR #4.** `.github/workflows/rust.yml` executes
-`./check.sh` itself (fmt check, all-target Clippy with `--locked -D warnings`,
-locked tests, locked release build) on push and PR to `main`. The runner's
+`./check.sh` itself (fmt and deploy-shell syntax, plist lint where available,
+all-target Clippy with `--locked -D warnings`, locked tests, locked release
+build) on push and PR to `main`. The runner's
 rustup honours `rust-toolchain.toml`, so CI and local runs share exact stable
 Rust 1.97.1. The stable-toolchain/release-build gate passed in GitHub Actions on
 PR #24 on 2026-08-20. Checks older than PR #4 vouch only for the workflow's
@@ -375,7 +376,7 @@ a user sees.
 (`DISCORD_TOKEN`, optional `ABBEY_GUILD_ID`, `RUST_LOG`, and `/persona ask`'s
 backend vars `ANTHROPIC_API_KEY` / `ABBEY_BOT_LLM_ENDPOINT` — the systemd token lives in `/etc/abbey-bot/env`, never in the
 unit or an image layer). The Debian-release pairing trap is in the traps
-section above; three more non-obvious lines are past fixes — don't simplify
+section above; four more non-obvious lines are past fixes — don't simplify
 them away:
 
 - **The runtime stage installs no ca-certificates, deliberately.** TLS roots
@@ -387,17 +388,24 @@ them away:
   limiting.
 - **`AF_UNIX` stays in `RestrictAddressFamilies`.** On hosts where nsswitch
   delegates entirely to nss-resolve, blocking unix sockets hard-fails DNS.
+- **launchd `Umask=63` stays.** Learned guild/member state, semantic memory,
+  and logs are private data. The launch command owns one fixed data path after
+  sourcing env, and the installer stops the old process before recursively
+  removing group/other access. Replacement binary and plist are staged,
+  validated, renamed in-directory, and restored from backups if bootstrap fails.
 
 ## What has and has not been verified
 
 **What is and is not verified lives in `tasks/goals.md` (Current vs Proposed
-per goal, dated) — read it before claiming anything works.** As of 2026-08-19
+per goal, dated) — read it before claiming anything works.** As of 2026-08-20
 the following have been seen live from Donald's Discord client: gateway +
 registration (16 commands, 58 guilds), slash commands answering, DM and
 guild-mention replies (streamed, edited in place), the per-guild policy
 deciding/reacting in an opted-in server, cooldown and act-off gates holding,
 rewards settling into replay buffers, a model-initiated `remember_fact` tool
-call, vision on gemma4:e4b. Not seen live: Anthropic path/fallback (no key),
+call, vision on gemma4:e4b, and the launchd-managed release service with
+persistent state plus local generation/vision configuration. Not seen live:
+Anthropic path/fallback (no key),
 Telegram/Slack (no tokens), `/see` `/ocr` from a client, an `OverBudget`
 refusal, a refreshed rolling summary.
 
