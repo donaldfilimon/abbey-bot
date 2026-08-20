@@ -21,6 +21,36 @@ SCRIPT = Path(__file__).with_name("configure-mlx-primary.py")
 REVISION = "73bcf09092aa277861d5a191b989b666f7f32e8f"
 FIXTURE = "abbey-provider-fixtures-v1"
 FM_CLI = Path("/usr/bin/fm")
+TEST_OS_BUILD = "synthetic-ci-os-build"
+IMPORTED_TEST_RUNNER = """
+import importlib.util
+import pathlib
+import sys
+
+script = pathlib.Path(sys.argv[1])
+fm_cli = pathlib.Path(sys.argv[2])
+os_build = sys.argv[3]
+spec = importlib.util.spec_from_file_location("abbey_configure_mlx_test_child", script)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load configurator test module")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+validate_manifest = module.validate_manifest
+production_fm_cli = module.FM_CLI
+production_os_build = module.current_os_build
+def validate_with_synthetic_identity(manifest, binary, model_dir):
+    module.FM_CLI = fm_cli
+    module.current_os_build = lambda os_build=os_build: os_build
+    try:
+        return validate_manifest(manifest, binary, model_dir)
+    finally:
+        module.FM_CLI = production_fm_cli
+        module.current_os_build = production_os_build
+module.validate_manifest = validate_with_synthetic_identity
+sys.argv = [str(script), *sys.argv[4:]]
+module.main()
+"""
 
 
 def sha256(path: Path) -> str:
@@ -44,8 +74,8 @@ def skipped_entry() -> dict[str, object]:
 
 
 @unittest.skipUnless(
-    sys.platform == "darwin" and FM_CLI.is_file(),
-    "the qualified Foundation Models cutover is macOS-only",
+    os.name == "posix",
+    "transaction and owner-only mode tests require POSIX filesystem and signals",
 )
 class ConfigureMlxPrimaryTests(unittest.TestCase):
     def fixture(self, root: Path) -> tuple[Path, Path, Path, Path, Path]:
@@ -74,18 +104,14 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
         binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         binary.chmod(0o700)
         binary_hash = sha256(binary)
-        os_build = subprocess.run(
-            ["/usr/bin/sw_vers", "-buildVersion"],
-            check=True,
-            capture_output=True,
-            text=True,
-            env={},
-        ).stdout.strip()
+        fm_cli = root / "fm"
+        fm_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fm_cli.chmod(0o700)
         primary_identity = {
             "endpoint": "http://127.0.0.1:8282",
             "model": str(model.resolve()),
             "abbey_binary_sha256": binary_hash,
-            "os_build": os_build,
+            "os_build": TEST_OS_BUILD,
             "fixture_version": FIXTURE,
         }
         vision_identity = {
@@ -93,11 +119,11 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
             "endpoint": "http://127.0.0.1:8282/v1",
         }
         fm_identity = {
-            "cli_path": str(FM_CLI),
-            "cli_sha256": sha256(FM_CLI),
+            "cli_path": str(fm_cli),
+            "cli_sha256": sha256(fm_cli),
             "mode": "system",
             "abbey_binary_sha256": binary_hash,
-            "os_build": os_build,
+            "os_build": TEST_OS_BUILD,
             "fixture_version": FIXTURE,
         }
         manifest = root / "fm-capabilities.json"
@@ -172,10 +198,19 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
 
     def script_command(self, *arguments: object) -> list[str]:
         values = [str(value) for value in arguments]
+        env_index = values.index("--env-file") + 1
+        root = Path(values[env_index]).parent
         if "--install-lock" not in values:
-            env_index = values.index("--env-file") + 1
-            values.extend(("--install-lock", str(Path(values[env_index]).parent / "install.lock")))
-        return [sys.executable, str(SCRIPT), *values]
+            values.extend(("--install-lock", str(root / "install.lock")))
+        return [
+            sys.executable,
+            "-c",
+            IMPORTED_TEST_RUNNER,
+            str(SCRIPT),
+            str(root / "fm"),
+            TEST_OS_BUILD,
+            *values,
+        ]
 
     def run_script(
         self, *arguments: object, environment: dict[str, str] | None = None
@@ -218,6 +253,77 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assert_secret_free(result)
             self.assertEqual(env.read_bytes(), before)
+            self.assertFalse(backups.exists())
+
+    def test_production_help_exposes_no_identity_override_arguments(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        self.assertNotIn("test-fm", output)
+        self.assertNotIn("test-os", output)
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("test_fm_cli", source)
+        self.assertNotIn("test_os_build", source)
+
+    @unittest.skipUnless(
+        sys.platform == "darwin" and FM_CLI.is_file(),
+        "production FM identity binding requires the installed macOS CLI",
+    )
+    def test_production_defaults_bind_actual_fm_and_current_os_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env, manifest, model, backups, binary = self.fixture(root)
+            os_build = subprocess.run(
+                ["/usr/bin/sw_vers", "-buildVersion"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={},
+            ).stdout.strip()
+            report = json.loads(manifest.read_text(encoding="utf-8"))
+            for entry in (
+                report["primary"]["identity"],
+                report["primary"]["vision_identity"],
+            ):
+                entry["os_build"] = os_build
+            fm_identity = report["fm_cli"]["identity"]
+            fm_identity["cli_path"] = str(FM_CLI)
+            fm_identity["cli_sha256"] = sha256(FM_CLI)
+            fm_identity["os_build"] = os_build
+            report["fm_cli"]["vision_identity"] = dict(fm_identity)
+            manifest.write_text(json.dumps(report) + "\n", encoding="utf-8")
+            manifest.chmod(0o600)
+            child_environment = os.environ.copy()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--env-file",
+                    str(env),
+                    "--model-dir",
+                    str(model),
+                    "--manifest",
+                    str(manifest),
+                    "--binary",
+                    str(binary),
+                    "--backup-dir",
+                    str(backups),
+                    "--install-lock",
+                    str(root / "install.lock"),
+                    "--dry-run",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=child_environment,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assert_secret_free(result)
             self.assertFalse(backups.exists())
 
     def test_apply_restarts_and_retains_private_backup_without_printing_secrets(

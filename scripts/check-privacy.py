@@ -69,8 +69,8 @@ PYTHON_LOG_METHODS = {
     "warning",
 }
 RUST_OUTPUT_CALL = re.compile(
-    r"(?P<name>std::io::Write::(?:write|write_all|write_fmt)|"
-    r"\.(?:write|write_all|write_fmt))\s*\("
+    r"(?P<name>std::io::Write::(?:write|write_all|write_fmt|write_vectored)|"
+    r"\.(?:write|write_all|write_fmt|write_vectored))\s*\("
 )
 SHELL_OUTPUT = re.compile(r"\b(?:cat|echo|printf|logger|tee)\b")
 SHELL_VARIABLE = re.compile(r"\$(?:\{)?([A-Za-z_][A-Za-z0-9_]*)")
@@ -244,7 +244,7 @@ def scan_python_source(source: str, label: str) -> list[str]:
             stream_aliases.update(
                 imported.asname or imported.name
                 for imported in node.names
-                if imported.name in {"stdout", "stderr"}
+                if imported.name in {"stdout", "stderr", "__stdout__", "__stderr__"}
             )
         elif node.module == "os":
             os_write_aliases.update(
@@ -278,6 +278,10 @@ def scan_python_source(source: str, label: str) -> list[str]:
             and node.func.attr in {"write", "writelines"}
             and (
                 (receiver is not None and receiver[:2] in (["sys", "stdout"], ["sys", "stderr"]))
+                or (
+                    receiver is not None
+                    and receiver[:2] in (["sys", "__stdout__"], ["sys", "__stderr__"])
+                )
                 or (receiver is not None and len(receiver) == 1 and receiver[0] in stream_aliases)
             )
         )
@@ -437,6 +441,13 @@ def self_test() -> None:
     safe = '''
         tracing::warn!(body_status = 413, image_bytes_len = 12, "request body rejected");
         tracing::debug!("image bytes: {}", image_bytes.len());
+        std::io::Write::write_vectored(
+            &mut std::io::stderr(),
+            &[std::io::IoSlice::new(image_bytes_len.as_bytes())],
+        );
+        std::io::stderr().write_vectored(
+            &[std::io::IoSlice::new(response_body_len.as_bytes())],
+        );
         #[tracing::instrument(skip_all)]
         fn qualified(system_prompt: &str) {}
     '''
@@ -456,6 +467,13 @@ def self_test() -> None:
         panic!("{}", response_body);
         std::io::Write::write_all(&mut std::io::stderr(), response_body.as_bytes());
         std::io::stderr().write_all(response_body.as_bytes());
+        std::io::Write::write_vectored(
+            &mut std::io::stderr(),
+            &[std::io::IoSlice::new(response_body.as_bytes())],
+        );
+        std::io::stderr().write_vectored(
+            &[std::io::IoSlice::new(image_bytes.as_slice())],
+        );
         println!("transcript: {}", reply_transcript);
         #[instrument]
         fn leaks(api_key: &str) {}
@@ -465,11 +483,14 @@ def self_test() -> None:
     if scan_source(safe, "safe-fixture"):
         raise SystemExit("privacy logging gate rejected its safe fixture")
     failures = scan_source(unsafe, "unsafe-fixture")
-    if len(failures) != 18:
+    if len(failures) != 20:
         raise SystemExit(
-            f"privacy logging gate missed an unsafe fixture: expected 18 failures, got {failures}"
+            f"privacy logging gate missed an unsafe fixture: expected 20 failures, got {failures}"
         )
-    python_safe = 'print({"vision_chars": len(vision_text), "body_status": 413})'
+    python_safe = (
+        'print({"vision_chars": len(vision_text), "body_status": 413})\n'
+        'sys.__stderr__.write(str(len(response_body)))'
+    )
     python_unsafe = (
         'from sys import stderr\n'
         'from os import write\n'
@@ -487,15 +508,18 @@ def self_test() -> None:
         'pprint.pprint(response_body)\n'
         'pprint.pp(response_body)\n'
         'sys.stderr.buffer.raw.write(image_bytes)\n'
-        'os.writev(2, [image_bytes])'
+        'os.writev(2, [image_bytes])\n'
+        'sys.__stderr__.write(response_body)\n'
+        'sys.__stdout__.buffer.write(image_bytes)\n'
+        'sys.__stderr__.buffer.raw.writelines([private_context])'
     )
     if scan_python_source(python_safe, "safe-python-fixture"):
         raise SystemExit("privacy logging gate rejected its safe Python fixture")
     python_failures = scan_python_source(python_unsafe, "unsafe-python-fixture")
-    if len(python_failures) != 15:
+    if len(python_failures) != 18:
         raise SystemExit(
             "privacy logging gate missed an unsafe Python fixture: "
-            f"expected 15 failures, got {python_failures}"
+            f"expected 18 failures, got {python_failures}"
         )
     shell_safe = "printf '%s\\n' \\\n+  \"$IMAGE_BYTES_LEN\""
     shell_unsafe = "printf '%s\\n' \\\n+  \"$RESPONSE_BODY\""
