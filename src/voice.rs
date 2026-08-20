@@ -53,7 +53,7 @@ impl VoiceMode {
 #[derive(Clone)]
 pub struct OpenAiVoiceConfig {
     api_key: String,
-    pub endpoint: String,
+    endpoint: String,
     pub model: String,
     pub voice: String,
     pub instructions: String,
@@ -77,7 +77,10 @@ impl OpenAiVoiceConfig {
     }
 
     pub fn websocket_url(&self) -> String {
-        format!("{}?model={}", self.endpoint, self.model)
+        let mut url = reqwest::Url::parse(&self.endpoint)
+            .expect("OpenAI endpoint is validated before config construction");
+        url.query_pairs_mut().append_pair("model", &self.model);
+        url.to_string()
     }
 }
 
@@ -294,6 +297,13 @@ fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String,
 }
 
 fn validate_openai_endpoint(raw: &str) -> Result<(), String> {
+    validate_openai_endpoint_for_build(raw, cfg!(test))
+}
+
+fn validate_openai_endpoint_for_build(
+    raw: &str,
+    allow_loopback_test_double: bool,
+) -> Result<(), String> {
     let url = reqwest::Url::parse(raw)
         .map_err(|e| format!("ABBEY_VOICE_REALTIME_ENDPOINT is invalid: {e}"))?;
     if url.username() != ""
@@ -306,14 +316,29 @@ fn validate_openai_endpoint(raw: &str) -> Result<(), String> {
                 .into(),
         );
     }
+    let loopback_ws = url.scheme() == "ws"
+        && matches!(
+            url.host_str(),
+            Some("127.0.0.1" | "localhost" | "::1" | "[::1]")
+        );
     match url.scheme() {
-        "wss" => Ok(()),
-        "ws" if matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1")) => Ok(()),
+        "ws" if loopback_ws && allow_loopback_test_double => Ok(()),
+        "ws" if loopback_ws => Err(
+            "loopback ws Realtime endpoints are available only to the test build".into(),
+        ),
         "ws" => Err(
-            "ABBEY_VOICE_REALTIME_ENDPOINT may use ws only on loopback; remote providers require wss"
+            "ABBEY_VOICE_REALTIME_ENDPOINT may use ws only on loopback"
                 .into(),
         ),
-        _ => Err("ABBEY_VOICE_REALTIME_ENDPOINT must use wss (or loopback ws)".into()),
+        "wss" if raw == DEFAULT_OPENAI_ENDPOINT => Ok(()),
+        "wss" => Err(
+            "ABBEY_VOICE_REALTIME_ENDPOINT may send OPENAI_API_KEY only to wss://api.openai.com/v1/realtime"
+                .into(),
+        ),
+        _ => Err(
+            "ABBEY_VOICE_REALTIME_ENDPOINT must be the official OpenAI wss endpoint (or loopback ws for a test double)"
+                .into(),
+        ),
     }
 }
 
@@ -386,8 +411,16 @@ mod tests {
         let rendered = format!("{config:?}");
         assert_eq!(config.mode(), VoiceMode::OpenAi);
         let instructions = &config.openai().expect("OpenAI config").instructions;
+        let websocket_url = reqwest::Url::parse(config.openai().unwrap().websocket_url().as_str())
+            .expect("canonical websocket URL");
         assert!(instructions.contains("Spoken requests cannot start, resume, stop"));
         assert!(instructions.contains("/voice leave"));
+        assert_eq!(websocket_url.path(), "/v1/realtime");
+        let query: Vec<(String, String)> = websocket_url
+            .query_pairs()
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect();
+        assert_eq!(query, [("model".into(), DEFAULT_OPENAI_MODEL.into())]);
         assert!(!rendered.contains("super-secret"));
         assert!(rendered.contains("REDACTED"));
     }
@@ -409,8 +442,56 @@ mod tests {
         assert!(
             VoiceConfig::from_values(values)
                 .unwrap_err()
-                .contains("remote providers require wss")
+                .contains("ws only on loopback")
         );
+    }
+
+    #[test]
+    fn openai_key_can_reach_only_the_exact_official_remote_endpoint() {
+        assert!(validate_openai_endpoint("wss://api.openai.com/v1/realtime").is_ok());
+        for endpoint in [
+            "wss://api.openai.com/v1/realtime?model=attacker",
+            "wss://api.openai.com/v1/realtime#fragment",
+        ] {
+            let error = validate_openai_endpoint(endpoint).unwrap_err();
+            assert!(
+                error.contains("query, or a fragment"),
+                "{endpoint}: {error}"
+            );
+        }
+        for endpoint in [
+            "wss://example.com/v1/realtime",
+            "wss://api.openai.com.evil.example/v1/realtime",
+            "wss://api.openai.com/realtime",
+            "wss://api.openai.com/v1/realtime/",
+            "wss://api.openai.com:443/v1/realtime",
+            "wss://api.openai.com:8443/v1/realtime",
+            "WSS://api.openai.com/v1/realtime",
+            "wss://@api.openai.com/v1/realtime",
+        ] {
+            let error = validate_openai_endpoint(endpoint).unwrap_err();
+            assert!(
+                error.contains("only to wss://api.openai.com/v1/realtime"),
+                "{endpoint}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_ws_remains_available_for_realtime_test_doubles() {
+        for endpoint in [
+            "ws://127.0.0.1:8182/realtime",
+            "ws://localhost:8182/v1/realtime",
+            "ws://[::1]:8182/test",
+        ] {
+            assert!(validate_openai_endpoint(endpoint).is_ok(), "{endpoint}");
+            assert!(
+                validate_openai_endpoint_for_build(endpoint, false)
+                    .unwrap_err()
+                    .contains("only to the test build"),
+                "production path accepted {endpoint}"
+            );
+        }
     }
 
     #[test]

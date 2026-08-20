@@ -13,276 +13,35 @@
 //! its original link, because Discord CDN links are signed and expire and
 //! Telegram/Slack URLs need auth the remote end does not have.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::future::Future;
+
+mod image;
+mod provider;
+mod render;
+
+pub use provider::{RemoteVision, VisionConfig, VisionRequest, VisionTransport};
+pub use render::{fold_descriptions, render_ocr, render_see};
+
+#[cfg(test)]
 use std::io::Cursor;
 
-use serde_json::{Value, json};
+#[cfg(test)]
+use image::{
+    INVALID_IMAGE_PUBLIC, MAX_DECODED_IMAGE_DIMENSION, OVERSIZED_IMAGE_PUBLIC,
+    UNSUPPORTED_IMAGE_PUBLIC, data_url_unchecked, sniff_mime,
+};
+
+#[cfg(test)]
+use provider::{DEFAULT_REMOTE_MODEL, VisionTask, build_vision_request, extract_vision_text};
 
 /// Cap on fetched image size. Attachments are attacker-controlled; a fetcher
 /// must stop reading at this many bytes.
 pub const MAX_IMAGE_BYTES: usize = 10 << 20;
 
-/// Output budget. The spec says 200, sized for the answer alone; local
-/// reasoning models (gemma4 via ollama) spend ~1.7k characters thinking about
-/// the picture first and returned a truncated "This image is" at 200
-/// (measured 2026-08-19), so the budget covers the thinking too.
-const MAX_TOKENS: u32 = 1024;
-
-/// Conventional default for a separately configured remote vision provider.
-/// When vision reuses the local reasoning endpoint it inherits that endpoint's
-/// model instead, falling back to [`crate::llm::DEFAULT_LOCAL_MODEL`].
-const DEFAULT_REMOTE_MODEL: &str = "gpt-4o-mini";
-
 /// Upper bound on images described per message — keeps one photo dump from
 /// turning into a dozen round trips.
 pub const MAX_DESCRIBED_IMAGES: usize = 3;
-
-/// Decode ceiling for every accepted image. The fetched-file cap alone does
-/// not stop a tiny compressed image from advertising an enormous canvas.
-const MAX_DECODED_IMAGE_DIMENSION: u32 = 8_192;
-
-/// Allocation ceiling used by each decoder in addition to the strict dimension
-/// ceiling above. `ImageReader::decode` reserves the decoded output size against
-/// this limit before allocating it, even where a codec's own accounting is only
-/// best effort.
-const MAX_DECODED_IMAGE_ALLOC: u64 = 96 << 20;
-
-/// Safe copy commands may show directly to the caller. OpenAI-compatible
-/// endpoints consistently accept these three data-URL formats; GIF is
-/// normalized to PNG locally before the request is built.
-const UNSUPPORTED_IMAGE_PUBLIC: &str = "That attachment is not a supported image. Upload a JPEG, PNG, WebP, or GIF file; convert HEIC, AVIF, JXL, SVG, and PDF files first.";
-
-/// Safe copy for a supported-looking file that is malformed or exceeds the
-/// local decoder limits. Decoder internals never cross the Discord boundary.
-const INVALID_IMAGE_PUBLIC: &str = "I couldn't decode that image safely. Re-export it as a normal JPEG, PNG, WebP, or GIF no larger than 8192 by 8192 pixels and try again.";
-
-/// Safe copy for a file over the byte cap. This is a size problem, not a
-/// format problem, so it names the actual remedy.
-const OVERSIZED_IMAGE_PUBLIC: &str =
-    "That image is too large. Keep the file at or under 10 MB and try again.";
-
-/// MIME type from the leading magic bytes, exactly the set the spec sniffs.
-/// Anything else is `application/octet-stream`; callers reject that locally
-/// rather than sending a provider an invalid or misleading data URL.
-pub fn sniff_mime(bytes: &[u8]) -> &'static str {
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        "image/jpeg"
-    } else if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        "image/png"
-    } else if bytes.starts_with(b"GIF") {
-        "image/gif"
-    } else if bytes.len() > 12 && &bytes[8..12] == b"WEBP" {
-        "image/webp"
-    } else {
-        "application/octet-stream"
-    }
-}
-
-/// Return provider-ready bytes without lying about their media type.
-///
-/// JPEG, PNG, and WebP already have portable OpenAI-compatible data-URL
-/// prefixes. GIF does not: Ollama 0.32 rejects `image/gif` even though remote
-/// OpenAI-compatible services may accept it. Decode only the first rendered
-/// frame under strict resource ceilings and encode that frame as PNG. Unknown
-/// formats fail before any HTTP request, so a PDF/HEIC/HTML response can never
-/// become `data:application/octet-stream` and leak into a provider-specific
-/// parser.
-fn prepare_image(bytes: &[u8]) -> Result<Cow<'_, [u8]>, VisionError> {
-    match sniff_mime(bytes) {
-        "image/jpeg" => {
-            validate_preserved_image(bytes, image::ImageFormat::Jpeg, "JPEG")?;
-            Ok(Cow::Borrowed(bytes))
-        }
-        "image/png" => {
-            validate_preserved_image(bytes, image::ImageFormat::Png, "PNG")?;
-            Ok(Cow::Borrowed(bytes))
-        }
-        "image/webp" => {
-            validate_preserved_image(bytes, image::ImageFormat::WebP, "WebP")?;
-            Ok(Cow::Borrowed(bytes))
-        }
-        "image/gif" => normalize_gif_first_frame(bytes).map(Cow::Owned),
-        _ => Err(VisionError::invalid_image(
-            "unsupported attachment image format",
-            UNSUPPORTED_IMAGE_PUBLIC,
-        )),
-    }
-}
-
-fn decode_with_limits(
-    bytes: &[u8],
-    format: image::ImageFormat,
-    format_label: &'static str,
-) -> Result<image::DynamicImage, VisionError> {
-    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_DECODED_IMAGE_DIMENSION);
-    limits.max_image_height = Some(MAX_DECODED_IMAGE_DIMENSION);
-    limits.max_alloc = Some(MAX_DECODED_IMAGE_ALLOC);
-    reader.limits(limits);
-    reader.decode().map_err(|_| {
-        VisionError::invalid_image(
-            format!("{format_label} decode failed or exceeded local resource limits"),
-            INVALID_IMAGE_PUBLIC,
-        )
-    })
-}
-
-/// Fully decode pass-through formats once under local limits, then preserve the
-/// caller's original bytes and MIME for the backend. Header sniffing alone is
-/// insufficient: a small compressed PNG/JPEG/WebP may expand into hundreds of
-/// megabytes, and a truncated file may still carry convincing magic bytes.
-fn validate_preserved_image(
-    bytes: &[u8],
-    format: image::ImageFormat,
-    format_label: &'static str,
-) -> Result<(), VisionError> {
-    drop(decode_with_limits(bytes, format, format_label)?);
-    Ok(())
-}
-
-fn normalize_gif_first_frame(bytes: &[u8]) -> Result<Vec<u8>, VisionError> {
-    let first_frame = decode_with_limits(bytes, image::ImageFormat::Gif, "GIF")?;
-    let mut encoded = Cursor::new(Vec::new());
-    first_frame
-        .write_to(&mut encoded, image::ImageFormat::Png)
-        .map_err(|_| {
-            VisionError::invalid_image("GIF-to-PNG encoding failed", INVALID_IMAGE_PUBLIC)
-        })?;
-    let encoded = encoded.into_inner();
-    if encoded.len() > MAX_IMAGE_BYTES {
-        return Err(VisionError::invalid_image(
-            format!(
-                "normalized GIF is {} bytes; the cap is {MAX_IMAGE_BYTES}",
-                encoded.len()
-            ),
-            INVALID_IMAGE_PUBLIC,
-        ));
-    }
-    Ok(encoded)
-}
-
-/// What is being asked of the image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VisionTask {
-    /// A short natural-language description, for folding into chat.
-    Describe,
-    /// OCR only — verbatim text.
-    ExtractText,
-}
-
-impl VisionTask {
-    pub const fn prompt(self) -> &'static str {
-        match self {
-            Self::Describe => {
-                "Describe this image in at most two short sentences. Factual, no preamble."
-            }
-            Self::ExtractText => {
-                "Transcribe all text visible in this image verbatim. Output only the text."
-            }
-        }
-    }
-}
-
-/// A fully assembled vision request: exactly what the live transport sends,
-/// and exactly what a recording fake captures.
-///
-/// `Debug` is hand-written: `headers` carries `Authorization`, and a derived
-/// `Debug` would print the key through any `{:?}` path (tracing fields, panic
-/// messages, failing assertions).
-#[derive(Clone, PartialEq)]
-pub struct VisionRequest {
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
-
-impl fmt::Debug for VisionRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let headers: Vec<(&str, &str)> = self
-            .headers
-            .iter()
-            .map(|(name, value)| {
-                let shown = if name.eq_ignore_ascii_case("authorization") {
-                    "<redacted>"
-                } else {
-                    value.as_str()
-                };
-                (name.as_str(), shown)
-            })
-            .collect();
-        // The body holds the whole image as base64; printing megabytes of it
-        // helps nobody, so only its size is shown.
-        let body_len = self.body.to_string().len();
-        f.debug_struct("VisionRequest")
-            .field("url", &self.url)
-            .field("headers", &headers)
-            .field("body_bytes", &body_len)
-            .finish()
-    }
-}
-
-/// Build the chat-completions request for one image. `base_url` is the
-/// OpenAI-compatible base *including* `/v1` (e.g. `https://api.openai.com/v1`).
-/// A blank `api_key` sends no `Authorization` header — loopback servers want
-/// none, and `Bearer ` with nothing after it is a malformed header.
-fn build_vision_request(
-    base_url: &str,
-    model: &str,
-    api_key: &str,
-    task: VisionTask,
-    image_bytes: &[u8],
-) -> VisionRequest {
-    let mime = sniff_mime(image_bytes);
-    let data_url = format!("data:{mime};base64,{}", base64_encode(image_bytes));
-    let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
-    if !api_key.trim().is_empty() {
-        headers.push(("Authorization".to_string(), format!("Bearer {api_key}")));
-    }
-    VisionRequest {
-        url: format!("{}/chat/completions", base_url.trim_end_matches('/')),
-        headers,
-        body: json!({
-            "model": model,
-            "max_tokens": MAX_TOKENS,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": task.prompt()},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }],
-        }),
-    }
-}
-
-/// Standard base64 (RFC 4648 §4) with padding. Hand-rolled because the crate
-/// has no encoding dependency and this is the one place that needs it.
-fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = u32::from(chunk[0]);
-        let b1 = chunk.get(1).copied().map_or(0, u32::from);
-        let b2 = chunk.get(2).copied().map_or(0, u32::from);
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[(triple >> 18) as usize & 0x3F] as char);
-        out.push(ALPHABET[(triple >> 12) as usize & 0x3F] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[(triple >> 6) as usize & 0x3F] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[triple as usize & 0x3F] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
 
 /// Why a vision call produced no answer. Carries no secrets by construction:
 /// keys travel in headers, and header values never appear in error text.
@@ -324,239 +83,18 @@ impl fmt::Display for VisionError {
 
 impl std::error::Error for VisionError {}
 
-/// Pull the answer out of a chat-completions body: `choices[0].message.content`.
-/// An empty string is a legitimate OCR result (no text in the image), so it
-/// is returned as `Ok("")`, not an error — the renderer says "No text found."
-pub fn extract_vision_text(raw: &str) -> Result<String, VisionError> {
-    let value: Value = serde_json::from_str(raw)
-        .map_err(|e| VisionError::internal(format!("the vision response was not JSON: {e}")))?;
-    let content = value
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .map(|s| s.trim().to_string())
-        .ok_or_else(|| VisionError::internal("the vision response carried no message content"))?;
-    if content.is_empty()
-        && value
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            == Some("length")
-    {
-        return Err(VisionError::internal(
-            "the vision model spent its whole budget reasoning and produced no description",
-        ));
-    }
-    Ok(content)
-}
-
 /// The seam: natural-language description and OCR over raw image bytes.
 /// Fetching (with the [`MAX_IMAGE_BYTES`] cap, `tgfile://` resolution, Slack
 /// auth) happens before this, in the orchestrator — the analyzer never sees a
 /// URL, so it can never be handed one it lacks credentials for.
 pub trait ImageUnderstanding {
     /// ≤2 sentences, suitable for inline folding into a chat message.
-    fn describe(&self, image: &[u8]) -> impl Future<Output = Result<String, VisionError>> + Send;
+    fn describe(&self, image: Vec<u8>) -> impl Future<Output = Result<String, VisionError>> + Send;
     /// OCR only — verbatim text found in the image.
     fn extract_text(
         &self,
-        image: &[u8],
+        image: Vec<u8>,
     ) -> impl Future<Output = Result<String, VisionError>> + Send;
-}
-
-/// The network seam under [`RemoteVision`]: post one request, return the raw
-/// body. The orchestrator implements it with a real client; tests with a fake.
-pub trait VisionTransport {
-    fn post(
-        &self,
-        request: &VisionRequest,
-    ) -> impl Future<Output = Result<String, VisionError>> + Send;
-}
-
-/// Where the remote analyzer points. Holds the key, so `Debug` is hand-written.
-#[derive(Clone, PartialEq, Eq)]
-pub struct VisionConfig {
-    /// OpenAI-compatible base including `/v1`.
-    pub base_url: String,
-    pub model: String,
-    /// May be empty: loopback servers take no key.
-    pub api_key: String,
-}
-
-impl fmt::Debug for VisionConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("VisionConfig")
-            .field("base_url", &self.base_url)
-            .field("model", &self.model)
-            .field(
-                "api_key",
-                &if self.api_key.is_empty() {
-                    "<none>"
-                } else {
-                    "<redacted>"
-                },
-            )
-            .finish()
-    }
-}
-
-impl VisionConfig {
-    /// Selection from environment values. Pure — takes values, not the
-    /// process environment — so tests never touch env state.
-    ///
-    /// Precedence:
-    /// 1. `ABBEY_VISION_ENDPOINT` set → that is the base, verbatim (it must
-    ///    already include `/v1`, matching the spec's
-    ///    `https://api.openai.com/v1` default shape).
-    /// 2. Else `ABBEY_BOT_LLM_ENDPOINT` set → the `/persona ask` server is
-    ///    reused with `/v1` appended, since `llm.rs` treats that value as a
-    ///    host root. A multimodal local model behind llama-server/ollama/mlx
-    ///    then serves both text and vision with one variable.
-    /// 3. Else no vision — the caller degrades (descriptions are skipped,
-    ///    `/see` and `/ocr` say vision is not configured).
-    ///
-    /// Model precedence is an explicit `ABBEY_VISION_MODEL`, then
-    /// `ABBEY_BOT_LLM_MODEL` when the LLM endpoint is reused, then the shared
-    /// local Gemma default for that reused endpoint. A separately configured
-    /// vision endpoint with no model retains the conventional remote
-    /// `gpt-4o-mini` default. Key is `ABBEY_VISION_KEY` or empty. Blank values
-    /// count as unset throughout because `.env.example` ships blank
-    /// assignments. `ABBEY_VISION_ENDPOINT=off` disables vision even when an
-    /// LLM endpoint is set.
-    pub fn from_values(
-        vision_endpoint: Option<String>,
-        vision_model: Option<String>,
-        vision_key: Option<String>,
-        fallback_llm_endpoint: Option<String>,
-        fallback_llm_model: Option<String>,
-    ) -> Option<Self> {
-        let non_blank = |value: Option<String>| {
-            value
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        };
-        let (base_url, reused_llm_endpoint) = match non_blank(vision_endpoint) {
-            // `off` is the sentinel that stops the LLM-endpoint fallback: a
-            // text-only local model (ollama gemma) would otherwise be asked to
-            // read images and fail a round-trip per attachment.
-            Some(off) if off.eq_ignore_ascii_case("off") => return None,
-            Some(explicit) => (explicit, false),
-            None => (
-                format!(
-                    "{}/v1",
-                    non_blank(fallback_llm_endpoint)?.trim_end_matches('/')
-                ),
-                true,
-            ),
-        };
-        let model = non_blank(vision_model)
-            .or_else(|| {
-                reused_llm_endpoint
-                    .then(|| non_blank(fallback_llm_model))
-                    .flatten()
-            })
-            .unwrap_or_else(|| {
-                if reused_llm_endpoint {
-                    crate::llm::DEFAULT_LOCAL_MODEL.to_string()
-                } else {
-                    DEFAULT_REMOTE_MODEL.to_string()
-                }
-            });
-        Some(Self {
-            base_url,
-            model,
-            api_key: non_blank(vision_key).unwrap_or_default(),
-        })
-    }
-
-    /// Selection from the real environment — the runtime path. Tests go
-    /// through [`VisionConfig::from_values`].
-    pub fn from_env() -> Option<Self> {
-        Self::from_values(
-            std::env::var("ABBEY_VISION_ENDPOINT").ok(),
-            std::env::var("ABBEY_VISION_MODEL").ok(),
-            std::env::var("ABBEY_VISION_KEY").ok(),
-            std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
-            std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
-        )
-    }
-
-    /// Build the request this config would send for `task` over `image`.
-    fn request(&self, task: VisionTask, image: &[u8]) -> VisionRequest {
-        build_vision_request(&self.base_url, &self.model, &self.api_key, task, image)
-    }
-}
-
-/// The OpenAI-compatible analyzer over any transport — `RemoteVisionAnalyzer`
-/// in the spec. The Apple Vision path has no Rust counterpart here; this is
-/// the implementation every host gets.
-pub struct RemoteVision<T> {
-    pub config: VisionConfig,
-    pub transport: T,
-}
-
-impl<T: VisionTransport + Sync> RemoteVision<T> {
-    async fn ask(&self, task: VisionTask, image: &[u8]) -> Result<String, VisionError> {
-        if image.len() > MAX_IMAGE_BYTES {
-            return Err(VisionError::invalid_image(
-                format!(
-                    "the image is {} bytes; the cap is {MAX_IMAGE_BYTES}",
-                    image.len()
-                ),
-                OVERSIZED_IMAGE_PUBLIC,
-            ));
-        }
-        let image = prepare_image(image)?;
-        let request = self.config.request(task, image.as_ref());
-        let raw = self.transport.post(&request).await?;
-        extract_vision_text(&raw)
-    }
-}
-
-impl<T: VisionTransport + Sync> ImageUnderstanding for RemoteVision<T> {
-    fn describe(&self, image: &[u8]) -> impl Future<Output = Result<String, VisionError>> + Send {
-        self.ask(VisionTask::Describe, image)
-    }
-
-    fn extract_text(
-        &self,
-        image: &[u8],
-    ) -> impl Future<Output = Result<String, VisionError>> + Send {
-        self.ask(VisionTask::ExtractText, image)
-    }
-}
-
-/// Fold image descriptions into the message text, one bracketed line per
-/// image, at most [`MAX_DESCRIBED_IMAGES`]. This is the string the intent
-/// classifier and the persona see.
-pub fn fold_descriptions(text: &str, described: &[(String, String)]) -> String {
-    let mut out = text.to_string();
-    for (filename, description) in described.iter().take(MAX_DESCRIBED_IMAGES) {
-        out.push_str("\n[image ");
-        out.push_str(filename);
-        out.push_str(": ");
-        out.push_str(description);
-        out.push(']');
-    }
-    out
-}
-
-/// The `/see` reply: the persona speaking, then the description.
-pub fn render_see(persona_label: &str, description: &str) -> String {
-    let description = description.trim();
-    if description.is_empty() {
-        return format!("**{persona_label}** — I couldn't make anything out in that image.");
-    }
-    format!("**{persona_label}** — {description}")
-}
-
-/// The `/ocr` reply: the transcribed text in a code block, or a plain note
-/// when the image carried none. Backticks inside the text would close the
-/// block early, so they are softened.
-pub fn render_ocr(text: &str) -> String {
-    let text = text.trim();
-    if text.is_empty() {
-        return "No text found.".to_string();
-    }
-    format!("```\n{}\n```", text.replace("```", "ʼʼʼ"))
 }
 
 /// Test double: answers every call with canned text and records which task
@@ -583,7 +121,10 @@ impl RecordingVision {
 
 #[cfg(test)]
 impl ImageUnderstanding for RecordingVision {
-    fn describe(&self, _image: &[u8]) -> impl Future<Output = Result<String, VisionError>> + Send {
+    fn describe(
+        &self,
+        _image: Vec<u8>,
+    ) -> impl Future<Output = Result<String, VisionError>> + Send {
         self.calls
             .lock()
             .expect("never poisoned")
@@ -593,7 +134,7 @@ impl ImageUnderstanding for RecordingVision {
 
     fn extract_text(
         &self,
-        _image: &[u8],
+        _image: Vec<u8>,
     ) -> impl Future<Output = Result<String, VisionError>> + Send {
         self.calls
             .lock()
@@ -635,9 +176,9 @@ mod tests {
         0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
     ];
 
-    fn encoded_pixel(format: image::ImageFormat) -> Vec<u8> {
+    fn encoded_pixel(format: ::image::ImageFormat) -> Vec<u8> {
         let mut encoded = Cursor::new(Vec::new());
-        image::DynamicImage::new_rgb8(1, 1)
+        ::image::DynamicImage::new_rgb8(1, 1)
             .write_to(&mut encoded, format)
             .expect("one-pixel fixture encodes");
         encoded.into_inner()
@@ -656,7 +197,7 @@ mod tests {
     }
 
     fn oversized_png() -> Vec<u8> {
-        let mut bytes = encoded_pixel(image::ImageFormat::Png);
+        let mut bytes = encoded_pixel(::image::ImageFormat::Png);
         let ihdr = bytes
             .windows(4)
             .position(|window| window == b"IHDR")
@@ -668,7 +209,7 @@ mod tests {
     }
 
     fn oversized_jpeg() -> Vec<u8> {
-        let mut bytes = encoded_pixel(image::ImageFormat::Jpeg);
+        let mut bytes = encoded_pixel(::image::ImageFormat::Jpeg);
         let sof = bytes
             .windows(2)
             .position(|window| {
@@ -696,7 +237,7 @@ mod tests {
     }
 
     fn oversized_webp() -> Vec<u8> {
-        let mut bytes = encoded_pixel(image::ImageFormat::WebP);
+        let mut bytes = encoded_pixel(::image::ImageFormat::WebP);
         let vp8l = bytes
             .windows(4)
             .position(|window| window == b"VP8L")
@@ -735,7 +276,7 @@ mod tests {
             },
         };
         let error = vision
-            .describe(bytes)
+            .describe(bytes.to_vec())
             .await
             .expect_err("unsafe image must fail locally");
         assert!(
@@ -768,13 +309,11 @@ mod tests {
     }
 
     #[test]
-    fn base64_matches_the_rfc_vectors() {
-        assert_eq!(base64_encode(b"Man"), "TWFu");
-        assert_eq!(base64_encode(b"Ma"), "TWE=");
-        assert_eq!(base64_encode(b"M"), "TQ==");
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64_encode(&[0xFF, 0xFF, 0xFF]), "////");
+    fn data_urls_use_standard_padded_base64() {
+        assert_eq!(
+            data_url_unchecked(&[0xFF, 0xD8, 0xFF]),
+            "data:image/jpeg;base64,/9j/"
+        );
     }
 
     #[test]
@@ -796,7 +335,7 @@ mod tests {
             "gpt-4o-mini",
             "sk-test",
             VisionTask::Describe,
-            PNG,
+            data_url_unchecked(PNG),
         );
         assert_eq!(req.url, "https://api.openai.com/v1/chat/completions");
         assert!(
@@ -812,7 +351,7 @@ mod tests {
         assert_eq!(content[1]["type"], "image_url");
         let url = content[1]["image_url"]["url"].as_str().expect("a string");
         assert!(url.starts_with("data:image/png;base64,"), "{url}");
-        assert_eq!(&url["data:image/png;base64,".len()..], base64_encode(PNG));
+        assert_eq!(url, data_url_unchecked(PNG));
     }
 
     #[test]
@@ -822,7 +361,7 @@ mod tests {
             "m",
             "  ",
             VisionTask::ExtractText,
-            PNG,
+            data_url_unchecked(PNG),
         );
         assert!(
             req.headers
@@ -838,15 +377,19 @@ mod tests {
     #[test]
     fn debug_redacts_the_key_and_the_image_payload() {
         const SECRET: &str = "sk-vision-super-secret";
-        let req = build_vision_request("https://x/v1", "m", SECRET, VisionTask::Describe, PNG);
+        let payload = data_url_unchecked(PNG);
+        let req = build_vision_request(
+            "https://x/v1",
+            "m",
+            SECRET,
+            VisionTask::Describe,
+            payload.clone(),
+        );
         let shown = format!("{req:?}");
         assert!(!shown.contains(SECRET), "request leaked the key: {shown}");
         assert!(shown.contains("<redacted>"), "{shown}");
         assert!(shown.contains("https://x/v1/chat/completions"), "{shown}");
-        assert!(
-            !shown.contains(&base64_encode(PNG)),
-            "image dumped: {shown}"
-        );
+        assert!(!shown.contains(&payload), "image dumped: {shown}");
 
         let config = VisionConfig {
             base_url: "https://x/v1".into(),
@@ -967,8 +510,8 @@ mod tests {
             },
             transport,
         };
-        let png = encoded_pixel(image::ImageFormat::Png);
-        assert_eq!(vision.describe(&png).await.expect("ok"), "two ducks");
+        let png = encoded_pixel(::image::ImageFormat::Png);
+        assert_eq!(vision.describe(png.clone()).await.expect("ok"), "two ducks");
         let sent = vision
             .transport
             .recorded
@@ -979,7 +522,7 @@ mod tests {
         assert_eq!(sent.url, "http://127.0.0.1:8080/v1/chat/completions");
         assert_eq!(sent.body["model"], "llava");
 
-        assert_eq!(vision.extract_text(&png).await.expect("ok"), "two ducks");
+        assert_eq!(vision.extract_text(png).await.expect("ok"), "two ducks");
         let sent = vision
             .transport
             .recorded
@@ -994,7 +537,7 @@ mod tests {
 
         // Oversized input is refused before any request is built.
         let huge = vec![0u8; MAX_IMAGE_BYTES + 1];
-        let error = vision.describe(&huge).await.expect_err("over the cap");
+        let error = vision.describe(huge).await.expect_err("over the cap");
         assert_eq!(error.public_message(), Some(OVERSIZED_IMAGE_PUBLIC));
     }
 
@@ -1013,7 +556,7 @@ mod tests {
         };
 
         assert_eq!(
-            vision.describe(GIF).await.expect("GIF decodes"),
+            vision.describe(GIF.to_vec()).await.expect("GIF decodes"),
             "one pixel"
         );
         let sent = vision
@@ -1033,9 +576,9 @@ mod tests {
     #[tokio::test]
     async fn valid_passthrough_formats_are_decoded_then_keep_their_mime() {
         for (format, mime) in [
-            (image::ImageFormat::Jpeg, "image/jpeg"),
-            (image::ImageFormat::Png, "image/png"),
-            (image::ImageFormat::WebP, "image/webp"),
+            (::image::ImageFormat::Jpeg, "image/jpeg"),
+            (::image::ImageFormat::Png, "image/png"),
+            (::image::ImageFormat::WebP, "image/webp"),
         ] {
             let bytes = encoded_pixel(format);
             let vision = RemoteVision {
@@ -1050,7 +593,7 @@ mod tests {
                 },
             };
             assert_eq!(
-                vision.describe(&bytes).await.expect("image decodes"),
+                vision.describe(bytes).await.expect("image decodes"),
                 "one pixel"
             );
             let sent = vision
@@ -1113,7 +656,7 @@ mod tests {
         };
 
         let error = vision
-            .describe(b"not an image")
+            .describe(b"not an image".to_vec())
             .await
             .expect_err("unknown bytes must fail locally");
         assert_eq!(error.public_message(), Some(UNSUPPORTED_IMAGE_PUBLIC));
@@ -1131,8 +674,11 @@ mod tests {
     #[tokio::test]
     async fn recording_vision_returns_canned_text_and_records_tasks() {
         let fake = RecordingVision::returning("a sunset");
-        assert_eq!(fake.describe(PNG).await.expect("ok"), "a sunset");
-        assert_eq!(fake.extract_text(PNG).await.expect("ok"), "a sunset");
+        assert_eq!(fake.describe(PNG.to_vec()).await.expect("ok"), "a sunset");
+        assert_eq!(
+            fake.extract_text(PNG.to_vec()).await.expect("ok"),
+            "a sunset"
+        );
         assert_eq!(
             fake.calls(),
             vec![VisionTask::Describe, VisionTask::ExtractText]

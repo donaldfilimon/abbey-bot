@@ -1,8 +1,7 @@
 //! The shells: Discord gateway events and the Telegram long-poll adapter, both
-//! translated into [`SocialEvent`]s and fed to [`crate::pipeline`]. The one
-//! Discord-specific voice-control boundary maps the configured voice chat and
-//! hands its text plus the serialized voice snapshot to the pure voice-session
-//! core, so generated prose can never contradict the media gate.
+//! translated into [`SocialEvent`]s and fed to [`crate::pipeline`]. Operational
+//! Discord voice events are intercepted by `commands_voice` before this social
+//! adapter runs.
 //!
 //! This file and `commands.rs` / `main.rs` are the only ones that import
 //! serenity. Its job is translation in both directions — native event in,
@@ -23,7 +22,6 @@ use crate::platform::{
     TelegramPoller, TgFile, TgResponse, TgUpdate,
 };
 use crate::runtime::AppState;
-use crate::voice_session::{VoiceRuntime, authoritative_text_reply, requests_consent_withdrawal};
 
 /// Discord's message cap, in codepoints. Same value `commands::clamp_message`
 /// enforces; repeated here because the pipeline's output also crosses it.
@@ -215,22 +213,7 @@ fn discord_reaction_event(reaction: &Reaction, added: bool) -> SocialEvent {
     }
 }
 
-fn voice_control_scope(
-    configured_guild: u64,
-    configured_channel: u64,
-    message_guild: Option<u64>,
-    message_channel: u64,
-    author_is_bot: bool,
-    author_id: u64,
-    bot_id: u64,
-) -> bool {
-    !author_is_bot
-        && author_id != bot_id
-        && message_guild == Some(configured_guild)
-        && message_channel == configured_channel
-}
-
-fn strip_bot_mention(text: &str, bot_id: u64) -> String {
+pub(crate) fn strip_bot_mention(text: &str, bot_id: u64) -> String {
     text.replace(&format!("<@{bot_id}>"), "")
         .replace(&format!("<@!{bot_id}>"), "")
         .trim()
@@ -242,7 +225,6 @@ pub async fn on_discord_event(
     ctx: &serenity::all::Context,
     event: &FullEvent,
     state: &Arc<AppState>,
-    voice: Option<&VoiceRuntime>,
 ) {
     let out = DiscordOutbound {
         http: Arc::clone(&ctx.http),
@@ -260,59 +242,6 @@ pub async fn on_discord_event(
             } else {
                 new_message.content.clone()
             };
-            if let Some(voice) = voice
-                && voice_control_scope(
-                    voice.config.guild_id,
-                    voice.config.channel_id,
-                    new_message.guild_id.map(|guild| guild.get()),
-                    new_message.channel_id.get(),
-                    new_message.author.bot,
-                    new_message.author.id.get(),
-                    me.get(),
-                )
-            {
-                let mut snapshot = voice.snapshot().await;
-                if let Some(mut text) = authoritative_text_reply(&translated_text, &snapshot) {
-                    if requests_consent_withdrawal(&translated_text, &snapshot) {
-                        let _ = crate::commands_voice::withdraw_voice_from_text(
-                            ctx,
-                            voice,
-                            new_message.author.id.get(),
-                        )
-                        .await;
-                        snapshot = voice.snapshot().await;
-                        if let Some(updated) = authoritative_text_reply(&translated_text, &snapshot)
-                        {
-                            text = updated;
-                        }
-                    }
-                    let reply = OutboundMessage {
-                        text,
-                        // Keep the operational correction visibly attached to the
-                        // human assertion; DiscordOutbound makes this no-ping and
-                        // falls back to a plain post if the source is deleted.
-                        reply_to_native_message_id: Some(new_message.id.get().to_string()),
-                        ..OutboundMessage::default()
-                    };
-                    match out
-                        .send(&new_message.channel_id.get().to_string(), &reply)
-                        .await
-                    {
-                        Ok(sent) => tracing::info!(
-                            message = new_message.id.get(),
-                            reply = %sent,
-                            phase = snapshot.phase.label(),
-                            "voice-state text answered from runtime snapshot"
-                        ),
-                        Err(error) => tracing::warn!(
-                            message = new_message.id.get(),
-                            %error,
-                            "voice-state text reply failed"
-                        ),
-                    }
-                    return;
-                }
-            }
             let reply_to = new_message
                 .referenced_message
                 .as_ref()
@@ -858,19 +787,6 @@ mod tests {
         assert_eq!(value["users"], serde_json::json!([]));
         assert_eq!(value["roles"], serde_json::json!([]));
         assert_eq!(value["replied_user"], false);
-    }
-
-    #[test]
-    fn voice_boundary_scope_is_exact_and_excludes_bots_and_self() {
-        let in_scope = |guild, channel, bot, author| {
-            voice_control_scope(10, 20, guild, channel, bot, author, 99)
-        };
-        assert!(in_scope(Some(10), 20, false, 42));
-        assert!(!in_scope(Some(11), 20, false, 42));
-        assert!(!in_scope(Some(10), 21, false, 42));
-        assert!(!in_scope(None, 20, false, 42));
-        assert!(!in_scope(Some(10), 20, true, 42));
-        assert!(!in_scope(Some(10), 20, false, 99));
     }
 
     #[test]

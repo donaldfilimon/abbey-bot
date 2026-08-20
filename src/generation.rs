@@ -40,8 +40,11 @@ pub enum StreamEnd {
 /// have passed, then editing the message every [`STREAM_EDIT_EVERY_SECS`]
 /// until the stream ends; the final edit carries the tidied full text.
 ///
-/// If the stream ends with tool calls and no text was posted, returns
-/// [`StreamEnd::Calls`] so the caller can run the tools and stream again. If
+/// If the stream ends with tool calls and no text was produced or posted,
+/// returns [`StreamEnd::Calls`] so the caller can run the tools and stream
+/// again. A mixed text-and-tool turn is rejected: dispatching its calls would
+/// let an already-visible claim get ahead of the actual side effect, while
+/// ignoring them would make streaming disagree with completed generation. If
 /// the stream fails after a partial message went out, that message is edited
 /// to the honest failure line so a half-answer never stands as if whole.
 pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
@@ -113,14 +116,14 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
                 if due {
                     flush(out, native_channel_id, reply_to, &text, &mut posted, &mut last_edited_len)
                         .await
-                        .map_err(llm::LlmError)?;
+                        .map_err(llm::LlmError::backend)?;
                 }
             }
             _ = tick.tick() => {
                 if posted.is_some() || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS {
                     flush(out, native_channel_id, reply_to, &text, &mut posted, &mut last_edited_len)
                         .await
-                        .map_err(llm::LlmError)?;
+                        .map_err(llm::LlmError::backend)?;
                 }
             }
             result = &mut stream => finished = Some(result),
@@ -132,8 +135,18 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
     }
     match finished.expect("loop exits only when finished is set") {
         Ok(turn) => {
-            if !turn.calls.is_empty() && posted.is_none() && turn.text.trim().is_empty() {
-                return Ok(StreamEnd::Calls(turn.calls));
+            if !turn.calls.is_empty() {
+                if posted.is_none() && text.trim().is_empty() && turn.text.trim().is_empty() {
+                    return Ok(StreamEnd::Calls(turn.calls));
+                }
+                let error = llm::LlmError::backend(
+                    "backend returned text and tool calls in one streamed turn".into(),
+                );
+                if let Some(id) = &posted {
+                    let failure = ask::render_failure(persona, backend.label(), &error);
+                    let _ = out.edit(native_channel_id, id, &failure).await;
+                }
+                return Err(error);
             }
             let full = if turn.text.len() >= text.len() {
                 turn.text
@@ -144,13 +157,13 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
             if let Some(id) = &posted {
                 out.edit(native_channel_id, id, &tidy)
                     .await
-                    .map_err(llm::LlmError)?;
+                    .map_err(llm::LlmError::backend)?;
             }
             Ok(StreamEnd::Text(tidy, posted))
         }
         Err(e) => {
             if let Some(id) = &posted {
-                let failure = ask::render_failure(persona, backend.label(), &e.0);
+                let failure = ask::render_failure(persona, backend.label(), &e);
                 let _ = out.edit(native_channel_id, id, &failure).await;
             }
             Err(e)
@@ -158,9 +171,10 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
     }
 }
 
-/// Type to name when a caller has no delivery channel (slash commands):
-/// `generate::<NoDelivery>(…, None, …)`. Never constructed.
-pub enum NoDelivery {}
+/// Internal outbound type for generation that intentionally has no delivery
+/// channel. Public callers use one of the concrete no-delivery entry points
+/// instead of supplying an uninhabited generic themselves.
+enum NoDelivery {}
 
 impl Outbound for NoDelivery {
     async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
@@ -209,17 +223,61 @@ pub struct Round<'a> {
 type RoundOutcome =
     Result<(Option<String>, Option<String>, Vec<crate::tools::ToolCall>), llm::LlmError>;
 
-/// What `generate` is asked to do, independent of delivery.
+/// What generation is asked to do, independent of delivery and capabilities.
 pub struct Ask<'a> {
     pub scope: &'a str,
     pub context: &'a PersonaContext,
     pub user_input: &'a str,
-    pub offer_tools: bool,
     pub now: u64,
 }
 
-/// The generation loop with tools: build the prompt for the scope's persona,
-/// call the backend (streamed to `delivery` on the local path, single-shot
+/// The complete tool-capability boundary for one generation. Disabled turns
+/// carry no host at all, so a read-only caller cannot accidentally expose a
+/// live runtime scope to the model. Enabled turns use the canonical scope that
+/// also owns persona switches.
+enum ToolAccess<'host, 'state> {
+    Disabled(Persona),
+    Enabled(&'host mut crate::runtime::ToolScope<'state>),
+}
+
+impl ToolAccess<'_, '_> {
+    fn is_enabled(&self) -> bool {
+        matches!(self, Self::Enabled(_))
+    }
+
+    fn persona(&self) -> Persona {
+        match self {
+            Self::Disabled(persona) => *persona,
+            Self::Enabled(host) => host.persona,
+        }
+    }
+
+    fn dispatch(
+        &mut self,
+        offered: bool,
+        calls: &[crate::tools::ToolCall],
+    ) -> Result<Vec<crate::tools::ToolResult>, llm::LlmError> {
+        if !offered && !calls.is_empty() {
+            return Err(llm::LlmError::backend(
+                "backend returned unrequested tool calls".into(),
+            ));
+        }
+        match self {
+            Self::Disabled(_) if calls.is_empty() => Ok(Vec::new()),
+            Self::Disabled(_) => Err(llm::LlmError::backend("tool access is disabled".into())),
+            Self::Enabled(host) => Ok(calls
+                .iter()
+                .map(|call| crate::tools::dispatch(call, &mut **host))
+                .collect()),
+        }
+    }
+}
+
+/// Generate with Abbey's model-callable tool vocabulary and canonical runtime
+/// scope. This is the only public entry point that accepts a live tool host.
+///
+/// The generation loop builds the prompt for the scope's persona,
+/// calls the backend (streamed to `delivery` on the local path, single-shot
 /// otherwise), run any tool calls against `host`, and repeat up to
 /// [`crate::tools::MAX_TOOL_ROUNDS`] times until the model answers in text.
 ///
@@ -227,29 +285,101 @@ pub struct Ask<'a> {
 /// stream posted it), and the persona that ended up answering (tools may
 /// switch it). A backend that rejects tooled requests (HTTP 4xx) is retried
 /// once without tools and `tools_enabled` is cleared for the process.
-pub async fn generate<O: Outbound + Sync>(
+pub async fn generate_with_tools<O: Outbound + Sync>(
     state: &AppState,
     host: &mut crate::runtime::ToolScope<'_>,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
 ) -> Result<(String, Option<String>, Persona), llm::LlmError> {
     let Some(backend) = &state.backend else {
-        return Err(llm::LlmError("no generation backend is configured".into()));
+        return Err(llm::LlmError::backend(
+            "no generation backend is configured".into(),
+        ));
     };
-    generate_with_backend(state, backend, host, ask, delivery, None).await
+    generate_with_backend_and_access(
+        state,
+        backend,
+        ToolAccess::Enabled(host),
+        ask,
+        delivery,
+        None,
+    )
+    .await
 }
 
-/// Generate through an explicitly selected backend while preserving Abbey's
-/// normal Engine, persona routing, WDBX context, and tool loop.
+/// Generate with Abbey's model-callable tools but without a delivery channel.
+///
+/// This is the non-streaming entry point for callers such as slash commands:
+/// it accepts the canonical live tool scope, but does not expose the internal
+/// uninhabited outbound type or require callers to spell a generic parameter.
+pub async fn generate_with_tools_without_delivery(
+    state: &AppState,
+    host: &mut crate::runtime::ToolScope<'_>,
+    ask: &Ask<'_>,
+) -> Result<(String, Persona), llm::LlmError> {
+    let (text, posted, persona) = generate_with_tools::<NoDelivery>(state, host, ask, None).await?;
+    debug_assert!(posted.is_none(), "no-delivery generation cannot post");
+    Ok((text, persona))
+}
+
+/// Generate against the configured backend without constructing a tool host
+/// or vocabulary. Persona is explicit because no mutable tool scope exists to
+/// smuggle that state into a read-only turn.
+pub async fn generate_read_only<O: Outbound + Sync>(
+    state: &AppState,
+    persona: Persona,
+    ask: &Ask<'_>,
+    delivery: Option<Delivery<'_, O>>,
+) -> Result<(String, Option<String>, Persona), llm::LlmError> {
+    let Some(backend) = &state.backend else {
+        return Err(llm::LlmError::backend(
+            "no generation backend is configured".into(),
+        ));
+    };
+    generate_with_backend_and_access(
+        state,
+        backend,
+        ToolAccess::Disabled(persona),
+        ask,
+        delivery,
+        None,
+    )
+    .await
+}
+
+/// Generate read-only text through an explicitly selected backend, with no
+/// delivery channel and no model-callable tools. The caller must choose the
+/// persona explicitly; no live [`crate::runtime::ToolScope`] is constructed or
+/// exposed, and the tool vocabulary is never allocated.
 ///
 /// The voice surface uses this seam to require a loopback backend even when a
 /// remote text provider is configured as the process-wide default. The
 /// optional suffix adds presentation constraints without replacing persona
 /// policy.
-pub async fn generate_with_backend<O: Outbound + Sync>(
+pub async fn generate_without_delivery(
     state: &AppState,
     backend: &llm::Backend,
-    host: &mut crate::runtime::ToolScope<'_>,
+    persona: Persona,
+    ask: &Ask<'_>,
+    system_suffix: Option<&str>,
+) -> Result<(String, Persona), llm::LlmError> {
+    let (text, posted, persona) = generate_with_backend_and_access::<NoDelivery>(
+        state,
+        backend,
+        ToolAccess::Disabled(persona),
+        ask,
+        None,
+        system_suffix,
+    )
+    .await?;
+    debug_assert!(posted.is_none(), "no-delivery generation cannot post");
+    Ok((text, persona))
+}
+
+async fn generate_with_backend_and_access<O: Outbound + Sync>(
+    state: &AppState,
+    backend: &llm::Backend,
+    mut access: ToolAccess<'_, '_>,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
     system_suffix: Option<&str>,
@@ -259,13 +389,16 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
         scope,
         context,
         user_input,
-        offer_tools,
         now,
     } = *ask;
-    let vocabulary = crate::tools::abbey_tools();
+    // Constructing the vocabulary is intentionally capability-gated. This is
+    // more than an empty slice at dispatch time: disabled voice turns never
+    // allocate or even materialize model-callable tool descriptions.
+    let vocabulary = (access.is_enabled() && state.tools_enabled.load(Ordering::Relaxed))
+        .then(crate::tools::abbey_tools);
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
-        let persona = host.persona;
+        let persona = access.persona();
         let prepared =
             AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
         let system_prompt = match system_suffix {
@@ -276,10 +409,14 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
         };
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
-        let offer = offer_tools
+        let offer = vocabulary.is_some()
             && round < crate::tools::MAX_TOOL_ROUNDS
             && state.tools_enabled.load(Ordering::Relaxed);
-        let tools: &[crate::tools::ToolSpec] = if offer { &vocabulary } else { &[] };
+        let tools: &[crate::tools::ToolSpec] = if offer {
+            vocabulary.as_deref().unwrap_or_default()
+        } else {
+            &[]
+        };
 
         let round = Round {
             backend,
@@ -310,8 +447,8 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
 
         let (text, posted, calls) = match turn {
             Ok(v) => v,
-            Err(e) if offer && looks_like_tool_rejection(&e.0) => {
-                tracing::warn!(error = %e.0, "backend rejected a tooled request; continuing without tools for this process");
+            Err(e) if offer && looks_like_tool_rejection(e.detail()) => {
+                tracing::warn!(error = %e, "backend rejected a tooled request; continuing without tools for this process");
                 state.tools_enabled.store(false, Ordering::Relaxed);
                 continue;
             }
@@ -322,12 +459,14 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
             if let Some(text) = text {
                 return Ok((text, posted, persona));
             }
-            return Err(llm::LlmError("the response carried no answer text".into()));
+            return Err(llm::LlmError::backend(
+                "the response carried no answer text".into(),
+            ));
         }
         // A model is not an authority boundary. If this request did not offer
         // tools, unsolicited calls must stop here before they can mutate
         // memory, WDBX, persona state, or any future capability.
-        let results = dispatch_requested_calls(offer, &calls, host)?;
+        let results = access.dispatch(offer, &calls)?;
         for call in &calls {
             // Tool results can contain private recalled facts. Keep operational
             // evidence (which scoped tool completed) without copying its
@@ -340,26 +479,10 @@ pub async fn generate_with_backend<O: Outbound + Sync>(
         ));
         extra_turns.extend(results.iter().map(llm::ChatTurn::tool_result));
     }
-    Err(llm::LlmError(format!(
+    Err(llm::LlmError::backend(format!(
         "the model kept calling tools for {} rounds without answering",
         crate::tools::MAX_TOOL_ROUNDS
     )))
-}
-
-fn dispatch_requested_calls(
-    offered: bool,
-    calls: &[crate::tools::ToolCall],
-    host: &mut dyn crate::tools::ToolHost,
-) -> Result<Vec<crate::tools::ToolResult>, llm::LlmError> {
-    if !offered && !calls.is_empty() {
-        return Err(llm::LlmError(
-            "backend returned unrequested tool calls".into(),
-        ));
-    }
-    Ok(calls
-        .iter()
-        .map(|call| crate::tools::dispatch(call, host))
-        .collect())
 }
 
 /// HTTP 4xx on a tooled request is how a backend without tool support says
@@ -395,34 +518,6 @@ mod tests {
     use super::*;
     use crate::pipeline::testing::FakeOut;
 
-    #[derive(Default)]
-    struct MutationRecordingHost {
-        remembered: Vec<String>,
-    }
-
-    impl crate::tools::ToolHost for MutationRecordingHost {
-        fn remember_fact(&mut self, fact: &str) -> String {
-            self.remembered.push(fact.to_string());
-            "stored".into()
-        }
-
-        fn lookup_reputation(&mut self, _user_id: Option<&str>) -> String {
-            "unused".into()
-        }
-
-        fn recent_messages(&mut self, _limit: usize) -> String {
-            "unused".into()
-        }
-
-        fn recall(&mut self, _query: &str) -> String {
-            "unused".into()
-        }
-
-        fn switch_persona(&mut self, _persona: Persona) -> String {
-            "unused".into()
-        }
-    }
-
     /// A streaming transport that replays canned deltas with small pauses.
     struct FakeStream {
         deltas: Vec<&'static str>,
@@ -444,7 +539,7 @@ mod tests {
             }
             if self.fail_at_end {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                return Err(llm::LlmError("upstream died".into()));
+                return Err(llm::LlmError::backend("upstream died".into()));
             }
             Ok(llm::ModelTurn {
                 text: full,
@@ -474,14 +569,30 @@ mod tests {
             name: "remember_fact".into(),
             arguments: serde_json::json!({"fact": "private voice statement"}),
         }];
-        let mut host = MutationRecordingHost::default();
-        let error = dispatch_requested_calls(false, &calls, &mut host).unwrap_err();
-        assert_eq!(error.0, "backend returned unrequested tool calls");
-        assert!(host.remembered.is_empty(), "host must remain untouched");
+        let mut disabled = ToolAccess::Disabled(Persona::Abbey);
+        let error = disabled.dispatch(false, &calls).unwrap_err();
+        assert_eq!(error.detail(), "backend returned unrequested tool calls");
 
-        let results = dispatch_requested_calls(true, &calls, &mut host).unwrap();
+        let state = AppState::in_memory();
+        let mut host = crate::runtime::ToolScope {
+            state: &state,
+            network: crate::platform::SocialNetwork::Discord,
+            scoped_guild: "discord:1".into(),
+            scoped_user: "discord:2".into(),
+            scoped_channel: "discord:3".into(),
+            persona: Persona::Abbey,
+        };
+        let results = ToolAccess::Enabled(&mut host)
+            .dispatch(true, &calls)
+            .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(host.remembered, ["private voice statement"]);
+        assert!(results[0].content.starts_with("Stored:"), "{results:?}");
+        assert_eq!(
+            AppState::lock(&state.stores)
+                .memory
+                .facts("discord:1", "discord:2"),
+            ["private voice statement"]
+        );
     }
 
     #[tokio::test]
@@ -573,6 +684,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streamed_text_and_tool_calls_are_rejected_before_dispatch() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec!["I remembered that."],
+            fail_at_end: false,
+            calls: vec![crate::tools::ToolCall {
+                id: "call_1".into(),
+                name: "remember_fact".into(),
+                arguments: serde_json::json!({"fact": "private voice statement"}),
+            }],
+        };
+        let error = stream_reply(
+            &transport,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &crate::tools::abbey_tools(),
+                persona: Persona::Abbey,
+            },
+        )
+        .await
+        .expect_err("mixed streamed output must fail closed");
+        assert_eq!(
+            error.detail(),
+            "backend returned text and tool calls in one streamed turn"
+        );
+        assert!(
+            out.sent.lock().unwrap().is_empty(),
+            "a short invalid mixed turn must not be published"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_posted_partial_is_replaced_when_tool_calls_arrive() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec![
+                "I have already remembered your private statement and this long claim ",
+                "must not remain visible if a tool call arrives with it.",
+            ],
+            fail_at_end: false,
+            calls: vec![crate::tools::ToolCall {
+                id: "call_1".into(),
+                name: "remember_fact".into(),
+                arguments: serde_json::json!({"fact": "private voice statement"}),
+            }],
+        };
+        let error = stream_reply(
+            &transport,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &crate::tools::abbey_tools(),
+                persona: Persona::Abbey,
+            },
+        )
+        .await
+        .expect_err("posted mixed output must fail closed");
+        assert_eq!(
+            error.detail(),
+            "backend returned text and tool calls in one streamed turn"
+        );
+        assert_eq!(out.sent.lock().unwrap().len(), 1, "partial was posted");
+        let edited = out.edited.lock().unwrap();
+        assert!(
+            edited
+                .last()
+                .is_some_and(|entry| entry.2.contains("backend returned an error")),
+            "the visible claim must be replaced with generic failure copy: {edited:?}"
+        );
+        assert!(
+            edited
+                .last()
+                .is_some_and(|entry| !entry.2.contains("remembered")),
+            "the unexecuted side-effect claim must not remain visible: {edited:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_short_stream_is_returned_unposted_for_the_ordinary_send() {
         let out = FakeOut::default();
         let transport = FakeStream {
@@ -635,7 +837,7 @@ mod tests {
         )
         .await
         .expect_err("upstream died");
-        assert_eq!(err.0, "upstream died");
+        assert_eq!(err.detail(), "upstream died");
         let edited = out.edited.lock().unwrap();
         assert!(
             edited

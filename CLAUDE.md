@@ -13,7 +13,7 @@ header line differs. Apply any edit to both, or they drift.
 ## Commands
 
 ```bash
-./check.sh          # gate: fmt, deploy syntax, clippy -D warnings, tests, release build; all locked
+./check.sh          # gate: fmt, deploy/lock validation, clippy -D warnings, tests, release build
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
 
@@ -61,34 +61,36 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `server.rs` | Role hierarchy, channel structure, and setup steps per archetype |
 | `webhook.rs` | The incoming-webhook guide: steps, curl, payloads, thread/forum semantics |
 | `ask.rs` | The fixed system prompt per persona for `/persona ask`, and the reply shape for answer / failure / no-backend |
-| `llm.rs` | Which generation backend the env selects, how its request is built (single- and multi-turn) and its response extracted (pure, behind a `Transport` trait) |
+| `llm.rs`, `llm/protocol.rs`, `llm/stream.rs`, `llm/transport.rs` | Backend selection and typed failures; strict completed-response/tool parsing; byte-safe terminal SSE; recording and live HTTP transports |
 | `brain/nn.rs`, `brain/replay.rs`, `brain/dqn.rs` | The learning machinery from `docs/spec/brain.md`: dense net with explicit output activation, circular replay buffer, ε-greedy DQN with snapshot export/import |
 | `brain/intent.rs`, `brain/state.rs`, `brain/reward.rs` | Intent classification (the spec's rule order, `Unknown` unreachable by design), the 18-dim state encoder + lexicon sentiment, delayed reaction-based rewards with an injected clock |
 | `brain/social.rs`, `brain/registry.rs` | Reputation EMA with write-through flush; one policy per guild with restore/persist/evict, generic over a `Brain` trait |
 | `guild.rs` | Per-guild settings + cache, reply cooldown, `/admin` rendering, scoped-id helpers (`"{platform}:{id}"`) |
-| `memory.rs`, `engine.rs` | Facts, channel context, interaction log, `PersonaContext`; per-scope multi-turn sessions that survive a persona switch |
+| `memory.rs`, `runtime/memory_service.rs`, `engine.rs` | Canonical JSON facts + coordinated WDBX projection, channel context, interaction log, `PersonaContext`; per-scope multi-turn sessions that survive a persona switch |
 | `wyhash.rs`, `embedding.rs`, `wdbx.rs` | Zig-compatible wyhash (pinned to 188 reference vectors), abi's n-gram text embedding (pinned to abi's own vectors), a WDBX v1 JSONL store + guild-namespaced semantic recall |
-| `platform.rs`, `vision.rs` | The network-agnostic event model and Telegram/Slack wire translation; the image-understanding seam (request/extract pure, transport injected) |
+| `platform.rs`, `vision.rs`, `vision/*` | The network-agnostic event model and Telegram/Slack wire translation; image validation/normalization off the async runtime, the OpenAI-compatible provider contract, and pure rendering |
 | `persist.rs` | The one JSON document the registries' store traits read and write, atomically |
-| `tools.rs` | The model-callable tool vocabulary, both wire shapes, both response parsers, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
-| `pipeline.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
-| `generation.rs` | How a reply is produced once the pipeline decides to speak: the bounded tool loop (`generate`), local-path streaming (`stream_reply`: post/edit pacing), typing re-broadcast, `Delivery`/`Ask`/`Round` |
+| `tools.rs` | The model-callable tool vocabulary, both request wire shapes, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
+| `pipeline.rs`, `pipeline/tests.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
+| `generation.rs` | How a reply is produced once the pipeline decides to speak: explicit tooled and read-only entry points, the bounded tool loop, local-path streaming (`stream_reply`: post/edit pacing), `Delivery`/`Ask`/`Round` |
 | `voice.rs`, `offline_voice.rs` | Explicit local/disabled/OpenAI voice policy; loopback MLX-Audio client, bounded PCM framing, VAD/segmentation, and spoken-text shaping |
-| `voice_session.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_self_test.rs` | Epoch-bound consent/media lifecycle, local cognition, the explicit Realtime actor, and the no-Discord full local-chain audition |
+| `voice_session.rs`, `voice_session/control.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_openai/protocol.rs`, `voice_self_test.rs` | Epoch/session-bound consent and media lifecycle, typed text control, local cognition, bounded Realtime protocol state, and the no-Discord full local-chain audition |
 
-`llm.rs` is pure in the same sense — it imports neither serenity nor poise —
+The `llm` module is pure in the same sense — it imports neither serenity nor poise —
 but it is the one module that touches a network other than Discord: the single
 live `Transport` impl POSTs JSON with reqwest. Request construction
 (`build_request`) and response extraction (`extract_text`) are pinned by tests
-through a recording fake, and **no test in this crate constructs the live
-transport**, so the suite passes with no network, no key, and no env vars. Keep
+through a recording fake, and **no test in this crate performs network I/O**,
+so the suite passes with no network, no key, and no env vars. Keep
 that property when touching the backend; it is what keeps the gate runnable
 anywhere.
 
 `runtime.rs` holds the shared `AppState` (each registry behind its own
 `Mutex`, locked briefly and never across a network `.await`), the scheduler
 (learn 30 s / flush 60 s / persist 300 s / settle 30 s), and the live vision
-transport; it imports neither serenity nor poise either.
+transport. `runtime::MemoryService` is the only production mutation/snapshot
+boundary for durable facts: JSON is authoritative and WDBX `mem:*` rows are a
+reconciled semantic projection. The runtime imports neither serenity nor poise.
 `http_body.rs` is the shared incremental response reader: it treats
 `Content-Length` as an early hint and enforces the byte cap again on every
 actual chunk before retaining it.
@@ -97,7 +99,9 @@ actual chunk before retaining it.
 data* into those plain structs and lifecycle calls. The ordinary command files
 fetch over REST, build the struct, hand it to a pure function, and post the
 string back; the voice shell additionally owns Songbird Call construction and
-Discord event registration while `voice_session` and the actors own decisions.
+one `commands_voice::on_gateway_event` adapter for operational text, immutable
+voice-state payloads, and permission events, while `voice_session` and the
+actors own decisions.
 `gateway.rs` is the same thing for gateway events (serenity `FullEvent` →
 `SocialEvent` → `pipeline::handle`) plus the Telegram long-poll and Slack Socket
 Mode adapters, which feed the *same* pipeline through their own `Outbound`.
@@ -194,9 +198,11 @@ touch, every mention reply's reward settled into nothing. Also: a forced reply
 that fails at the backend posts `ask::render_failure` instead of dead air, and
 the typing indicator is re-broadcast every 8 s while a local model thinks.
 
-**Tools run through one loop, `generation::generate`.** Mentions, DMs, and
-`/persona ask` offer `tools::abbey_tools()`; unsolicited policy replies and
-`/summarize` do not. The loop is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
+**Tool capability is explicit at the generation boundary.** Mentions, DMs, and
+`/persona ask` enter `generation::generate_with_tools*` with a live `ToolScope`;
+unsolicited policy replies, voice, and `/summarize` enter a read-only function
+with an explicit persona and never construct the vocabulary or host. The loop
+is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
 local path (`StreamEnd::Calls` means "run the tools and stream again"), retries
 once without tools on a 4xx and clears `AppState.tools_enabled` for the
 process. Every tool result is a short string (`tools::truncate`); no tool posts,
@@ -370,7 +376,11 @@ generation slot like any other turn.
 `persist::Stores` implements the three store traits the registries speak and
 writes `abbey-state.json` atomically; `wdbx::Recall` writes `wdbx.seg.0.jsonl`
 in the `# ABI-WDBX v1` format (header required; unknown record types preserved
-so a file shared with abi round-trips). A corrupt state file is a startup error,
+so a file shared with abi round-trips). JSON memory is the canonical fact set;
+the versioned startup migration recovers legacy WDBX-only facts once, then
+rebuilds only the WDBX `mem:*` projection without touching unrelated records.
+Persistence snapshots both under one lock order and publishes JSON first, so a
+crash cannot resurrect a deleted projection row. A corrupt state file is a startup error,
 never a silent fresh start — a fresh start would discard every guild's
 learning. The spec's Postgres/Fluent layer is recorded as Proposed in the goal
 ledger; do not add a database dependency to "match the spec" without Donald.
@@ -409,6 +419,11 @@ them away:
   sourcing env, and the installer stops the old process before recursively
   removing group/other access. Replacement binary and plist are staged,
   validated, renamed in-directory, and restored from backups if bootstrap fails.
+- **The MLX-Audio environment is hash locked.** Keep the runtime and isolated
+  build inputs, their uv-compiled `--generate-hashes` locks, the
+  `--require-hashes`/`--build-constraint` install, and
+  `deploy/check-python-locks.py` together. `webrtcvad` is the sole explicit
+  source-build exception; do not widen it.
 
 ## What has and has not been verified
 

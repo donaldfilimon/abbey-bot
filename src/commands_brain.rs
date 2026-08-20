@@ -91,32 +91,6 @@ async fn memory_subject_authorized(ctx: Context<'_>, subject: &User) -> bool {
     can_access_memory_subject(ctx.author().id, subject.id, permissions)
 }
 
-/// Preserve exact matching for legacy facts written before normalization, but
-/// let a manually entered whitespace variant find a newly normalized fact.
-fn fact_for_deletion(facts: &[String], requested: &str) -> Option<String> {
-    facts
-        .iter()
-        .find(|fact| fact.as_str() == requested)
-        .or_else(|| {
-            let normalized = memory::normalize_fact_text(requested);
-            facts.iter().find(|fact| fact.as_str() == normalized)
-        })
-        .cloned()
-}
-
-/// Present the subject-scoped union of plain memory and WDBX. Plain memory is
-/// authoritative during normal operation, while the WDBX-only tail makes a
-/// partially persisted deletion visible and recoverable after a crash.
-fn union_fact_texts(plain: &[String], semantic: &[crate::wdbx::RecalledFact]) -> Vec<String> {
-    let mut facts = plain.to_vec();
-    for fact in semantic {
-        if !facts.iter().any(|existing| existing == &fact.text) {
-            facts.push(fact.text.clone());
-        }
-    }
-    facts
-}
-
 /// Store a durable fact about a member (yourself by default).
 #[poise::command(slash_command, ephemeral)]
 pub async fn remember(
@@ -134,24 +108,22 @@ pub async fn remember(
         ctx.say(CROSS_USER_MEMORY_DENIED).await?;
         return Ok(());
     }
-    let fact = match memory::validated_fact(&fact) {
-        Ok(fact) => fact,
+    let u = scoped_user(subject);
+    let state = &ctx.data().state;
+    let reply = match state
+        .memory_service()
+        .remember(&g, &u, &fact, runtime::now())
+    {
+        Ok(runtime::RememberOutcome::Stored(fact)) => {
+            format!("Stored about <@{}>: {fact}", subject.id.get())
+        }
+        Ok(runtime::RememberOutcome::Unchanged) => {
+            "Already on record (or the fact list is full).".to_string()
+        }
         Err(message) => {
             ctx.say(message).await?;
             return Ok(());
         }
-    };
-    let u = scoped_user(subject);
-    let state = &ctx.data().state;
-    let now = runtime::now();
-    let stored = AppState::lock(&state.stores)
-        .memory
-        .remember(&g, &u, &fact, now);
-    let reply = if stored {
-        AppState::lock(&state.recall).remember(&g, &u, &fact, now);
-        format!("Stored about <@{}>: {fact}", subject.id.get())
-    } else {
-        "Already on record (or the fact list is full).".to_string()
     };
     ctx.say(clamp_message(reply)).await?;
     Ok(())
@@ -161,9 +133,7 @@ async fn autocomplete_fact(ctx: Context<'_>, partial: &str) -> Vec<String> {
     let g = scoped_guild(ctx);
     let u = scoped_user(ctx.author());
     let state = &ctx.data().state;
-    let plain = AppState::lock(&state.stores).memory.facts(&g, &u).to_vec();
-    let semantic = AppState::lock(&state.recall).facts_for_user(&g, &u);
-    let facts = union_fact_texts(&plain, &semantic);
+    let facts = state.memory_service().facts(&g, &u);
     memory::autocomplete_facts(&facts, partial)
         .into_iter()
         .map(str::to_string)
@@ -189,29 +159,7 @@ pub async fn forget(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let plain = AppState::lock(&state.stores).memory.facts(&g, &u).to_vec();
-    let semantic = AppState::lock(&state.recall).facts_for_user(&g, &u);
-    let candidates = union_fact_texts(&plain, &semantic);
-    let selected = fact_for_deletion(&candidates, &fact);
-    let removed = if let Some(selected) = selected {
-        let removed_plain = AppState::lock(&state.stores)
-            .memory
-            .forget(&g, &u, &selected);
-        let mut recall = AppState::lock(&state.recall);
-        let ids: Vec<u64> = recall
-            .facts_for_user(&g, &u)
-            .into_iter()
-            .filter(|f| f.text == selected)
-            .map(|f| f.id)
-            .collect();
-        let mut removed_semantic = false;
-        for id in ids {
-            removed_semantic |= recall.forget(&g, id);
-        }
-        removed_plain || removed_semantic
-    } else {
-        false
-    };
+    let removed = state.memory_service().forget(&g, &u, &fact);
     ctx.say(if removed {
         "Forgotten."
     } else {
@@ -237,14 +185,11 @@ pub async fn recall(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let (plain, reputation) = {
+    let facts = state.memory_service().facts(&g, &u);
+    let reputation = {
         let stores = AppState::lock(&state.stores);
-        let facts = stores.memory.facts(&g, &u).to_vec();
-        let rep = AppState::lock(&state.social).reputation(&u, &g, &*stores);
-        (facts, rep)
+        AppState::lock(&state.social).reputation(&u, &g, &*stores)
     };
-    let semantic = AppState::lock(&state.recall).facts_for_user(&g, &u);
-    let facts = union_fact_texts(&plain, &semantic);
     let mut out = format!(
         "**<@{}>** — standing {reputation:.2} (0 = poor, 1 = excellent)\n",
         subject.id.get()
@@ -319,7 +264,7 @@ pub async fn summarize(
     };
     let (system, user) = engine::summarize_prompt(persona, &transcript, count);
     let outcome = match state.acquire_generation().await {
-        Err(busy) => Err(llm::LlmError(busy)),
+        Err(error) => Err(error),
         Ok(_slot) => llm::ask_backend(&state.llm, backend, &system, &user).await,
     };
     let reply = match outcome {
@@ -333,8 +278,8 @@ pub async fn summarize(
             ask::render_answer(persona, backend.label(), &summary)
         }
         Err(e) => {
-            tracing::warn!(error = %e.0, backend = backend.label(), "summary generation failed");
-            ask::render_failure(persona, backend.label(), &e.0)
+            tracing::warn!(error = %e, backend = backend.label(), "summary generation failed");
+            ask::render_failure(persona, backend.label(), &e)
         }
     };
     ctx.say(clamp_message(reply)).await?;
@@ -376,7 +321,7 @@ pub async fn see(
             return Ok(());
         }
     };
-    let description = match vision_client.describe(&bytes).await {
+    let description = match vision_client.describe(bytes).await {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(error = %e, "vision description failed");
@@ -392,7 +337,7 @@ pub async fn see(
         (Some(q), Some(backend)) => {
             let folded = vision::fold_descriptions(&q, &[(image.filename.clone(), description)]);
             let outcome = match state.acquire_generation().await {
-                Err(busy) => Err(llm::LlmError(busy)),
+                Err(error) => Err(error),
                 Ok(_slot) => {
                     llm::ask_backend(&state.llm, backend, &ask::system_prompt(persona), &folded)
                         .await
@@ -403,8 +348,8 @@ pub async fn see(
                     ask::render_answer(persona, backend.label(), &ask::tidy_reply(persona, &a))
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e.0, backend = backend.label(), "vision follow-up generation failed");
-                    ask::render_failure(persona, backend.label(), &e.0)
+                    tracing::warn!(error = %e, backend = backend.label(), "vision follow-up generation failed");
+                    ask::render_failure(persona, backend.label(), &e)
                 }
             }
         }
@@ -429,7 +374,7 @@ pub async fn ocr(
     };
     let reply = match fetch_attachment(state, &image).await {
         Err(e) => format!("Could not read that attachment: {e}"),
-        Ok(bytes) => match vision_client.extract_text(&bytes).await {
+        Ok(bytes) => match vision_client.extract_text(bytes).await {
             Ok(text) => vision::render_ocr(&text),
             Err(e) => {
                 tracing::warn!(error = %e, "vision OCR failed");
@@ -824,34 +769,6 @@ mod tests {
         assert_eq!(
             memory::validated_fact(&"🦀".repeat(memory::MAX_FACT_CHARS + 1)),
             Err("Keep one remembered fact to 300 characters or fewer.")
-        );
-    }
-
-    #[test]
-    fn deletion_accepts_legacy_exact_text_or_normalized_new_text() {
-        let facts = vec!["legacy\nfact".to_string(), "Donald likes Rust.".to_string()];
-        assert_eq!(
-            fact_for_deletion(&facts, "legacy\nfact"),
-            Some("legacy\nfact".to_string())
-        );
-        assert_eq!(
-            fact_for_deletion(&facts, "  Donald\nlikes  Rust. "),
-            Some("Donald likes Rust.".to_string())
-        );
-        assert_eq!(fact_for_deletion(&facts, "missing"), None);
-    }
-
-    #[test]
-    fn wdbx_only_fact_is_visible_and_selectable_for_recovery() {
-        let plain = vec!["plain fact".to_string()];
-        let mut recall = crate::wdbx::Recall::new();
-        recall.remember("g", "u", "semantic ghost", 1);
-        let semantic = recall.facts_for_user("g", "u");
-        let union = union_fact_texts(&plain, &semantic);
-        assert_eq!(union, ["plain fact", "semantic ghost"]);
-        assert_eq!(
-            fact_for_deletion(&union, "  semantic\nghost "),
-            Some("semantic ghost".to_string())
         );
     }
 }

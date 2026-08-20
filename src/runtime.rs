@@ -25,8 +25,12 @@ use crate::engine::Engine;
 use crate::guild::{GuildRegistry, ReplyCooldown};
 use crate::llm::{Backend, HttpTransport};
 use crate::persist::Stores;
+use crate::platform::SocialNetwork;
 use crate::vision::{RemoteVision, VisionConfig, VisionError, VisionRequest, VisionTransport};
 use crate::wdbx::Recall;
+
+mod memory_service;
+pub use memory_service::{MemoryService, RememberOutcome};
 
 /// Hidden-layer widths per `docs/spec/adaptivelearning.md`: `[18, 64, 32, 3]`.
 pub const TOPOLOGY: [usize; 4] = [STATE_DIMENSIONS, 64, 32, BotAction::ALL.len()];
@@ -243,13 +247,17 @@ pub fn queue_secs_from_value(value: Option<String>) -> u64 {
 }
 
 /// The honest copy when no slot frees up in time.
-pub const BUSY_REPLY: &str = crate::ask::BUSY_REASON;
+#[cfg(test)]
+const BUSY_REPLY: &str = crate::ask::BUSY_REASON;
 
 /// The runtime's [`crate::tools::ToolHost`]: one conversation's scope, over
 /// `AppState`. Each method takes the locks it needs, briefly, in the
 /// documented order, and returns the short plain string the model reads.
 pub struct ToolScope<'a> {
     pub state: &'a AppState,
+    /// Network of the conversation. Explicit native ids supplied to tools are
+    /// scoped with this value; they must never default to Discord.
+    pub network: SocialNetwork,
     pub scoped_guild: String,
     pub scoped_user: String,
     pub scoped_channel: String,
@@ -260,51 +268,37 @@ pub struct ToolScope<'a> {
 
 impl crate::tools::ToolHost for ToolScope<'_> {
     fn remember_fact(&mut self, fact: &str) -> String {
-        let fact = match crate::memory::validated_fact(fact) {
-            Ok(fact) => fact,
-            Err(message) => return message.to_string(),
-        };
-        let t = now();
-        let stored = AppState::lock(&self.state.stores).memory.remember(
+        match self.state.memory_service().remember(
             &self.scoped_guild,
             &self.scoped_user,
-            &fact,
-            t,
-        );
-        if stored {
-            AppState::lock(&self.state.recall).remember(
-                &self.scoped_guild,
-                &self.scoped_user,
-                &fact,
-                t,
-            );
-            format!("Stored: {fact}")
-        } else {
-            "Already on record (or the fact list is full).".to_string()
+            fact,
+            now(),
+        ) {
+            Ok(RememberOutcome::Stored(fact)) => format!("Stored: {fact}"),
+            Ok(RememberOutcome::Unchanged) => {
+                "Already on record (or the fact list is full).".to_string()
+            }
+            Err(message) => message.to_string(),
         }
     }
 
     fn lookup_reputation(&mut self, user_id: Option<&str>) -> String {
         let user = match user_id {
             Some(id) => crate::guild::scoped_user_id(
-                "discord",
+                self.network.as_str(),
                 id.trim_start_matches(['<', '@', '!']).trim_end_matches('>'),
             ),
             None => self.scoped_user.clone(),
         };
-        let stores = AppState::lock(&self.state.stores);
-        let rep =
-            AppState::lock(&self.state.social).reputation(&user, &self.scoped_guild, &*stores);
+        let rep = self.state.reputation_snapshot(&self.scoped_guild, &user);
         format!("Reputation {rep:.2} (0 = poor, 1 = excellent).")
     }
 
     fn recall(&mut self, query: &str) -> String {
-        let facts = AppState::lock(&self.state.recall).recall_for_user(
-            &self.scoped_guild,
-            &self.scoped_user,
-            query,
-            5,
-        );
+        let facts =
+            self.state
+                .memory_service()
+                .recall(&self.scoped_guild, &self.scoped_user, query, 5);
         if facts.is_empty() {
             return "Nothing on record.".to_string();
         }
@@ -365,6 +359,8 @@ impl AppState {
             }
             None => (Stores::default(), Recall::new()),
         };
+        let (stores, recall) =
+            memory_service::reconcile_loaded(stores, recall).map_err(StartupError)?;
         let backend = Backend::from_env();
         if let Some(backend) = &backend {
             backend
@@ -455,7 +451,9 @@ impl AppState {
     /// Wait for a generation slot, up to `queue_secs`. `Err` is the
     /// user-facing reason (already honest copy) — callers render it with
     /// `ask::render_failure`.
-    pub async fn acquire_generation(&self) -> Result<tokio::sync::SemaphorePermit<'_>, String> {
+    pub async fn acquire_generation(
+        &self,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
         match tokio::time::timeout(
             Duration::from_secs(self.queue_secs),
             self.generation.acquire(),
@@ -463,8 +461,10 @@ impl AppState {
         .await
         {
             Ok(Ok(permit)) => Ok(permit),
-            Ok(Err(_)) => Err("the generation queue is closed".to_string()),
-            Err(_) => Err(BUSY_REPLY.to_string()),
+            Ok(Err(_)) => Err(crate::llm::LlmError::backend(
+                "the generation queue is closed".into(),
+            )),
+            Err(_) => Err(crate::llm::LlmError::busy()),
         }
     }
 
@@ -478,7 +478,7 @@ impl AppState {
         turns: &[crate::llm::ChatTurn],
     ) -> Result<(String, &'static str), crate::llm::LlmError> {
         let Some(primary) = &self.backend else {
-            return Err(crate::llm::LlmError(
+            return Err(crate::llm::LlmError::backend(
                 "no generation backend is configured".into(),
             ));
         };
@@ -486,7 +486,7 @@ impl AppState {
             Ok(text) => Ok((text, primary.label())),
             Err(e) => match &self.fallback {
                 Some(local) => {
-                    tracing::warn!(error = %e.0, "primary backend failed; falling back to the local endpoint");
+                    tracing::warn!(error = %e, "primary backend failed; falling back to the local endpoint");
                     crate::llm::chat_backend(&self.llm, local, system_prompt, turns)
                         .await
                         .map(|text| (text, local.label()))
@@ -501,6 +501,18 @@ impl AppState {
     /// rather than cascading every command into an error.
     pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
         m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The canonical coordinator for plain memory and semantic WDBX recall.
+    pub fn memory_service(&self) -> MemoryService<'_> {
+        MemoryService::new(&self.stores, &self.recall)
+    }
+
+    /// One coherent standing snapshot from the canonical SocialBrain/store
+    /// authority, always taking the process-wide `stores -> social` order.
+    pub fn reputation_snapshot(&self, scoped_guild: &str, scoped_user: &str) -> f64 {
+        let stores = Self::lock(&self.stores);
+        Self::lock(&self.social).reputation(scoped_user, scoped_guild, &*stores)
     }
 
     /// Whether `scoped_user_id` is one of Abbey's own accounts.
@@ -565,18 +577,18 @@ impl AppState {
     /// failed persist must not take the gateway down.
     pub fn persist_all(&self) {
         let t = now();
-        {
-            let mut stores = Self::lock(&self.stores);
-            Self::lock(&self.brains).persist_all(&mut *stores, t);
-            Self::lock(&self.social).flush(&mut *stores);
+        let snapshots = self.memory_service().consistent_snapshot_after(|stores| {
+            Self::lock(&self.brains).persist_all(stores, t);
+            Self::lock(&self.social).flush(stores);
             stores.pending_rewards = Self::lock(&self.rewards).export_pending();
-        }
+        });
         Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
         let Some(dir) = &self.data_dir else { return };
-        if let Err(e) = Self::lock(&self.stores).save(dir) {
-            tracing::error!(error = %e, "persisting state failed");
+        if let Err(e) = snapshots.0.save(dir) {
+            tracing::error!(error = %e, "persisting canonical state failed; WDBX projection was not published");
+            return;
         }
-        if let Err(e) = Self::lock(&self.recall).save(&Stores::wdbx_path(dir)) {
+        if let Err(e) = snapshots.1.save(&Stores::wdbx_path(dir)) {
             tracing::error!(error = %e, "persisting the WDBX segment failed");
         }
     }
@@ -636,7 +648,7 @@ impl AppState {
                     tracing::info!(channel = %scoped_channel, "rolling summary refreshed");
                 }
                 Err(e) => {
-                    tracing::warn!(channel = %scoped_channel, error = %e.0, "rolling summary failed");
+                    tracing::warn!(channel = %scoped_channel, error = %e, "rolling summary failed");
                     break;
                 }
             }
@@ -689,6 +701,7 @@ fn guild_of_channel(stores: &Stores, scoped_channel: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::brain::social::ReputationStore;
 
     #[test]
     fn dqn_round_trips_through_the_brain_trait() {
@@ -713,7 +726,7 @@ mod tests {
         let first = state.acquire_generation().await.expect("first slot");
         let started = std::time::Instant::now();
         let second = state.acquire_generation().await;
-        assert_eq!(second.unwrap_err(), BUSY_REPLY);
+        assert_eq!(second.unwrap_err().to_string(), BUSY_REPLY);
         assert!(
             started.elapsed().as_millis() >= 900,
             "waited for the queue window"
@@ -787,6 +800,7 @@ mod tests {
         let state = AppState::in_memory();
         let mut scope = ToolScope {
             state: &state,
+            network: SocialNetwork::Discord,
             scoped_guild: "discord:g".into(),
             scoped_user: "discord:u".into(),
             scoped_channel: "discord:c".into(),
@@ -797,9 +811,7 @@ mod tests {
             "Stored: Donald likes Rust."
         );
         assert_eq!(
-            AppState::lock(&state.stores)
-                .memory
-                .facts("discord:g", "discord:u"),
+            state.memory_service().facts("discord:g", "discord:u"),
             ["Donald likes Rust."]
         );
         assert_eq!(
@@ -810,10 +822,57 @@ mod tests {
             "Keep one remembered fact to 300 characters or fewer."
         );
         assert_eq!(
-            AppState::lock(&state.recall)
-                .facts_for_user("discord:g", "discord:u")
-                .len(),
+            state.memory_service().facts("discord:g", "discord:u").len(),
             1
+        );
+    }
+
+    #[test]
+    fn explicit_reputation_ids_are_scoped_to_the_conversation_network() {
+        for (network, expected) in [
+            (SocialNetwork::Discord, 0.61),
+            (SocialNetwork::Telegram, 0.72),
+            (SocialNetwork::Slack, 0.83),
+        ] {
+            let state = AppState::in_memory();
+            let guild = format!("{}:g", network.as_str());
+            let user = format!("{}:42", network.as_str());
+            AppState::lock(&state.stores).store_reputation(&guild, &user, expected, 1);
+            let mut scope = ToolScope {
+                state: &state,
+                network,
+                scoped_guild: guild,
+                scoped_user: format!("{}:self", network.as_str()),
+                scoped_channel: format!("{}:c", network.as_str()),
+                persona: crate::persona::Persona::Abbey,
+            };
+            let native_id = if network == SocialNetwork::Discord {
+                "<@42>"
+            } else {
+                "42"
+            };
+            assert_eq!(
+                crate::tools::ToolHost::lookup_reputation(&mut scope, Some(native_id)),
+                format!("Reputation {expected:.2} (0 = poor, 1 = excellent).")
+            );
+        }
+    }
+
+    #[test]
+    fn conflicting_scoped_reputation_id_cannot_escape_the_current_network() {
+        let state = AppState::in_memory();
+        AppState::lock(&state.stores).store_reputation("telegram:g", "discord:42", 0.99, 1);
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Telegram,
+            scoped_guild: "telegram:g".into(),
+            scoped_user: "telegram:self".into(),
+            scoped_channel: "telegram:c".into(),
+            persona: crate::persona::Persona::Abbey,
+        };
+        assert_eq!(
+            crate::tools::ToolHost::lookup_reputation(&mut scope, Some("discord:42")),
+            "Reputation 0.50 (0 = poor, 1 = excellent)."
         );
     }
 

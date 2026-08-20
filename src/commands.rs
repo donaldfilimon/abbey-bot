@@ -25,6 +25,7 @@ use serenity::all::{
 
 use crate::ask;
 use crate::generation;
+#[cfg(test)]
 use crate::llm;
 use crate::moderation::{self, History, Severity};
 use crate::perms::{self, Overwrite, Scope, Subject};
@@ -291,41 +292,47 @@ pub async fn ask(
             // Same per-channel transcript, memory context, and tool loop the
             // pipeline uses, so a slash-command question and a DM continue
             // one thread. No streaming: an interaction followup is one post.
-            let context =
-                pipeline::assemble_context(state, &scoped_guild, &scoped_user, &scope, &question);
+            let reputation = state.reputation_snapshot(&scoped_guild, &scoped_user);
+            let context = pipeline::assemble_context(
+                state,
+                &scoped_guild,
+                &scoped_user,
+                &scope,
+                &question,
+                reputation,
+            );
             let mut host = runtime::ToolScope {
                 state,
+                network: crate::platform::SocialNetwork::Discord,
                 scoped_guild: scoped_guild.clone(),
                 scoped_user: scoped_user.clone(),
                 scoped_channel: scope.clone(),
                 persona: routed,
             };
             let outcome = match state.acquire_generation().await {
-                Err(busy) => Err(llm::LlmError(busy)),
+                Err(error) => Err(error),
                 Ok(_slot) => {
-                    generation::generate::<generation::NoDelivery>(
+                    generation::generate_with_tools_without_delivery(
                         state,
                         &mut host,
                         &generation::Ask {
                             scope: &scope,
                             context: &context,
                             user_input: &question,
-                            offer_tools: true,
                             now,
                         },
-                        None,
                     )
                     .await
                 }
             };
             match outcome {
-                Ok((answer, _posted, persona)) => {
+                Ok((answer, persona)) => {
                     AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
                     ask::render_answer(persona, backend.label(), &answer)
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error.0, backend = backend.label(), "slash-command generation failed");
-                    ask::render_failure(routed, backend.label(), &error.0)
+                    tracing::warn!(error = %error, backend = backend.label(), "slash-command generation failed");
+                    ask::render_failure(routed, backend.label(), &error)
                 }
             }
         }
@@ -746,8 +753,10 @@ mod tests {
             model: "default".into(),
         };
         let long_answer = "é".repeat(5000);
-        let canned =
-            serde_json::json!({"choices": [{"message": {"content": long_answer}}]}).to_string();
+        let canned = serde_json::json!({
+            "choices": [{"message": {"content": long_answer}, "finish_reason": "stop"}]
+        })
+        .to_string();
         let transport = llm::RecordingTransport::returning(&canned);
 
         let answer = llm::ask_backend(

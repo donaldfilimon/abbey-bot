@@ -72,9 +72,13 @@ local voice:
 ./deploy/install-mlx-audio-launchd.sh
 ```
 
-The installer creates an owner-only uv environment, verifies the exact Whisper,
-Kokoro, and `af_heart` voice-pack revisions, then launches MLX-Audio offline on
-`127.0.0.1:8181` and requires a TTS-to-STT smoke to pass. It does not activate
+The installer creates a fresh owner-only uv environment from the committed,
+SHA-256-hashed dependency and isolated-build locks (`webrtcvad` is the one
+explicit source-build exception), verifies the exact Whisper, Kokoro, and `af_heart` voice-pack
+revisions, then launches MLX-Audio offline on `127.0.0.1:8181` and requires a
+TTS-to-STT smoke to pass. Installation is serialized; replacement stays staged
+until healthy, and rollback refuses to mutate files if launchd cannot unload
+the candidate. It does not activate
 Discord listening; that still requires everyone-present consent followed by
 `/voice join consent:true`.
 
@@ -122,8 +126,8 @@ separate, pinned MLX-VLM service (it does not share MLX-Audio's environment):
 
 It stages `mlx-vlm==0.6.15`, downloads
 `mlx-community/gemma-4-12B-it-4bit` at revision
-`73bcf09092aa277861d5a191b989b666f7f32e8f`, and requires offline streamed
-text, streamed tool-loop, and generated-image vision smokes before publishing
+`73bcf09092aa277861d5a191b989b666f7f32e8f`, and requires exact offline
+streamed-text, streamed tool-loop, colored-shape, and OCR smokes before publishing
 the loopback service on `127.0.0.1:8282`. Configure Abbey with the exact local
 snapshot path printed by the installer:
 
@@ -224,9 +228,12 @@ drops no reward. Channels where Abbey has been invited (`/admin act on`, or
 DMs) get a rolling summary refreshed by the backend every 30 new messages (the
 spec's "rolling 2k-token summary"); it feeds every reply's context.
 
-**Semantic memory is WDBX-shaped.** Facts are embedded with the same
+**Semantic memory is projected into WDBX.** Canonical facts live in the atomic
+JSON state document and are embedded into WDBX with the same
 Zig-compatible wyhash n-gram embedding abi uses (pinned to abi's own vectors)
-and written to a `# ABI-WDBX v1` JSONL segment that abi's tooling can read.
+in a `# ABI-WDBX v1` JSONL segment that abi's tooling can read. Legacy
+WDBX-only facts are recovered once; thereafter startup repairs the projection
+from JSON, so interrupted persistence cannot resurrect a forgotten fact.
 Production inference and tools scope recall by both server and Discord user: a
 fact stored for one person is never supplied to another person or guild. The
 slash-command surfaces are self-only by default; cross-member `/remember`,
@@ -272,9 +279,10 @@ sometimes is one that races eventually.
 **Decision logic is separated from Discord.** Persona, profile, permission,
 moderation, server, learning, memory, generation-shaping, platform, and tool
 decisions live in plain Rust modules with no serenity or poise dependency. The
-Discord shell is limited to `commands.rs`, `commands_brain.rs`, `gateway.rs`,
-and `main.rs`: they fetch or translate native data, call the core, and deliver
-the result. This is why the decision suite runs with no gateway connection. The
+Discord shell is limited to `commands.rs`, `commands_brain.rs`,
+`commands_voice.rs` and its adapter modules, `gateway.rs`, and `main.rs`: they
+fetch or translate native data, call the core, and deliver the result. This is
+why the decision suite runs with no gateway connection. The
 complete module map and its load-bearing boundaries live in `AGENTS.md`.
 
 **Generated text cannot ping anyone.** Command responses, gateway posts, reply
@@ -314,9 +322,10 @@ carry the recommendation out — the permission bit via serenity's canonical
 rules: the owner cannot be actioned, administrators cannot be timed out, and
 the actor's top role must sit strictly above the target's.
 
-**Persona routing refuses to guess.** The skill's rule is to switch persona when
-the task type is *unambiguous*; a request that pulls toward two personas equally
-therefore falls back to Abbey rather than picking a winner on list order.
+**Persona routing mirrors ABI.** An explicit leading Abbey, Aviva, or ABI name
+wins; otherwise canonical keyword weights are added to the 0.40/0.30/0.30 ABI
+prior and ties deterministically favor Abbey. The selected route and normalized
+weights remain visible through `/profile`.
 
 ## Deploying
 
@@ -398,8 +407,8 @@ release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
 ```
 
 CI (`.github/workflows/rust.yml`) runs exactly this script with the exact Rust
-1.97.1 toolchain, so a green check means fmt, launchd shell syntax (plus plist
-lint where `plutil` exists), clippy `-D warnings`, the test suite, and the
+1.97.1 toolchain, so a green check means fmt, launchd shell syntax, Python lock
+hash validation (plus plist lint where `plutil` exists), clippy `-D warnings`, the test suite, and the
 locked release build used by deployment.
 
 `cargo fmt --all -- --check`, deploy syntax, then

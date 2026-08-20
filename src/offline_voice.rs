@@ -29,7 +29,8 @@ pub struct OfflineVoiceConfig {
     pub stt_model: String,
     pub tts_model: String,
     pub voice: String,
-    pub language: String,
+    pub stt_language: String,
+    tts_language_code: &'static str,
 }
 
 impl OfflineVoiceConfig {
@@ -47,12 +48,15 @@ impl OfflineVoiceConfig {
     ) -> Result<Self, String> {
         let endpoint = nonblank(endpoint).unwrap_or_else(|| Self::DEFAULT_ENDPOINT.to_string());
         let endpoint = validate_loopback_endpoint(&endpoint)?;
+        let voice = nonblank(voice).unwrap_or_else(|| Self::DEFAULT_VOICE.to_string());
+        let tts_language_code = kokoro_language_code(&voice)?;
         Ok(Self {
             endpoint,
             stt_model: safe_identifier(stt_model, Self::DEFAULT_STT_MODEL, "STT model")?,
             tts_model: safe_identifier(tts_model, Self::DEFAULT_TTS_MODEL, "TTS model")?,
-            voice: safe_identifier(voice, Self::DEFAULT_VOICE, "TTS voice")?,
-            language: safe_identifier(language, "en", "speech language")?,
+            voice,
+            stt_language: safe_identifier(language, "en", "STT language")?,
+            tts_language_code,
         })
     }
 
@@ -97,6 +101,36 @@ fn safe_identifier(value: Option<String>, default: &str, label: &str) -> Result<
             "{label} may contain only ASCII letters, digits, slash, dot, dash, underscore, or colon"
         ))
     }
+}
+
+/// MLX-Audio's Kokoro pipeline keys language selection from the first
+/// character of its `<language><gender>_<name>` voice-pack convention. Keep
+/// this independent from Whisper's STT language: a British or Japanese voice
+/// must select its matching phonemizer even when recognition remains English.
+fn kokoro_language_code(voice: &str) -> Result<&'static str, String> {
+    let bytes = voice.as_bytes();
+    let valid_shape = (4..=200).contains(&bytes.len())
+        && matches!(bytes[1], b'f' | b'm')
+        && bytes[2] == b'_'
+        && bytes[3..]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-'));
+    let code = valid_shape.then(|| match bytes[0] {
+        b'a' => Some("a"), // American English
+        b'b' => Some("b"), // British English
+        b'e' => Some("e"), // Spanish
+        b'f' => Some("f"), // French
+        b'h' => Some("h"), // Hindi
+        b'i' => Some("i"), // Italian
+        b'p' => Some("p"), // Brazilian Portuguese
+        b'j' => Some("j"), // Japanese
+        b'z' => Some("z"), // Mandarin Chinese
+        _ => None,
+    });
+    code.flatten().ok_or_else(|| {
+        "TTS voice must use a supported Kokoro voice prefix (af_/am_, bf_/bm_, ef_/em_, ff_/fm_, hf_/hm_, if_/im_, pf_/pm_, jf_/jm_, or zf_/zm_)"
+            .to_string()
+    })
 }
 
 fn validate_loopback_endpoint(raw: &str) -> Result<reqwest::Url, String> {
@@ -149,6 +183,33 @@ impl VoiceFrame {
     }
 }
 
+/// Continuity guard shared by both local segmentation and the direct Realtime
+/// actor. The first frame establishes an arbitrary starting point; every later
+/// frame must be its exact successor.
+#[derive(Debug, Default)]
+pub(crate) struct FrameSequence {
+    last: Option<u64>,
+}
+
+impl FrameSequence {
+    pub(crate) fn observe(&mut self, actual: u64) -> Result<(), SequenceGap> {
+        let expected = self.last.map(|last| last.saturating_add(1));
+        self.last = Some(actual);
+        if let Some(expected) = expected
+            && expected != actual
+        {
+            return Err(SequenceGap { expected, actual });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SequenceGap {
+    pub(crate) expected: u64,
+    pub(crate) actual: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Utterance {
     pub speaker_id: Option<u64>,
@@ -183,7 +244,7 @@ pub struct Segmenter {
     candidate_frames: usize,
     candidate_speaker: Option<u64>,
     active: Option<ActiveUtterance>,
-    last_sequence: Option<u64>,
+    sequence: FrameSequence,
 }
 
 impl Segmenter {
@@ -196,10 +257,7 @@ impl Segmenter {
         if frame.samples.len() != FRAME_SAMPLES {
             frame.samples.resize(FRAME_SAMPLES, 0);
         }
-        let sequence_gap = self
-            .last_sequence
-            .is_some_and(|last| frame.sequence != last.saturating_add(1));
-        self.last_sequence = Some(frame.sequence);
+        let sequence_gap = self.sequence.observe(frame.sequence).is_err();
         if sequence_gap {
             let interrupted = self.active.take().is_some() || self.candidate_frames > 0;
             self.pre_roll.clear();
@@ -526,7 +584,7 @@ impl MlxAudioClient {
             .map_err(|e| format!("building the local STT request failed: {e}"))?;
         let form = reqwest::multipart::Form::new()
             .text("model", self.config.stt_model.clone())
-            .text("language", self.config.language.clone())
+            .text("language", self.config.stt_language.clone())
             .text("response_format", "json")
             .part("file", part);
         let response = self
@@ -597,7 +655,7 @@ impl MlxAudioClient {
                 "model": self.config.tts_model,
                 "input": text,
                 "voice": self.config.voice,
-                "lang_code": "a",
+                "lang_code": self.config.tts_language_code,
                 "response_format": "wav",
                 "stream": false,
             }))
@@ -702,6 +760,48 @@ mod tests {
                 OfflineVoiceConfig::from_values(Some(endpoint.into()), None, None, None, None)
                     .unwrap_err();
             assert!(error.contains("loopback HTTP"), "{endpoint}: {error}");
+        }
+    }
+
+    #[test]
+    fn kokoro_language_is_derived_from_voice_not_stt_language() {
+        for (voice, expected_code) in [
+            ("af_heart", "a"),
+            ("bf_emma", "b"),
+            ("jf_alpha", "j"),
+            ("zf_xiaobei", "z"),
+            ("pf_dora", "p"),
+        ] {
+            let config = OfflineVoiceConfig::from_values(
+                None,
+                None,
+                None,
+                Some(voice.into()),
+                Some("de".into()),
+            )
+            .unwrap();
+            assert_eq!(config.tts_language_code, expected_code, "{voice}");
+            assert_eq!(config.stt_language, "de", "STT stays independent");
+        }
+    }
+
+    #[test]
+    fn invalid_kokoro_voice_language_mapping_fails_at_configuration() {
+        for voice in [
+            "xf_unknown",
+            "a_heart",
+            "af",
+            "alloy",
+            "af_../../foo",
+            "bf_emma.wav",
+            "jf_日本語",
+        ] {
+            let error = OfflineVoiceConfig::from_values(None, None, None, Some(voice.into()), None)
+                .unwrap_err();
+            assert!(
+                error.contains("supported Kokoro voice prefix"),
+                "{voice}: {error}"
+            );
         }
     }
 

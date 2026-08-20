@@ -61,7 +61,7 @@ pub fn abbey_tools() -> Vec<ToolSpec> {
             description: "Look up a member's standing in this server (0 = poor, 1 = excellent). Omit user_id for the person you are talking to.",
             parameters: json!({
                 "type": "object",
-                "properties": { "user_id": { "type": "string", "description": "Discord user id" } }
+                "properties": { "user_id": { "type": "string", "description": "Native user id on the current network (Discord, Telegram, or Slack)" } }
             }),
         },
         ToolSpec {
@@ -122,7 +122,8 @@ pub fn anthropic_tools_json(tools: &[ToolSpec]) -> Value {
 /// `function.arguments` as a JSON *string*). Unparseable argument strings
 /// become `{}` rather than dropping the call, so the model still gets a
 /// result telling it what went wrong.
-pub fn parse_openai_tool_calls(message: &Value) -> Vec<ToolCall> {
+#[cfg(test)]
+fn parse_openai_tool_calls(message: &Value) -> Vec<ToolCall> {
     message
         .get("tool_calls")
         .and_then(Value::as_array)
@@ -150,7 +151,8 @@ pub fn parse_openai_tool_calls(message: &Value) -> Vec<ToolCall> {
 }
 
 /// Calls in an Anthropic `content` array (`type: tool_use` blocks).
-pub fn parse_anthropic_tool_use(content: &Value) -> Vec<ToolCall> {
+#[cfg(test)]
+fn parse_anthropic_tool_use(content: &Value) -> Vec<ToolCall> {
     content
         .as_array()
         .into_iter()
@@ -281,6 +283,10 @@ mod tests {
         assert_eq!(
             an[3]["input_schema"]["properties"]["persona"]["enum"][1],
             "aviva"
+        );
+        assert_eq!(
+            oa[1]["function"]["parameters"]["properties"]["user_id"]["description"],
+            "Native user id on the current network (Discord, Telegram, or Slack)"
         );
     }
 
