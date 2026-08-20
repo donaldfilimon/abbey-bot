@@ -101,7 +101,7 @@ runs fully offline.
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_ENDPOINT` / `_MODEL` / `_KEY` | Any OpenAI-compatible vision endpoint for `/see`, `/ocr`, and attachment folding. Falls back to `ABBEY_BOT_LLM_ENDPOINT` + `/v1`; `off` stops that. Measured 2026-08-19: `http://127.0.0.1:11434/v1` + `gemma4:e4b` describes a screenshot correctly in ~4–15 s (budget raised to 1,024 tokens because the model reasons before it answers). |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. `ABBEY_VOICE_MODE` is `local` by default, `disabled` for presence only, or `openai` as an explicit cloud backup. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend; model/voice/language overrides are in `.env.example`. OpenAI mode alone requires `OPENAI_API_KEY` and its Realtime overrides. A key never selects cloud mode. `ABBEY_VOICE_AUTOJOIN=1` always uses Songbird `DecodeMode::Pass`, mute, and self-deafen with no receive/playback actor. Conversation still requires `/voice join consent:true`; membership changes require `/voice resume consent:true`. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. `ABBEY_VOICE_MODE` is `local` by default, `disabled` for presence only, or `openai` as an explicit cloud backup. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend; model/voice/language overrides are in `.env.example`. OpenAI mode alone requires `OPENAI_API_KEY` and its Realtime overrides; it is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context. A key never selects cloud mode. `ABBEY_VOICE_AUTOJOIN=1` always uses Songbird `DecodeMode::Pass`, mute, and self-deafen with no receive/playback actor. Conversation still requires `/voice join consent:true`; membership changes require `/voice resume consent:true`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -155,9 +155,9 @@ spec's "rolling 2k-token summary"); it feeds every reply's context.
 
 **Semantic memory is WDBX-shaped.** Facts are embedded with the same
 Zig-compatible wyhash n-gram embedding abi uses (pinned to abi's own vectors)
-and written to a `# ABI-WDBX v1` JSONL segment that abi's tooling can read. The
-store is namespace-scoped by server: a fact stored in one guild is never
-recalled in another.
+and written to a `# ABI-WDBX v1` JSONL segment that abi's tooling can read.
+Production inference and tools scope recall by both server and Discord user: a
+fact stored for one person is never supplied to another person or guild.
 
 The visible consequence: **`/whois` does not report online/idle/DND status.** That
 needs `GUILD_PRESENCES`. Rather than print a status it cannot actually observe,
@@ -176,7 +176,11 @@ caller. Any new, unknown, or unattested speaker revokes the media epoch before
 that frame can enter the bounded 20 ms input queue, cancels work/playback, and
 applies mute/self-deafen. Local mode runs Whisper STT, canonical Abbey
 cognition, and Kokoro TTS on loopback; voice turns are read-only and raw audio
-is not persisted. `/voice leave` tears down both sides, while `/voice status`
+is not persisted. Abbey must retain View Channel, Send Messages, Connect, and
+Speak and must not be server-muted/deafened/suppressed; startup rechecks those
+conditions around activation, and channel/role/member changes stop the media
+epoch if the call could become receive-only. `/voice leave` tears down both
+sides, while `/voice status`
 reports mode, phase, models, consent epoch, and bounded-queue counters without
 content or credentials. Discord Go Live video is not ingested; stream vision
 needs a separate consented screenshot source and retention policy.

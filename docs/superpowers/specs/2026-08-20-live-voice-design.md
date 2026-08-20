@@ -24,12 +24,17 @@ selects cloud audio by itself.
   framing/segmentation, `voice_session.rs` owns epochs and cancellation, and
   `voice_local.rs` / `voice_openai.rs` own their respective actors.
 - Local speech endpoints must be credential-free loopback HTTP. Local voice
-  also refuses a remote text-generation backend. Cloud Realtime requires
-  `ABBEY_VOICE_MODE=openai`, a key, and WSS (loopback WS is test-only).
+  also refuses a remote text-generation backend, and both HTTP clients bypass
+  process/system proxies for loopback requests. Cloud Realtime requires
+  `ABBEY_VOICE_MODE=openai`, a key, and WSS (loopback WS is test-only); it is a
+  direct, whole-response-buffered degraded backup without local ABI routing or
+  WDBX context.
 - Conversational Songbird calls start in mono 24 kHz `Decode` mode because
-  Songbird 0.6 cannot promote a running `Pass` receiver to `Decode`. No receive
-  handler exists before public disclosure, and a separate atomic media epoch
-  keeps callbacks and playback closed until final activation.
+  Songbird 0.6 cannot promote a running `Pass` receiver to `Decode`. Mapping,
+  transport-liveness, and `VoiceTick` handlers are installed before the join so
+  one-shot core events cannot be missed, but a separate atomic media epoch
+  makes `VoiceTick` return before inspecting or forwarding samples and keeps
+  playback closed until disclosure and final activation.
 - The 20 ms callback performs mapping/attestation checks, bounded energy work,
   and `try_send` only. Unknown speakers atomically revoke media before a frame
   is forwarded; slow cancellation and Discord mute/deafen run in another task.
@@ -52,6 +57,13 @@ mute/self-deafen, and requires renewed consent via resume. Cache loss, a bot
 move, transport failure, public-notice failure, model failure, and replacement
 races all fail closed. `/voice leave` is available to a manager or someone in
 the channel and synchronously invalidates work before disconnecting.
+
+A conversation is permitted only while Abbey has View Channel, Send Messages,
+Connect, and Speak and is not server-muted, server-deafened, or suppressed.
+Permissions are fetched again after slow model preflight and on both sides of
+the activation transition. Channel overwrite, role update/deletion, and
+current-bot member-role events re-evaluate the effective permissions and close
+the media epoch before teardown if the call could become receive-only.
 
 `ABBEY_VOICE_AUTOJOIN=1` is a separate operations presence path. It always
 constructs Songbird in `DecodeMode::Pass`, mutes and self-deafens before/after

@@ -193,7 +193,35 @@ async fn main() -> Result<(), Error> {
                         commands_voice::on_voice_state_update(ctx, old, new, data).await;
                     }
                     if let serenity::all::FullEvent::ChannelUpdate { new, .. } = event {
-                        commands_voice::on_voice_channel_update(ctx, new, data).await;
+                        commands_voice::on_voice_permissions_changed(
+                            ctx,
+                            new.guild_id,
+                            Some(new.id),
+                            data,
+                        )
+                        .await;
+                    }
+                    if let serenity::all::FullEvent::GuildRoleUpdate { new, .. } = event {
+                        commands_voice::on_voice_permissions_changed(ctx, new.guild_id, None, data)
+                            .await;
+                    }
+                    if let serenity::all::FullEvent::GuildRoleDelete { guild_id, .. } = event {
+                        commands_voice::on_voice_permissions_changed(ctx, *guild_id, None, data)
+                            .await;
+                    }
+                    if let serenity::all::FullEvent::GuildMemberUpdate { event, .. } = event
+                        && event.user.id == ctx.cache.current_user().id
+                    {
+                        // Discord sends updates for the current bot member even
+                        // without the privileged GUILD_MEMBERS intent. Role
+                        // assignments can therefore revoke voice immediately.
+                        commands_voice::on_voice_permissions_changed(
+                            ctx,
+                            event.guild_id,
+                            None,
+                            data,
+                        )
+                        .await;
                     }
                     Ok(())
                 })

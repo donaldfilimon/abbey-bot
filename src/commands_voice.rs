@@ -179,6 +179,13 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
             .await?;
         return Ok(());
     }
+    if let Err(error) =
+        verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
+    {
+        drop(transition);
+        ctx.say(error).await?;
+        return Ok(());
+    }
     let manager = songbird::get(ctx.serenity_context())
         .await
         .ok_or("Songbird was not registered in the Discord client")?;
@@ -517,6 +524,19 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
 
+    if let Err(error) =
+        verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
+    {
+        runtime
+            .fail_safe("required Discord voice permissions could not be verified before activation")
+            .await;
+        let _ = set_muted_self_deafened(&call).await;
+        let _ = manager.remove(guild_id).await;
+        drop(transition);
+        ctx.say(error).await?;
+        return Ok(());
+    }
+
     if let Err(error) = enable_conversation(&call).await {
         runtime
             .fail_safe("could not leave the muted/self-deafened startup state")
@@ -528,6 +548,19 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
             "The public notice was posted, but Discord could not enable the consented session: {error}"
         ))
         .await?;
+        return Ok(());
+    }
+
+    if let Err(error) =
+        verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
+    {
+        runtime
+            .fail_safe("required Discord voice permissions changed during activation")
+            .await;
+        let _ = set_muted_self_deafened(&call).await;
+        let _ = manager.remove(guild_id).await;
+        drop(transition);
+        ctx.say(error).await?;
         return Ok(());
     }
 
@@ -975,13 +1008,14 @@ pub async fn on_voice_state_update(
         .await;
 }
 
-/// Permission-overwrite changes can turn an apparently healthy call into a
-/// silent receive-only recorder. Re-evaluate the cache-authoritative channel
-/// and fail closed whenever Abbey loses any permission required for a public,
-/// bidirectional conversation.
-pub async fn on_voice_channel_update(
+/// Channel overwrites, role permissions, role deletion, and Abbey's own role
+/// assignments can turn an apparently healthy call into a silent receive-only
+/// recorder. Serenity updates its cache before dispatching these callbacks, so
+/// re-evaluate the complete effective permission set and fail closed.
+pub async fn on_voice_permissions_changed(
     ctx: &serenity::all::Context,
-    new: &GuildChannel,
+    affected_guild_id: GuildId,
+    affected_channel_id: Option<ChannelId>,
     data: &crate::Data,
 ) {
     let Some(runtime) = data.voice.as_ref().cloned() else {
@@ -989,7 +1023,9 @@ pub async fn on_voice_channel_update(
     };
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
-    if new.guild_id != guild_id || new.id != channel_id {
+    if affected_guild_id != guild_id
+        || affected_channel_id.is_some_and(|affected| affected != channel_id)
+    {
         return;
     }
     let snapshot = runtime.snapshot().await;
@@ -1084,6 +1120,47 @@ fn bot_has_required_voice_permissions(
                 .contains(required_voice_permissions())
         })
     })
+}
+
+/// Fetch the channel, Abbey's member record, and guild roles directly from
+/// Discord. This closes the long model-preflight and activation TOCTOU windows
+/// even if a gateway callback is delayed. Passing `&ctx.http` deliberately
+/// bypasses Serenity's cache for the guild request.
+async fn verify_required_voice_permissions_live(
+    ctx: &serenity::all::Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+) -> Result<(), String> {
+    let bot_id = ctx.cache.current_user().id;
+    let fetched = tokio::try_join!(
+        channel_id.to_channel(&ctx.http),
+        guild_id.member(&ctx.http, bot_id),
+        guild_id.to_partial_guild(&ctx.http),
+    );
+    let (channel, member, guild) = fetched.map_err(|error| {
+        tracing::warn!(%error, %guild_id, %channel_id, "could not revalidate Discord voice permissions");
+        "Discord could not revalidate Abbey's View Channel, Send Messages, Connect, and Speak permissions; voice stayed off."
+            .to_string()
+    })?;
+    let Some(channel) = channel.guild() else {
+        return Err(
+            "The configured voice destination is no longer a server channel; voice stayed off."
+                .into(),
+        );
+    };
+    if channel.guild_id != guild_id || channel.id != channel_id {
+        return Err(
+            "The configured voice destination changed unexpectedly; voice stayed off.".into(),
+        );
+    }
+    if !guild
+        .user_permissions_in(&channel, &member)
+        .contains(required_voice_permissions())
+    {
+        return Err("Abbey needs View Channel, Send Messages, Connect, and Speak in the configured voice channel; voice stayed off."
+            .into());
+    }
+    Ok(())
 }
 
 fn cached_participants(
