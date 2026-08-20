@@ -30,3 +30,7 @@ songbird = { version = "0.6.0", features = ["receive"] }
 # consented live-voice output.
 symphonia = { version = "0.5.5", default-features = false, features = ["pcm"] }
 base64 = "0.22.1"
+# Validate every accepted attachment under bounded decoder limits before handing
+# it to an OpenAI-compatible vision endpoint. GIF is normalized to first-frame
+# PNG because Ollama rejects the otherwise valid image/gif data-URL prefix.
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }

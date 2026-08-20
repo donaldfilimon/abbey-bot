@@ -9,6 +9,7 @@ LOG_DIR="$HOME/Library/Logs/abbey-bot"
 # Runtime is deliberately network-independent. The installer downloads and
 # verifies the exact model revisions before launchd ever starts this process.
 export HF_HOME="$CACHE_DIR"
+export HF_HUB_CACHE="$CACHE_DIR/hub"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
