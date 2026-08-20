@@ -2,6 +2,14 @@
 # webrtcvad publishes no usable wheel; the installer permits only its
 # hash-authenticated source archive, constrains its isolated build backend with
 # mlx-audio-build-constraints.txt, and requires wheels for everything else.
-mlx-audio[server,stt,tts]==0.5.0
+# mlx-audio 0.5.0's `server` extra unnecessarily caps setuptools below 81,
+# which is vulnerable. Keep the library's STT/TTS extras and spell out the
+# server runtime it documents so the resolver can select a patched setuptools.
+mlx-audio[stt,tts]==0.5.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+webrtcvad==2.0.10
+setuptools==83.0.0
 misaki[en]==0.9.4
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
