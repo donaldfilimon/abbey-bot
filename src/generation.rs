@@ -40,8 +40,11 @@ pub enum StreamEnd {
 /// have passed, then editing the message every [`STREAM_EDIT_EVERY_SECS`]
 /// until the stream ends; the final edit carries the tidied full text.
 ///
-/// If the stream ends with tool calls and no text was posted, returns
-/// [`StreamEnd::Calls`] so the caller can run the tools and stream again. If
+/// If the stream ends with tool calls and no text was produced or posted,
+/// returns [`StreamEnd::Calls`] so the caller can run the tools and stream
+/// again. A mixed text-and-tool turn is rejected: dispatching its calls would
+/// let an already-visible claim get ahead of the actual side effect, while
+/// ignoring them would make streaming disagree with completed generation. If
 /// the stream fails after a partial message went out, that message is edited
 /// to the honest failure line so a half-answer never stands as if whole.
 pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
@@ -132,8 +135,18 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
     }
     match finished.expect("loop exits only when finished is set") {
         Ok(turn) => {
-            if !turn.calls.is_empty() && posted.is_none() && turn.text.trim().is_empty() {
-                return Ok(StreamEnd::Calls(turn.calls));
+            if !turn.calls.is_empty() {
+                if posted.is_none() && text.trim().is_empty() && turn.text.trim().is_empty() {
+                    return Ok(StreamEnd::Calls(turn.calls));
+                }
+                let error = llm::LlmError::backend(
+                    "backend returned text and tool calls in one streamed turn".into(),
+                );
+                if let Some(id) = &posted {
+                    let failure = ask::render_failure(persona, backend.label(), &error);
+                    let _ = out.edit(native_channel_id, id, &failure).await;
+                }
+                return Err(error);
             }
             let full = if turn.text.len() >= text.len() {
                 turn.text
@@ -667,6 +680,97 @@ mod tests {
         assert!(
             out.sent.lock().unwrap().is_empty(),
             "nothing posted for a tool round"
+        );
+    }
+
+    #[tokio::test]
+    async fn streamed_text_and_tool_calls_are_rejected_before_dispatch() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec!["I remembered that."],
+            fail_at_end: false,
+            calls: vec![crate::tools::ToolCall {
+                id: "call_1".into(),
+                name: "remember_fact".into(),
+                arguments: serde_json::json!({"fact": "private voice statement"}),
+            }],
+        };
+        let error = stream_reply(
+            &transport,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &crate::tools::abbey_tools(),
+                persona: Persona::Abbey,
+            },
+        )
+        .await
+        .expect_err("mixed streamed output must fail closed");
+        assert_eq!(
+            error.detail(),
+            "backend returned text and tool calls in one streamed turn"
+        );
+        assert!(
+            out.sent.lock().unwrap().is_empty(),
+            "a short invalid mixed turn must not be published"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_posted_partial_is_replaced_when_tool_calls_arrive() {
+        let out = FakeOut::default();
+        let transport = FakeStream {
+            deltas: vec![
+                "I have already remembered your private statement and this long claim ",
+                "must not remain visible if a tool call arrives with it.",
+            ],
+            fail_at_end: false,
+            calls: vec![crate::tools::ToolCall {
+                id: "call_1".into(),
+                name: "remember_fact".into(),
+                arguments: serde_json::json!({"fact": "private voice statement"}),
+            }],
+        };
+        let error = stream_reply(
+            &transport,
+            &Delivery {
+                out: &out,
+                native_channel_id: "c1",
+                reply_to: None,
+            },
+            &Round {
+                backend: &local_backend(),
+                system_prompt: "S",
+                turns: &prepared().turns,
+                tools: &crate::tools::abbey_tools(),
+                persona: Persona::Abbey,
+            },
+        )
+        .await
+        .expect_err("posted mixed output must fail closed");
+        assert_eq!(
+            error.detail(),
+            "backend returned text and tool calls in one streamed turn"
+        );
+        assert_eq!(out.sent.lock().unwrap().len(), 1, "partial was posted");
+        let edited = out.edited.lock().unwrap();
+        assert!(
+            edited
+                .last()
+                .is_some_and(|entry| entry.2.contains("backend returned an error")),
+            "the visible claim must be replaced with generic failure copy: {edited:?}"
+        );
+        assert!(
+            edited
+                .last()
+                .is_some_and(|entry| !entry.2.contains("remembered")),
+            "the unexecuted side-effect claim must not remain visible: {edited:?}"
         );
     }
 
