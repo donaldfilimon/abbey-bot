@@ -226,7 +226,15 @@ restart:
   `ABBEY_BOT_LLM_ENDPOINT`, `ABBEY_BOT_LLM_MODEL`, and (if you want images)
   `ABBEY_VISION_ENDPOINT`/`ABBEY_VISION_MODEL`; `ABBEY_GUILD_ID`,
   `ABBEY_MESSAGE_CONTENT`, `ABBEY_QUIET` as you ran it by hand. With only the
-  token, every DM answers the honest "no backend" line.
+  token, every DM answers the honest "no backend" line. launchd always uses
+  its fixed private data path; an `ABBEY_DATA_DIR` line in the env file is
+  ignored rather than being allowed to silently disable persistence.
+  Installed and verified live on 2026-08-20: launchd runs the locked release
+  binary with persistent data, gpt-oss:20b generation, gemma4:e4b vision, and
+  guild-scoped command registration in the sandbox guild. Updates stage and
+  validate the replacement before a SIGTERM-driven graceful stop, then publish
+  by same-directory renames with rollback. The service umask and installer keep
+  the env, learned state, WDBX segment, and logs owner-only.
 - **Docker** — the multi-stage `Dockerfile`. Pass secrets with
   `docker run --env-file`; never bake a token into an image layer.
 
@@ -239,8 +247,10 @@ cooldown and act-off gates holding; a model-initiated `remember_fact` tool call;
 vision on `gemma4:e4b`. Not yet observed: Anthropic path/fallback (no key),
 Telegram/Slack (no tokens), an `OverBudget` refusal, a refreshed rolling
 summary, `/whois` `/perms` `/modcall` `/server` `/webhook` `/remember` `/forget`
-`/reputation` `/summarize` `/see` `/ocr` from a client — `tasks/goals.md` is the
-ledger of record.** This host has neither Docker nor systemd, so both
+`/reputation` `/summarize` `/see` `/ocr` from a client. On 2026-08-20 the
+launchd release service, persistent data path, gateway connection, local
+generation backend, and real three-turn backend pipeline were verified;
+`tasks/goals.md` is the ledger of record.** This host has neither Docker nor systemd, so both
 deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
 --locked` produces the binary they both wrap. The exact stable Rust + locked
 release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
@@ -252,8 +262,10 @@ release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
 ```
 
 CI (`.github/workflows/rust.yml`) runs exactly this script with the exact Rust
-1.97.1 toolchain, so a green check means fmt, clippy `-D warnings`, the test
-suite, and the locked release build used by deployment.
+1.97.1 toolchain, so a green check means fmt, launchd shell syntax (plus plist
+lint where `plutil` exists), clippy `-D warnings`, the test suite, and the
+locked release build used by deployment.
 
-`cargo fmt --all -- --check`, then `cargo clippy --all-targets --locked -- -D warnings`,
-then `cargo test --locked`, then `cargo build --release --locked`.
+`cargo fmt --all -- --check`, deploy syntax, then
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`,
+and `cargo build --release --locked`.

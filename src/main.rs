@@ -68,6 +68,20 @@ pub struct Data {
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
 
+#[cfg(unix)]
+async fn shutdown_signal() -> std::io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt()
@@ -220,12 +234,12 @@ async fn main() -> Result<(), Error> {
         .framework(framework)
         .await?;
 
-    // Ctrl-C: persist, then take the shards down. Without this, everything
-    // learned since the last five-minute tick is lost on every redeploy.
+    // Persist on interactive Ctrl-C and service-manager SIGTERM before taking
+    // shards down. Otherwise a redeploy loses the current five-minute window.
     let shard_manager = client.shard_manager.clone();
     let shutdown_state = std::sync::Arc::clone(&state);
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
+        if shutdown_signal().await.is_ok() {
             tracing::info!("shutting down");
             gateway::shutdown(&shutdown_state);
             shard_manager.shutdown_all().await;
