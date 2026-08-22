@@ -85,6 +85,49 @@ class AbbeyContractGuardTests(unittest.TestCase):
             f"digest={PINNED_DIGEST}\n",
         )
 
+    def test_autocrlf_checkout_preserves_exact_vendored_corpus_bytes(self) -> None:
+        source = Path(self.temporary.name) / "source"
+        checkout = Path(self.temporary.name) / "checkout"
+        (source / "contracts").mkdir(parents=True)
+        shutil.copy2(ROOT / ".gitattributes", source / ".gitattributes")
+        shutil.copytree(ROOT / "contracts/abbey", source / "contracts/abbey")
+
+        commands = (
+            ("init", "--quiet"),
+            ("config", "user.name", "Abbey contract test"),
+            ("config", "user.email", "abbey-contract-test@example.invalid"),
+            ("add", "."),
+            ("commit", "--quiet", "-m", "fixture"),
+        )
+        for command in commands:
+            subprocess.run(
+                ["git", *command],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--quiet",
+                "-c",
+                "core.autocrlf=true",
+                str(source),
+                str(checkout),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        result = self.run_check(checkout / "contracts/abbey")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
     def test_missing_corpus_fails_closed(self) -> None:
         missing_root = Path(self.temporary.name) / "missing" / "abbey"
         missing_root.mkdir(parents=True)
