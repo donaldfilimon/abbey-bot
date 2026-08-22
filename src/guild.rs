@@ -119,8 +119,13 @@ pub trait GuildConfigStore {
     fn save(&mut self, scoped_guild_id: &str, settings: &GuildSettings);
 }
 
-/// HashMap-backed store: the test double and the default backend until a
-/// durable one is wired in.
+/// HashMap-backed store: the test double, and only that.
+///
+/// It is `#[cfg(test)]`, so it cannot be a production backend at all. The
+/// durable one is `impl GuildConfigStore for Stores` in `src/persist.rs`, a
+/// JSON file store with an atomic temp-write plus rename. This comment
+/// previously called this type "the default backend until a durable one is
+/// wired in", which stopped being true once `Stores` landed.
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub struct InMemoryGuildConfigStore {
