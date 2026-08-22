@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use futures_util::{Sink, SinkExt, StreamExt};
-use songbird::events::{Event, EventContext, EventHandler, TrackEvent};
 use songbird::input::RawAdapter;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
@@ -23,7 +22,10 @@ use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::offline_voice::{FrameSequence, frame_is_voice};
-use crate::voice_session::{SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime};
+use crate::voice_session::{
+    PlaybackTermination, SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime,
+    register_playback_termination,
+};
 use protocol::{
     ResponseBuffer, cancel_response, capture_output_item, next_event_id, pcm16_to_f32,
     truncate_event,
@@ -157,22 +159,39 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                 }
             }
             lifecycle = session.lifecycle.recv() => {
-                let Some(SessionEvent::PlaybackEnded(turn)) = lifecycle else { continue; };
-                if consume_natural_playback_end(&mut playing_turn, turn) {
+                let Some(SessionEvent::PlaybackTerminated { turn, termination }) = lifecycle else {
+                    continue;
+                };
+                if consume_matching_playback_termination(&mut playing_turn, turn) {
                     session.playback.lock().await.take();
                     playing_item_id = None;
-                    if session
-                        .runtime
-                        .with_media_enabled(session.epoch, || {
-                            session.runtime.note_completed_turn();
-                        })
-                        .is_some()
+                    if termination == PlaybackTermination::Natural
+                        && session
+                            .runtime
+                            .with_media_enabled(session.epoch, || {
+                                session.runtime.note_completed_turn();
+                            })
+                            .is_some()
                     {
                         session.runtime
                             .set_status(
                                 session.epoch,
                                 VoicePhase::Listening,
                                 "direct OpenAI backup ready; buffered output; listening",
+                            )
+                            .await;
+                    } else if termination != PlaybackTermination::Natural {
+                        tracing::warn!(
+                            epoch = session.epoch,
+                            turn,
+                            ?termination,
+                            "OpenAI backup playback ended without natural completion"
+                        );
+                        session.runtime
+                            .set_status(
+                                session.epoch,
+                                VoicePhase::Listening,
+                                "direct OpenAI backup playback ended early; listening",
                             )
                             .await;
                     }
@@ -440,28 +459,17 @@ where
     Ok(interrupted)
 }
 
-/// A Songbird `End` event also fires after `TrackHandle::stop()`. Only the
-/// still-armed matching turn represents audio that reached natural playback
-/// completion and may advance `/voice status`.
-fn consume_natural_playback_end(playing_turn: &mut Option<u64>, ended_turn: u64) -> bool {
-    if *playing_turn != Some(ended_turn) {
+/// Consume only the still-armed matching turn. The caller separately checks
+/// typed Songbird termination provenance before recording completion.
+fn consume_matching_playback_termination(
+    playing_turn: &mut Option<u64>,
+    terminated_turn: u64,
+) -> bool {
+    if *playing_turn != Some(terminated_turn) {
         return false;
     }
     *playing_turn = None;
     true
-}
-
-struct PlaybackEnd {
-    tx: mpsc::UnboundedSender<SessionEvent>,
-    turn: u64,
-}
-
-#[serenity::async_trait]
-impl EventHandler for PlaybackEnd {
-    async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
-        let _ = self.tx.send(SessionEvent::PlaybackEnded(self.turn));
-        None
-    }
 }
 
 async fn play_audio(
@@ -479,17 +487,9 @@ async fn play_audio(
         return Ok(false);
     };
     drop(call);
-    if let Err(error) = handle.add_event(
-        Event::Track(TrackEvent::End),
-        PlaybackEnd {
-            tx: events.clone(),
-            turn,
-        },
-    ) {
+    if let Err(error) = register_playback_termination(&handle, events, turn) {
         let _ = handle.stop();
-        return Err(format!(
-            "registering the playback completion event failed: {error}"
-        ));
+        return Err(error);
     }
     *playback.lock().await = Some(handle);
     Ok(true)
@@ -606,18 +606,27 @@ mod tests {
     }
 
     #[test]
-    fn only_natural_matching_playback_end_counts_as_complete() {
+    fn only_matching_playback_termination_consumes_the_armed_turn() {
         let mut playing_turn = Some(11);
-        assert!(!consume_natural_playback_end(&mut playing_turn, 10));
+        assert!(!consume_matching_playback_termination(
+            &mut playing_turn,
+            10
+        ));
         assert_eq!(playing_turn, Some(11));
-        assert!(consume_natural_playback_end(&mut playing_turn, 11));
+        assert!(consume_matching_playback_termination(&mut playing_turn, 11));
         assert_eq!(playing_turn, None);
-        assert!(!consume_natural_playback_end(&mut playing_turn, 11));
+        assert!(!consume_matching_playback_termination(
+            &mut playing_turn,
+            11
+        ));
 
         // Barge-in/teardown invalidates the armed turn before Songbird emits
         // the End event caused by TrackHandle::stop().
         let mut interrupted_turn = Some(12);
         interrupted_turn.take();
-        assert!(!consume_natural_playback_end(&mut interrupted_turn, 12));
+        assert!(!consume_matching_playback_termination(
+            &mut interrupted_turn,
+            12
+        ));
     }
 }

@@ -250,6 +250,30 @@ impl PersonaContext {
         }
     }
 
+    fn selected_facts<'a>(&'a self, query: &str) -> crate::recall::Selection<'a> {
+        crate::recall::select(
+            &self.user_facts,
+            query,
+            crate::recall::MAX_CONTEXT_FACTS,
+            crate::recall::FACT_CONTEXT_CHARS,
+        )
+    }
+
+    /// Plain context fragments actually selected for this request.
+    ///
+    /// This is the read-only factual boundary used by reply grounding. It
+    /// deliberately excludes the fixed prompt copy and ambient reputation:
+    /// the former contains instruction-only numbers, while the latter may be
+    /// reported only through an authorized `lookup_reputation` tool result.
+    pub fn grounding_sources<'a>(&'a self, query: &str) -> Vec<&'a str> {
+        let mut sources = Vec::new();
+        if !self.channel_summary.is_empty() {
+            sources.push(self.channel_summary.as_str());
+        }
+        sources.extend(self.selected_facts(query).facts);
+        sources
+    }
+
     /// The context block appended to the system prompt, focused on `query`.
     ///
     /// Originally a line-for-line port of appleintelligence.md's `render(_ c:)`,
@@ -270,12 +294,7 @@ impl PersonaContext {
             ));
         }
         if !self.user_facts.is_empty() {
-            let picked = crate::recall::select(
-                &self.user_facts,
-                query,
-                crate::recall::MAX_CONTEXT_FACTS,
-                crate::recall::FACT_CONTEXT_CHARS,
-            );
+            let picked = self.selected_facts(query);
             out.push_str(&format!(
                 "Known about this user: {}",
                 picked.facts.join("; ")

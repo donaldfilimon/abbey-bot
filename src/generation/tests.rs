@@ -32,10 +32,7 @@ impl llm::StreamTransport for FakeStream {
 }
 
 fn prepared() -> crate::engine::PreparedTurn {
-    crate::engine::PreparedTurn {
-        system_prompt: "S".into(),
-        turns: vec![llm::ChatTurn::user("Q")],
-    }
+    crate::engine::Engine::new().prepare("c1", Persona::Abbey, &PersonaContext::empty(), "Q", 1)
 }
 
 fn local_backend() -> llm::Backend {
@@ -81,6 +78,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
 #[tokio::test]
 async fn streaming_posts_early_then_edits_to_the_tidied_final_text() {
     let out = FakeOut::default();
+    let prepared = prepared();
     // 70+ chars across deltas → first post after the 60-char threshold,
     // final edit carries the whole tidied text.
     let transport = FakeStream {
@@ -102,9 +100,10 @@ async fn streaming_posts_early_then_edits_to_the_tidied_final_text() {
         &Round {
             backend: &local_backend(),
             system_prompt: "S",
-            turns: &prepared().turns,
+            turns: &prepared.turns,
             tools: &[],
             persona: Persona::Abbey,
+            grounding: prepared.grounding(),
         },
     )
     .await
@@ -130,6 +129,7 @@ async fn streaming_posts_early_then_edits_to_the_tidied_final_text() {
 #[tokio::test]
 async fn a_stream_that_ends_in_tool_calls_reports_them_unposted() {
     let out = FakeOut::default();
+    let prepared = prepared();
     let transport = FakeStream {
         deltas: vec![],
         fail_at_end: false,
@@ -149,9 +149,10 @@ async fn a_stream_that_ends_in_tool_calls_reports_them_unposted() {
         &Round {
             backend: &local_backend(),
             system_prompt: "S",
-            turns: &prepared().turns,
+            turns: &prepared.turns,
             tools: &crate::tools::abbey_tools(),
             persona: Persona::Abbey,
+            grounding: prepared.grounding(),
         },
     )
     .await
@@ -169,6 +170,7 @@ async fn a_stream_that_ends_in_tool_calls_reports_them_unposted() {
 #[tokio::test]
 async fn streamed_text_and_tool_calls_are_rejected_before_dispatch() {
     let out = FakeOut::default();
+    let prepared = prepared();
     let transport = FakeStream {
         deltas: vec!["I remembered that."],
         fail_at_end: false,
@@ -188,9 +190,10 @@ async fn streamed_text_and_tool_calls_are_rejected_before_dispatch() {
         &Round {
             backend: &local_backend(),
             system_prompt: "S",
-            turns: &prepared().turns,
+            turns: &prepared.turns,
             tools: &crate::tools::abbey_tools(),
             persona: Persona::Abbey,
+            grounding: prepared.grounding(),
         },
     )
     .await
@@ -208,6 +211,7 @@ async fn streamed_text_and_tool_calls_are_rejected_before_dispatch() {
 #[tokio::test]
 async fn a_posted_partial_is_replaced_when_tool_calls_arrive() {
     let out = FakeOut::default();
+    let prepared = prepared();
     let transport = FakeStream {
         deltas: vec![
             "I have already remembered your private statement and this long claim ",
@@ -230,9 +234,10 @@ async fn a_posted_partial_is_replaced_when_tool_calls_arrive() {
         &Round {
             backend: &local_backend(),
             system_prompt: "S",
-            turns: &prepared().turns,
+            turns: &prepared.turns,
             tools: &crate::tools::abbey_tools(),
             persona: Persona::Abbey,
+            grounding: prepared.grounding(),
         },
     )
     .await
@@ -260,6 +265,7 @@ async fn a_posted_partial_is_replaced_when_tool_calls_arrive() {
 #[tokio::test]
 async fn a_short_stream_is_returned_unposted_for_the_ordinary_send() {
     let out = FakeOut::default();
+    let prepared = prepared();
     let transport = FakeStream {
         deltas: vec!["Blue."],
         fail_at_end: false,
@@ -275,9 +281,10 @@ async fn a_short_stream_is_returned_unposted_for_the_ordinary_send() {
         &Round {
             backend: &local_backend(),
             system_prompt: "S",
-            turns: &prepared().turns,
+            turns: &prepared.turns,
             tools: &[],
             persona: Persona::Abbey,
+            grounding: prepared.grounding(),
         },
     )
     .await
@@ -295,6 +302,7 @@ async fn a_short_stream_is_returned_unposted_for_the_ordinary_send() {
 #[tokio::test]
 async fn a_stream_that_dies_after_posting_edits_in_the_failure_line() {
     let out = FakeOut::default();
+    let prepared = prepared();
     let transport = FakeStream {
         deltas: vec![
             "This is going to be a long and promising answer that then ",
@@ -313,9 +321,10 @@ async fn a_stream_that_dies_after_posting_edits_in_the_failure_line() {
         &Round {
             backend: &local_backend(),
             system_prompt: "S",
-            turns: &prepared().turns,
+            turns: &prepared.turns,
             tools: &[],
             persona: Persona::Abbey,
+            grounding: prepared.grounding(),
         },
     )
     .await
@@ -333,5 +342,98 @@ async fn a_stream_that_dies_after_posting_edits_in_the_failure_line() {
             .last()
             .is_some_and(|e| !e.2.contains("upstream died")),
         "private backend detail must stay out of Discord: {edited:?}"
+    );
+}
+
+#[tokio::test]
+async fn streaming_hedges_an_unsupported_specific_before_the_first_post() {
+    let out = FakeOut::default();
+    let prepared = prepared();
+    let transport = FakeStream {
+        deltas: vec![
+            "Version 4.2.1 definitely shipped in 2019 and is the only supported release ",
+            "for every production deployment.",
+        ],
+        fail_at_end: false,
+        calls: vec![],
+    };
+    let StreamEnd::Text(text, id) = stream_reply(
+        &transport,
+        &Delivery {
+            out: &out,
+            native_channel_id: "c1",
+            reply_to: None,
+        },
+        &Round {
+            backend: &local_backend(),
+            system_prompt: "S",
+            turns: &prepared.turns,
+            tools: &[],
+            persona: Persona::Abbey,
+            grounding: prepared.grounding(),
+        },
+    )
+    .await
+    .expect("streamed") else {
+        panic!("expected text")
+    };
+    assert_eq!(id.as_deref(), Some("sent-1"));
+    let sent = out.sent.lock().unwrap();
+    let first = &sent[0].1.text;
+    assert!(
+        first.contains("treat these as unsupported: `4.2.1`, `2019`"),
+        "the first visible partial must already be guarded: {first}"
+    );
+    assert!(
+        text.contains("treat these as unsupported: `4.2.1`, `2019`"),
+        "the completed streamed reply must use the same hedge: {text}"
+    );
+}
+
+#[test]
+fn completed_replies_share_the_hedge_and_empty_grounding_policy() {
+    let grounding = Grounding::from_sources(["what changed?"]);
+    let guarded = finalize_reply(Persona::Abbey, "**Abbey**: It shipped in 2019.", &grounding);
+    assert!(guarded.starts_with("It shipped in 2019."), "{guarded}");
+    assert!(
+        guarded.contains("treat these as unsupported: `2019`"),
+        "{guarded}"
+    );
+
+    assert_eq!(
+        finalize_reply(
+            Persona::Abbey,
+            "**Abbey**: It shipped in 2019.",
+            &Grounding::new(),
+        ),
+        "It shipped in 2019.",
+        "an empty grounding remains explicitly no-hedge"
+    );
+}
+
+#[test]
+fn only_evidence_bearing_read_tool_results_ground_a_final_candidate() {
+    let prepared = prepared();
+    let results = vec![
+        crate::tools::ToolResult {
+            call_id: "call-1".into(),
+            name: "remember_fact".into(),
+            content: "Stored: The release was 4.2.1.".into(),
+        },
+        crate::tools::ToolResult {
+            call_id: "call-2".into(),
+            name: "recent_messages".into(),
+            content: "The release record says 2019.".into(),
+        },
+    ];
+    let grounding = grounding_for_round(&prepared, &results);
+
+    assert!(
+        grounding::check("It was 4.2.1.", &grounding).should_hedge(),
+        "a mutating acknowledgement that echoes model input is not authority"
+    );
+    assert!(
+        grounding::check("It was 2019.", &grounding).is_grounded(),
+        "validated tool results are grounding"
     );
 }

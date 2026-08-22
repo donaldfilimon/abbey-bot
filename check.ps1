@@ -30,6 +30,8 @@ Invoke-Checked -Executable "python" -Arguments @(
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-mlx-primary.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-publish-provider-qualification.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-privacy.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-wdbx-conformance.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-wdbx-conformance.py")
 
 Write-Host "== clippy =="
 Invoke-Checked -Executable "cargo" -Arguments @("clippy", "--all-targets", "--locked", "--", "-D", "warnings")

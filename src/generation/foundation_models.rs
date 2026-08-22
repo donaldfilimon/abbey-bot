@@ -3,13 +3,12 @@
 use std::future::Future;
 use std::sync::atomic::Ordering;
 
-use crate::ask;
 use crate::llm;
 use crate::persona::Persona;
 use crate::provider::{FoundationModels, ProviderRoute, ProviderRouter};
 use crate::runtime::AppState;
 
-use super::{Ask, ToolAccess};
+use super::{Ask, ToolAccess, finalize_reply, grounding_for_round};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FallbackRoute {
@@ -101,12 +100,14 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
         (access.is_enabled() && fm_tools && state.tools_enabled.load(Ordering::Relaxed))
             .then(crate::tools::abbey_tools);
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
+    let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
         let prepared =
             AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
+        let grounding = grounding_for_round(&prepared, &grounding_results);
         let offer = vocabulary.is_some()
             && round_index < crate::tools::MAX_TOOL_ROUNDS
             && fm
@@ -142,7 +143,11 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
                     "the FM CLI response carried no answer text".into(),
                 ));
             }
-            return Ok((ask::tidy_reply(persona, &turn.text), None, persona));
+            return Ok((
+                finalize_reply(persona, &turn.text, &grounding),
+                None,
+                persona,
+            ));
         }
         let results = access.dispatch(offer, &turn.calls)?;
         for call in &turn.calls {
@@ -150,6 +155,7 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
         }
         extra_turns.push(llm::ChatTurn::assistant_calls(turn.text, turn.calls));
         extra_turns.extend(results.iter().map(llm::ChatTurn::tool_result));
+        grounding_results.extend(results);
     }
     Err(llm::LlmError::backend(format!(
         "the FM CLI kept calling tools for {} rounds without answering",

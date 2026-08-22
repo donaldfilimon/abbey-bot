@@ -3,13 +3,13 @@
 //! Audio callbacks only enqueue fixed frames. This task owns turn segmentation,
 //! cancellation, WDBX-scoped context, persona routing, the existing tool loop,
 //! and one playback track per response. Raw audio and provider transcripts are
-//! never persisted.
+//! never persisted. While an operator verification run is armed, completed
+//! conversational transcripts and responses are not committed either.
 
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 
-use songbird::events::{Event, EventContext, EventHandler, TrackEvent};
 use songbird::input::RawAdapter;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinSet;
@@ -22,8 +22,8 @@ use crate::persona;
 use crate::pipeline;
 use crate::runtime::{self, AppState};
 use crate::voice_session::{
-    SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime, authoritative_text_reply,
-    requests_consent_withdrawal,
+    PlaybackTermination, SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime,
+    authoritative_text_reply, register_playback_termination, requests_consent_withdrawal,
 };
 
 const VOICE_SYSTEM_SUFFIX: &str = "You are speaking aloud in a consented Discord voice session. Respond in one to three short, natural sentences unless the user explicitly asks for detail. Avoid Markdown, raw URLs, emoji, tables, headings, and unspoken formatting. Pronounce code, symbols, and acronyms clearly. Voice turns are read-only: never claim an external action or durable memory change succeeded.";
@@ -104,6 +104,55 @@ struct PendingCommit {
     spoken_answer: String,
 }
 
+fn should_commit_turn(persist_requested: bool, verification_active: bool) -> bool {
+    persist_requested && !verification_active
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackObservation {
+    NaturalCompletion,
+    Errored,
+    OrdinaryStop,
+    ConfirmedBargeInCancellation,
+    Unclassified,
+    Stale,
+}
+
+#[derive(Default)]
+struct PlaybackLifecycle {
+    pending_barge_stop: Option<u64>,
+}
+
+impl PlaybackLifecycle {
+    fn note_barge_stop_requested(&mut self, turn: u64) {
+        self.pending_barge_stop = Some(turn);
+    }
+
+    fn observe(
+        &mut self,
+        current_turn: u64,
+        turn: u64,
+        termination: PlaybackTermination,
+    ) -> PlaybackObservation {
+        let pending_barge_stop = self.pending_barge_stop == Some(turn);
+        if pending_barge_stop {
+            self.pending_barge_stop = None;
+            if termination == PlaybackTermination::Stopped {
+                return PlaybackObservation::ConfirmedBargeInCancellation;
+            }
+        }
+        if turn != current_turn {
+            return PlaybackObservation::Stale;
+        }
+        match termination {
+            PlaybackTermination::Natural => PlaybackObservation::NaturalCompletion,
+            PlaybackTermination::Stopped => PlaybackObservation::OrdinaryStop,
+            PlaybackTermination::Errored => PlaybackObservation::Errored,
+            PlaybackTermination::Unclassified => PlaybackObservation::Unclassified,
+        }
+    }
+}
+
 pub async fn run(mut session: LocalSession) {
     let client = session.client.clone();
     let wake = Arc::new(Mutex::new(WakeState::default()));
@@ -111,6 +160,7 @@ pub async fn run(mut session: LocalSession) {
     let mut turns = JoinSet::new();
     let mut turn_generation = 0_u64;
     let mut pending_commit: Option<PendingCommit> = None;
+    let mut playback_lifecycle = PlaybackLifecycle::default();
 
     session
         .runtime
@@ -141,39 +191,79 @@ pub async fn run(mut session: LocalSession) {
                 }
             }
             lifecycle = session.lifecycle.recv() => {
-                let Some(SessionEvent::PlaybackEnded(turn)) = lifecycle else { continue; };
-                if turn == turn_generation {
-                    session.playback.lock().await.take();
-                    let mut committed = false;
-                    if let Some(pending) = pending_commit.take()
-                        && pending.turn == turn
-                    {
-                        committed = session
+                let Some(SessionEvent::PlaybackTerminated { turn, termination }) = lifecycle else {
+                    continue;
+                };
+                match playback_lifecycle.observe(turn_generation, turn, termination) {
+                    PlaybackObservation::NaturalCompletion => {
+                        session.playback.lock().await.take();
+                        let pending = pending_commit.take().filter(|pending| pending.turn == turn);
+                        let has_pending_commit = pending.is_some();
+                        let committed = session
                             .runtime
                             .with_media_enabled(session.epoch, || {
-                                AppState::lock(&session.state.engine).commit(
-                                    &pending.scope,
-                                    &pending.transcript,
-                                    &pending.spoken_answer,
-                                    runtime::now(),
-                                );
+                                if let Some(pending) = pending {
+                                    AppState::lock(&session.state.engine).commit(
+                                        &pending.scope,
+                                        &pending.transcript,
+                                        &pending.spoken_answer,
+                                        runtime::now(),
+                                    );
+                                }
+                                // Only Songbird's natural `PlayMode::End` is
+                                // completion evidence. Verification may still
+                                // suppress the conversational commit.
                                 session.runtime.note_completed_turn();
+                                has_pending_commit
                             })
-                            .is_some();
+                            .unwrap_or(false);
+                        tracing::info!(
+                            epoch = session.epoch,
+                            turn,
+                            committed,
+                            "local Abbey playback completed"
+                        );
+                        session.runtime
+                            .set_status(
+                                session.epoch,
+                                VoicePhase::Listening,
+                                "local inference ready; listening for Abbey",
+                            )
+                            .await;
                     }
-                    tracing::info!(
-                        epoch = session.epoch,
-                        turn,
-                        committed,
-                        "local Abbey playback completed"
-                    );
-                    session.runtime
-                        .set_status(
-                            session.epoch,
-                            VoicePhase::Listening,
-                            "local inference ready; listening for Abbey",
-                        )
-                        .await;
+                    PlaybackObservation::ConfirmedBargeInCancellation => {
+                        session.runtime.note_verification_barge_in_cancellation();
+                        tracing::info!(
+                            epoch = session.epoch,
+                            turn,
+                            "local Abbey playback stop confirmed after barge-in"
+                        );
+                    }
+                    PlaybackObservation::Errored
+                    | PlaybackObservation::OrdinaryStop
+                    | PlaybackObservation::Unclassified => {
+                        session.playback.lock().await.take();
+                        if pending_commit
+                            .as_ref()
+                            .is_some_and(|pending| pending.turn == turn)
+                        {
+                            pending_commit = None;
+                        }
+                        tracing::warn!(
+                            epoch = session.epoch,
+                            turn,
+                            ?termination,
+                            "local Abbey playback ended without natural completion"
+                        );
+                        session.runtime
+                            .set_status(
+                                session.epoch,
+                                VoicePhase::Listening,
+                                "speech playback ended early; listening remains active",
+                            )
+                            .await;
+                    }
+                    PlaybackObservation::Stale => {}
                 }
             }
             frame = session.input.recv() => {
@@ -184,10 +274,14 @@ pub async fn run(mut session: LocalSession) {
                 for event in segmenter.push(frame) {
                     match event {
                         SegmentEvent::SpeechStarted { .. } => {
+                            let playback_turn = turn_generation;
                             turn_generation = turn_generation.saturating_add(1);
                             pending_commit = None;
-                            let interrupted =
-                                !turns.is_empty() || stop_playback(&session.playback).await;
+                            let playback_stop_requested = stop_playback(&session.playback).await;
+                            if playback_stop_requested {
+                                playback_lifecycle.note_barge_stop_requested(playback_turn);
+                            }
+                            let interrupted = !turns.is_empty() || playback_stop_requested;
                             if interrupted {
                                 session.runtime.note_barge_in();
                             }
@@ -313,7 +407,11 @@ pub async fn run(mut session: LocalSession) {
                             turn,
                         ).await {
                             Ok(true) => {
-                                pending_commit = persist.then_some(PendingCommit {
+                                pending_commit = should_commit_turn(
+                                    persist,
+                                    session.runtime.verification_active(),
+                                )
+                                .then_some(PendingCommit {
                                     turn,
                                     scope,
                                     transcript,
@@ -395,6 +493,8 @@ async fn process_turn(work: TurnWork) -> TurnOutcome {
             };
         }
     };
+    work.runtime
+        .note_verification_stt_completion(work.consent_epoch);
     let safely_attributed = work.utterance.speaker_id.is_some() && !work.utterance.overlap;
     let snapshot = work.runtime.snapshot().await;
     let withdrawal_authorized = if safely_attributed {
@@ -598,21 +698,11 @@ async fn stop_playback(playback: &SharedPlayback) -> bool {
     let Some(track) = track else {
         return false;
     };
-    let _ = track.stop();
-    true
+    playback_stop_requested(track.stop())
 }
 
-struct PlaybackEnd {
-    tx: mpsc::UnboundedSender<SessionEvent>,
-    turn: u64,
-}
-
-#[serenity::async_trait]
-impl EventHandler for PlaybackEnd {
-    async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
-        let _ = self.tx.send(SessionEvent::PlaybackEnded(self.turn));
-        None
-    }
+fn playback_stop_requested(result: songbird::tracks::TrackResult<()>) -> bool {
+    result.is_ok()
 }
 
 async fn play_audio(
@@ -635,17 +725,9 @@ async fn play_audio(
         return Ok(false);
     };
     drop(call);
-    if let Err(error) = handle.add_event(
-        Event::Track(TrackEvent::End),
-        PlaybackEnd {
-            tx: events.clone(),
-            turn,
-        },
-    ) {
+    if let Err(error) = register_playback_termination(&handle, events, turn) {
         let _ = handle.stop();
-        return Err(format!(
-            "registering the playback completion event failed: {error}"
-        ));
+        return Err(error);
     }
     *playback.lock().await = Some(handle);
     Ok(true)
@@ -756,5 +838,58 @@ mod tests {
         assert_ne!(first, other_speaker);
         assert_ne!(first, later_consent);
         assert_ne!(unknown_a, unknown_b);
+    }
+
+    #[test]
+    fn armed_verification_disables_conversation_commits() {
+        assert!(should_commit_turn(true, false));
+        assert!(!should_commit_turn(true, true));
+        assert!(!should_commit_turn(false, false));
+        assert!(!should_commit_turn(false, true));
+    }
+
+    #[test]
+    fn stop_command_result_only_arms_later_confirmation() {
+        assert!(playback_stop_requested(Ok(())));
+        assert!(!playback_stop_requested(Err(
+            songbird::tracks::ControlError::Finished
+        )));
+    }
+
+    #[test]
+    fn playback_lifecycle_distinguishes_every_terminal_outcome() {
+        let mut lifecycle = PlaybackLifecycle::default();
+        assert_eq!(
+            lifecycle.observe(7, 7, PlaybackTermination::Natural),
+            PlaybackObservation::NaturalCompletion
+        );
+        assert_eq!(
+            lifecycle.observe(8, 8, PlaybackTermination::Errored),
+            PlaybackObservation::Errored
+        );
+        assert_eq!(
+            lifecycle.observe(9, 9, PlaybackTermination::Stopped),
+            PlaybackObservation::OrdinaryStop
+        );
+
+        lifecycle.note_barge_stop_requested(9);
+        assert_eq!(
+            lifecycle.observe(10, 9, PlaybackTermination::Natural),
+            PlaybackObservation::Stale,
+            "a natural-end race must not be reported as barge cancellation"
+        );
+
+        lifecycle.note_barge_stop_requested(10);
+        assert_eq!(
+            lifecycle.observe(11, 10, PlaybackTermination::Errored),
+            PlaybackObservation::Stale,
+            "a playback error must not be reported as barge cancellation"
+        );
+
+        lifecycle.note_barge_stop_requested(11);
+        assert_eq!(
+            lifecycle.observe(12, 11, PlaybackTermination::Stopped),
+            PlaybackObservation::ConfirmedBargeInCancellation
+        );
     }
 }

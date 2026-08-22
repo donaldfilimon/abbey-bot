@@ -235,6 +235,12 @@ fn persona_context_render_snapshot() {
     assert!(rendered.contains("explicitly asks"));
     assert!(rendered.contains("lookup_reputation"));
     assert!(rendered.contains("never changes safety, authorization, privacy"));
+
+    assert_eq!(
+        ctx.grounding_sources("a rust question"),
+        ["talking about deploys", "likes rust", "runs a homelab"],
+        "grounding sees only the summary and facts rendered for this request"
+    );
 }
 
 #[test]
@@ -271,6 +277,13 @@ fn render_focuses_facts_on_the_message_and_discloses_the_trim() {
     assert!(
         rendered.contains("(+2 more remembered facts not shown for this message)"),
         "the trim must be disclosed: {rendered}"
+    );
+    let grounding = ctx.grounding_sources("how do I roll back a kubernetes deploy?");
+    assert_eq!(grounding.len(), crate::recall::MAX_CONTEXT_FACTS);
+    assert!(grounding.contains(&"deploys with kubernetes"));
+    assert!(
+        !grounding.contains(&"unrelated fact 0"),
+        "held-back facts must not ground claims the model never saw: {grounding:?}"
     );
     // Ranking is not forgetting: everything is still on file.
     assert_eq!(ctx.user_facts.len(), 10);

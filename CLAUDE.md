@@ -13,7 +13,7 @@ header line differs. Apply any edit to both, or they drift.
 ## Commands
 
 ```bash
-./check.sh          # gate: fmt, deploy/lock validation, clippy -D warnings, tests, release build
+./check.sh          # gate: fmt, validation/WDBX parity, clippy -D warnings, tests, release build
 ./check.ps1         # the same source gate on Windows (without POSIX/plist-only checks)
 cargo test <name>   # single test, substring-matched against the full path
 cargo run           # needs DISCORD_TOKEN; see README
@@ -43,10 +43,16 @@ before the gate did too, a Cargo.toml bump without a regenerated lock kept CI
 green while every deploy build died. The gate proves the property the deploy
 depends on — do not remove the flag to "fix" a lock error; regenerate the lock.
 
+The gate runs `scripts/check-wdbx-conformance.py`. With the canonical sibling
+`../wdbx` checkout present, it compares both frozen WDBX-v1 fixtures byte for
+byte. Standalone CI reports that external layer as explicitly skipped; set
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1` (and, outside the sibling layout,
+`ABBEY_WDBX_REPO`) for an integration/release run where absence must fail.
+
 **CI runs the platform's real gate.** `.github/workflows/rust.yml` runs a
 non-fail-fast Ubuntu/macOS/Windows matrix on every push and PR to `main`.
 Ubuntu and macOS execute `./check.sh`; Windows executes `./check.ps1`. Every
-lane checks formatting, Python locks/syntax, the privacy logging rule,
+    lane checks formatting, Python locks/syntax, the privacy logging rule,
 all-target Clippy with `--locked -D warnings`, locked tests, and the locked
 release build. POSIX shell syntax runs on Ubuntu/macOS and plist lint runs when
 `plutil` is present. The runner's rustup honours `rust-toolchain.toml`, so CI
@@ -534,8 +540,7 @@ making claims about `origin/main`.
 
 `~/dev/archive/swift-discord` is a home-grown **Swift** Discord library with its
 own gateway and REST targets. It shares no code with this crate and is not a
-dependency, a port source, or a reference implementation. The `discord-abbey`
-skill's reference files describe a Swift/Vapor/DiscordBM bot at
-`~/Desktop/AbbeyBot`, which does not exist on this machine; the skill's
-non-code guidance (capability map, output format rules, persona registers) is
-what this project actually implements, and those reference files are historical.
+dependency, a port source, or a reference implementation. The separate active
+Swift/Vapor/DiscordBM product is `~/dev/active/AbbeyBot`; it shares no code with
+this Rust crate. Treat its architecture as an adjacent implementation, not a
+dependency or source of runtime truth for this project.

@@ -37,6 +37,19 @@ pub struct ToolResult {
     pub content: String,
 }
 
+impl ToolResult {
+    /// Runtime read results that may add lexical evidence to a final reply.
+    /// Mutation acknowledgements, persona switches, and unknown tools are not
+    /// evidence merely because execution returned a string.
+    pub fn grounding_source(&self) -> Option<&str> {
+        matches!(
+            self.name.as_str(),
+            "lookup_reputation" | "recall" | "recent_messages"
+        )
+        .then_some(self.content.as_str())
+    }
+}
+
 /// Longest tool result handed back to the model.
 pub const MAX_RESULT_CHARS: usize = 600;
 /// Most recent messages `recent_messages` will return.
@@ -387,5 +400,20 @@ mod tests {
         let t = truncate(&long);
         assert_eq!(t.chars().count(), MAX_RESULT_CHARS);
         assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn only_read_tools_expose_grounding_sources() {
+        let result = |name: &str| ToolResult {
+            call_id: "c".into(),
+            name: name.into(),
+            content: "source".into(),
+        };
+        for name in ["lookup_reputation", "recall", "recent_messages"] {
+            assert_eq!(result(name).grounding_source(), Some("source"), "{name}");
+        }
+        for name in ["remember_fact", "switch_persona", "unknown"] {
+            assert_eq!(result(name).grounding_source(), None, "{name}");
+        }
     }
 }

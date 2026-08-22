@@ -244,7 +244,7 @@ fn the_verdict_reports_what_was_examined_not_just_a_boolean() {
     assert_eq!(v.examined.len(), 2, "{:?}", v.examined);
     assert_eq!(v.ungrounded.len(), 1);
     assert_eq!(v.ungrounded[0].text, "2019");
-    assert_eq!(v.ungrounded[0].kind.label(), "year");
+    assert_eq!(v.ungrounded[0].kind, SpecificKind::Year);
 }
 
 #[test]
