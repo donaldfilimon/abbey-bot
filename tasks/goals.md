@@ -164,3 +164,31 @@ status: in_progress
   (versions, dates, statistics, quotes) asserted in a reply but absent from the supplied grounding
   — explicitly a lexical check, not a hallucination detector, and required to test the
   false-positive direction because a guard that flags numbers the user supplied is worse than none.
+- **2026-08-22 ledger reconciliation.** PRs #25–#31 landed after the entries above without those
+  entries being updated, so several "Open and honestly unclaimed" claims from 2026-08-20 slice 1
+  were stale by the time this was checked. Verified against actual source and a real binary run,
+  not assumed: (1) `.github/workflows/rust.yml` runs the `ubuntu-24.04` / `macos-15` /
+  `windows-2025` matrix on every push and PR — the "cross-platform CI … not yet added" line is
+  false as of this repo state; (2) `--provider-self-test primary|fm|all --json` is implemented and
+  was run here under `env -i` (no inherited environment, no `DISCORD_TOKEN`, no `ABBEY_DATA_DIR`):
+  `primary` correctly reports `configured:false` and exits 2 without touching Discord or a data
+  directory; `fm` with `ABBEY_FM_MODE=system` against this Mac's real `/usr/bin/fm` (macOS 27,
+  build `26A5416b`) reports `text`/`structured_output`/`tools` as `pass`, bound to
+  `cli_sha256`/`abbey_binary_sha256` identity, and `vision`/`ocr` as `fail` with
+  `category":"semantic_vision"`/`"semantic_ocr"` — the self-test fails closed on the real semantic
+  check rather than a bare-connectivity pass, which is the FM vision/OCR gating requirement working
+  as designed. This closes both remaining `--provider-self-test` and FM-vision/OCR-gating items in
+  `tasks/todo.md`. It does **not** mean FM vision/OCR are production-qualified on this build — they
+  are not, per the same evidence, and must not be advertised as such.
+- **2026-08-22 residual check, no branches or PRs pending.** `codex/live-voice-20260820` and
+  `codex/memory-revision-20260820` no longer exist as branches (their work is already folded into
+  main's history); `git worktree list` shows only the primary checkout; `gh pr list --state open`
+  is empty; local `main` equals `origin/main`. There is nothing outstanding to merge. The remaining
+  open items across every `in_progress` goal in this file are blocked on one of two things neither
+  fixable from source: (a) human presence in a live Discord voice/text session for consent,
+  wake-reply, barge-in, and `/see`/`/ocr`/`/webhook`/`OverBudget` acceptance, or (b) a deployed
+  MLX-VLM/MLX-Audio sidecar, which this Mac does not currently have — both launchd services and
+  their weights were deliberately uninstalled 2026-08-21, and redeploying them mid-slice was
+  explicitly declined in favor of building source-only and redeploying once at the end. Until one
+  of those two conditions changes, further "continue" work here is ledger honesty and source-level
+  slices like the one above, not the human/deployment-gated bullets themselves.
