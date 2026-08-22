@@ -74,7 +74,12 @@ pub struct GuildSettings {
     pub enabled: bool,
     #[serde(with = "persona_serde")]
     pub default_persona: Persona,
-    /// DQN on/off for this guild.
+    /// DQN on/off for this guild. **Opt-in and default-off** per constitutional
+    /// decision 31: a guild that has never chosen must not be learning from its
+    /// members. `#[serde(default)]` makes an absent field read as off rather
+    /// than as a deserialize error, so the safe value is also the one a
+    /// truncated or older document produces.
+    #[serde(default)]
     pub learning_enabled: bool,
     /// Kept for the spec's row shape and old documents; voice is out of
     /// scope (no `voice.md` was supplied), so nothing reads or renders it.
@@ -101,7 +106,7 @@ impl Default for GuildSettings {
         Self {
             enabled: true,
             default_persona: Persona::Abbey,
-            learning_enabled: true,
+            learning_enabled: false,
             voice_enabled: true,
             vision_enabled: true,
             reply_cooldown_seconds: DEFAULT_COOLDOWN_SECONDS,
@@ -308,12 +313,27 @@ mod tests {
 
     const G: &str = "discord:42";
 
+    /// Constitutional decision 31: adaptive learning is opt-in and default-off.
+    /// A guild that has never chosen must not be learning from its members, and
+    /// `commands_brain.rs` already provides the operator toggle that makes
+    /// opting in reachable.
+    #[test]
+    fn learning_is_off_until_a_guild_opts_in() {
+        assert!(
+            !GuildSettings::default().learning_enabled,
+            "adaptive learning must be opt-in; a default of true learns from a guild that never consented"
+        );
+    }
+
     #[test]
     fn defaults_match_spec() {
         let d = GuildSettings::default();
         assert!(d.enabled);
         assert_eq!(d.default_persona, Persona::Abbey);
-        assert!(d.learning_enabled);
+        assert!(
+            !d.learning_enabled,
+            "learning is opt-in; see learning_is_off_until_a_guild_opts_in"
+        );
         assert!(d.voice_enabled);
         assert!(d.vision_enabled);
         assert_eq!(d.reply_cooldown_seconds, 20);
@@ -435,7 +455,11 @@ mod tests {
 
     #[test]
     fn render_settings_matches_admin_show() {
+        // Both flags are set explicitly so this asserts the *rendering* of a
+        // known mixed state rather than whatever the defaults happen to be.
+        // `learning_enabled` in particular is now opt-in and default-off.
         let s = GuildSettings {
+            learning_enabled: true,
             vision_enabled: false,
             ..GuildSettings::default()
         };
