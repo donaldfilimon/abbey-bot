@@ -539,6 +539,10 @@ fn opt_in(state: &AppState, guild: &str, per_hour: u32) {
         s.unsolicited = true;
         s.unsolicited_per_hour = per_hour;
         s.reply_cooldown_seconds = 0;
+        // Learning is opt-in and default-off, so a helper named `opt_in` has to
+        // say so. It used to rely on the default being true, which is exactly
+        // the implicit consent the default-off change removes.
+        s.learning_enabled = true;
     });
 }
 
