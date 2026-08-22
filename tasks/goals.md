@@ -1,5 +1,25 @@
 # Goals
 
+## Program 1 stable-Rust contract conformance
+status: done
+- Local C1 source evidence on 2026-08-22: `abbey-bot` vendors the exact 81-artifact,
+  88,328-byte Abbey Program 1 corpus from ABI revision
+  `348754bdaaf59a40fbb858380f925e0aba95a23b`, pinned to aggregate SHA-256
+  `72e241e34967df318376bf68f4a0e2db13f5ebf17d1a219709731f1f470dbe8e`.
+  The Python gate independently rejects lock, inventory, byte, digest, and privacy-taxonomy
+  drift using closed reason codes and corpus-relative paths. The stable Rust 1.97.1 test
+  decoder independently verifies the lock, per-artifact and aggregate commitments, bounded
+  local schemas, all 52 fixtures across seven taxonomies, authority-unknown rejection,
+  tolerant extension preservation, semantic fail-closed outcomes, and the complete redacted
+  synthetic operator-verification report classified only as `local_test`.
+- Fresh local gate evidence: `./check.sh` passed Python syntax and privacy validation, 7
+  vendored-corpus guard tests, exact corpus verification, WDBX parity, Clippy with
+  `-D warnings`, 640 Rust tests with 2 intentional live-environment ignores, and the locked
+  release build. Contract validation remains data-only and is not connected to Discord
+  command execution. This evidence does not establish production federation, deployment,
+  provider qualification, a real grant or approval, participant consent, live Discord,
+  WDBX episode writes, or installed-artifact identity.
+
 ## Full-duplex Abbey voice in Discord Engineering
 status: in_progress
 - Captured 2026-08-20 from "use amazing voice and full live voice from advanced voice, look at streams, use Claude Code and find Abbey repo on computer and work on it."
