@@ -113,7 +113,7 @@ a green source gate is not semantic, deployment, or live evidence.
       (default `/usr/bin/fm`), `ABBEY_FM_FALLBACK=1` — no implicit provider switching when unset
 - [x] Add `abbey-bot --provider-self-test primary|fm|all --json`, runnable without Discord
       credentials or production state, reporting each capability independently — verified
-      2026-08-22 by running the built release binary under `env -i` (no `DISCORD_TOKEN`, no
+      2026-08-21 by running the built release binary under `env -i` (no `DISCORD_TOKEN`, no
       `ABBEY_DATA_DIR`, no inherited environment at all): `primary` reports `configured:false` and
       exits 2 (unconfigured target, matching the documented contract) without touching Discord or
       a data directory; `fm` with `ABBEY_FM_MODE=system` reports real per-capability JSON bound to
@@ -127,7 +127,7 @@ a green source gate is not semantic, deployment, or live evidence.
 - [x] Enable FM tools only after all required request, argument, result-continuation, refusal,
       malformed-output, and max-round tests
 - [x] Enable FM vision/OCR only on semantic fixtures (known colors/objects, exact text), not
-      HTTP 200 — verified 2026-08-22: `--provider-self-test fm --json` against the real
+      HTTP 200 — verified 2026-08-21: `--provider-self-test fm --json` against the real
       `/usr/bin/fm` on this Mac (macOS 27, build `26A5416b`) reports `text`/`structured_output`/
       `tools` as `pass` but `vision`/`ocr` as `fail` with `category":"semantic_vision"` /
       `"semantic_ocr"` — the gate fails closed on the actual semantic check rather than reporting

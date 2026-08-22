@@ -164,7 +164,7 @@ status: in_progress
   (versions, dates, statistics, quotes) asserted in a reply but absent from the supplied grounding
   — explicitly a lexical check, not a hallucination detector, and required to test the
   false-positive direction because a guard that flags numbers the user supplied is worse than none.
-- **2026-08-22 ledger reconciliation.** PRs #25–#31 landed after the entries above without those
+- **2026-08-21 ledger reconciliation.** PRs #25–#31 landed after the entries above without those
   entries being updated, so several "Open and honestly unclaimed" claims from 2026-08-20 slice 1
   were stale by the time this was checked. Verified against actual source and a real binary run,
   not assumed: (1) `.github/workflows/rust.yml` runs the `ubuntu-24.04` / `macos-15` /
@@ -180,7 +180,7 @@ status: in_progress
   as designed. This closes both remaining `--provider-self-test` and FM-vision/OCR-gating items in
   `tasks/todo.md`. It does **not** mean FM vision/OCR are production-qualified on this build — they
   are not, per the same evidence, and must not be advertised as such.
-- **2026-08-22 residual check, no branches or PRs pending.** `codex/live-voice-20260820` and
+- **2026-08-21 residual check, no branches or PRs pending.** `codex/live-voice-20260820` and
   `codex/memory-revision-20260820` no longer exist as branches (their work is already folded into
   main's history); `git worktree list` shows only the primary checkout; `gh pr list --state open`
   is empty; local `main` equals `origin/main`. There is nothing outstanding to merge. The remaining
