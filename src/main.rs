@@ -43,6 +43,8 @@
 //! over REST instead, which is why [`profile::summarize`] states that
 //! presence is unavailable rather than guessing at it.
 
+#[cfg(test)]
+mod abbey_contracts;
 mod ask;
 mod brain;
 mod commands;
