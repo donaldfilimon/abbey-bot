@@ -27,7 +27,7 @@ to this crate and shares no code with it.
 | `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint. JPEG, PNG, WebP, and GIF are fully decoded locally under 8192×8192-pixel and 96 MiB allocation ceilings before transport; GIF's first rendered frame is normalized to PNG. |
 | `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
-| `/voice join consent:true\|resume consent:true\|leave\|status` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
+| `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. The owner/admin-only local verifier spans join, participant pause/resume, and final leave with content-free in-memory counters; while armed it disables voice conversation commits. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
 
 **The model can call Abbey's own systems.** On mentions, DMs, and `/persona
 ask` the backend is offered five tools — `remember_fact`, `lookup_reputation`,
@@ -319,6 +319,10 @@ Abbey keeps these evidence layers separate; passing one never implies the next:
    formatting, deployment/static validation, privacy logging rules, Clippy,
    offline tests, and a locked release build. GitHub runs the corresponding
    gate on Ubuntu, macOS, and Windows for every pull request and `main` push.
+   When the canonical sibling `wdbx` checkout is present, the gate also compares
+   both repositories' frozen WDBX-v1 conformance fixtures byte-for-byte. Set
+   `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` for integration/release runs where a
+   missing sibling must fail rather than explicitly skip that external layer.
 2. `--provider-self-test primary|fm|all --json` probes configured providers
    with synthetic fixtures and ephemeral state before Discord credentials or
    production data are loaded. Its JSON binds capability results to provider,
@@ -332,6 +336,18 @@ Abbey keeps these evidence layers separate; passing one never implies the next:
 5. Voice requires a separate, current everyone-present consent record and an
    authorized consent-bearing `/voice` command. Source tests, an offline WAV,
    muted presence, or an earlier session do not authorize live capture.
+
+For final local voice acceptance, an owner or administrator runs `/voice verify
+start` before the consented join and `/voice verify report` after the final
+`/voice leave`. The process-memory-only report contains fixed milestone counts,
+consent epochs, and participant counts, never participant identities, audio,
+transcripts, responses, or message content. While the run is armed, voice
+conversation commits are disabled. It observes decoded voiced input, local STT
+completion, natural synthesized playback completion, an actual playback handle
+stopped by barge-in, participant-change pause plus fresh-epoch resume, and the
+final Songbird leave. It cannot prove that each human actually consented or
+heard the response; those remain explicit manual witness facts, separate from
+source tests and the offline audition.
 
 Provider self-test exit codes are `0` when every capability required by the
 selected runtime configuration passes, `1` for a required probe failure, and
@@ -432,8 +448,11 @@ conditions around activation, and channel/role/member changes stop the media
 epoch if the call could become receive-only. `/voice leave` tears down both
 sides, while `/voice status`
 reports mode, phase, models, consent epoch, and bounded-queue counters without
-content or credentials. In explicit `openai` backup mode, Realtime is a
-degraded direct provider path: spoken stop detection is not authoritative, so
+content or credentials. The local-only `/voice verify start|report` surface is
+further limited to the owner or an administrator. It keeps one ephemeral,
+redacted acceptance run across consent epochs and suppresses voice transcript
+commits while armed; a process restart clears it. In explicit `openai` backup
+mode, Realtime is a degraded direct provider path: spoken stop detection is not authoritative, so
 any participant must use `/voice leave` or write `stop listening` in the
 configured voice chat for a deterministic stop. Discord Go Live video is not
 ingested; stream vision needs a separate consented screenshot source and
@@ -586,8 +605,11 @@ CI (`.github/workflows/rust.yml`) runs Ubuntu and macOS through `check.sh` and
 Windows through `check.ps1`, all with the exact Rust 1.97.1 toolchain. Every
 lane proves formatting, Python syntax and hash locks, the static privacy gate,
 Clippy with warnings denied, the offline test suite, and the locked release
-build. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also runs
-where `plutil` exists.
+build. The WDBX parity script runs in every lane but reports an explicit external
+skip in a standalone checkout; it becomes required when
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1` and `ABBEY_WDBX_REPO` identifies the canonical
+sibling. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also
+runs where `plutil` exists.
 
 The shared Rust sequence is
 `cargo fmt --all -- --check`, platform-appropriate deployment validation, then

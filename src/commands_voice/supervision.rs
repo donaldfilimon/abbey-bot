@@ -330,7 +330,7 @@ async fn stop_for_new_participant(
     let manager = songbird::get(ctx).await;
     let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
     let Some(pause) = runtime
-        .begin_pause_epoch_for_consent(
+        .begin_participant_pause_epoch_for_consent(
             epoch,
             participants,
             "audio stopped; a new participant requires renewed consent",

@@ -17,8 +17,13 @@ use tokio::task::JoinHandle;
 use crate::voice::VoiceConfig;
 
 mod control;
+mod playback;
+mod verification;
 
 pub use control::{authoritative_text_reply, requests_consent_withdrawal};
+pub use playback::{PlaybackTermination, register_playback_termination};
+pub use verification::VerificationActivation;
+use verification::VerificationState;
 
 pub type SharedPlayback = Arc<Mutex<Option<TrackHandle>>>;
 
@@ -55,9 +60,12 @@ impl VoicePhase {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
-    PlaybackEnded(u64),
+    PlaybackTerminated {
+        turn: u64,
+        termination: PlaybackTermination,
+    },
 }
 
 impl VoiceRuntime {
@@ -226,6 +234,7 @@ pub struct VoiceRuntime {
     aborted_overruns: AtomicU64,
     barge_ins: AtomicU64,
     completed_turns: AtomicU64,
+    verification: SyncMutex<VerificationState>,
     inner: Mutex<RuntimeState>,
 }
 
@@ -247,6 +256,7 @@ impl VoiceRuntime {
             aborted_overruns: AtomicU64::new(0),
             barge_ins: AtomicU64::new(0),
             completed_turns: AtomicU64::new(0),
+            verification: SyncMutex::new(VerificationState::default()),
             inner: Mutex::new(RuntimeState {
                 epoch: 0,
                 phase: VoicePhase::Disconnected,
@@ -567,6 +577,30 @@ impl VoiceRuntime {
         start_generation: u64,
         status: impl Into<String>,
     ) -> bool {
+        self.activate_inner(epoch, start_generation, status, None)
+            .await
+    }
+
+    /// Open media and publish content-free verifier activation evidence in
+    /// the same critical section as the lifecycle transition.
+    pub async fn activate_verified(
+        &self,
+        epoch: u64,
+        start_generation: u64,
+        status: impl Into<String>,
+        evidence: VerificationActivation,
+    ) -> bool {
+        self.activate_inner(epoch, start_generation, status, Some(evidence))
+            .await
+    }
+
+    async fn activate_inner(
+        &self,
+        epoch: u64,
+        start_generation: u64,
+        status: impl Into<String>,
+        verification: Option<VerificationActivation>,
+    ) -> bool {
         let status = bounded_status(status.into());
         let mut inner = self.inner.lock().await;
         let _activation = self
@@ -584,6 +618,9 @@ impl VoiceRuntime {
         inner.status = status;
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.media_epoch.store(epoch, Ordering::SeqCst);
+        if let Some(evidence) = verification {
+            self.record_verification_activation(evidence, inner.consent_epoch);
+        }
         true
     }
 
@@ -615,6 +652,29 @@ impl VoiceRuntime {
         participants: HashSet<u64>,
         status: impl Into<String>,
     ) -> Option<ConsentPause> {
+        self.begin_pause_epoch_for_consent_inner(epoch, participants, status, false)
+            .await
+    }
+
+    /// Close an exact epoch and publish a participant-change milestone in the
+    /// same critical section. This cannot race a verified activation.
+    pub async fn begin_participant_pause_epoch_for_consent(
+        &self,
+        epoch: u64,
+        participants: HashSet<u64>,
+        status: impl Into<String>,
+    ) -> Option<ConsentPause> {
+        self.begin_pause_epoch_for_consent_inner(epoch, participants, status, true)
+            .await
+    }
+
+    async fn begin_pause_epoch_for_consent_inner(
+        &self,
+        epoch: u64,
+        participants: HashSet<u64>,
+        status: impl Into<String>,
+        participant_change: bool,
+    ) -> Option<ConsentPause> {
         let control = {
             let mut inner = self.inner.lock().await;
             let _activation = self
@@ -623,6 +683,9 @@ impl VoiceRuntime {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if inner.epoch != epoch || self.current_epoch.load(Ordering::SeqCst) != epoch {
                 return None;
+            }
+            if participant_change {
+                self.record_verification_participant_pause(participants.len());
             }
             let next_epoch = epoch.saturating_add(1);
             self.media_epoch.store(0, Ordering::SeqCst);
@@ -842,10 +905,6 @@ impl VoiceRuntime {
 
     pub fn note_barge_in(&self) {
         self.barge_ins.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn note_completed_turn(&self) {
-        self.completed_turns.fetch_add(1, Ordering::Relaxed);
     }
 }
 

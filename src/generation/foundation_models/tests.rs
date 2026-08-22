@@ -181,6 +181,35 @@ async fn refusal_is_final_text_and_has_no_side_effect() {
 }
 
 #[tokio::test]
+async fn completed_fm_reply_uses_the_canonical_grounding_hedge() {
+    let state = AppState::in_memory();
+    let fm = FakeFm::with_responses(vec![Ok(llm::ModelTurn {
+        text: "It shipped in 2019.".into(),
+        calls: Vec::new(),
+    })]);
+    let context = PersonaContext::empty();
+    let answer = generate_with_fm_cli_and_access(
+        &state,
+        &fm,
+        ToolAccess::Disabled(Persona::Abbey),
+        &Ask {
+            scope: "discord:3",
+            context: &context,
+            user_input: "when did it ship?",
+            now: 10,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        answer.0.contains("treat these as unsupported: `2019`"),
+        "{}",
+        answer.0
+    );
+}
+
+#[tokio::test]
 async fn max_round_boundary_dispatches_no_extra_tool() {
     let calls = (0..=crate::tools::MAX_TOOL_ROUNDS)
         .map(|round| {

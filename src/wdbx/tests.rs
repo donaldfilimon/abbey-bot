@@ -339,10 +339,13 @@ fn error_display_is_one_sentence_each() {
 /// round-trip test above exercises a block abi could never have written, and
 /// only this fixture proves the projection preserves a real one.
 ///
-/// If this fails you changed the writer. Regenerate, then copy the file to
-/// `wdbx/crates/abi-wdbx/tests/golden/abbey-bot-projection.seg.jsonl`. The two
-/// copies are a deliberate, documented residual: no single toolchain compiles
-/// both crates, so neither side can generate the other's copy.
+/// This fixture is the frozen WDBX-v1 projection contract. Do not regenerate it
+/// for a writer change under the same format version: such a change is exactly
+/// what this test must reject. `scripts/check-wdbx-conformance.py` also compares
+/// the exact bytes with the canonical sibling WDBX fixture when that checkout is
+/// present. Integration/release validation sets
+/// `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` so an absent sibling fails rather than
+/// weakening cross-repository evidence to this repository-local writer pin.
 #[test]
 fn writer_output_matches_the_cross_implementation_conformance_fixture() {
     let mut store = WdbxStore::new();

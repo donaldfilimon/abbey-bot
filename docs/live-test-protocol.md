@@ -113,6 +113,12 @@ human currently present, post the local-processing/no-raw-retention notice, and
 wait for each person to explicitly agree. Silence, ambiguous reactions,
 historical consent, and a manager's assertion for someone else do not count.
 
+For the local backend, have the server owner or an administrator run `/voice
+verify start` before the consented join. This arms only an in-memory,
+content-free counter set and does not open capture. It also disables voice
+conversation commits for the run. Manage Server remains sufficient for the
+actual join/resume commands, but cannot start or read the verification report.
+
 After unanimous current consent, an authorized in-channel manager invokes
 `/voice join consent:true` or `/voice resume consent:true`. Verify:
 
@@ -129,6 +135,14 @@ After unanimous current consent, an authorized in-channel manager invokes
 6. Written `stop listening` is authoritative even if provider prose claims
    otherwise; `/voice leave` removes presence and voice UDP activity, and no
    later MLX speech request occurs.
+
+After the successful final leave, the owner or administrator runs `/voice
+verify report` and copies the concise redacted output into the manual acceptance
+record. Require `observed: 8/8`, then add the human witness facts that all
+current participants explicitly consented and at least one person heard the
+reply. The report retains no ids, audio, transcripts, responses, or message
+content, is cleared by process restart or when a later run is armed, and
+explicitly does not turn the local gate into live Discord evidence.
 
 If unanimous consent cannot be obtained, leave Abbey muted and self-deafened in
 `DecodeMode::Pass`, record voice as **externally pending**, and stop. Offline

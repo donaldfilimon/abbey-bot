@@ -132,7 +132,7 @@ impl EventHandler for DiscordAudioForwarder {
                         let epoch = self.epoch;
                         tokio::spawn(async move {
                             let Some(pause) = runtime
-                                .begin_pause_epoch_for_consent(
+                                .begin_participant_pause_epoch_for_consent(
                                     epoch,
                                     participants,
                                     "audio stopped before an unknown or unattested speaker frame was forwarded",
@@ -165,9 +165,14 @@ impl EventHandler for DiscordAudioForwarder {
                     unreachable!("unattested tick returned above")
                 };
                 frame.sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-                let sent = self
-                    .runtime
-                    .with_media_enabled(self.epoch, || self.tx.try_send(frame))?;
+                let voiced = frame_is_voice(&frame.samples);
+                let sent = self.runtime.with_media_enabled(self.epoch, || {
+                    let sent = self.tx.try_send(frame);
+                    if voiced && sent.is_ok() {
+                        self.runtime.note_verification_decoded_receive();
+                    }
+                    sent
+                })?;
                 match sent {
                     Ok(()) => None,
                     Err(mpsc::error::TrySendError::Full(_)) => {

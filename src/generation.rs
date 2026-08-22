@@ -10,6 +10,7 @@
 use std::future::Future;
 
 use crate::ask;
+use crate::grounding::{self, Grounding};
 use crate::llm;
 use crate::memory::PersonaContext;
 use crate::persona::Persona;
@@ -66,6 +67,7 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
         turns,
         tools,
         persona,
+        grounding,
     } = *round;
     let request = llm::build_stream_request(backend, system_prompt, turns, tools);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -84,23 +86,25 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
         channel: &str,
         reply_to: Option<&str>,
         text: &str,
+        grounding: &Grounding,
         posted: &mut Option<String>,
         last_edited_len: &mut usize,
     ) -> Result<(), String> {
         if text.trim().is_empty() || text.chars().count() == *last_edited_len {
             return Ok(());
         }
+        let visible = apply_grounding(text, grounding);
         match posted {
             None => {
                 let message = OutboundMessage {
-                    text: text.to_string(),
+                    text: visible,
                     reply_to_native_message_id: reply_to.map(str::to_string),
                     ..OutboundMessage::default()
                 };
                 let id = out.send(channel, &message).await?;
                 *posted = Some(id);
             }
-            Some(id) => out.edit(channel, id, text).await?,
+            Some(id) => out.edit(channel, id, &visible).await?,
         }
         *last_edited_len = text.chars().count();
         Ok(())
@@ -117,14 +121,14 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
                     && (text.chars().count() >= STREAM_FIRST_POST_CHARS
                         || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS);
                 if due {
-                    flush(out, native_channel_id, reply_to, &text, &mut posted, &mut last_edited_len)
+                    flush(out, native_channel_id, reply_to, &text, grounding, &mut posted, &mut last_edited_len)
                         .await
                         .map_err(llm::LlmError::backend)?;
                 }
             }
             _ = tick.tick() => {
                 if posted.is_some() || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS {
-                    flush(out, native_channel_id, reply_to, &text, &mut posted, &mut last_edited_len)
+                    flush(out, native_channel_id, reply_to, &text, grounding, &mut posted, &mut last_edited_len)
                         .await
                         .map_err(llm::LlmError::backend)?;
                 }
@@ -156,7 +160,7 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
             } else {
                 text
             };
-            let tidy = ask::tidy_reply(persona, &full);
+            let tidy = finalize_reply(persona, &full, grounding);
             if let Some(id) = &posted {
                 out.edit(native_channel_id, id, &tidy)
                     .await
@@ -219,6 +223,37 @@ pub struct Round<'a> {
     pub turns: &'a [llm::ChatTurn],
     pub tools: &'a [crate::tools::ToolSpec],
     pub persona: Persona,
+    /// Immutable pre-candidate sources used to guard every visible form of
+    /// this round's reply.
+    pub grounding: &'a Grounding,
+}
+
+/// Add only evidence-bearing read results from the current request to the
+/// immutable grounding snapshot prepared by the engine. Successful execution
+/// is not itself factual authority: mutation acknowledgements echo model input,
+/// persona switches carry no evidence, and tool errors must not ground claims.
+fn grounding_for_round(
+    prepared: &crate::engine::PreparedTurn,
+    tool_results: &[crate::tools::ToolResult],
+) -> Grounding {
+    let mut grounding = prepared.grounding().clone();
+    for result in tool_results {
+        if let Some(source) = result.grounding_source() {
+            grounding.push_source(source);
+        }
+    }
+    grounding
+}
+
+/// Apply the existing hedge policy without changing reply shape. Streaming
+/// uses this on each accumulated candidate before it becomes visible.
+fn apply_grounding(reply: &str, grounding: &Grounding) -> String {
+    grounding::hedged(reply, &grounding::check(reply, grounding))
+}
+
+/// Canonical completed-reply boundary for streaming and non-streaming paths.
+fn finalize_reply(persona: Persona, reply: &str, grounding: &Grounding) -> String {
+    apply_grounding(&ask::tidy_reply(persona, reply), grounding)
 }
 
 /// What a round produced: text (tidied), the id of a message already holding
@@ -613,6 +648,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
         ))
     .then(crate::tools::abbey_tools);
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
+    let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
         let prepared =
@@ -625,6 +661,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
         };
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
+        let grounding = grounding_for_round(&prepared, &grounding_results);
         let offer = vocabulary.is_some()
             && round < crate::tools::MAX_TOOL_ROUNDS
             && foundation_models::primary_tools_are_available(
@@ -643,6 +680,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
             turns: &turns,
             tools,
             persona,
+            grounding: &grounding,
         };
         let turn: RoundOutcome = match (&delivery, backend) {
             (Some(d), llm::Backend::OpenAiCompatible { .. }) => {
@@ -655,9 +693,15 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
             _ => llm::chat_turn(&state.llm, backend, &system_prompt, &turns, tools)
                 .await
                 .map(|t| {
+                    let is_final = t.calls.is_empty();
                     let text = if t.text.trim().is_empty() {
                         None
+                    } else if is_final {
+                        Some(finalize_reply(persona, &t.text, &grounding))
                     } else {
+                        // Preserve prior tool-round shaping, but do not append
+                        // a user-visible hedge to assistant prose that will
+                        // only be sent back to the model for continuation.
                         Some(ask::tidy_reply(persona, &t.text))
                     };
                     (text, None, t.calls)
@@ -701,6 +745,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
             calls,
         ));
         extra_turns.extend(results.iter().map(llm::ChatTurn::tool_result));
+        grounding_results.extend(results);
     }
     Err(llm::LlmError::backend(format!(
         "the model kept calling tools for {} rounds without answering",

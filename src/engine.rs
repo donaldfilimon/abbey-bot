@@ -17,6 +17,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::grounding::Grounding;
 use crate::llm::{ChatTurn, Role};
 use crate::memory::PersonaContext;
 use crate::persona::Persona;
@@ -73,6 +74,7 @@ impl Session {
 pub struct PreparedTurn {
     pub system_prompt: String,
     pub turns: Vec<ChatTurn>,
+    grounding: Grounding,
 }
 
 impl PreparedTurn {
@@ -84,6 +86,13 @@ impl PreparedTurn {
                 .iter()
                 .map(|t| t.text.chars().count())
                 .sum::<usize>()
+    }
+
+    /// Immutable snapshot of user-provided transcript facts and selected
+    /// factual context that existed before the backend produced its candidate
+    /// reply. Prior assistant output is deliberately not evidence.
+    pub fn grounding(&self) -> &Grounding {
+        &self.grounding
     }
 }
 
@@ -119,6 +128,15 @@ impl Engine {
         session.last_used = now;
         let mut turns: Vec<ChatTurn> = session.turns.iter().cloned().collect();
         turns.push(ChatTurn::user(user_input));
+        let mut grounding = Grounding::from_sources(
+            turns
+                .iter()
+                .filter(|turn| turn.role == Role::User)
+                .map(|turn| turn.text.as_str()),
+        );
+        for source in context.grounding_sources(user_input) {
+            grounding.push_source(source);
+        }
         PreparedTurn {
             system_prompt: format!(
                 "{}\n\n{}",
@@ -128,6 +146,7 @@ impl Engine {
                 context.render(user_input)
             ),
             turns,
+            grounding,
         }
     }
 
@@ -332,6 +351,47 @@ mod tests {
         assert!(prepared.system_prompt.starts_with("You are Aviva. "));
         assert_eq!(prepared.turns.len(), 3, "history survived the switch");
         assert_eq!(prepared.turns[0], ChatTurn::user("q1"));
+    }
+
+    #[test]
+    fn prepared_grounding_is_a_pre_candidate_snapshot() {
+        let mut engine = Engine::new();
+        engine.commit(
+            "c",
+            "The lockfile says 1.2.3. Which line should ship?",
+            "Ship 4.2.1.",
+            1,
+        );
+        let prepared = engine.prepare(
+            "c",
+            Persona::Abbey,
+            &PersonaContext::empty(),
+            "what should ship?",
+            2,
+        );
+        let candidate = "Ship 4.2.1 in 2019.";
+
+        assert!(
+            crate::grounding::check("Keep 1.2.3.", prepared.grounding()).is_grounded(),
+            "prior user input is part of the snapshot"
+        );
+        assert!(
+            crate::grounding::check("Keep 4.2.1.", prepared.grounding()).should_hedge(),
+            "prior assistant output is not factual authority"
+        );
+        assert!(
+            crate::grounding::check(candidate, prepared.grounding()).should_hedge(),
+            "the candidate must not ground itself"
+        );
+
+        // Delivery callers commit only after generation returns. Even if the
+        // engine advances afterward, this prepared boundary remains the same
+        // read-only pre-candidate snapshot; no second prepare is needed.
+        engine.commit("c", "what should ship?", candidate, 2);
+        assert!(
+            crate::grounding::check(candidate, prepared.grounding()).should_hedge(),
+            "committing later must not mutate the captured grounding"
+        );
     }
 
     #[test]

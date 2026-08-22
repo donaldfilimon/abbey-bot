@@ -15,19 +15,21 @@ use crate::offline_voice::MlxAudioClient;
 use crate::voice::{VoiceBackendConfig, VoiceMode};
 use crate::voice_local::LocalSession;
 use crate::voice_openai::OpenAiSession;
-use crate::voice_session::{SessionControl, SharedPlayback, VoiceRuntime};
+use crate::voice_session::{SessionControl, SharedPlayback, VerificationActivation, VoiceRuntime};
 use crate::{Context, Error};
 
 mod discord;
 mod events;
 mod receive;
 mod supervision;
+mod verification;
 
 use discord::*;
 use receive::{ReceiveHandlerInstall, install_receive_handlers};
 
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
+pub use verification::voice_verify;
 
 const INPUT_QUEUE_FRAMES: usize = 64;
 const OPENAI_READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -46,12 +48,18 @@ impl Drop for StartAttempt {
     }
 }
 
-/// `/voice join`, `/voice resume`, `/voice leave`, and `/voice status`.
+/// Consent-gated Discord voice and redacted operator verification.
 #[poise::command(
     slash_command,
     guild_only,
     ephemeral,
-    subcommands("voice_join", "voice_resume", "voice_leave", "voice_status")
+    subcommands(
+        "voice_join",
+        "voice_resume",
+        "voice_leave",
+        "voice_status",
+        "voice_verify"
+    )
 )]
 pub async fn voice(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
@@ -686,13 +694,19 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     }
 
     if !runtime
-        .activate(
+        .activate_verified(
             epoch,
             start_generation,
             match runtime.config.mode() {
                 VoiceMode::Local => "local inference ready; listening for Abbey",
                 VoiceMode::OpenAi => "direct OpenAI backup ready; buffered output; listening",
                 VoiceMode::Disabled => unreachable!(),
+            },
+            VerificationActivation {
+                manager_authorized: true,
+                caller_present: true,
+                participant_count: participants.len(),
+                resumed,
             },
         )
         .await
@@ -756,6 +770,9 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
             .await?;
         return Ok(());
     }
+    // Bind completion evidence to the run that was armed when this authorized
+    // leave began. A later verifier must not inherit this leave's result.
+    let verification_run = runtime.verification_run_token();
     // An authorized stop closes the software media gate before any further
     // await, including Songbird lookup and Discord acknowledgement.
     runtime.cancel_pending_start();
@@ -798,6 +815,9 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
     drop(transition);
     match removed {
         Ok(()) | Err(songbird::error::JoinError::NoCall) => {
+            if let Some(run) = verification_run {
+                let _ = runtime.note_verification_final_leave(run);
+            }
             ctx.say("Left voice. Capture, provider work, queued audio, and playback are stopped.")
                 .await?;
         }

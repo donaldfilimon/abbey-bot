@@ -45,33 +45,16 @@
 //!   in doubt this module says "grounded" and stays silent, because a false
 //!   accusation in a user-visible reply costs more than a miss.
 //!
-//! # Wiring status — read this before quoting the module in a claim
+//! # Reply-path boundary
 //!
-//! **Nothing calls this module in the reply path yet.** It is a pure, tested
-//! library registered in `main.rs`, and no user-visible behaviour changes
-//! because it exists. Saying "the bot declines to invent" on the strength of
-//! this file would be exactly the kind of unearned claim it was written to
-//! catch.
-//!
-//! The intended seam is [`crate::generation::generate_with_backend`], at the
-//! point where a round returns text: the prepared transcript (`turns`) and the
-//! [`crate::memory::PersonaContext`] are both in scope there and have not yet
-//! been polluted by the answer itself, which is the only place the *full*
-//! grounding for a turn exists. Two things must be settled before that edit is
-//! honest rather than convenient:
-//!
-//! 1. The streaming path has already posted the message by the time text is
-//!    final, so attaching a hedge means an edit, not a different return value.
-//! 2. `commands.rs` alone cannot supply the transcript — `Engine` exposes no
-//!    read-only accessor for it, and re-`prepare`ing after `commit` would
-//!    ground the reply in itself.
-
-// Scoped to this module, and deliberate. The crate is a binary, so every item
-// here is `dead_code` until the seam above is wired; the alternative was to
-// edit the live generation path in the same change that introduces the guard,
-// which is a behaviour change wearing a library's clothes. The tests exercise
-// the whole surface.
-#![allow(dead_code)]
+//! [`crate::engine::Engine::prepare`] snapshots user-authored transcript turns
+//! and only the context fragments selected for that request before generation
+//! begins. [`crate::generation`] clones that snapshot only to add explicitly
+//! evidence-bearing read-tool results. Prior assistant output, current-round
+//! assistant prose, mutation acknowledgements, and tool errors are excluded.
+//! This prevents the current candidate and ordinary prior assistant replies
+//! from promoting themselves into evidence. The guard runs before every
+//! streamed post/edit and before every completed reply.
 
 use std::collections::BTreeSet;
 
@@ -98,20 +81,6 @@ pub enum SpecificKind {
     Quotation,
 }
 
-impl SpecificKind {
-    /// Short human label, used in the hedge note and in test assertions.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Version => "version",
-            Self::Date => "date",
-            Self::Year => "year",
-            Self::Percentage => "percentage",
-            Self::Statistic => "statistic",
-            Self::Quotation => "quotation",
-        }
-    }
-}
-
 /// One specific asserted in a reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Specific {
@@ -133,7 +102,7 @@ pub struct Specific {
 /// **Do not push the system prompt in as a source.** It carries its own
 /// numbers (the length budget), which would silently ground unrelated
 /// specifics in the reply.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Grounding {
     /// Normalized keys of every specific-shaped token found in the sources,
     /// generously expanded (see [`Grounding::push_source`]).
@@ -722,7 +691,6 @@ fn trim_to_words(s: &str, max: usize) -> String {
     format!("{} …", head[..cut].trim_end())
 }
 
-#[cfg(test)]
 #[cfg(test)]
 #[path = "grounding/tests.rs"]
 mod tests;

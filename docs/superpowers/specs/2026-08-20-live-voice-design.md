@@ -67,6 +67,15 @@ failure, and replacement races all fail closed. `/voice leave` is available to
 a manager or someone in the channel and synchronously invalidates work before
 disconnecting.
 
+`/voice verify start|report` is a separate local-mode acceptance surface limited
+to the server owner or an administrator. One armed run spans successful
+activation, participant-change pause, a fresh consent-epoch resume, and final
+leave. It retains only aggregate counts and epochs in process memory. It never
+stores participant ids, audio, transcripts, responses, or message content, and
+it disables the ordinary completed-turn conversation commit while armed. Its
+redacted report observes code/runtime milestones but leaves unanimous consent
+and audible human reception as explicit manual witness facts.
+
 A conversation is permitted only while Abbey has View Channel, Send Messages,
 Connect, and Speak and is not server-muted, server-deafened, or suppressed.
 Permissions are fetched again after slow model preflight and on both sides of
@@ -145,9 +154,12 @@ used as all-participant acceptance evidence.
 Completion of the current candidate still requires deploying the exact gated
 build, observing safe-presence rejoin without media activity, collecting a
 fresh everyone-present consent epoch, and observing a refreshed manager resume,
-an audible wake-name/reply heard by a human, and barge-in. Until those steps,
-the voice goal remains in progress. Stream vision remains a separate consented
-slice.
+an audible wake-name/reply heard by a human, and barge-in. The owner/admin-only
+in-memory verifier makes decoded receive, local STT, synthesized playback end,
+actual playback cancellation, consent-epoch change, participant pause/resume,
+and final leave independently reportable without retaining content. Until
+those steps, the voice goal remains in progress. Stream vision remains a
+separate consented slice.
 
 ## Dependency audit
 
