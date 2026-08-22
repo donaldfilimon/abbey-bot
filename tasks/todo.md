@@ -111,8 +111,13 @@ a green source gate is not semantic, deployment, or live evidence.
       route only to providers qualified for every capability the request needs
 - [x] Add `ABBEY_FM_MODE=off|system|pcc` (default `off`), `ABBEY_FM_ENDPOINT`, `ABBEY_FM_CLI`
       (default `/usr/bin/fm`), `ABBEY_FM_FALLBACK=1` — no implicit provider switching when unset
-- [ ] Add `abbey-bot --provider-self-test primary|fm|all --json`, runnable without Discord
-      credentials or production state, reporting each capability independently
+- [x] Add `abbey-bot --provider-self-test primary|fm|all --json`, runnable without Discord
+      credentials or production state, reporting each capability independently — verified
+      2026-08-21 by running the built release binary under `env -i` (no `DISCORD_TOKEN`, no
+      `ABBEY_DATA_DIR`, no inherited environment at all): `primary` reports `configured:false` and
+      exits 2 (unconfigured target, matching the documented contract) without touching Discord or
+      a data directory; `fm` with `ABBEY_FM_MODE=system` reports real per-capability JSON bound to
+      this machine's identity (`cli_sha256`, `abbey_binary_sha256`, `os_build`) and exits 0.
 - [x] `fm serve` over loopback for qualified text only — never advertise the server
       endpoint as tool-capable (it silently returned prose instead of `tool_calls`)
 - [x] `fm respond` schema-constrained adapter yielding either a typed final answer or exactly one
@@ -121,8 +126,14 @@ a green source gate is not semantic, deployment, or live evidence.
       mutates nothing and reports no success
 - [x] Enable FM tools only after all required request, argument, result-continuation, refusal,
       malformed-output, and max-round tests
-- [ ] Enable FM vision/OCR only on semantic fixtures (known colors/objects, exact text), not
-      HTTP 200
+- [x] Enable FM vision/OCR only on semantic fixtures (known colors/objects, exact text), not
+      HTTP 200 — verified 2026-08-21: `--provider-self-test fm --json` against the real
+      `/usr/bin/fm` on this Mac (macOS 27, build `26A5416b`) reports `text`/`structured_output`/
+      `tools` as `pass` but `vision`/`ocr` as `fail` with `category":"semantic_vision"` /
+      `"semantic_ocr"` — the gate fails closed on the actual semantic check rather than reporting
+      success on mere connectivity. This is the mechanism working, not FM vision/OCR being
+      production-qualified: on this exact CLI build, they are not, and must not be advertised as
+      such until they pass.
 - [x] Prove nothing reaches `pcc` unless `ABBEY_FM_MODE=pcc` was explicitly selected
 
 ### 4. Voice, vision, tool, and privacy safety
