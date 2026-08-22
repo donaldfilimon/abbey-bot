@@ -320,3 +320,69 @@ fn error_display_is_one_sentence_each() {
     };
     assert_eq!(bad.to_string(), "WDBX store line 4 is malformed: not JSON");
 }
+
+/// Cross-implementation conformance: the exact bytes this module writes are
+/// pinned here, and `wdbx`'s `abi-wdbx` parses the identical file in its own
+/// suite (`crates/abi-wdbx/tests/abbey_bot_projection_conformance.rs`).
+///
+/// Why a shared fixture instead of a dependency: this crate pins **stable
+/// 1.97.1** (`rust-toolchain.toml`), while `abi-compute` — which `abi-wdbx`
+/// depends on — requires `#![feature(portable_simd)]` on nightly. Linking
+/// `abi-wdbx` here, even as a dev-dependency, is not possible without reversing
+/// this crate's pinned-stable decision. The same shape is already used for the
+/// Zig wyhash reference vectors in `src/wyhash.rs`.
+///
+/// The fixture's trailing `block` record is a **real one, copied from abi's own
+/// `wdbx-sample.seg.jsonl`**, with a 32-byte array hash. That detail matters:
+/// the `SAMPLE` constant at the top of this file uses `"hash":"abc"`, which
+/// `abi-wdbx` rejects with `expected 32 characters, got 3`. So the older
+/// round-trip test above exercises a block abi could never have written, and
+/// only this fixture proves the projection preserves a real one.
+///
+/// If this fails you changed the writer. Regenerate, then copy the file to
+/// `wdbx/crates/abi-wdbx/tests/golden/abbey-bot-projection.seg.jsonl`. The two
+/// copies are a deliberate, documented residual: no single toolchain compiles
+/// both crates, so neither side can generate the other's copy.
+#[test]
+fn writer_output_matches_the_cross_implementation_conformance_fixture() {
+    let mut store = WdbxStore::new();
+    store.put_kv(
+        "mem:guild-1:1",
+        "{\"user\":\"alice\",\"text\":\"likes rust\",\"at\":1000}",
+    );
+    store.put_kv("completion:1", "{\"kind\":\"completion\"}");
+    assert_eq!(store.insert_vector(vec![0.5, -0.25, 0.125]), 1);
+    assert_eq!(store.insert_vector(vec![-1.0, 0.0, 1.0]), 2);
+
+    let fixture = include_str!("../../tests/fixtures/wdbx_v1_conformance.seg.jsonl");
+    let without_block: String = fixture
+        .lines()
+        .filter(|line| !line.contains("\"type\":\"block\""))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(
+        store.render(),
+        without_block,
+        "writer output drifted from the cross-implementation conformance fixture"
+    );
+}
+
+/// A record kind this projection does not model must survive verbatim, because
+/// abi owns the format and may add kinds this side has never heard of. Losing
+/// one would silently corrupt a shared file.
+#[test]
+fn the_conformance_fixture_round_trips_byte_identically() {
+    let fixture = include_str!("../../tests/fixtures/wdbx_v1_conformance.seg.jsonl");
+    let parsed = WdbxStore::parse(fixture).expect("fixture parses");
+    assert_eq!(
+        parsed.render(),
+        fixture,
+        "a real abi block record was not preserved verbatim"
+    );
+    assert_eq!(parsed.vector(1), Some(&[0.5, -0.25, 0.125][..]));
+    assert_eq!(parsed.vector(2), Some(&[-1.0, 0.0, 1.0][..]));
+    assert_eq!(
+        parsed.get_kv("mem:guild-1:1"),
+        Some("{\"user\":\"alice\",\"text\":\"likes rust\",\"at\":1000}")
+    );
+}
