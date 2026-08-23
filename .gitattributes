@@ -1,1 +1,2 @@
 tests/fixtures/*.seg.jsonl text eol=lf
+contracts/abbey/** -text
