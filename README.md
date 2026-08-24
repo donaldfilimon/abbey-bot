@@ -3,10 +3,12 @@
 Abbey's Discord operational layer, in Rust — [serenity](https://github.com/serenity-rs/serenity)
 0.12 with [poise](https://github.com/serenity-rs/poise) 0.6 for slash commands.
 
-This is the Rust implementation. Prior Abbey bots existed in Bun/TypeScript, Zig,
-and Swift; none of those are on this machine. The one adjacent thing that is —
-`~/dev/archive/swift-discord`, a home-grown Swift Discord library — is unrelated
-to this crate and shares no code with it.
+This is the Rust implementation. A separate active Swift/Vapor/DiscordBM product
+lives at `~/dev/active/AbbeyBot`; it is an adjacent implementation, not a port,
+dependency, or shared runtime. The archived `~/dev/archive/swift-discord` tree is
+a home-grown Swift Discord library, not either bot. The Rust and Swift products
+share no application code; cross-language agreement is established only through
+the independently vendored Abbey contract corpus and each consumer's own gate.
 
 ## Commands
 
