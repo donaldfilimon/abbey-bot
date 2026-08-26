@@ -10,3 +10,6 @@ tasks/session-log.md
 /wdbx.seg.*.jsonl
 /wdbx.seg.*.jsonl.tmp
 /data/
+
+# Agent scratch (superpowers brainstorm output), not source
+.superpowers/
