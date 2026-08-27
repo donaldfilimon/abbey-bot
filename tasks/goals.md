@@ -201,6 +201,16 @@ status: in_progress
   as designed. This closes both remaining `--provider-self-test` and FM-vision/OCR-gating items in
   `tasks/todo.md`. It does **not** mean FM vision/OCR are production-qualified on this build — they
   are not, per the same evidence, and must not be advertised as such.
+- **2026-08-27 cross-platform source reconciliation.** Current `main` and
+  `origin/main` are the same commit,
+  `588cbe6eeaf7b11ec616657874ccba7e63ad4a3e`. GitHub Actions run
+  `33025176982` executed and completed all three real source gates successfully:
+  Ubuntu and macOS through `./check.sh`, Windows through `./check.ps1`. This
+  closes the Linux/Windows build-and-test portions of the cross-platform goal
+  at that exact head. It does not close Linux or Windows provider/runtime
+  qualification, systemd/Docker or foreground-process acceptance, installed
+  artifact identity, live connectors, service deployment, or the separately
+  consent-gated voice goal.
 - **2026-08-21 residual check, no branches or PRs pending.** `codex/live-voice-20260820` and
   `codex/memory-revision-20260820` no longer exist as branches (their work is already folded into
   main's history); `git worktree list` shows only the primary checkout; `gh pr list --state open`

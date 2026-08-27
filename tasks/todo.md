@@ -165,14 +165,18 @@ a green source gate is not semantic, deployment, or live evidence.
 - [x] Keep the Rust core provider-neutral: no direct MLX or Foundation Models inference
       dependencies; MLX remains an OpenAI-compatible external loopback service and Foundation
       Models remains a bounded external CLI/server adapter.
-- [ ] Linux: same binary builds and tests, Gemma via the OpenAI-compatible seam, systemd and
-      Docker retained, voice only via explicit OpenAI Realtime
-- [ ] Windows: same binary builds and tests, Gemma via Ollama or another qualified server,
-      explicit data directory, Ctrl-C with a final persistence flush, PowerShell setup docs, no
-      Windows Service
+- [x] Linux source gate: exact head `588cbe6` completed the Ubuntu `./check.sh`
+      lane successfully in Actions run `33025176982` on 2026-08-27
+- [ ] Linux runtime acceptance: qualify Gemma through the OpenAI-compatible seam, exercise the
+      retained systemd/Docker artifacts, and use voice only through explicit OpenAI Realtime
+- [x] Windows source gate: exact head `588cbe6` completed the Windows `./check.ps1`
+      lane successfully in Actions run `33025176982` on 2026-08-27
+- [ ] Windows runtime acceptance: qualify Gemma through Ollama or another conforming server and
+      verify the explicit data directory plus Ctrl-C final persistence flush. Windows remains a
+      documented foreground process; a Windows Service is not planned.
 - [x] Expand CI to `macos` + `ubuntu` + `windows` on the pinned toolchain and locked dependencies;
-      this records the checked-in matrix, while exact-head and post-merge run evidence remains a
-      release requirement outside the source ledger
+      exact-head run `33025176982` supplies the current three-lane source evidence, while future
+      release candidates still require their own exact-head or post-merge runs
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
