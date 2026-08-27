@@ -613,6 +613,13 @@ skip in a standalone checkout; it becomes required when
 sibling. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also
 runs where `plutil` exists.
 
+The latest checked-in source snapshot verified here is commit
+`588cbe6eeaf7b11ec616657874ccba7e63ad4a3e`: Actions run `33025176982`
+completed the Ubuntu, macOS, and Windows gate jobs successfully on 2026-08-27.
+That is cross-platform source build/test evidence only. Provider qualification,
+installed service identity, connector round trips, and current consented voice
+retain the separate acceptance layers above.
+
 The shared Rust sequence is
 `cargo fmt --all -- --check`, platform-appropriate deployment validation, then
 `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`,

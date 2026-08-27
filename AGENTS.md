@@ -52,12 +52,19 @@ byte. Standalone CI reports that external layer as explicitly skipped; set
 **CI runs the platform's real gate.** `.github/workflows/rust.yml` runs a
 non-fail-fast Ubuntu/macOS/Windows matrix on every push and PR to `main`.
 Ubuntu and macOS execute `./check.sh`; Windows executes `./check.ps1`. Every
-    lane checks formatting, Python locks/syntax, the privacy logging rule,
+lane checks formatting, Python locks/syntax, the privacy logging rule,
 all-target Clippy with `--locked -D warnings`, locked tests, and the locked
 release build. POSIX shell syntax runs on Ubuntu/macOS and plist lint runs when
 `plutil` is present. The runner's rustup honours `rust-toolchain.toml`, so CI
 and local runs share exact stable Rust 1.97.1. Historical CI runs prove only
 the commit and lanes they actually executed.
+
+Exact-head source evidence as of 2026-08-27: commit
+`588cbe6eeaf7b11ec616657874ccba7e63ad4a3e` completed `Gate (Ubuntu)`,
+`Gate (macOS)`, and `Gate (Windows)` successfully in Actions run
+`33025176982`. That closes build/test evidence for those three lanes at that
+commit only. It does not qualify a Gemma/provider runtime, install or service
+artifact, live Telegram/Slack/Discord turn, or participant-consented voice.
 
 ## Architecture: a pure core with a thin Discord shell
 
@@ -544,3 +551,14 @@ dependency, a port source, or a reference implementation. The separate active
 Swift/Vapor/DiscordBM product is `~/dev/active/AbbeyBot`; it shares no code with
 this Rust crate. Treat its architecture as an adjacent implementation, not a
 dependency or source of runtime truth for this project.
+
+<!-- machine-git-policy -->
+## Git workflow (machine policy, 2026-08-27)
+
+Work on the default branch in this canonical checkout. Do not create
+branches or worktrees by default; they are for tasks that genuinely need
+isolation, or when Donald asks. Any worktree or topic branch created here
+must be merged back into this checkout's default branch, the worktree
+removed, and the branch deleted, before pushing and before the task is
+called done. Full policy: `~/.claude/CLAUDE.md` (*Git discipline*).
+<!-- /machine-git-policy -->
