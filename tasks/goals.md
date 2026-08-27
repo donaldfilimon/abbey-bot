@@ -91,6 +91,21 @@ status: in_progress
 - 2026-08-20 command-evidence reconciliation: the durable interaction ledger records successful `/stats`, `/remember`, `/reputation`, `/summarize`, `/whois`, `/perms`, `/modcall`, `/server`, `/voice status`, and `/voice leave` executions. `/forget`, `/ocr`, and `/webhook` remain unobserved. A live `/see` invocation reached the older path but failed on attachment MIME/decoding; current source fully decodes JPEG/PNG/WebP/GIF under 8192×8192-pixel and 96 MiB allocation ceilings, preserves validated JPEG/PNG/WebP, and normalizes GIF's first frame to PNG before transport, but needs a fresh live `/see` after deployment. Memory slash commands are self-only by default; cross-member `/remember`, `/forget`, and `/recall` require Manage Messages, Manage Guild, or Administrator, and new facts are normalized, non-empty, and capped at 300 Unicode characters.
 - Not done / needs external credentials or live acceptance: Telegram and Slack live (tokens); `/forget`, `/ocr`, and `/webhook`; the hardened `/see` attachment path after deployment; an actual `OverBudget` refusal. GitHub Actions is no longer listed as blocked here: the exact stable-toolchain gate executed successfully on PR #24.
 - 2026-08-19 (strict review pass): `pipeline.rs` split — the generation loop (streaming, tool rounds, typing) now lives in `src/generation.rs` (PR #23); no behavior change, gate 332 tests. Dependabot residual: all four open alerts are `rustls-webpki` 0.102.8 via serenity 0.12.5 → tokio-tungstenite 0.21 → rustls 0.22; every patch lands only on the 0.103 line, so this is blocked until serenity releases against rustls 0.23 — re-run `cargo update -p rustls-webpki@0.102.x` after any serenity bump. Practical exposure is low: the crate is a TLS client to Discord/ollama and the flaws are in CRL/name-constraint paths.
+- 2026-08-27 dependency-debt reconciliation, verified not assumed. The `rustls-webpki`
+  blocker recorded above is **resolved and its bullet is superseded**, not still open. The
+  condition it named ("blocked until serenity releases against rustls 0.23") has been met:
+  `Cargo.lock` now resolves a single `rustls` at `0.23.43` and a single `rustls-webpki` at
+  `0.103.14`, with no `0.102.x` or `0.22` line remaining anywhere in the lock. A full
+  `cargo audit` on this clean checkout (`main` at `72464a4`, 506 crate dependencies scanned
+  against 1226 advisories) exits **0 with zero vulnerabilities**; the only output is 5 allowed
+  warnings — `derivative`, `instant`, and `proc-macro-error2` unmaintained, `stable-vec`
+  unsound, `chacha20` yanked. No `rustls-webpki`, OpenMLS, HPKE, or libcrux finding appears.
+  This therefore also supersedes the "`cargo audit` remains red: four pre-existing
+  rustls-webpki findings plus six libcrux findings" line in the voice goal and the
+  "`cargo audit` stays deliberately non-green" line in the Complete Abbey goal. Those dated
+  observations stay as written; this entry records that their subject no longer holds.
+  The 5 remaining warnings are unmaintained/unsound/yanked advisories, not vulnerabilities,
+  and are unrelated to the TLS stack the original entry was about.
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
