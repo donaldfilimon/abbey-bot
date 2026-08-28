@@ -106,6 +106,20 @@ status: in_progress
   observations stay as written; this entry records that their subject no longer holds.
   The 5 remaining warnings are unmaintained/unsound/yanked advisories, not vulnerabilities,
   and are unrelated to the TLS stack the original entry was about.
+- **2026-08-28 residual-count reconciliation: the "5 allowed warnings" figure above is stale, not
+  the audit-clean claim itself.** Commit `9895734` ("chore(deps): bump stable-vec to 0.4.3 and
+  chacha20 to 0.10.2") fixed the two findings that made up two of the five: `stable-vec` 0.4.2 to
+  0.4.3 (RUSTSEC-2026-0267, panic-safety unsoundness) and `chacha20` 0.9.1 to 0.10.2 (yanked
+  release), reached transitively through `songbird -> stream_lib -> hls_m3u8 -> stable-vec`.
+  `Cargo.lock` now resolves `stable-vec` at exactly `0.4.3`; a `chacha20` `0.10.2` entry is also
+  present (a second `chacha20` `0.9.1` entry remains from an unrelated dependency edge, but that
+  version is not itself flagged by the advisory database). A fresh `cargo audit` run on this clean
+  checkout (`main` at `cb265a4`, 506 crate dependencies scanned against 1226 advisories) exits **0
+  with zero vulnerabilities and 3 allowed warnings**, not 5: `derivative` 2.2.0 (RUSTSEC-2024-0388,
+  unmaintained), `instant` 0.1.13 (RUSTSEC-2024-0384, unmaintained), and `proc-macro-error2` 2.0.1
+  (RUSTSEC-2026-0173, unmaintained). Neither `stable-vec` nor `chacha20` appears in the output. The
+  audit-clean claim in the entry above still holds; only its enumerated count and crate list are
+  superseded.
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
@@ -234,6 +248,20 @@ status: in_progress
   (versions, dates, statistics, quotes) asserted in a reply but absent from the supplied grounding
   — explicitly a lexical check, not a hallucination detector, and required to test the
   false-positive direction because a guard that flags numbers the user supplied is worse than none.
+- **2026-08-28 reconciliation: items (1) and (3) above landed; the "results pending" framing is
+  superseded for those two.** Verified against source, not assumed. Both feature branches are
+  merged into `main`: `e3422ef` ("Merge branch 'codex/routing-signals-20260820'") and `ac05930`
+  ("Merge branch 'codex/grounding-guard-20260820'"). (1) `src/routing_signals.rs` (885 lines from
+  that merge) exists and is wired in: `src/main.rs:73` declares `mod routing_signals;` and
+  `src/pipeline.rs:99` calls `let composed = routing_signals::route(text, None);`. (3)
+  `src/grounding.rs` (1,177 lines from that merge) exists and is wired in: `src/engine.rs:20`
+  imports `crate::grounding::Grounding`, `PreparedTurn` holds a `grounding: Grounding` field
+  (`src/engine.rs:77`) populated via `Grounding::from_sources` at `src/engine.rs:131`; consumption
+  lives in `src/generation.rs`, where `apply_grounding` (line 250) and `finalize_reply` (line 255)
+  call `grounding::check`/`grounding::hedged` and are invoked from both the streaming and
+  non-streaming tool-round paths. Item (2), the delayed-outcome reward path, is not part of this
+  reconciliation — it landed separately via merge `4c85646` ("Merge branch
+  'feat/delayed-outcome-reward'") and was already correctly accounted for elsewhere in this file.
 - **2026-08-21 ledger reconciliation.** PRs #25–#31 landed after the entries above without those
   entries being updated, so several "Open and honestly unclaimed" claims from 2026-08-20 slice 1
   were stale by the time this was checked. Verified against actual source and a real binary run,
