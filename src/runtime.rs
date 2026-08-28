@@ -290,7 +290,7 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         match outcome {
             Ok(RememberOutcome::Stored(fact)) => format!("Stored: {fact}"),
             Ok(RememberOutcome::Proposed { stored, proposed }) => format!(
-                "Stored: {stored}. Proposed to replace {proposed:?}, which is unchanged until                  the person confirms."
+                "Stored: {stored}. Proposed to replace {proposed:?}, which is unchanged until the person confirms."
             ),
             Ok(RememberOutcome::Superseded { stored, removed }) => {
                 format!("Stored: {stored}. Replaced: {removed}")
@@ -830,6 +830,44 @@ mod tests {
     #[test]
     fn topology_matches_the_spec() {
         assert_eq!(TOPOLOGY, [18, 64, 32, 3]);
+    }
+
+    /// The safety property at its real integration point: a model calling
+    /// `remember_fact` with `supersedes` must PROPOSE, never delete. Verified
+    /// here through the actual `ToolHost` impl rather than by reading the
+    /// routing — `remember_proposing` being correct in isolation would not
+    /// prove `ToolScope` routes to it instead of `remember_replacing`.
+    #[test]
+    fn a_model_supersedes_argument_proposes_and_never_deletes() {
+        let state = AppState::in_memory();
+        state
+            .memory_service()
+            .remember("discord:g", "discord:u", "uses rust", 1)
+            .expect("seed");
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        let reply =
+            crate::tools::ToolHost::remember_fact(&mut scope, "moved to zig", Some("uses rust"));
+        assert!(reply.contains("Proposed to replace"), "{reply}");
+
+        // BOTH facts must survive. The model does not get to delete.
+        let facts = state.memory_service().facts("discord:g", "discord:u");
+        assert!(facts.contains(&"uses rust".to_string()), "{facts:?}");
+        assert!(facts.contains(&"moved to zig".to_string()), "{facts:?}");
+        assert_eq!(
+            state
+                .memory_service()
+                .pending_supersessions("discord:g", "discord:u")
+                .len(),
+            1
+        );
     }
 
     #[test]

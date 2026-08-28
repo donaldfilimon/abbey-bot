@@ -133,7 +133,7 @@ pub async fn remember(
             subject.id.get()
         ),
         Ok(runtime::RememberOutcome::Proposed { stored, proposed }) => format!(
-            "Stored about <@{}>: {stored}\nProposed to replace: {proposed} — nothing was              removed. Run /pending confirm to apply it.",
+            "Stored about <@{}>: {stored}\nProposed to replace: {proposed} — nothing was removed. Run /pending confirm to apply it.",
             subject.id.get()
         ),
         Ok(runtime::RememberOutcome::Unchanged) => {
@@ -281,6 +281,11 @@ pub async fn pending_confirm(
         runtime::SupersessionOutcome::Confirmed(removed) => format!("Removed: {removed}"),
         runtime::SupersessionOutcome::AlreadyGone(old) => format!(
             "That fact was already gone, so nothing was removed. Cleared the proposal for: {old}"
+        ),
+        runtime::SupersessionOutcome::PremiseGone { old_fact, new_fact } => format!(
+            "Refused, and nothing was removed. That proposal said {new_fact} replaces \
+             {old_fact}, but {new_fact} is no longer on record, so confirming would have \
+             left you holding neither. Cleared the stale proposal."
         ),
         runtime::SupersessionOutcome::NotPending => "No proposal names that fact.".to_string(),
     };

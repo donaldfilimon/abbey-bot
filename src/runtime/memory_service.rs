@@ -82,6 +82,10 @@ pub enum SupersessionOutcome {
     /// The proposal existed but its old fact was already gone (a bare
     /// `/forget`, or the cap). The proposal is cleared; nothing was removed.
     AlreadyGone(String),
+    /// The replacement fact this proposal was premised on is itself gone, so
+    /// confirming would remove the old fact and leave the user holding
+    /// NEITHER. Refused, and the stale proposal is cleared. Nothing removed.
+    PremiseGone { old_fact: String, new_fact: String },
     /// No proposal names that old fact for this user.
     NotPending,
 }
@@ -153,8 +157,19 @@ impl<'a> MemoryService<'a> {
             // The slot was just freed and the text differs from what was
             // removed, so the only way this fails is an exact duplicate of
             // another held fact. Put the removed fact back rather than losing
-            // it to a request that stored nothing.
+            // it to a request that stored nothing. This restore cannot itself
+            // fail: `selected` was just removed from a de-duplicated list and
+            // the list is one under the cap.
             stores.memory.remember(guild, user, &selected, now);
+            // Reconcile even though the fact SET is unchanged. The
+            // forget-then-restore moved `selected` to the end of the Vec and
+            // bumped `updated_at`, which `fact_records` stamps onto every
+            // projected row for this user — skipping this leaves WDBX
+            // timestamps stale until the next unrelated write. Every mutating
+            // path in this module reconciles before returning; this one is not
+            // an exception.
+            let mut recall = AppState::lock(self.recall);
+            reconcile_projection(&stores, &mut recall);
             return Ok(RememberOutcome::Unchanged);
         }
         // Any queued proposal naming the now-removed fact is moot.
@@ -227,6 +242,30 @@ impl<'a> MemoryService<'a> {
         let Some(pending) = pending else {
             return SupersessionOutcome::NotPending;
         };
+        // A proposal is a claim that `new_fact` REPLACES `old_fact`. If the
+        // replacement has since been removed — a bare `/forget` on it, say —
+        // that claim no longer holds, and confirming would delete the old
+        // fact too and leave the person with neither. Nothing clears a
+        // proposal when its `new_fact` goes away, so the stale entry can
+        // outlive its own premise and `/pending list` would still render it.
+        // Refuse and clear it rather than complete a destructive action on a
+        // premise the display no longer matches.
+        if !stores
+            .memory
+            .facts(guild, user)
+            .iter()
+            .any(|fact| fact == &pending.new_fact)
+        {
+            stores
+                .memory
+                .drop_supersession(guild, user, &pending.old_fact);
+            let mut recall = AppState::lock(self.recall);
+            reconcile_projection(&stores, &mut recall);
+            return SupersessionOutcome::PremiseGone {
+                old_fact: pending.old_fact,
+                new_fact: pending.new_fact,
+            };
+        }
         let removed = stores.memory.forget(guild, user, &pending.old_fact);
         stores
             .memory
@@ -509,6 +548,33 @@ mod tests {
             service.confirm_supersession("g", "u", "uses rust"),
             SupersessionOutcome::AlreadyGone("uses rust".to_string())
         );
+        assert!(service.pending_supersessions("g", "u").is_empty());
+    }
+
+    /// A proposal is a claim that `new_fact` replaces `old_fact`. If the
+    /// replacement is itself removed, confirming must NOT go through — that
+    /// would leave the person holding neither fact, having acted on a
+    /// `/pending list` display that no longer matched reality.
+    #[test]
+    fn confirming_refuses_when_the_replacement_fact_is_gone() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        service
+            .remember_proposing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("propose");
+        // The human removes the REPLACEMENT, not the original.
+        assert!(service.forget("g", "u", "moved to zig"));
+        assert_eq!(
+            service.confirm_supersession("g", "u", "uses rust"),
+            SupersessionOutcome::PremiseGone {
+                old_fact: "uses rust".to_string(),
+                new_fact: "moved to zig".to_string(),
+            }
+        );
+        // The original survives: the user is not left with nothing.
+        assert_eq!(service.facts("g", "u"), vec!["uses rust".to_string()]);
+        // And the stale proposal is cleared rather than left to mislead again.
         assert!(service.pending_supersessions("g", "u").is_empty());
     }
 

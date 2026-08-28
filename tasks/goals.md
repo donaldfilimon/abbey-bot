@@ -186,6 +186,40 @@ status: in_progress
   under three characters) would have destroyed `go`, `ai`, `js`, `c`, and `os` as retrieval keys,
   so it is an explicit stopword list with regression tests in both directions. Gate: 428 passed /
   0 failed / 1 ignored, exit 0 (was 415).
+- **2026-08-27 fact supersession landed (the item above is now built, as a hybrid).** An
+  explicit `replaces` on `/remember` is AUTHORITATIVE and removes the named fact atomically;
+  a model-proposed `supersedes` on the `remember_fact` tool only QUEUES a `PendingSupersession`
+  and removes nothing, until a human confirms via `/pending confirm`. There is deliberately no
+  model-callable path to the authoritative method — a model must not confirm its own contested
+  claim. `PendingSupersession` lives only in the JSON `UserMemory`, never on `FactRecord`, whose
+  bytes are pinned by a fixture the sibling `../wdbx` repo also owns; `MEMORY_PROJECTION_VERSION`
+  is deliberately NOT bumped because the field is additive with `serde(default)`, so an older
+  binary loses advisory proposals but never facts. `./check.sh` green, 655 tests.
+  An independent review of the landed diff confirmed the central property — no model-callable
+  path deletes a fact — and found three real issues, all since fixed: a stale-premise gap where
+  confirming a proposal whose REPLACEMENT had been separately forgotten would have left the user
+  holding neither fact (now refused as `PremiseGone`, with a regression test); a rollback branch
+  that mutated `stores` and returned without reconciling the WDBX projection; and two literal
+  runs of whitespace in user-facing strings. The review also proved the rollback restore itself
+  cannot fail, since after the forget the list is de-duplicated and one under the cap.
+
+- **2026-08-27 embedding-backed recall ranking: MEASURED AND REJECTED, not deferred again.**
+  This had been carried as "a later slice." It is now closed as not viable on this embedding,
+  with data rather than opinion. `src/embedding.rs`'s algorithm and `src/wyhash.rs` were
+  reimplemented and validated against all 5 pinned wyhash reference values and all 3 pinned
+  golden embedding vectors (to 3e-8) before any measurement was trusted. Across 1,200 unrelated
+  fact/query pairs the cosine distribution runs median 0.133, p95 0.429, max 0.611 — while
+  genuine paraphrases score as low as 0.108 (`uses rust` vs `I use Rust`) and 0.110
+  (`moved to zig` vs `switched to Zig`), the two examples the feature existed to catch. One pair
+  sharing its single most distinctive term (`kubernetes`) scored NEGATIVE at -0.071. The
+  populations overlap with no separating threshold: a floor of 0.10 admits 62% of pairs sharing
+  zero meaning, and a floor of 0.40 discards 14% of genuinely related ones. No floor preserves
+  both the paraphrase case and the exact-zero property that `unrelated_facts_still_fill_remaining_slots_newest_first`
+  and `a_short_fact_list_is_never_trimmed_by_focusing` depend on. This is a property of a
+  non-learned 32-dimensional feature hash with signed bucket collisions, so it cannot be tuned
+  away; raising `EMBED_DIM` would change the persisted vector format shared with abi. Retrieval
+  stays lexical. Re-opening this requires a different embedding, not a threshold.
+
 - **Deliberately not built, with the reason recorded:** automatic contradiction detection ("I use
   Rust" superseded by "I moved to Zig"). Deterministic supersession over free text mis-supersedes
   real facts, and silently losing a user's memory is a worse failure than showing one stale line.

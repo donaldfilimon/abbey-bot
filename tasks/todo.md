@@ -245,10 +245,12 @@ access logs, and historical consent are explicitly not acceptable substitutes.
 - [x] `PersonaContext::render(query)` focuses facts on the message and discloses the trim
 - [x] `Engine::prepare` passes the user's message as the relevance query
 - [x] Short fact lists render whole regardless of wording — focusing never becomes forgetting
-- [ ] Fact supersession — needs an explicit `replaces` parameter or a model-judged path; NOT
-      inferred from free text (see the goals note for why)
-- [ ] Retrieval currently ranks lexically; embedding-backed ranking via `wdbx`/`embedding.rs` is a
-      later slice and must stay off the hot path
+- [x] Fact supersession — landed 2026-08-27 as a hybrid: an explicit `replaces` parameter is
+      authoritative, while a model-proposed `supersedes` only QUEUES a proposal that a human
+      confirms through `/pending`. Never inferred silently from free text. See the goals note.
+- [x] Retrieval ranking: embedding-backed ranking was MEASURED and REJECTED on 2026-08-27, not
+      deferred again. It stays lexical. The measurement and the reason are in the goals note;
+      re-opening this needs a different embedding, not a tuned threshold.
 - [x] Cross-guild isolation asserted by a dedicated test, not merely inherited from the
       `"{guild}:{user}"` key: a highly relevant fact in another guild stays invisible, and the same
       user still sees their own facts in the guild that owns them
