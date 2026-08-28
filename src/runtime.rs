@@ -32,7 +32,7 @@ use crate::wdbx::Recall;
 
 mod memory_service;
 mod provider_setup;
-pub use memory_service::{MemoryService, RememberOutcome};
+pub use memory_service::{MemoryService, RememberOutcome, SupersessionOutcome};
 
 /// Hidden-layer widths per `docs/spec/adaptivelearning.md`: `[18, 64, 32, 3]`.
 pub const TOPOLOGY: [usize; 4] = [STATE_DIMENSIONS, 64, 32, BotAction::ALL.len()];
@@ -274,14 +274,27 @@ pub struct ToolScope<'a> {
 }
 
 impl crate::tools::ToolHost for ToolScope<'_> {
-    fn remember_fact(&mut self, fact: &str) -> String {
-        match self.state.memory_service().remember(
-            &self.scoped_guild,
-            &self.scoped_user,
-            fact,
-            now(),
-        ) {
+    fn remember_fact(&mut self, fact: &str, supersedes: Option<&str>) -> String {
+        // A model may PROPOSE that a new fact replaces an old one, but never
+        // apply it. `remember_proposing` stores the new fact and queues the
+        // proposal; the old fact survives until a human confirms. There is no
+        // model-callable path to `remember_replacing` — a model must not be
+        // able to confirm its own contested claim.
+        let service = self.state.memory_service();
+        let outcome = match supersedes {
+            Some(old) => {
+                service.remember_proposing(&self.scoped_guild, &self.scoped_user, fact, old, now())
+            }
+            None => service.remember(&self.scoped_guild, &self.scoped_user, fact, now()),
+        };
+        match outcome {
             Ok(RememberOutcome::Stored(fact)) => format!("Stored: {fact}"),
+            Ok(RememberOutcome::Proposed { stored, proposed }) => format!(
+                "Stored: {stored}. Proposed to replace {proposed:?}, which is unchanged until                  the person confirms."
+            ),
+            Ok(RememberOutcome::Superseded { stored, removed }) => {
+                format!("Stored: {stored}. Replaced: {removed}")
+            }
             Ok(RememberOutcome::Unchanged) => {
                 "Already on record (or the fact list is full).".to_string()
             }
@@ -831,7 +844,7 @@ mod tests {
             persona: crate::persona::Persona::Abbey,
         };
         assert_eq!(
-            crate::tools::ToolHost::remember_fact(&mut scope, "  Donald\nlikes\tRust.  "),
+            crate::tools::ToolHost::remember_fact(&mut scope, "  Donald\nlikes\tRust.  ", None),
             "Stored: Donald likes Rust."
         );
         assert_eq!(
@@ -841,7 +854,8 @@ mod tests {
         assert_eq!(
             crate::tools::ToolHost::remember_fact(
                 &mut scope,
-                &"🦀".repeat(crate::memory::MAX_FACT_CHARS + 1)
+                &"🦀".repeat(crate::memory::MAX_FACT_CHARS + 1),
+                None
             ),
             "Keep one remembered fact to 300 characters or fewer."
         );

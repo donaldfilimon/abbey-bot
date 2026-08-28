@@ -65,6 +65,25 @@ pub enum RememberOutcome {
     Stored(String),
     /// The fact was already represented, or canonical memory was at its cap.
     Unchanged,
+    /// An explicit `replaces` removed the named old fact and stored the new
+    /// one atomically. Carries the removed text so the caller can report it.
+    Superseded { stored: String, removed: String },
+    /// The new fact was stored, and a model-proposed supersession of the named
+    /// old fact was queued for explicit confirmation. The old fact is
+    /// untouched — this outcome never removes anything.
+    Proposed { stored: String, proposed: String },
+}
+
+/// Result of acting on one queued supersession.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupersessionOutcome {
+    /// The old fact was removed and the proposal cleared.
+    Confirmed(String),
+    /// The proposal existed but its old fact was already gone (a bare
+    /// `/forget`, or the cap). The proposal is cleared; nothing was removed.
+    AlreadyGone(String),
+    /// No proposal names that old fact for this user.
+    NotPending,
 }
 
 /// One logical memory service over the JSON and WDBX stores.
@@ -99,6 +118,143 @@ impl<'a> MemoryService<'a> {
         let mut recall = AppState::lock(self.recall);
         reconcile_projection(&stores, &mut recall);
         Ok(RememberOutcome::Stored(fact))
+    }
+
+    /// Store `fact`, replacing `replaces` in the same lock boundary.
+    ///
+    /// This is the AUTHORITATIVE path: the caller supplied an explicit signal
+    /// naming exactly what to replace, so no confirmation is required. Order
+    /// matters and is deliberate — validate first so a rejected fact can never
+    /// trigger a deletion, then forget, then remember. Forgetting first is
+    /// also what lets a user sitting at `MAX_FACTS` supersede at all, since it
+    /// frees the slot the new fact needs.
+    pub fn remember_replacing(
+        &self,
+        guild: &str,
+        user: &str,
+        fact: &str,
+        replaces: &str,
+        now: u64,
+    ) -> Result<RememberOutcome, &'static str> {
+        let fact = memory::validated_fact(fact)?;
+        let mut stores = AppState::lock(self.stores);
+        let Some(selected) = fact_for_deletion(stores.memory.facts(guild, user), replaces) else {
+            return Err("No remembered fact matches what you asked to replace.");
+        };
+        if selected == fact {
+            // Replacing a fact with itself would delete then re-store the same
+            // text; report it as a no-op rather than churning both stores.
+            return Ok(RememberOutcome::Unchanged);
+        }
+        if !stores.memory.forget(guild, user, &selected) {
+            return Err("No remembered fact matches what you asked to replace.");
+        }
+        if !stores.memory.remember(guild, user, &fact, now) {
+            // The slot was just freed and the text differs from what was
+            // removed, so the only way this fails is an exact duplicate of
+            // another held fact. Put the removed fact back rather than losing
+            // it to a request that stored nothing.
+            stores.memory.remember(guild, user, &selected, now);
+            return Ok(RememberOutcome::Unchanged);
+        }
+        // Any queued proposal naming the now-removed fact is moot.
+        stores.memory.drop_supersession(guild, user, &selected);
+        let mut recall = AppState::lock(self.recall);
+        reconcile_projection(&stores, &mut recall);
+        Ok(RememberOutcome::Superseded {
+            stored: fact,
+            removed: selected,
+        })
+    }
+
+    /// Store `fact` and QUEUE a model-proposed supersession of `supersedes`.
+    ///
+    /// Never removes anything. The new fact is stored on its own merits; the
+    /// old one survives until a human explicitly confirms via
+    /// [`Self::confirm_supersession`]. If the proposed old fact does not
+    /// exist, the new fact is still stored and no proposal is queued — there
+    /// is nothing to contest.
+    pub fn remember_proposing(
+        &self,
+        guild: &str,
+        user: &str,
+        fact: &str,
+        supersedes: &str,
+        now: u64,
+    ) -> Result<RememberOutcome, &'static str> {
+        let fact = memory::validated_fact(fact)?;
+        let mut stores = AppState::lock(self.stores);
+        if !stores.memory.remember(guild, user, &fact, now) {
+            return Ok(RememberOutcome::Unchanged);
+        }
+        let proposed = fact_for_deletion(stores.memory.facts(guild, user), supersedes)
+            .filter(|candidate| candidate != &fact);
+        let outcome = match proposed {
+            Some(old) => {
+                stores
+                    .memory
+                    .propose_supersession(guild, user, &fact, &old, now);
+                RememberOutcome::Proposed {
+                    stored: fact,
+                    proposed: old,
+                }
+            }
+            None => RememberOutcome::Stored(fact),
+        };
+        let mut recall = AppState::lock(self.recall);
+        reconcile_projection(&stores, &mut recall);
+        Ok(outcome)
+    }
+
+    /// Apply one queued supersession after an explicit human decision.
+    ///
+    /// Re-checks that the old fact still exists: by the time someone confirms,
+    /// a bare `/forget` or the `MAX_FACTS` cap may already have removed it.
+    /// That is reported distinctly rather than silently succeeding.
+    pub fn confirm_supersession(
+        &self,
+        guild: &str,
+        user: &str,
+        old_fact: &str,
+    ) -> SupersessionOutcome {
+        let mut stores = AppState::lock(self.stores);
+        let pending = stores
+            .memory
+            .pending_supersessions(guild, user)
+            .iter()
+            .find(|entry| entry.old_fact == old_fact)
+            .cloned();
+        let Some(pending) = pending else {
+            return SupersessionOutcome::NotPending;
+        };
+        let removed = stores.memory.forget(guild, user, &pending.old_fact);
+        stores
+            .memory
+            .drop_supersession(guild, user, &pending.old_fact);
+        let mut recall = AppState::lock(self.recall);
+        reconcile_projection(&stores, &mut recall);
+        if removed {
+            SupersessionOutcome::Confirmed(pending.old_fact)
+        } else {
+            SupersessionOutcome::AlreadyGone(pending.old_fact)
+        }
+    }
+
+    /// Drop one queued proposal without touching either fact.
+    pub fn dismiss_supersession(&self, guild: &str, user: &str, old_fact: &str) -> bool {
+        let mut stores = AppState::lock(self.stores);
+        stores.memory.drop_supersession(guild, user, old_fact)
+    }
+
+    pub fn pending_supersessions(
+        &self,
+        guild: &str,
+        user: &str,
+    ) -> Vec<memory::PendingSupersession> {
+        AppState::lock(self.stores)
+            .memory
+            .pending_supersessions(guild, user)
+            .to_vec()
     }
 
     /// Facts from canonical JSON memory. Legacy WDBX-only rows are recovered
@@ -193,6 +349,183 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    /// The explicit path is authoritative — it removes the named fact without
+    /// any confirmation step, because the caller already gave the signal.
+    #[test]
+    fn explicit_replaces_supersedes_atomically() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        let outcome = service
+            .remember_replacing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("supersede");
+        assert_eq!(
+            outcome,
+            RememberOutcome::Superseded {
+                stored: "moved to zig".to_string(),
+                removed: "uses rust".to_string(),
+            }
+        );
+        assert_eq!(service.facts("g", "u"), vec!["moved to zig".to_string()]);
+        assert!(service.pending_supersessions("g", "u").is_empty());
+    }
+
+    /// A rejected fact must never cause a deletion. Validation runs before
+    /// the forget, so the old fact is still there afterwards.
+    #[test]
+    fn a_rejected_replacement_never_removes_the_old_fact() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        let too_long = "x".repeat(memory::MAX_FACT_CHARS + 1);
+        assert!(
+            service
+                .remember_replacing("g", "u", &too_long, "uses rust", 2)
+                .is_err()
+        );
+        assert_eq!(service.facts("g", "u"), vec!["uses rust".to_string()]);
+    }
+
+    /// Naming a fact that is not held must not store the new one under a
+    /// false pretense, and must not remove anything.
+    #[test]
+    fn replacing_an_absent_fact_is_refused_without_storing() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        assert!(
+            service
+                .remember_replacing("g", "u", "moved to zig", "plays banjo", 2)
+                .is_err()
+        );
+        assert_eq!(service.facts("g", "u"), vec!["uses rust".to_string()]);
+    }
+
+    /// Superseding must work at the cap: the forget frees the slot the new
+    /// fact needs. Without forget-before-remember this silently fails.
+    #[test]
+    fn superseding_works_at_the_fact_cap() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        for index in 0..memory::MAX_FACTS {
+            service
+                .remember("g", "u", &format!("fact number {index}"), 1)
+                .expect("seed");
+        }
+        assert_eq!(service.facts("g", "u").len(), memory::MAX_FACTS);
+        // A plain remember at the cap is rejected...
+        assert_eq!(
+            service.remember("g", "u", "one more", 2).expect("capped"),
+            RememberOutcome::Unchanged
+        );
+        // ...but an explicit supersession still succeeds.
+        let outcome = service
+            .remember_replacing("g", "u", "one more", "fact number 0", 3)
+            .expect("supersede at cap");
+        assert_eq!(
+            outcome,
+            RememberOutcome::Superseded {
+                stored: "one more".to_string(),
+                removed: "fact number 0".to_string(),
+            }
+        );
+        let facts = service.facts("g", "u");
+        assert_eq!(facts.len(), memory::MAX_FACTS);
+        assert!(facts.contains(&"one more".to_string()));
+        assert!(!facts.contains(&"fact number 0".to_string()));
+    }
+
+    /// THE core invariant of this feature: a model proposal stores the new
+    /// fact but must never remove the old one.
+    #[test]
+    fn a_model_proposal_stores_without_removing_anything() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        let outcome = service
+            .remember_proposing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("propose");
+        assert_eq!(
+            outcome,
+            RememberOutcome::Proposed {
+                stored: "moved to zig".to_string(),
+                proposed: "uses rust".to_string(),
+            }
+        );
+        let facts = service.facts("g", "u");
+        assert!(facts.contains(&"uses rust".to_string()), "{facts:?}");
+        assert!(facts.contains(&"moved to zig".to_string()), "{facts:?}");
+        assert_eq!(service.pending_supersessions("g", "u").len(), 1);
+    }
+
+    /// Proposing against a fact that is not held still stores the new fact —
+    /// it stands on its own merits — but queues nothing to contest.
+    #[test]
+    fn proposing_against_an_absent_fact_stores_without_queuing() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        let outcome = service
+            .remember_proposing("g", "u", "moved to zig", "never said this", 1)
+            .expect("propose");
+        assert_eq!(outcome, RememberOutcome::Stored("moved to zig".to_string()));
+        assert!(service.pending_supersessions("g", "u").is_empty());
+    }
+
+    #[test]
+    fn confirming_a_proposal_removes_the_old_fact_exactly_once() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        service
+            .remember_proposing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("propose");
+        assert_eq!(
+            service.confirm_supersession("g", "u", "uses rust"),
+            SupersessionOutcome::Confirmed("uses rust".to_string())
+        );
+        assert_eq!(service.facts("g", "u"), vec!["moved to zig".to_string()]);
+        assert!(service.pending_supersessions("g", "u").is_empty());
+        // Confirming again must not resurrect or re-remove anything.
+        assert_eq!(
+            service.confirm_supersession("g", "u", "uses rust"),
+            SupersessionOutcome::NotPending
+        );
+    }
+
+    /// The race the plan called out: by the time someone confirms, a bare
+    /// `/forget` may already have removed the old fact. That must report
+    /// distinctly rather than silently succeeding.
+    #[test]
+    fn confirming_after_the_old_fact_is_already_gone_reports_it() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        service
+            .remember_proposing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("propose");
+        assert!(service.forget("g", "u", "uses rust"));
+        assert_eq!(
+            service.confirm_supersession("g", "u", "uses rust"),
+            SupersessionOutcome::AlreadyGone("uses rust".to_string())
+        );
+        assert!(service.pending_supersessions("g", "u").is_empty());
+    }
+
+    #[test]
+    fn dismissing_a_proposal_keeps_both_facts() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        service
+            .remember_proposing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("propose");
+        assert!(service.dismiss_supersession("g", "u", "uses rust"));
+        let facts = service.facts("g", "u");
+        assert!(facts.contains(&"uses rust".to_string()));
+        assert!(facts.contains(&"moved to zig".to_string()));
+        assert!(service.pending_supersessions("g", "u").is_empty());
+    }
 
     #[test]
     fn remember_validates_once_and_updates_both_representations() {

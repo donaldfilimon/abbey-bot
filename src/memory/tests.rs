@@ -378,3 +378,64 @@ fn bank_round_trips_through_json() {
     let minimal: UserMemory = serde_json::from_str("{}").expect("defaults");
     assert_eq!(minimal.reputation, DEFAULT_REPUTATION);
 }
+
+/// The new field is additive and `#[serde(default)]`: a document written by an
+/// older build, with no `pending_supersessions` key at all, must still load
+/// with its facts intact and an empty proposal queue. This is why
+/// `MEMORY_PROJECTION_VERSION` is not bumped — an old binary reading a new
+/// document loses advisory proposals, never facts.
+#[test]
+fn a_user_record_without_pending_supersessions_still_loads() {
+    let legacy: UserMemory = serde_json::from_str(
+        r#"{"facts":["uses rust"],"reputation":0.5,"interaction_count":2,"updated_at":7}"#,
+    )
+    .expect("legacy user record loads");
+    assert_eq!(legacy.facts, ["uses rust"]);
+    assert!(legacy.pending_supersessions.is_empty());
+}
+
+#[test]
+fn pending_supersessions_round_trip_through_json() {
+    let mut bank = MemoryBank::default();
+    bank.remember("g", "u", "uses rust", 1);
+    assert!(bank.propose_supersession("g", "u", "moved to zig", "uses rust", 2));
+    let json = serde_json::to_string(&bank).expect("serialize");
+    let back: MemoryBank = serde_json::from_str(&json).expect("deserialize");
+    let pending = back.pending_supersessions("g", "u");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].old_fact, "uses rust");
+    assert_eq!(pending[0].new_fact, "moved to zig");
+    // A proposal never alters the fact list.
+    assert_eq!(back.facts("g", "u"), ["uses rust"]);
+}
+
+#[test]
+fn proposing_the_same_pair_twice_queues_it_once() {
+    let mut bank = MemoryBank::default();
+    assert!(bank.propose_supersession("g", "u", "new", "old", 1));
+    assert!(!bank.propose_supersession("g", "u", "new", "old", 2));
+    assert_eq!(bank.pending_supersessions("g", "u").len(), 1);
+}
+
+/// Bounded the way facts are. Dropping the oldest proposal must never remove
+/// a fact.
+#[test]
+fn pending_supersessions_are_capped_without_touching_facts() {
+    let mut bank = MemoryBank::default();
+    bank.remember("g", "u", "a durable fact", 1);
+    for index in 0..(MAX_PENDING_SUPERSESSIONS + 5) {
+        bank.propose_supersession(
+            "g",
+            "u",
+            &format!("new {index}"),
+            &format!("old {index}"),
+            1,
+        );
+    }
+    assert_eq!(
+        bank.pending_supersessions("g", "u").len(),
+        MAX_PENDING_SUPERSESSIONS
+    );
+    assert_eq!(bank.pending_supersessions("g", "u")[0].old_fact, "old 5");
+    assert_eq!(bank.facts("g", "u"), ["a durable fact"]);
+}

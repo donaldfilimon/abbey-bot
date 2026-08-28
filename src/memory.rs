@@ -22,6 +22,12 @@ use serde::{Deserialize, Serialize};
 pub const RECENT_CAP: usize = 50;
 /// Facts one user may hold in one guild. Exact duplicates never count twice.
 pub const MAX_FACTS: usize = 100;
+
+/// Cap on queued model-proposed supersessions per user. Bounded for the same
+/// reason facts are: a chatty model must not be able to grow the document
+/// without limit. Oldest proposals are dropped first, and dropping a proposal
+/// never touches a fact.
+pub const MAX_PENDING_SUPERSESSIONS: usize = 16;
 /// Longest durable fact, measured in Unicode scalar values after whitespace
 /// normalization. This is shared by slash commands and model tools so every
 /// write path enforces the same storage/context bound.
@@ -64,6 +70,27 @@ pub fn validated_fact(fact: &str) -> Result<String, &'static str> {
     Ok(normalized)
 }
 
+/// One model-proposed supersession awaiting an explicit human decision.
+///
+/// The new fact is stored the moment it is proposed — storing a fact never
+/// loses anything. Only the *removal* of `old_fact` waits, because a wrong
+/// supersession silently destroys something the user asked to be remembered.
+/// Nothing here ever deletes on its own: an unconfirmed proposal that is
+/// dismissed, capped out, or simply ignored leaves both facts intact.
+///
+/// JSON-only by design. This must never become a field on the WDBX
+/// `FactRecord`, whose serialized bytes are pinned by
+/// `tests/fixtures/wdbx_v1_conformance.seg.jsonl` and cross-checked against
+/// the sibling `../wdbx` repository's own copy of that fixture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingSupersession {
+    /// Exact normalized text of the fact that was stored.
+    pub new_fact: String,
+    /// Exact normalized text of the fact the model believes it replaces.
+    pub old_fact: String,
+    pub at: u64,
+}
+
 /// Per-user fact store + reputation (bot-architecture.md `UserMemory`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserMemory {
@@ -76,6 +103,12 @@ pub struct UserMemory {
     pub interaction_count: u64,
     #[serde(default)]
     pub updated_at: u64,
+    /// Additive and `#[serde(default)]`: an older binary reading a newer
+    /// document simply does not see these, losing advisory *proposals* but
+    /// never *facts*. That is why `MEMORY_PROJECTION_VERSION` is not bumped
+    /// for this field — nothing about fact authority changes.
+    #[serde(default)]
+    pub pending_supersessions: Vec<PendingSupersession>,
 }
 
 impl Default for UserMemory {
@@ -85,6 +118,7 @@ impl Default for UserMemory {
             reputation: DEFAULT_REPUTATION,
             interaction_count: 0,
             updated_at: 0,
+            pending_supersessions: Vec::new(),
         }
     }
 }
@@ -437,6 +471,66 @@ impl MemoryBank {
 
     pub fn facts(&self, guild: &str, user: &str) -> &[String] {
         self.user(guild, user).map_or(&[], |m| m.facts.as_slice())
+    }
+
+    /// Queue a model-proposed supersession. Returns `false` — and queues
+    /// nothing — when the same pair is already pending.
+    ///
+    /// Deliberately does NOT touch `facts`. The proposal is advisory until a
+    /// human confirms it; see [`PendingSupersession`].
+    pub fn propose_supersession(
+        &mut self,
+        guild: &str,
+        user: &str,
+        new_fact: &str,
+        old_fact: &str,
+        now: u64,
+    ) -> bool {
+        let memory = self.user_mut(guild, user);
+        if memory
+            .pending_supersessions
+            .iter()
+            .any(|pending| pending.new_fact == new_fact && pending.old_fact == old_fact)
+        {
+            return false;
+        }
+        // Drop oldest first so a chatty model cannot grow the document without
+        // bound. Dropping a proposal never removes a fact.
+        while memory.pending_supersessions.len() >= MAX_PENDING_SUPERSESSIONS {
+            memory.pending_supersessions.remove(0);
+        }
+        memory.pending_supersessions.push(PendingSupersession {
+            new_fact: new_fact.to_string(),
+            old_fact: old_fact.to_string(),
+            at: now,
+        });
+        memory.updated_at = now;
+        true
+    }
+
+    /// Drop one queued proposal by its exact `old_fact`, without touching any
+    /// fact. Used by both confirm (after the fact is removed) and dismiss.
+    pub fn drop_supersession(&mut self, guild: &str, user: &str, old_fact: &str) -> bool {
+        let key = user_key(guild, user);
+        let legacy = legacy_user_key(guild, user);
+        let selected = if self.users.contains_key(&key) {
+            key
+        } else {
+            legacy
+        };
+        let Some(memory) = self.users.get_mut(&selected) else {
+            return false;
+        };
+        let before = memory.pending_supersessions.len();
+        memory
+            .pending_supersessions
+            .retain(|pending| pending.old_fact != old_fact);
+        memory.pending_supersessions.len() != before
+    }
+
+    pub fn pending_supersessions(&self, guild: &str, user: &str) -> &[PendingSupersession] {
+        self.user(guild, user)
+            .map_or(&[], |m| m.pending_supersessions.as_slice())
     }
 
     /// Every durable fact with its decoded scope, in stable map/fact order.

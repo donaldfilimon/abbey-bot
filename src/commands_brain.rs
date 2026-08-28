@@ -100,6 +100,10 @@ pub async fn remember(
     fact: String,
     #[description = "Who it is about (default: you; moderators may choose another member)"]
     user: Option<User>,
+    #[description = "An existing fact this replaces — it is removed only because you said so"]
+    #[autocomplete = "autocomplete_fact"]
+    #[max_length = 300]
+    replaces: Option<String>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
@@ -110,13 +114,28 @@ pub async fn remember(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let reply = match state
-        .memory_service()
-        .remember(&g, &u, &fact, runtime::now())
-    {
+    // `replaces` is an explicit human signal, so it is authoritative and needs
+    // no confirmation step. Without it nothing is ever removed here.
+    let outcome = match replaces.as_deref() {
+        Some(old) => state
+            .memory_service()
+            .remember_replacing(&g, &u, &fact, old, runtime::now()),
+        None => state
+            .memory_service()
+            .remember(&g, &u, &fact, runtime::now()),
+    };
+    let reply = match outcome {
         Ok(runtime::RememberOutcome::Stored(fact)) => {
             format!("Stored about <@{}>: {fact}", subject.id.get())
         }
+        Ok(runtime::RememberOutcome::Superseded { stored, removed }) => format!(
+            "Stored about <@{}>: {stored}\nReplaced: {removed}",
+            subject.id.get()
+        ),
+        Ok(runtime::RememberOutcome::Proposed { stored, proposed }) => format!(
+            "Stored about <@{}>: {stored}\nProposed to replace: {proposed} — nothing was              removed. Run /pending confirm to apply it.",
+            subject.id.get()
+        ),
         Ok(runtime::RememberOutcome::Unchanged) => {
             "Already on record (or the fact list is full).".to_string()
         }
@@ -164,6 +183,138 @@ pub async fn forget(
         "Forgotten."
     } else {
         "Nothing by that wording was on record."
+    })
+    .await?;
+    Ok(())
+}
+
+async fn autocomplete_pending(ctx: Context<'_>, partial: &str) -> Vec<String> {
+    let g = scoped_guild(ctx);
+    let u = scoped_user(ctx.author());
+    let state = &ctx.data().state;
+    let needle = partial.to_lowercase();
+    state
+        .memory_service()
+        .pending_supersessions(&g, &u)
+        .into_iter()
+        .map(|pending| pending.old_fact)
+        .filter(|old| needle.is_empty() || old.to_lowercase().contains(&needle))
+        .take(25)
+        .collect()
+}
+
+/// Review or resolve supersessions the model proposed but never applied.
+///
+/// Human-only by construction: there is no model-callable tool that confirms a
+/// supersession. A model may propose that one fact replaces another, but only
+/// a person decides whether the old fact is actually removed.
+#[poise::command(
+    slash_command,
+    ephemeral,
+    subcommands("pending_list", "pending_confirm", "pending_dismiss")
+)]
+pub async fn pending(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+/// Show supersessions proposed for a member, with nothing removed yet.
+#[poise::command(slash_command, ephemeral, rename = "list")]
+pub async fn pending_list(
+    ctx: Context<'_>,
+    #[description = "Who to review (default: you; moderators may choose another member)"]
+    user: Option<User>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let g = scoped_guild(ctx);
+    let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
+    let u = scoped_user(subject);
+    let pending = ctx
+        .data()
+        .state
+        .memory_service()
+        .pending_supersessions(&g, &u);
+    if pending.is_empty() {
+        ctx.say("Nothing proposed. Every remembered fact stands as stored.")
+            .await?;
+        return Ok(());
+    }
+    let mut reply = format!(
+        "Proposed for <@{}> — nothing has been removed:\n",
+        subject.id.get()
+    );
+    for entry in &pending {
+        reply.push_str(&format!("• {} → {}\n", entry.old_fact, entry.new_fact));
+    }
+    reply.push_str("Use /pending confirm to remove an old fact, or /pending dismiss to keep both.");
+    ctx.say(clamp_message(reply)).await?;
+    Ok(())
+}
+
+/// Apply one proposed supersession, removing the old fact.
+#[poise::command(slash_command, ephemeral, rename = "confirm")]
+pub async fn pending_confirm(
+    ctx: Context<'_>,
+    #[description = "The old fact to remove"]
+    #[autocomplete = "autocomplete_pending"]
+    old_fact: String,
+    #[description = "Who it is about (default: you; moderators may choose another member)"]
+    user: Option<User>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let g = scoped_guild(ctx);
+    let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
+    let u = scoped_user(subject);
+    let reply = match ctx
+        .data()
+        .state
+        .memory_service()
+        .confirm_supersession(&g, &u, &old_fact)
+    {
+        runtime::SupersessionOutcome::Confirmed(removed) => format!("Removed: {removed}"),
+        runtime::SupersessionOutcome::AlreadyGone(old) => format!(
+            "That fact was already gone, so nothing was removed. Cleared the proposal for: {old}"
+        ),
+        runtime::SupersessionOutcome::NotPending => "No proposal names that fact.".to_string(),
+    };
+    ctx.say(clamp_message(reply)).await?;
+    Ok(())
+}
+
+/// Drop one proposed supersession, keeping both facts.
+#[poise::command(slash_command, ephemeral, rename = "dismiss")]
+pub async fn pending_dismiss(
+    ctx: Context<'_>,
+    #[description = "The old fact to keep"]
+    #[autocomplete = "autocomplete_pending"]
+    old_fact: String,
+    #[description = "Who it is about (default: you; moderators may choose another member)"]
+    user: Option<User>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let g = scoped_guild(ctx);
+    let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
+    let u = scoped_user(subject);
+    let dropped = ctx
+        .data()
+        .state
+        .memory_service()
+        .dismiss_supersession(&g, &u, &old_fact);
+    ctx.say(if dropped {
+        "Dismissed. Both facts are kept."
+    } else {
+        "No proposal names that fact."
     })
     .await?;
     Ok(())

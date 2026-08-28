@@ -65,7 +65,10 @@ pub fn abbey_tools() -> Vec<ToolSpec> {
             description: "Store one durable fact about the person you are talking to, in third person, for future conversations in this server.",
             parameters: json!({
                 "type": "object",
-                "properties": { "fact": { "type": "string", "description": "A single concise fact", "maxLength": crate::memory::MAX_FACT_CHARS } },
+                "properties": {
+                    "fact": { "type": "string", "description": "A single concise fact", "maxLength": crate::memory::MAX_FACT_CHARS },
+                    "supersedes": { "type": "string", "description": "An existing fact this probably replaces. This only PROPOSES the replacement — the old fact is kept until the person confirms it themselves. Never assume it was removed.", "maxLength": crate::memory::MAX_FACT_CHARS }
+                },
                 "required": ["fact"]
             }),
         },
@@ -185,7 +188,11 @@ fn parse_anthropic_tool_use(content: &Value) -> Vec<ToolCall> {
 /// plain text the model will read; the host owns scoping (guild/user) and
 /// any locking.
 pub trait ToolHost {
-    fn remember_fact(&mut self, fact: &str) -> String;
+    /// `supersedes` is a PROPOSAL, never an instruction. The host stores the
+    /// new fact and queues the proposal; the named old fact survives until a
+    /// human explicitly confirms. A model must never be able to delete a
+    /// remembered fact.
+    fn remember_fact(&mut self, fact: &str, supersedes: Option<&str>) -> String;
     fn lookup_reputation(&mut self, user_id: Option<&str>) -> String;
     fn recall(&mut self, query: &str) -> String;
     fn switch_persona(&mut self, persona: Persona) -> String;
@@ -205,7 +212,7 @@ pub fn dispatch(call: &ToolCall, host: &mut dyn ToolHost) -> ToolResult {
     };
     let content = match call.name.as_str() {
         "remember_fact" => match arg_str("fact") {
-            Some(fact) => host.remember_fact(&fact),
+            Some(fact) => host.remember_fact(&fact, arg_str("supersedes").as_deref()),
             None => "remember_fact needs a non-empty `fact`.".to_string(),
         },
         "lookup_reputation" => host.lookup_reputation(arg_str("user_id").as_deref()),
@@ -258,8 +265,11 @@ mod tests {
     }
 
     impl ToolHost for FakeHost {
-        fn remember_fact(&mut self, fact: &str) -> String {
-            self.log.push(format!("remember:{fact}"));
+        fn remember_fact(&mut self, fact: &str, supersedes: Option<&str>) -> String {
+            match supersedes {
+                Some(old) => self.log.push(format!("remember:{fact};supersedes:{old}")),
+                None => self.log.push(format!("remember:{fact}")),
+            }
             format!("Stored: {fact}")
         }
         fn lookup_reputation(&mut self, user_id: Option<&str>) -> String {

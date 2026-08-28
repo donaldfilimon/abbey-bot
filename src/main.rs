@@ -239,6 +239,7 @@ async fn main() -> Result<(), Error> {
                 commands::webhook(),
                 commands_brain::remember(),
                 commands_brain::forget(),
+                commands_brain::pending(),
                 commands_brain::recall(),
                 commands_brain::reputation(),
                 commands_brain::summarize(),
