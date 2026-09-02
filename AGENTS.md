@@ -7,8 +7,8 @@ per-feature design notes. Read it first. This file holds what the README leaves
 out: the shape of the codebase, the rules that keep it that shape, and the traps
 this project has already hit.
 
-`AGENTS.md` is a verbatim mirror of this file for non-Claude agents — only the
-header line differs. Apply any edit to both, or they drift.
+`AGENTS.md` and `CLAUDE.md` are verbatim mirrors except for their header line.
+Apply every body edit to both, or they drift.
 
 ## Commands
 
@@ -16,7 +16,7 @@ header line differs. Apply any edit to both, or they drift.
 ./check.sh          # gate: fmt, validation/WDBX parity, clippy -D warnings, tests, release build
 ./check.ps1         # the same source gate on Windows (without POSIX/plist-only checks)
 cargo test <name>   # single test, substring-matched against the full path
-cargo run           # needs DISCORD_TOKEN; see README
+cargo run           # needs DISCORD_TOKEN or its documented fallback; see README
 
 # Synthetic provider qualification; runs before Discord/state initialization:
 ./target/release/abbey-bot --provider-self-test primary --json
@@ -28,7 +28,8 @@ cargo run           # needs DISCORD_TOKEN; see README
 #   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gemma4:12b \
 #   ABBEY_VISION_ENDPOINT=http://127.0.0.1:11434/v1 ABBEY_VISION_MODEL=gemma4:12b \
 #   ABBEY_DATA_DIR=<dir> RUST_LOG=info,abbey_bot=debug ./target/debug/abbey-bot
-#   pkill -INT -f target/debug/abbey-bot      # SIGINT → persists learning/memory first
+# Stop only at an authorized transition: re-resolve PID, parent, owner, start
+# time, cwd, executable, and hash; SIGINT that exact PID and verify exit/listeners.
 # End-to-end against a real local model, no Discord (ignored by the gate):
 #   ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434 ABBEY_BOT_LLM_MODEL=gemma4:12b \
 #   cargo test live_dm -- --ignored --nocapture
@@ -56,15 +57,16 @@ lane checks formatting, Python locks/syntax, the privacy logging rule,
 all-target Clippy with `--locked -D warnings`, locked tests, and the locked
 release build. POSIX shell syntax runs on Ubuntu/macOS and plist lint runs when
 `plutil` is present. The runner's rustup honours `rust-toolchain.toml`, so CI
-and local runs share exact stable Rust 1.97.1. Historical CI runs prove only
+and local runs share exact stable Rust 1.98.0. Historical CI runs prove only
 the commit and lanes they actually executed.
 
-Exact-head source evidence as of 2026-08-27: commit
-`588cbe6eeaf7b11ec616657874ccba7e63ad4a3e` completed `Gate (Ubuntu)`,
-`Gate (macOS)`, and `Gate (Windows)` successfully in Actions run
-`33025176982`. That closes build/test evidence for those three lanes at that
-commit only. It does not qualify a Gemma/provider runtime, install or service
-artifact, live Telegram/Slack/Discord turn, or participant-consented voice.
+The pre-stabilization exact-head baseline is commit
+`9716f00f4b9dfe4c8ddfa1e126e74ba2cf9fdde1`: `Gate (Ubuntu)`,
+`Gate (macOS)`, and `Gate (Windows)` completed successfully in Actions run
+`33218303755` on 2026-08-28. That proves only those source gates at that exact
+commit. The newer stabilization source requires its own push and exact-head
+run; neither record qualifies a provider runtime, installed or managed-service
+artifact, live connector turn, or participant-consented voice.
 
 ## Architecture: a pure core with a thin Discord shell
 
@@ -90,7 +92,7 @@ serenity or poise** (no count here — it rots; the table is the list):
 | `platform.rs`, `vision.rs`, `vision/*` | The network-agnostic event model and Telegram/Slack wire translation; image validation/normalization off the async runtime, the OpenAI-compatible provider contract, and pure rendering |
 | `provider.rs`, `provider_self_test.rs` | Explicit Foundation Models config, manifest-bound server/CLI capabilities, loopback-only routing, the bounded schema-constrained `fm respond` adapter, and synthetic provider qualification |
 | `persist.rs` | The one JSON document the registries' store traits read and write, atomically |
-| `tools.rs` | The model-callable tool vocabulary, both request wire shapes, and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`) |
+| `tools.rs`, `inspect.rs` | Named in-process skill packs (`Core`, `Inspect`) and `dispatch` against a `ToolHost` (the runtime implements it over `AppState` as `ToolScope`). Inspect tools read status and facts; they do not mutate. |
 | `pipeline.rs`, `pipeline/tests.rs` | The spec's `SocialRouter`: triage → intent → state → policy → cooldown → persona → reply/react, behind an `Outbound` trait so it runs in tests |
 | `generation.rs` | How a reply is produced once the pipeline decides to speak: explicit tooled and read-only entry points, the bounded tool loop, local-path streaming (`stream_reply`: post/edit pacing), `Delivery`/`Ask`/`Round` |
 | `voice.rs`, `offline_voice.rs` | Explicit local/disabled/OpenAI voice policy; loopback MLX-Audio client, bounded PCM framing, VAD/segmentation, and spoken-text shaping |
@@ -221,15 +223,39 @@ the typing indicator is re-broadcast every 8 s while a local model thinks.
 **Tool capability is explicit at the generation boundary.** Mentions, DMs, and
 `/persona ask` enter `generation::generate_with_tools*` with a live `ToolScope`;
 unsolicited policy replies, voice, and `/summarize` enter a read-only function
-with an explicit persona and never construct the vocabulary or host. The loop
-is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
+with an explicit persona and never construct the vocabulary or host. Whenever
+the global tools policy is on, production exposes exactly five Core tools then
+two Inspect tools, in this stable order: `remember_fact`,
+`lookup_reputation`, `recall`, `switch_persona`, `recent_messages`,
+`inspect_status`, `list_facts`. `abbey_tools()` remains the byte-stable original
+five-tool compatibility fixture; production uses the seven-tool definition in
+both the OpenAI-compatible/Anthropic request serializers and the Foundation
+Models decision schema. `ABBEY_BOT_LLM_TOOLS=off` suppresses the complete
+vocabulary; there is no partial Inspect toggle. Provider Inspect returns only
+effective routable capability categories and configured-versus-qualified
+provenance. Voice Inspect is guild-scoped and returns exactly one of `off`,
+`presence`, `awaiting-consent`, `active`, or `paused`, with no participant or
+media details. The loop is bounded (`MAX_TOOL_ROUNDS = 3`), streams on the
 local path (`StreamEnd::Calls` means "run the tools and stream again"), retries
 once without tools on a 4xx and disables only that provider's tool route for
 the process. Every tool result is a short string (`tools::truncate`); no tool posts,
 moderates, or changes config; `switch_persona` changes only the conversation's
 persona and keeps the transcript. Adding a tool means: a `ToolSpec` in
-`abbey_tools`, a `ToolHost` method, a `dispatch` arm, and a test — nothing in
-the shells.
+the matching skill pack (`tools_for`), a `ToolHost` method, a `dispatch` arm,
+and a test — nothing in the shells.
+
+**Private local launch state is outside the tracked repository contract.**
+`launch.sh` and `run_bot.sh` are owner-private mode-0700 helpers: they remain
+untracked, checkout-locally excluded, unread in public evidence, unstaged, and
+outside tracked gate checks. `bot.log` is ignored and is not read, rotated,
+removed, or permission-changed while the manually launched bot is active.
+Source builds and tests use a fresh `CARGO_TARGET_DIR` outside the checkout so
+they cannot replace the running `target/release/abbey-bot`. The source handoff
+does not authorize stopping that process. At a separately authorized
+transition, re-resolve PID, parent PID, owner, start time, cwd, executable path,
+and executable hash; send SIGINT only to that exact process, verify graceful
+shutdown and listener removal, and request operator intervention rather than
+using a broad matcher or automatically escalating to a force kill.
 
 **Generated replies are shaped, queued, and (locally) streamed.** Every
 generated reply passes `ask::tidy_reply` (persona-echo/heading strip,
@@ -406,7 +432,7 @@ untested claim.
 moved to trixie/glibc 2.41 while the runtime stayed on bookworm/2.36 — a
 combination that builds green and dies at `docker run` with "GLIBC_2.xx not
 found". Build and runtime stages must name the same release; the current pair is
-`rust:1.97.1-slim-trixie` + `debian:trixie-slim`. Never update only one stage.
+`rust:1.98.0-slim-trixie` + `debian:trixie-slim`. Never update only one stage.
 Remember also that this host has neither Docker nor
 systemd, so `Dockerfile` and `deploy/abbey-bot.service` can only ever be
 source-reviewed here, never artifact-verified — the README's honesty note says
@@ -463,7 +489,22 @@ them away:
 - **The runtime stage installs no ca-certificates, deliberately.** TLS roots
   are compiled in (webpki-roots via hyper-rustls and tokio-tungstenite;
   nothing links native-tls or openssl), so the system cert store is never
-  read. Adding the package back is a dead layer, not a fix.
+  read. `scripts/check-linux-tls-tree.py` pins that Linux dependency-graph
+  invariant in both platform gates. Adding the package back is a dead layer,
+  not a fix.
+- **Portable TLS is explicitly not audit-clean.** Serenity 0.12.5's WebSocket
+  edge still resolves `rustls-webpki` 0.102.8 with exactly four accepted
+  temporary vulnerability records: `RUSTSEC-2026-0049` /
+  `GHSA-pwjx-qhcg-rvj4`, `RUSTSEC-2026-0098` /
+  `GHSA-965h-392x-2mh5`, `RUSTSEC-2026-0099` /
+  `GHSA-xgp8-3hg3-c2mh`, and `RUSTSEC-2026-0104` /
+  `GHSA-82j2-j2ch-gfr8`. The last is the malformed-CRL reachable-panic
+  advisory and remains visible. `security/rustsec-accepted-debt.json` binds
+  every material advisory and package fingerprint; the gate fails on missing,
+  added, or changed evidence and prints that four vulnerabilities remain and
+  the audit is **not clean**. Cargo-audit 0.22.2 is pinned only for report-format
+  reproducibility, while informational warnings remain separate maintenance
+  debt.
 - **`RestartSec=30`, not 5.** A bad token exits 1 forever, and a 5-second
   restart loop re-auths against Discord fast enough to draw IP-level rate
   limiting.
@@ -482,9 +523,18 @@ them away:
 
 ## What has and has not been verified
 
+**2026-09-02 stabilization status:** this checkout contains source newer than
+the pre-stabilization hosted baseline above. A manually launched checkout
+binary is being preserved during source work, but its presence does not attest
+that binary to this source and is not installed- or managed-service evidence.
+The stabilization wave has no current provider qualification, installed
+artifact, live seven-tool Discord acceptance, consented voice acceptance, or
+managed-service acceptance. Those layers remain pending and must be recorded
+separately after the exact source is pushed and its own CI is green.
+
 **What is and is not verified lives in `tasks/goals.md` (Current vs Proposed
 per goal, dated) — read it before claiming anything works.** As of 2026-08-20
-the following have been seen live from Donald's Discord client: gateway +
+the following had been seen live from the operator's Discord client: gateway +
 registration (16 commands, 58 guilds), slash commands answering, DM and
 guild-mention replies (streamed, edited in place), the per-guild policy
 deciding/reacting in an opted-in server, cooldown and act-off gates holding,
@@ -500,8 +550,8 @@ refusal, a refreshed rolling summary.
 gpt-oss:20b, while `gemma4:e4b` had the best register and became Donald's
 interim choice. Donald then selected the larger `gemma4:12b` as the
 source/config cross-platform deployment target on 2026-08-20
-(`docs/benchmarks/2026-08-19-local-models.md`). A "research …" DM
-exceeded 120 s under concurrent generation → the default backend timeout is
+(`docs/benchmarks/2026-08-19-local-models.md`). A long-running DM exceeded
+120 s under concurrent generation → the default backend timeout is
 300 s (`ABBEY_BOT_LLM_TIMEOUT_SECS`) and generation is serialised. Keystroke-
 driven testing must check Discord is frontmost first — the operator may be
 typing elsewhere.

@@ -16,10 +16,10 @@
 - [x] README + CLAUDE.md/AGENTS.md updates, .env.example, gate green via ./check.sh
 
 ## Open (after this pass)
-- [x] Live smoke test: registration, mention reply, reaction reward settling, and `/admin brain` read observed
+- [x] Historical 2026-08-19 live smoke: registration, mention reply, reaction reward settling, and `/admin brain` read observed
 - [x] Model-initiated tools — shipped PR #19 (both wire shapes)
 - [x] Local-first DAVE voice — consent/media epochs, Whisper → canonical Abbey → Kokoro, explicit degraded OpenAI backup with non-authoritative spoken control, managed sidecar, and no-Discord full-chain audition; consent invalidation physically disconnects the conversational `Decode` call
-- [x] Durable live control evidence — `/voice status`, participant-change pause, and manager `/voice leave` observed
+- [x] Historical 2026-08-20 durable live control evidence — `/voice status`, participant-change pause, and manager `/voice leave` observed
 - [ ] Deploy the exact current candidate with cross-platform `gemma4:12b` reasoning/vision target, then obtain fresh everyone-present consent and observe refreshed `/voice resume`, an audible wake/reply, and barge-in
 - [x] Preserve the portable OpenAI-compatible endpoint seam for macOS, Linux, and Windows; keep Ollama/llama.cpp-class runtimes available behind the same contract
 - [ ] Before selecting MLX acceleration, verify its exact reasoning, tool-calling, and vision interfaces; treat Apple `fm serve` as an optional macOS adapter and do not claim MLX Gemma multimodal/tools or an installed service without evidence
@@ -31,7 +31,7 @@
 - [x] ABBEY_QUIET + learning-off gate before policy
 - [x] Live DM round-trip via pipeline against ollama gemma4:12b
 - [x] Live Discord test via desktop control: DM ×2, guild mention ×2, commands answered (docs/live-test-protocol.md A1–A2, C1)
-- [x] C3–C4: 👍 on an Abbey reply → `Rewarded` → `reward settled into the replay buffer … loaded=true` (17:16Z)
+- [x] C3–C4: delayed reaction reward settlement observed at 17:16Z; no raw session text retained
 - [x] ABBEY_VISION_ENDPOINT=off sentinel
 - [x] ABBEY_BOT_LLM_TIMEOUT_SECS shipped; ABBEY_BOT_LLM_MAX_TOKENS deliberately not added (budget is per path: 1,024 Anthropic / 4,096 local)
 - [x] Durable interactions observed for `/stats`, `/remember`, `/reputation`, `/summarize`, `/whois`, `/perms`, `/modcall`, `/server`, `/voice status`, and `/voice leave`
@@ -54,11 +54,12 @@
 - [x] generation semaphore + queue timeout + busy copy
 - [x] SSE accumulator, StreamTransport, Outbound::edit, stream_reply + tests
 - [x] Anthropic→local fallback (AppState::chat)
-- [x] live: streaming DM observed (posted :39, final :44, "(edited)"); concurrency serialisation not observed (unit-tested)
+- [x] Live streaming DM edit-in-place observed; concurrency serialization was unit-tested but not
+      observed live
 
 ## Rust 2026 modernization (2026-08-19)
 - [x] Fast-forward local `main` to the current upstream baseline
-- [x] Pin Rust 1.97.1 and declare `rust-version`
+- [x] Pin Rust 1.98.0 and declare `rust-version`
 - [x] Refresh semver-compatible transitive dependencies without reqwest/Serenity stack duplication
 - [x] Add mention suppression, endpoint validation, redirect refusal, streaming body caps, and shared bounded attachment downloads
 - [x] Add `/persona ask` cost/input controls and move hierarchy policy into the pure core
@@ -122,8 +123,8 @@ a green source gate is not semantic, deployment, or live evidence.
       endpoint as tool-capable (it silently returned prose instead of `tool_calls`)
 - [x] `fm respond` schema-constrained adapter yielding either a typed final answer or exactly one
       typed Abbey tool request; stdin/argument arrays only, never a shell, never transcript saving
-- [x] Prove prose claiming a tool action ("I will remember that") without a validated request
-      mutates nothing and reports no success
+- [x] Prove prose-only action claims without a validated request mutate nothing and report no
+      success
 - [x] Enable FM tools only after all required request, argument, result-continuation, refusal,
       malformed-output, and max-round tests
 - [x] Enable FM vision/OCR only on semantic fixtures (known colors/objects, exact text), not
@@ -160,28 +161,41 @@ a green source gate is not semantic, deployment, or live evidence.
       canonical JSON memory and its WDBX projection under one lock boundary.
 - [x] Retitle tool descriptions from "Discord user id" to network-scoped identity language so
       Telegram and Slack identities are not misrepresented as Discord ones.
+- [x] 2026-09-02 Core + Inspect source surface: production offers exactly seven tools in stable
+      order whenever the global tools policy is enabled. `abbey_tools()` preserves the original
+      five-tool compatibility corpus; both OpenAI-compatible/Anthropic and Foundation Models
+      decision schemas expose the five Core tools followed by `inspect_status` and `list_facts`.
+      The partial Inspect-only toggle was removed; only the global tools-off boundary
+      applies. Inspect is read-only, scoped, non-provisioning, snapshot-consistent, and reports
+      effective routable provider capabilities with safe provenance. No HTTP or Discord acting
+      tools were added. Live calls remain pending.
+- [x] Publish guild-keyed coarse voice Inspect state from central lifecycle transitions, limited
+      to `off`, `presence`, `awaiting-consent`, `active`, or `paused`. Consent revocation, media
+      revocation, actor failure, leave, and shutdown cannot leave stale `active`; DMs and other
+      guilds observe `off`. No participant, identity, epoch, model, counter, timestamp, audio,
+      media detail, or transcript is exposed.
 
 ### 5. Cross-platform and transport
 - [x] Keep the Rust core provider-neutral: no direct MLX or Foundation Models inference
       dependencies; MLX remains an OpenAI-compatible external loopback service and Foundation
       Models remains a bounded external CLI/server adapter.
-- [x] Linux source gate: exact head `588cbe6` completed the Ubuntu `./check.sh`
-      lane successfully in Actions run `33025176982` on 2026-08-27
+- [x] Historical source evidence: exact head `588cbe6` completed the Ubuntu and Windows source
+      lanes in Actions run `33025176982` on 2026-08-27. This is not current stabilization proof.
 - [ ] Linux runtime acceptance: qualify Gemma through the OpenAI-compatible seam, exercise the
       retained systemd/Docker artifacts, and use voice only through explicit OpenAI Realtime
-- [x] Windows source gate: exact head `588cbe6` completed the Windows `./check.ps1`
-      lane successfully in Actions run `33025176982` on 2026-08-27
 - [ ] Windows runtime acceptance: qualify Gemma through Ollama or another conforming server and
       verify the explicit data directory plus Ctrl-C final persistence flush. Windows remains a
       documented foreground process; a Windows Service is not planned.
 - [x] Expand CI to `macos` + `ubuntu` + `windows` on the pinned toolchain and locked dependencies;
-      exact-head run `33025176982` supplies the current three-lane source evidence, while future
-      release candidates still require their own exact-head or post-merge runs
+      pre-stabilization `origin/main` at `9716f00` passed those source lanes in Actions run
+      `33218303755`. That run proves only the pre-stabilization baseline; the final pushed head
+      requires its own exact-head run.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
       traverse the common pipeline and select the same persona; a deterministic `ImageUnderstanding`
-      description is folded identically; all five tool calls return identical results while memory,
+      description is folded identically; the preserved five-tool compatibility corpus returns
+      identical results while memory,
       channel, guild, and user state remains network-prefixed. Explicit reputation ids are rebound
       to the current network and conflicting prefixes cannot escape it. This is deterministic
       source/seam evidence; live Telegram/Slack round trips remain unperformed without tokens.
@@ -208,9 +222,15 @@ a green source gate is not semantic, deployment, or live evidence.
       continuity, gateway connection, and no voice UDP socket before consent
 
 ### Live acceptance — HUMAN-GATED, never substitutable
-Guild `1009583217948491928`, voice channel `1486123994611585135`. Per the specification, if
-participant consent or an authorized manager is unavailable these stay pending; source tests, MLX
-access logs, and historical consent are explicitly not acceptable substitutes.
+Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
+If participant consent or an authorized manager is unavailable these stay pending; source tests,
+provider logs, and historical consent are explicitly not acceptable substitutes.
+- [ ] Start with Guild A learning/acting enabled under a small budget and cooldown while Guild B
+      remains default-off; prove no cross-guild leakage or unsolicited Guild B behavior
+- [ ] Exercise all seven Core + Inspect tools, provider provenance, memory/pending snapshots,
+      `/see`, `/ocr`, `/webhook`, `/forget`, bounded tool loops, and a bounded `OverBudget` result
+- [ ] Swap the Guild A/B roles, repeat the isolation-sensitive subset, and restore both guilds'
+      initial settings
 - [ ] `/voice status` reports deployed local mode, inactive media, exact model ids, no credentials
 - [ ] Fresh notification and explicit agreement from every human present (no reuse or inference)
 - [ ] Authorized manager runs `/voice join consent:true` (or `resume`); public local-processing
@@ -224,18 +244,28 @@ access logs, and historical consent are explicitly not acceptable substitutes.
 - [ ] Manager `/voice leave`: no voice presence, no UDP socket, no subsequent MLX speech requests
 - [ ] `/see` and `/ocr` on real JPEG/PNG/WebP/GIF against the deployed 12B backend
 - [ ] Malformed, unsupported, decompression-bomb, and >10 MB uploads fail locally with safe copy
-- [ ] All five tools against an isolated test user/guild scope, then remove any temporary fact
+- [ ] All seven Core + Inspect tools against both sandbox role scopes, then remove any temporary fact
 
 ### Delivery
 - [x] Docs distinguish source/test, provider-qualification, installed-binary, live-Discord,
       Linux/Windows CI, and untested-connector evidence; record that Go Live video is not ingested
-- [x] Commit in reviewable groups (provider/deployment, safety/core, cross-platform tests/docs) and
-      push the branch **without merging**
-- [x] Keep `cargo audit` honest: the active root lock reports zero vulnerabilities after a
-      provenance-checked, source-identical `openmls_rust_crypto` 0.5.1 compatibility patch moved
-      only its HPKE manifest constraints from 0.6 to 0.7. Remove the patch when `davey` adopts a
-      fixed upstream line. Retain the informational unmaintained `derivative`, `instant`, and
-      `proc-macro-error2` warnings as maintenance debt, not vulnerabilities.
+- [ ] Commit each stabilization cycle by exact paths on canonical `main`, run the isolated strict
+      gate and locked release build, fetch and require non-divergence, review the complete diff,
+      then push normally without force and wait for exact-head three-platform CI
+- [x] Keep the 2026-08-27 audit evidence historical: the provenance-checked, source-identical
+      `openmls_rust_crypto` 0.5.1 patch moved only its HPKE manifest constraints from 0.6 to 0.7.
+      Remove it when `davey` adopts a fixed upstream line.
+- [ ] Resolve exactly four accepted `rustls-webpki` 0.102.8 vulnerability records after Serenity
+      publishes a compatible Rustls/WebSocket edge: `RUSTSEC-2026-0049` /
+      `GHSA-pwjx-qhcg-rvj4`, `RUSTSEC-2026-0098` / `GHSA-965h-392x-2mh5`,
+      `RUSTSEC-2026-0099` / `GHSA-xgp8-3hg3-c2mh`, and `RUSTSEC-2026-0104` /
+      `GHSA-82j2-j2ch-gfr8`. The portable migration removes native TLS/OpenSSL from Linux but is
+      explicitly not audit-clean; the malformed-CRL panic remains visible. Any changed/additional
+      vulnerability fails closed. Keep `derivative`, `instant`, and `proc-macro-error2` as separate
+      informational warnings.
+- [ ] Treat the existing manually launched process as untouched and unqualified. Current source,
+      provider/model qualification, installed artifact, foreground Discord, consented voice,
+      managed deployment, and real Windows runtime remain separate pending evidence layers.
 
 ## Memory relevance and intelligence layers (2026-08-20)
 
@@ -260,8 +290,8 @@ Corrects a standing overstatement first: the loop was **not** a pure terminal co
 on an immediate heuristic. `brain/reward.rs` already held each reply open for a 150 s settlement
 window and collected genuinely delayed evidence — reactions (±1), a human reply (+0.5), a
 deletion (−2) — persisted across restarts. What was missing is that the evidence was **untyped**:
-"perfect, thanks" and "no, that's wrong" both scored exactly +0.5, so the policy could not tell a
-reply that helped from one that had to be corrected. Attribution was also keyed on the sent
+positive acknowledgement and correction signals both scored exactly +0.5, so the policy could
+not tell a reply that helped from one that had to be corrected. Attribution was also keyed on the sent
 message id alone, so a follow-up that was not a Discord reply-to could never reach the action
 that earned it.
 
@@ -291,7 +321,7 @@ that earned it.
 **Unwired, and not claimed.** Reactions still feed only the untyped path. Message edits, thread
 creation, pins, leaves, and voice carry no delayed signal. In-scope attribution remains a
 heuristic: a marker-only outcome (thanks/correction) is credited by scope only when it comes
-from the human the turn answered — so "thanks Carol!" from a bystander is dropped — but a
+from the human the turn answered, while a bystander marker is dropped; a
 *topical* follow-up from anyone in the channel is still credited on overlap alone, and that
 overlap is lexical, not semantic. Reply-to is the precise path. And there is no live evidence
 yet: no observed settle whose reward moved because of a typed outcome.

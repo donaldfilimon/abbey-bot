@@ -1,149 +1,202 @@
 # Live acceptance protocol
 
-This is an operator protocol, not evidence that it ran. Record a date, commit,
-installed binary hash, model/CLI identity, PID/listener ownership, and each
-observed result in a separate acceptance record. The 2026-08-19 observations in
-`tasks/goals.md` remain historical and do not qualify a replaced binary,
-provider, model, or OS build. Never record credentials, prompts, transcripts,
-provider response bodies, image contents, or raw audio.
+This is an operator protocol, not evidence that it ran. Begin only after the
+final provider-routing commit equals `origin/main` and Ubuntu, macOS, and
+Windows CI are green for that exact SHA. A local gate, a pushed commit, hosted
+CI, provider qualification, an installed artifact, foreground Discord,
+consented voice, and a managed service are separate acceptance layers. Never
+promote one into proof of another.
 
-Use an isolated Discord test guild/user scope. Keep `ABBEY_QUIET=1` and guild
-`act off` except during the explicit policy exercise. Non-model commands have a
-5-second observation window; provider turns use the configured timeout. Record
-anything not seen by its deadline as **NOT observed**, with only a fixed failure
-category and the last safe operational log line.
+Use two operator-supplied sandbox guilds and consenting test users. Retain only
+the neutral labels **Guild A** and **Guild B**; actual Discord identifiers are
+transient execution inputs, not acceptance evidence. Use synthetic content and
+restore both guilds to their initial settings after every run.
 
-## 0 — source, provider, and installed identity
+## Evidence and privacy boundary
 
-Treat each row as a separate acceptance layer:
+Create each evidence directory mode 0700 and every evidence file mode 0600.
+Use an owner-only `umask 077` before creating them. Retain only:
 
-1. Record the clean `main` commit and successful Ubuntu, macOS, and Windows CI
-   runs. This is source evidence only.
-2. Run the installed release binary with
-   `--provider-self-test primary --json`, then `fm`, then `all`. Use synthetic
-   fixtures and no Discord token or production data directory. Require exit 0
-   for every capability required by the selected runtime configuration and
-   retain the redacted JSON. Optional FM image failures remain explicit `fail`
-   evidence and must stay unavailable at runtime; they do not invalidate a
-   text-only FM secondary. This is provider qualification only.
-3. For FM `system`, publish the resulting manifest atomically to an owner-only
-   regular file with `deploy/publish-provider-qualification.py`, then verify its
-   Abbey binary hash, `/usr/bin/fm` hash, OS build, mode, and fixture version
-   match the running service. The publisher is POSIX-only; Windows performs
-   syntax/static validation and records the publisher runtime test as skipped,
-   not as publication evidence. Do not probe PCC.
-4. Record the installed Abbey/MLX-Audio/MLX-VLM artifact hashes, launchd PIDs,
-   exact MLX-VLM snapshot, effective KV limit, and processes owning
-   `127.0.0.1:8181` and `127.0.0.1:8282`. Restart offline and require the same
-   installed identities and loopback-only listeners.
-5. Verify the deployed bot reaches the Discord gateway with persistent state
-   checksums unchanged. Confirm autojoin, if configured, is muted,
-   self-deafened `DecodeMode::Pass` with no receive/playback actor and no
-   conversational voice UDP activity. This still is not consent to capture.
-   On Linux/Windows, verify local voice configuration is rejected and use
-   `disabled` or explicitly configured OpenAI Realtime; no destination remains
-   the valid default-off configuration.
+- commit, binary, immutable model, and manifest hashes;
+- normalized provider IDs and fixed result categories;
+- timestamps and PIDs verified during the run;
+- aggregate counters, Guild A/Guild B role labels, and human pass/fail
+  attestations.
 
-If staging, self-test, hash, listener, persistence, or gateway verification
-fails, stop and restore the previous complete environment/artifact set. Do not
-continue from a partial cutover.
+Never retain credentials or environment values, Discord IDs, participant or
+user identities, prompts, messages, replies, provider errors or provider-
+controlled text, raw logs, executable/model paths, image contents, audio,
+transcripts, packet captures, or generated response bodies. Inspect live state
+without copying those values into the record. Record an unobserved bounded
+condition as **NOT OBSERVED**; do not create unbounded traffic to force it.
 
-## A — DM and all five tools
+## 0 — exact source and hosted state
 
-1. DM `hi abbey, what can you do here?` and require a generated reply-to from
-   the configured MLX-VLM primary.
-2. DM `and what did I just ask you?` and require turn-one context.
-3. Exercise `remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
-   and `recent_messages` through model requests. Verify exact subject/guild
-   scoping, authorization, and tool-result continuation.
-4. Confirm the remembered test fact appears in both canonical recall and its
-   semantic projection, then remove it and confirm it is absent from both.
-5. React to Abbey's reply and observe only the typed reward outcome/counters.
-6. Confirm a second DM user cannot retrieve the first user's fact or context.
+1. Record the clean canonical `main` SHA and prove it equals `origin/main`.
+2. Record the isolated strict-gate and locked-release result for that SHA.
+3. Record the Ubuntu, macOS, and Windows job results whose `headSha` is exactly
+   that SHA. A successful Windows CI job is source-contract evidence, not a
+   real Windows runtime acceptance.
+4. Do not proceed if the checkout, remote SHA, release source, or hosted job SHA
+   differs.
 
-## B — guild commands and persistence
+## 1 — safe transition and exact foreground artifact
 
-1. `/stats` records counters and selected provider labels without credentials.
-2. `/admin show` confirms persona, learning, vision, cooldown, act, and budget.
-3. Exercise self-scoped `/remember`, `/recall`, and `/forget`; then verify a
-   cross-member attempt is rejected without the required invocation-time
-   permission and succeeds only for an authorized manager.
-4. `/persona ask` as Abbey and Aviva must retain the requested persona header
-   and report the provider that actually answered.
-5. `/summarize` before captured channel context gives the honest empty result;
-   after context exists it produces and persists a summary.
-6. Flush, restart, and confirm the intended state survives with unchanged
-   caller/guild scopes. Remove every temporary acceptance fact afterward.
+Do not trust a saved PID. Immediately before transition, re-resolve the old
+manual process by PID, owner, parent PID, start time, working directory,
+executable path, executable mode, and SHA-256 hash. Verify listener ownership
+without reading its log. Do not inspect `launch.sh`, `run_bot.sh`, or `bot.log`,
+and do not replace the executable while that process is running.
 
-## C — text, reward, and bounded policy behavior
+Only after every identity field matches the just-frozen observation, send
+SIGINT to that exact PID. Verify graceful exit and removal of its listeners. If
+the identity changes, the process does not exit cleanly, or a listener remains,
+do not send a broad signal and do not escalate to TERM or KILL automatically;
+preserve state and request operator intervention.
 
-1. Mention Abbey and require typing plus a reply reference; verify the primary
-   MLX-VLM provider label and one pending reward.
-2. React, wait through the settlement window, and confirm one settled
-   experience and the expected counters.
-3. Only in the sandbox guild, enable message content, remove quiet mode, set
-   `act on`, and set a small budget. Verify policy decisions, cooldown, reward,
-   and `OverBudget` behavior; every other guild remains `act off`.
-4. Restore `ABBEY_QUIET=1` and `act off` before continuing.
+Build the exact pushed SHA with `cargo build --release --locked` in a fresh
+external `CARGO_TARGET_DIR`. Record its binary hash. All later foreground and
+managed checks must use that same hash. Rotate any Discord credential that
+previously appeared in inherited GUI process state before loading it; never
+quote or record the old or replacement value.
 
-## D — vision/OCR and local rejection
+## 2 — provider qualification before Discord
 
-1. With `ABBEY_VISION_PROVIDER=remote`, run `/see` and `/ocr` using real JPEG,
-   PNG, WebP, and GIF attachments. Record only pass/fail and format/size
-   metadata, never image bytes or generated data URLs.
-2. Require local rejection before provider invocation for truncated or
-   malformed images, over-10-MB input, allocation/decompression bombs, HEIC,
-   AVIF, JXL, SVG, PDF, and HTML.
-3. If FM CLI vision is separately selected, first require the exact manifest
-   to report both semantic shape and OCR probes passing. Selection is exclusive:
-   one image must never be retried through a second provider.
+Run this stage without Discord credentials or the production data directory.
 
-## E — Telegram and Slack boundary
+1. Provision fresh Abbey-private model copies. Bind MLX to its fixed revision
+   and import an Ollama model only by immutable digest. Foundation Models is the
+   sole OS-managed exception.
+2. With `ABBEY_PROVIDER_CLOUD_ALLOW` empty, prove that no cloud provider is
+   eligible and that no cloud call occurs.
+3. Prove agent CLIs without the approved external sandbox and attestation are
+   detected but never spawned. An allowlist alone must not promote them.
+4. Run synthetic, content-free qualification for the provider selected for the
+   live run. Require exact binary/model/OS/tool-schema/sandbox identity,
+   structured output, size limits, environment clearing, cancellation, and
+   descendant cleanup to pass.
+5. Publish the v2 manifest only by atomic replacement into a mode-0700
+   directory with a mode-0600 regular file. Confirm it contains only normalized
+   identities/hashes, capability categories, and qualification results.
+6. If an immutable model digest, model artifact, sandbox attestation, explicit
+   credential, or required operator allowlist is absent, fail closed and mark
+   only provider qualification pending. Do not weaken the design.
 
-The ordinary gate proves source-level parity through the shared pipeline; it
-does not prove a live connector. If current connector credentials and an
-explicit operator test are unavailable, record Telegram and Slack as **NOT live
-tested**. When they are available, run native text/persona/tool/memory/vision
-round trips independently and retain their network-scoped identity evidence.
+An explicitly allowed cloud provider may be qualified only with an operator-
+supplied allowlist entry, an explicit provider credential, and synthetic
+content. Ambient credentials never authorize routing.
 
-## F — human-gated voice
+## 3 — foreground two-guild text, tools, policy, and vision
 
-Do not begin this section merely because the bot is joined. Identify every
-human currently present, post the local-processing/no-raw-retention notice, and
-wait for each person to explicitly agree. Silence, ambiguous reactions,
-historical consent, and a manager's assertion for someone else do not count.
+Launch the exact pushed release hash directly in the foreground. Verify the
+Discord credential preflight reports only the selected source variable and
+that the effective provider is the exact qualified provider from stage 2.
 
-For the local backend, have the server owner or an administrator run `/voice
-verify start` before the consented join. This arms only an in-memory,
-content-free counter set and does not open capture. It also disables voice
-conversation commits for the run. Manage Server remains sufficient for the
-actual join/resume commands, but cannot start or read the verification report.
+Capture the initial sandbox settings transiently. Begin with Guild A learning
+and acting enabled under a small bounded budget and cooldown; leave Guild B at
+the default-off policy. Then exercise:
 
-After unanimous current consent, an authorized in-channel manager invokes
-`/voice join consent:true` or `/voice resume consent:true`. Verify:
+1. A generated DM and follow-up turn, with no retained prompt or reply text.
+2. All seven tools in stable order through the selected qualified provider:
+   `remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
+   `recent_messages`, `inspect_status`, and `list_facts`.
+3. `inspect_status` for runtime, guild, provider, voice, and all. Require only
+   effective routable capabilities and safe configuration-versus-qualified
+   provenance. Reject endpoint, path, model, OS-build, hash, key, manifest,
+   credential, or raw-error leakage.
+4. `list_facts` as the bounded canonical subject snapshot, including pending
+   replacements. Verify independent omitted-fact and omitted-pending counts and
+   that no pending replacement is clipped into a partial value.
+5. Exact user/guild isolation for memory, pending replacements, reputation,
+   recent context, provider status, and the coarse voice state. A DM or the
+   other guild must observe voice `off`.
+6. `/see`, `/ocr`, `/webhook`, and `/forget`, plus bounded multi-round tool
+   handling. Retain only result categories and permitted aggregate metadata.
+7. Policy decisions, cooldown, reward settlement, and a deliberately bounded
+   `OverBudget` state in Guild A. Guild B must remain silent by default and
+   receive no Guild A state.
 
-1. Public activation disclosure, a fresh media epoch, and decode opening only
-   after the final participant/permission checks.
-2. An audible wake-name request and human-confirmed response, with the
-   completed-turn counter incrementing.
-3. Barge-in immediately truncates playback and increments its counter.
-4. A participant change synchronously closes the epoch, disconnects the
-   conversational call, and stops STT/TTS before slow cleanup; no new or
-   unattested participant frame enters STT.
-5. A new notice, unanimous renewed consent, and a new manager resume create a
-   distinct epoch.
-6. Written `stop listening` is authoritative even if provider prose claims
-   otherwise; `/voice leave` removes presence and voice UDP activity, and no
-   later MLX speech request occurs.
+If the bounded `OverBudget` condition is not observed, record **NOT OBSERVED**
+and continue without increasing traffic beyond the approved limit.
 
-After the successful final leave, the owner or administrator runs `/voice
-verify report` and copies the concise redacted output into the manual acceptance
-record. Require `observed: 8/8`, then add the human witness facts that all
-current participants explicitly consented and at least one person heard the
-reply. The report retains no ids, audio, transcripts, responses, or message
-content, is cleared by process restart or when a later run is armed, and
-explicitly does not turn the local gate into live Discord evidence.
+Swap the roles: restore Guild A to default-off, enable Guild B under the same
+small bounds, and repeat the isolation-sensitive tool, memory, policy,
+provider, budget, and voice-Inspect checks. Restore both guilds to their exact
+initial settings when complete and remove all temporary facts.
 
-If unanimous consent cannot be obtained, leave Abbey muted and self-deafened in
-`DecodeMode::Pass`, record voice as **externally pending**, and stop. Offline
-tests, a generated WAV, or an earlier consented session are not substitutes.
+## 4 — consented foreground voice
+
+Do not begin merely because Abbey has voice presence. Publish the documented
+local-processing/no-raw-retention notice and obtain fresh explicit consent from
+every person currently present. Silence, ambiguous reactions, historical
+consent, and one person's assertion for another do not count. Retain only the
+human pass/fail attestation, never participant identities.
+
+Have the owner or an administrator run `/voice verify start`, then have an
+authorized in-channel manager invoke `/voice join consent:true`. Verify:
+
+1. Voice Inspect moves through only the approved coarse states: `off`,
+   `presence`, `awaiting-consent`, `active`, and `paused`; another guild and a
+   DM remain `off`.
+2. Capture opens only after the public notice, fresh unanimous consent, and
+   final participant/permission checks.
+3. A human witness confirms an audible wake/reply and the completed-turn
+   milestone.
+4. Barge-in audibly truncates playback and records its aggregate milestone.
+5. A membership change immediately closes capture, playback, and STT and moves
+   Inspect to `paused`; no frame from a new or unattested participant enters
+   processing.
+6. A new notice, fresh unanimous consent, and `/voice resume consent:true`
+   create a new consent epoch before processing resumes.
+7. A written stop is authoritative. `/voice leave` removes voice presence,
+   media, UDP activity, and STT, with no later speech request.
+8. `/voice verify report` returns the complete `observed: 8/8` lifecycle and a
+   human confirms the audible result and current unanimous consent.
+
+The report is an ephemeral content-free counter set, not proof of human
+identity or consent by itself. Do not copy identities, consent epochs, audio,
+messages, transcripts, replies, or raw output into evidence. If unanimous
+consent or the human audible confirmation is unavailable, leave immediately,
+mark voice externally pending, and stop this layer.
+
+## 5 — atomic installation
+
+Install the identical accepted binary hash, provider manifest, and private
+model identities in one atomic transaction with a recorded rollback hash.
+Verify the managed PID, executable hash, environment source category, model
+identity hashes, manifest hash, and listener ownership. Validate environment
+and filesystem paths in place but do not retain their raw values. If any
+identity differs or startup is unstable, roll back the complete transaction;
+do not mix old and new components.
+
+Installation proves artifact identity only. It does not inherit the foreground
+Discord or voice result.
+
+## 6 — complete managed-service acceptance
+
+Repeat the full protocol through the managed service, not an abbreviated smoke:
+
+1. Repeat the Guild A enabled/Guild B default-off run, all seven tools,
+   provider provenance, memory/pending snapshots, `/see`, `/ocr`, `/webhook`,
+   `/forget`, bounded tool loops, policy, cooldown, reward, and bounded budget.
+2. Swap Guild A and Guild B and repeat the isolation-sensitive subset.
+3. Repeat the complete consent notice, fresh unanimous consent, audible
+   wake/reply, barge-in, membership pause, renewed consent, written stop,
+   final leave, and 8/8 voice lifecycle.
+4. Restore both guilds to their initial settings, remove temporary facts and
+   credentials, set `ABBEY_QUIET=1`, and verify no test jobs, provider
+   descendants, voice presence, media, or temporary listeners remain.
+
+Only this successful repeat is managed-deployment acceptance for the installed
+hash. A later binary, manifest, model, OS, sandbox, or configuration change
+requires the affected layers to run again.
+
+## 7 — independent connector and Windows status
+
+Telegram and Slack share source paths but need their own explicitly authorized
+native round trips before being called live-qualified. If credentials are not
+operator-supplied, record each as pending without reading ambient stores.
+
+Windows CI proves compile/test/Job Object contracts only. Record Windows live
+provider and managed-runtime acceptance as pending unless this complete
+protocol runs on a real Windows host.

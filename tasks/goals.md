@@ -7,119 +7,127 @@ status: done
   `348754bdaaf59a40fbb858380f925e0aba95a23b`, pinned to aggregate SHA-256
   `72e241e34967df318376bf68f4a0e2db13f5ebf17d1a219709731f1f470dbe8e`.
   The Python gate independently rejects lock, inventory, byte, digest, and privacy-taxonomy
-  drift using closed reason codes and corpus-relative paths. The stable Rust 1.97.1 test
+  drift using closed reason codes and corpus-relative paths. The stable Rust 1.98.0 test
   decoder independently verifies the lock, per-artifact and aggregate commitments, bounded
   local schemas, all 52 fixtures across seven taxonomies, authority-unknown rejection,
   tolerant extension preservation, semantic fail-closed outcomes, and the complete redacted
   synthetic operator-verification report classified only as `local_test`.
-- Fresh local gate evidence: `./check.sh` passed Python syntax and privacy validation, 7
-  vendored-corpus guard tests, exact corpus verification, WDBX parity, Clippy with
-  `-D warnings`, 640 Rust tests with 2 intentional live-environment ignores, and the locked
-  release build. Contract validation remains data-only and is not connected to Discord
-  command execution. This evidence does not establish production federation, deployment,
-  provider qualification, a real grant or approval, participant consent, live Discord,
-  WDBX episode writes, or installed-artifact identity.
+- The earlier 656-test ledger snapshot is historical, not a current stabilization gate result.
+  The current Rust 1.98.0 source still requires the isolated strict gate and locked release build
+  after this documentation cycle. Contract validation remains data-only and does not establish
+  production federation, deployment, provider qualification, a real grant or approval,
+  participant consent, live Discord, WDBX episode writes, or installed-artifact identity.
 
 ## Full-duplex Abbey voice in Discord Engineering
 status: in_progress
-- Captured 2026-08-20 from "use amazing voice and full live voice from advanced voice, look at streams, use Claude Code and find Abbey repo on computer and work on it."
-- Authoritative checkout: `/Users/donaldfilimon/dev/active/abbey-bot`; implementation branch `codex/live-voice-20260820`. Design: `docs/superpowers/specs/2026-08-20-live-voice-design.md`.
-- Implemented locally: Songbird 0.6 DAVE-capable send/receive; explicit `GUILD_VOICE_STATES`; `/voice join consent:true|resume consent:true|leave|status`; one-guild/one-channel participant-attested media epochs; restart-safe no-audio autojoin; local MLX-Audio Whisper STT → canonical read-only Abbey cognition → Kokoro `af_heart` TTS; bounded non-blocking framing, segmentation, playback, and cancellation; key-redacted configuration and deployment documentation. OpenAI Realtime is explicit-only and degraded: its spoken control is not authoritative, its provider instructions cannot override Discord state, and participants must use `/voice leave` or write `stop listening` in the configured voice chat for a deterministic stop.
-- Offline evidence: `./check.sh` green (fmt, launchd syntax/plist, Clippy `-D warnings`, 346 passed + 1 intentionally ignored live-model test, locked optimized build); a loopback WebSocket test observes `session.update`, input audio, provider output audio, and the conversion back to Songbird PCM. Regression tests prepare Songbird's raw f32 PCM output through the deployed codec registry and prove the no-key path switches from decoded receive to `DecodeMode::Pass`. `cargo audit` remains red: four pre-existing rustls-webpki findings plus six libcrux findings in DAVEy's pinned OpenMLS/HPKE lock. The enabled DAVE P256 ciphersuite does not call the advisory-listed SHAKE/ML-KEM or constant-time select APIs, and three alerts are optional lock-only packages, but upstream constraints reject the patched 0.x versions; this remains explicit dependency debt, not a green audit.
-- Live evidence 2026-08-20 09:15Z: launchd PID 6460 registered commands in Space (`1009583217948491928`), connected Songbird to Discord media for Engineering (`1486123994611585135`), and logged a self-deafened join with receive/provider streaming disabled. Discord's participant list independently showed `Abbey, Deafened` alongside Blu3, DaNan, David, and Donald. The one-shot startup flag was removed from the env immediately after connection, so it will not rejoin after a future restart.
-- Live output evidence 2026-08-20 09:26Z: the release service entered Discord's speaking state, prepared and played a 16.2-second local f32 PCM greeting, emitted `Playable` and normal `End`, then returned to silence without an error. Abbey remained self-deafened throughout, so this proves bounded Discord output only—not reception, provider connectivity, or a bidirectional turn. The one-shot autojoin and greeting flags were removed from the persisted env immediately after launch; the service remained running as PID 12061 and Discord still showed Abbey in voice.
-- Follow-up safety state: the temporary greeting configuration and playback path were removed. The current no-key `/voice join` and operations autojoin paths both require Discord mute plus self-deafen and disconnect on either transition failing, so the deployed idle-presence mode has no audio input or output.
-- Live safety redeploy 2026-08-20 09:36Z: commit `089b1cb` was built and installed through the launchd installer, then rejoined Space Engineering as PID 37774. The installed and gated release binaries had the identical SHA-256 `e9051aa1fe7978f3c6e97ac10ef528d99640ac7da42be5af058b7eaf88281e30`; service logs recorded the requested guild/channel and disabled reception/transmission, while Discord independently displayed `Abbey` with `Muted Deafened`. The temporary autojoin flag was removed immediately after launch, and neither a greeting setting nor provider key remained in the persisted environment.
-- Persistent safe presence 2026-08-20 09:52Z: commits `8f57b9c` and `2e3c772` make no-key autojoin explicitly persistent and create the Songbird driver in `DecodeMode::Pass`. A clean detached checkout passed `./check.sh` (Clippy, 346 passed + 1 intentionally ignored, locked release build); its release SHA-256 `6ce8f99088feec4f93f3fa866f763e2f71b9d338d5698156ebd98cc052df27b1` exactly matched the installed binary. The controlled launchd restart autojoined guild `1009583217948491928` / Engineering `1486123994611585135` as stable PID 93309 with `ABBEY_VOICE_AUTOJOIN=1`; the live Songbird runner logged `decode_mode: Pass`, connected to Discord media, and produced no decode errors during the observation window. Discord independently showed `Abbey, Deafened` and `Muted Deafened`. `OPENAI_API_KEY` remains absent, so this is silent, self-deafened presence rather than full duplex.
-- Crash-recovery evidence 2026-08-20 09:56Z: PID 93309 was terminated with `SIGKILL` to exercise launchd's unsuccessful-exit recovery rather than another graceful deployment restart. After the configured 30-second throttle, launchd reported run 2 as PID 95976; the fresh process registered the guild commands, autojoined the same Engineering destination, negotiated `decode_mode: Pass`, and logged the required muted/self-deafened state. Discord independently showed `Abbey, Deafened`, `Muted Deafened`, and `In voice (Engineering)` after recovery. This proves automatic recovery from a process crash in addition to startup persistence; Songbird's bounded driver retry remains the first layer for transient media disconnects.
-- Local-first candidate evidence 2026-08-20 10:38Z: MLX-Audio 0.5.0 loaded `mlx-community/Kokoro-82M-bf16` plus `mlx-community/whisper-large-v3-turbo-asr-fp16`; a 3.05-second 24 kHz mono PCM16 `af_heart` WAV for “Abbey voice systems are online and ready” was transcribed back as “Abbey Voice Systems are online and ready.” The reconciled Claude Code/Codex worktree then passed `./check.sh`: both launchd plists and installer shells, strict all-target Clippy, 368 passed + 1 intentionally ignored live-backend test, and the locked optimized build. Tests cover the immutable Songbird `Pass`/`Decode` construction split, consent/media epochs, stale cancellation, mapping/attribution boundaries, local speech validation, and the explicit Realtime backup. This proves the local services and candidate artifact only—not Discord reception or a bidirectional voice turn.
-- Managed local speech evidence 2026-08-20 10:48Z: `com.donaldfilimon.abbey-mlx-audio` runs owner-only and loopback-only under launchd with network-disabled Hugging Face/Transformers runtime. Its installer pinned `mlx-audio==0.5.0`, `misaki[en]==0.9.4`, `en_core_web_sm==3.8.0`, Whisper snapshot `624c19c…`, Kokoro snapshot `a71e4d3…`, and the separate Kokoro voice-pack snapshot `e02c9ea…`; after loading all three from the private cache, its required offline TTS→STT smoke returned “Abbey Local Voice is ready.” The surviving service PID was 96532. This establishes restart-managed local speech readiness, still without enabling Discord capture.
-- Live local deployment and UI evidence 2026-08-20 10:56Z: commit `644cbd8` was installed through the launchd deployment path as PID 97548. The gated release and installed binary have identical SHA-256 `745d4f25d2e62074c857b23bf48ce977834e09363a2aafa6c34ad75c10792f84`; logs show Songbird `decode_mode: Pass`, a Discord media connection, and the explicit "decryption/decoding and transmission disabled" join for guild `1009583217948491928` / Engineering `1486123994611585135`. Discord independently displayed `Abbey, Deafened`, `Muted Deafened`, and "Abbey and Robbie Schro are currently in voice." The local MLX-Audio sidecar remained healthy as PID 96532 with both pinned Whisper and Kokoro models listed. This closes safe local installation/rejoin verification.
-- Post-command recovery evidence 2026-08-20 11:01Z: after a client `/voice leave` removed Abbey, a controlled launchd kickstart of the same installed artifact replaced PID 97548 with PID 99776. Fresh logs at 10:58:36Z again showed `decode_mode: Pass`, a Discord media connection, and the disabled-decryption/disabled-transmission join to Engineering. Discord then showed `Abbey, Deafened` / `Muted Deafened` alone in Engineering while David, Donald, and Robbie Schro were in The Archive. Donald's attempted `/voice join` interactions were rejected for lacking `Manage Guild`, confirming that neither a natural-language request nor an unauthorized caller can attest consent or activate capture.
-- Final permission-hardening deployment evidence 2026-08-20 11:03Z: commit `cd4b404` closes startup and live permission-revocation races for channel overwrites, role changes/deletions, and the bot's own role assignment; three independent read-only reviews found no remaining P0/P1 blocker. The final `./check.sh` passed both launchd plists and installer shells, strict all-target Clippy, 368 tests with 1 intentionally ignored live-backend test, and the locked optimized build. The gated and installed release binaries have identical SHA-256 `366ef4b9204896a9227eec553d59bb91ea79dc3a43feb29ea4b95b0d991cda21`; launchd reported the release running as PID 1052 and the loopback-only MLX sidecar as PID 96532, with both pinned models listed by `127.0.0.1:8181`. Fresh service logs showed `decode_mode: Pass`, Discord media connected, and decryption/decoding/transmission disabled. A Discord app inspection at 11:02:58Z independently showed Engineering with Abbey visibly `Muted Deafened` alongside David, Donald, and Robbie Schro. A one-instant burst of pre-DAVE packets was rejected as illegal RTP while DAVE was still inactive; it did not enable decode/transmit and had not repeated at the closeout check.
-- Consent checkpoint at 11:03Z, not a source claim: listening/speech could be activated only after everyone currently in Engineering was notified and agreed, followed by `/voice join consent:true`. David, Donald, and Robbie Schro were present with Abbey and no all-participant attestation was then available, so Abbey correctly stayed muted/self-deafened in `DecodeMode::Pass`. Later entries separately record activation, status, participant-change pause, and leave; this checkpoint must not be read as the current acceptance list. The OpenAI key is irrelevant to local mode and cloud audio remained explicitly disabled.
-- Consented receive evidence 2026-08-20 11:07Z onward: an authorized manager attestation replaced the silent `Pass` connection with Songbird `Decode(Mono, Hz24000)` after the command's public local-processing/no-raw-retention notice and participant checks. Discord independently showed Abbey unmuted and undeafened with David and Donald; Donald's later `/voice resume` remained correctly rejected for lacking `Manage Guild`. The loopback MLX sidecar returned repeated successful live transcription requests. A later speech-synthesis request is consistent with a live addressed turn but the shared sidecar access log cannot distinguish Discord traffic from the concurrent private audition, and the deployed bot has no playback-completion marker. David successfully invoked the manager-only `/voice status` at 11:27:16Z (durable interaction ledger: `succeeded=true`, 1,000 ms), but its ephemeral response was visible only to David and its counter was not pasted into the channel. At this checkpoint, no heard reply or completed-turn value was claimed; the later entries close participant-change pause and `/voice leave`, while a human-confirmed wake/reply, fresh renewed-consent resume on the current candidate, and barge-in remain open.
-- Participant-change fail-closed evidence 2026-08-20 11:33Z: `dooooovid` joined Engineering after the attested three-participant session began. Abbey immediately posted “paused capture and playback because someone new joined,” switched visibly to `Muted Deafened`, and instructed renewed notification plus `/voice resume consent:true`. The shared MLX access counters then remained exactly at 8 speech and 128 transcription requests throughout a 30-second window despite the continuing call. This proves the automatic membership pause and actual cessation of local speech processing; renewed consent/resume remains pending and is not inferred.
-- Renewed-consent evidence 2026-08-20 11:38Z–11:43Z: Abbey posted an explicit opt-in request naming David, Donald, and `dooooovid`; Donald then publicly consented to local recognition, Abbey/Abi/Aviva reasoning, and local synthesis for the Engineering session. David and `dooooovid` had not replied or reacted during the observed window, so the all-participant requirement remained unmet and Abbey stayed visibly `Muted Deafened`. Abbey's ordinary text pipeline incorrectly replied that the local speech components were “back on”; Donald immediately corrected the public record that audio processing had not resumed and that David and `dooooovid` still had to agree before David could run `/voice resume consent:true`. This text-generation error is not treated as voice state evidence.
-- A second participant change at 2026-08-20 11:46Z added `da null` (`nu.ll`) to Engineering. Abbey remained visibly `Muted Deafened` and posted a fresh opt-in request (message `1539963772947660872`) explicitly naming the now-present David, Donald, `dooooovid`, and `da null`. Donald posted consent for the updated participant set with the explicit condition that Abbey not resume until all four humans agree and David's manager command succeeds; Abbey's text pipeline echoed that condition. No reaction from David, `dooooovid`, or `da null` was present at the direct API check, so this newer consent epoch remains incomplete and no resume is claimed.
-- Manager resume/leave evidence 2026-08-20 12:09Z–12:13Z: David publicly posted `I consent` and successfully invoked `/voice resume consent:true` at 12:10:38Z; Abbey posted the required public local-processing notice. The durable interaction ledger records the authorized resume as `succeeded=true` in 6,000 ms, followed by David's successful `/voice leave` at 12:13:49Z. The later Abbey process has no UDP socket, which is consistent with the completed disconnect. The shared MLX log contains many successful transcription requests and speech requests but no request timestamps or session identifiers, so it cannot prove that a specific reply traversed this Discord session or was heard. No consent reaction or message from `dooooovid` or `da null` is present in the channel history, and the exact participant set at resume time was not captured; therefore this record does not retroactively claim an all-participant consent set, a heard wake reply, or barge-in acceptance.
-- New-session request 2026-08-20 12:42Z: after confirming that Donald was no longer in any active Discord call, Abbey had no voice UDP socket, and Engineering had received no messages since the manager leave, Abbey posted message `1539977865825619980` asking David to begin a new Engineering session only after notifying everyone currently present and obtaining their agreement, followed by `/voice join consent:true`. A 30-second direct message/interaction-ledger watch found no reply and no new join/resume/leave command. Abbey remained disconnected; this is a pending restart request, not a join claim.
-- Private full-chain acceptance 2026-08-20 11:30Z: gated candidate `cae32d0` / SHA-256 `5e41b477e04812a6933f2542da9258cfa8228146c270d2f56f146d344f088bf6` ran with Discord, Anthropic, and OpenAI credentials removed, vision off, empty in-memory state, and no microphone/call. Kokoro synthesized the fixed wake request; Whisper recovered it exactly; canonical Abbey answered “My local voice processes all speech on the device itself, keeping your commands and data off external servers.”; Kokoro synthesized the answer; Whisper recovered the answer exactly for 100% word recall; and Songbird promoted the exact RawAdapter input to playable audio. The create-new owner-only output is `/Users/donaldfilimon/.local/share/abbey-bot/auditions/abbey-local-full-chain-2026-08-20-1130.wav`, PCM16 mono 24 kHz, 7.35 seconds, 352,844 bytes, SHA-256 `159ddbfe3cd67dbdb4819ef2324a80bb657313ddabf98c5bb897c01d43dbbf25`. This proves the complete local speech/cognition/playback-format chain without making a Discord transport or subjective voice-quality claim.
-- Current-candidate reconciliation: consent invalidation now closes the exact media epoch and physically disconnects the conversational `Decode` call before provider/playback cleanup; it no longer leaves an idle decoded receiver in-channel. The latest offline-first source is newer than the installed evidence above and remains pending its final gated launchd deployment. The operator selected the larger `gemma4:12b` as the current cross-platform reasoning/vision model name and deployment intent, superseding both the interim `gemma4:e4b` choice and the 2026-08-19 `gpt-oss:20b` benchmark recommendation without rewriting dated observations. Durable evidence closes `/voice status`, participant-change pause, and `/voice leave`; the voice goal intentionally remains `in_progress` until a fresh everyone-present consent set, refreshed `/voice resume`, an audible wake-name/reply heard by a human, and barge-in are observed on the deployed candidate.
-- Privacy-safe operator-verifier source evidence 2026-08-22: the owner/admin-only local `/voice verify start|report` flow now keeps one content-free process-memory run across manager/in-channel authorization, consent-epoch activation, decoded voiced receive, local STT completion, natural synthesized playback completion, actual playback cancellation by barge-in, participant-change pause plus fresh-epoch resume, and final Songbird leave. While armed, it suppresses completed-turn conversation commits; its report contains only fixed milestones, aggregate counts, and epochs and explicitly requires separate human confirmation of unanimous current consent and an audibly heard reply. Targeted voice lifecycle/local/authorization/receive tests passed. The full current-checkout `./check.sh` passed formatting, deployment and privacy validation, strict all-target Clippy, 632 tests with 2 intentional live-environment ignores, and the locked optimized build. This is local source evidence only: the verifier is not claimed deployed, and no consented Discord `8/8` report was observed in this run.
-- Model portability contract: macOS may use MLX acceleration only after Abbey's exact reasoning, tool-calling, and vision interfaces pass against that adapter. Apple `fm serve` is an optional macOS OpenAI-compatible adapter, not the cross-platform default and not currently claimed installed. Linux and Windows retain the same endpoint seam through verified runtimes such as Ollama or llama.cpp. No MLX Gemma multimodal/tool capability is claimed without direct evidence.
-- "Look at streams" is not folded into the audio bridge. OpenAI Realtime accepts discrete image inputs, not video, and Songbird's documented receive surface is audio/RT(C)P. A future stream-vision slice must choose a supported, explicit screenshot source and consent/retention policy.
+- Design: `docs/superpowers/specs/2026-08-20-live-voice-design.md`. Delivery now follows the
+  canonical checkout on `main`; dated branch names are archival context, not current guidance.
+- The source contract remains participant-attested and fail-closed: bounded Songbird media,
+  explicit join/resume/leave/status controls, read-only voice cognition, immediate cancellation on
+  consent or media revocation, and no provider prose as authority for voice state.
+- Privacy-safe historical evidence from 2026-08-20 and 2026-08-22 is retained only by commit and
+  artifact identity. Commits `089b1cb`, `8f57b9c`, `2e3c772`, `644cbd8`, `cd4b404`, and
+  `cae32d0`, with recorded artifact hashes
+  `e9051aa1fe7978f3c6e97ac10ef528d99640ac7da42be5af058b7eaf88281e30`,
+  `6ce8f99088feec4f93f3fa866f763e2f71b9d338d5698156ebd98cc052df27b1`,
+  `745d4f25d2e62074c857b23bf48ce977834e09363a2aafa6c34ad75c10792f84`,
+  `366ef4b9204896a9227eec553d59bb91ea79dc3a43feb29ea4b95b0d991cda21`, and
+  `5e41b477e04812a6933f2542da9258cfa8228146c270d2f56f146d344f088bf6`, covered the
+  categories safe presence, bounded output, restart recovery, permission revocation,
+  content-free lifecycle verification, and offline speech-chain checks. Those dated results do
+  not qualify the current source, manually launched process, provider, installation, or live
+  voice behavior.
+- Current source publishes a guild-keyed coarse Inspect state from central lifecycle transitions:
+  `off`, `presence`, `awaiting-consent`, `active`, or `paused`. Consent revocation, media
+  revocation, actor failure, leave, and shutdown cannot leave a stale `active` state; DMs and
+  other guilds observe `off`. No identity, participant count, epoch, model, counter, timestamp,
+  audio, media detail, or transcript is exposed.
+- The existing manually launched process remains untouched and unqualified. Fresh acceptance is
+  pending for exact pushed source, provider qualification, installed artifact identity, two-guild
+  isolation, unanimous current consent, a human-witnessed audible wake/reply, barge-in,
+  membership-change pause, renewed consent, written stop, and final leave with no remaining media.
+- Stream/video ingestion remains outside this voice goal; only explicitly supplied still images
+  are part of the documented vision surface.
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
-- Captured 2026-08-19 from `/goal implement all abbey/abi/wdbx/aviva/other spec in rust 2026 and complete codebase do all`; specs copied to `docs/spec/` (brain, adaptive-learning, multi-guild, platforms, vision, bot-architecture, apple-intelligence, companion-app, discordbm-api, SKILL).
+- Captured 2026-08-19 from the approved Rust specification program; specs copied to
+  `docs/spec/` (brain, adaptive-learning, multi-guild, platforms, vision, bot-architecture,
+  apple-intelligence, companion-app, discordbm-api, SKILL).
 - 2026-08-19 slice landed (gate `./check.sh` green, 282 tests, was 84): pure modules brain/{nn,replay,dqn,intent,state,reward,social,registry}, guild, memory, engine, wyhash (188 Zig ref vectors), embedding (pinned to abi-ai's own vectors), wdbx (WDBX v1 JSONL + guild-namespaced recall), platform (Discord/Telegram/Slack translation), vision (OpenAI-compatible VLM seam), persist (atomic JSON store), pipeline (SocialRouter behind an `Outbound` trait, tested); shells gateway.rs (serenity events, Telegram long-poll, Slack Socket Mode), commands_brain.rs (/remember /forget+autocomplete /recall /reputation /summarize /see /ocr /stats /admin×9), runtime.rs (AppState + scheduler), main.rs wiring (opt-in MESSAGE_CONTENT, ctrl-c persist). Binary verified to start, fail fast, write and reload `ABBEY_DATA_DIR`, and refuse a corrupt state file.
 - At this slice, model-initiated tools were still proposed; PR #19 and the "Smarter agent — tools" section below supersede that residual. The remaining out-of-scope items are the Swift companion app + Apple on-device models, voice (no `voice.md` supplied), Postgres/Fluent (file store instead), and Slack HTTP Events (Socket Mode implemented instead).
-- 2026-08-19 live: first gateway connection that did not crash — the previous attempt hit Discord's Entry Point bulk-overwrite rejection; `register_globally_keeping_entry_point` fixes it. Observed: Ready as `Abbey`, 16 global commands registered (15 ours + `launch`), 58 guilds. Still unobserved: a command answering, a pipeline reply/reaction, a reward settling.
-- 2026-08-19 LIVE (Donald's client + desktop-control keystrokes, bot on `main` with ollama gemma4:12b): **commands answer** (`/admin export`, `/recall` ×4, interaction log `succeeded=true`); **DM pipeline replies** (two turns, reply-to references, generated text, transcript carried into turn 2; 54 s / 17 s); **guild mention replies** (two, `mentions_bot=true outcome=Replied`); typing keepalive visible; quiet guard held (non-mention guild traffic → `Ignored`). Still unobserved: a reaction reward settling into a replay buffer (needs a 👍 on one of Abbey's replies + 150 s; settle now logs `reward settled into the replay buffer`). PR #13 merged (vision `off`, mention-prefix off, settle log).
-- 2026-08-19 17:16Z — **reward settle observed live**: 👍 on Abbey's DM reply → `reaction handled … Rewarded` → 150 s → `reward settled into the replay buffer guild=discord:dm:… reward=0.8 action=1 loaded=true`. Acceptance met (commands answer, pipeline replies, reward settles). This was the PR #10–#14 snapshot; later sections supersede its then-proposed model tools and its then-unexercised vision path.
+- Privacy-safe historical evidence from 2026-08-19 records the result categories gateway-ready,
+  command success, generated DM and guild-mention replies, quiet-guard enforcement, and delayed
+  reward settlement. PRs #10–#14 own that dated snapshot; no Discord identifiers, participant
+  identities, prompts, replies, or raw session text are retained here.
 
 ## DMs work end-to-end and the smart features are exercised live on Discord
 status: done
-- Captured 2026-08-19 from `/goal get dms to work and all smart features … auto control computer to use discord to test features … go until completed`.
+- Captured 2026-08-19 from the approved DM and smart-feature live-acceptance goal.
 - Acceptance: a DM to Abbey gets a generated (not template) reply; the memory/reputation/admin/stats commands answer in a real guild; the pipeline's reply/react/reward path is observed at least once; everything observed is recorded here with what was *not* observed.
-- Backend found 2026-08-19: ollama at 127.0.0.1:11434. `gemma4:26b` wedged its runner mid-session (HTTP 000); `gemma4:12b` is healthy (~10 s bare, ~35 s with Abbey's prompt). `ABBEY_BOT_LLM_MODEL` added; 4,096-token local budget; reasoning-only replies reported as such.
-- 2026-08-19 slice (PR #12): DMs are one-person namespaces (`discord:dm:<user>`), `/persona` + memory/stats commands DM-capable, `/persona ask` shares the engine transcript + context, forced path loads the brain (rewards no longer dropped), honest failure reply on mention/DM, typing keepalive, mention stripping, `ABBEY_QUIET`, `/admin learning off` now really gates the policy, persona-reviewed prompt wording. **Verified:** DM round-trip against the real model through the pipeline (`cargo test live_dm -- --ignored`: 3 turns, transcript survives). Bot running live on `main` with gemma4:12b + QUIET.
+- Historical provider check on 2026-08-19: the local loopback backend produced bounded timing and
+  failure categories, `ABBEY_BOT_LLM_MODEL` was added, the local budget became 4,096 tokens, and
+  reasoning-only replies gained an explicit result category.
+- 2026-08-19 slice (PR #12): DMs are one-person namespaces (`discord:dm:<user>`), `/persona` + memory/stats commands DM-capable, `/persona ask` shares the engine transcript + context, forced path loads the brain (rewards no longer dropped), honest failure reply on mention/DM, typing keepalive, mention stripping, `ABBEY_QUIET`, `/admin learning off` now really gates the policy, persona-reviewed prompt wording. **Verified:** DM round-trip against the real model through the pipeline (`cargo test live_dm -- --ignored`: 3 turns, transcript survives). At that dated checkpoint, a mainline binary was observed live under quiet mode; that is not current process, installation, or provider evidence.
 - 2026-08-19 outcome: DMs generate replies (3 turns observed, transcript carried, honest failure line on a backend timeout), `/admin export` + `/recall` answered in a guild, guild mentions answered, 👍 → reward settled into the DM user's replay buffer. Not individually exercised: `/reputation`, `/stats`, `/remember` (same command path; the DM slash picker had not yet propagated the re-registration), Telegram, Slack, vision — recorded, not claimed.
-- 2026-08-19: Chrome extension unavailable → switched to desktop control (AppleScript keystrokes into the Discord app + `screencapture`). Observed live: DM "hey abbey, what toolchain…" → generated reply-to in 54 s; follow-up "what did I just ask you?" → reply in 17 s; Donald's `@Abbey …` mentions in a guild → replies; `/admin export`, `/recall` answered. Protocol A1–A2, B-commands partially, C1 done; C3–C4 (reaction → settle) pending a 👍; keystrokes paused whenever Discord is not frontmost (they would land in the active app).
+- 2026-08-19 privacy-safe result categories: desktop-controlled DM and guild-mention replies,
+  `/admin export`, and `/recall` were observed; reaction settlement was still pending at that
+  checkpoint. The ledger retains no prompt, reply, participant, or concrete Discord identifier.
 
 ## Guild learning loop acts in opted-in servers (sub-project 3 of "improve all")
 status: in_progress
 - Spec: `docs/superpowers/specs/2026-08-19-guild-learning-loop-design.md`; plan: `docs/superpowers/plans/2026-08-19-guild-learning-loop.md`. Decisions: per-guild `/admin act on` opt-in (default off), per-guild hourly budget (default 6, 1–60), in-memory BrainStats in `/admin brain`, `ABBEY_QUIET` still wins. At capture time, sub-projects 1, 2, and 4 still needed their own records; the sections below supersede that planning note.
-- 2026-08-19 18:16Z: PR #16 merged (Tasks 1–8; 305 tests). MESSAGE_CONTENT is enabled in the portal (app flag GATEWAY_MESSAGE_CONTENT_LIMITED). Bot restarted from `main` with `ABBEY_MESSAGE_CONTENT=1`, no QUIET, guild-scoped commands in sandbox `1275617641620443146` (MLAI Community). **Observed:** non-sandbox guild messages now carry content and log `Ignored("act off")` — the opt-in gate holds across every other guild. `/admin act state` appears in the sandbox picker instantly. Then 18:22Z: `/admin act on` run live in MLAI Community via keystrokes ("Abbey may now speak unsolicited here…"); **observed:** `policy decision` lines with Q-values (react/stay/react/react), two live `react` actions (Abbey's 👍 on Donald's messages), a `CooledDown` refusal 9 s after a react, and both reacts' rewards settling into the guild's buffer 150 s later (−0.2 each, no reaction back). Code review of #16 (PR #17, merged `101dd96`): budget now spent only on action, canonical lock order (PR #10's P1 deadlock findings), atomic cooldown reservation; bot restarted on `101dd96`, `act: on` persisted across the restart. **Still unobserved live:** an `OverBudget` refusal (needs 7 actions in an hour of real traffic) and a `/admin brain` read.
-- At the earlier 2026-08-20 deployment checkpoint, the launchd-managed release was connected with MESSAGE_CONTENT, guild-scoped commands, persistent data, gpt-oss:20b generation, and gemma4:e4b vision. The 11:02Z Discord inspection visibly captured two successful `/admin brain` replies in Space, including topology `[18, 64, 32, 3]`, 68 replay experiences, the live epsilon, the full 6.0/6 hourly budget, and `act: on`; this closes the brain-read evidence. The latest operator choice makes `gemma4:12b` the next deployment's cross-platform model target; the gpt-oss and e4b entries remain historical. An actual `OverBudget` refusal remains external live-client evidence, not source work that can be marked complete from the terminal.
+- Privacy-safe 2026-08-19 evidence for PRs #16–#17 and commit `101dd96` records the result
+  categories opt-in enforcement, policy decisions, reactions, cooldown refusal, delayed rewards,
+  and persisted enablement in the sandbox role. The 2026-08-20 checkpoint records a successful
+  aggregate brain-state read. An actual `OverBudget` refusal remains pending external acceptance;
+  no Discord identifier, participant identity, prompt, reply, or raw session text is retained.
 
 ## Reply quality & speed (sub-project 1 of "improve all")
 status: done
 - Spec `docs/superpowers/specs/2026-08-19-reply-quality-speed-design.md`; the dated `docs/benchmarks/2026-08-19-local-models.md` ranked gpt-oss:20b first, gemma4:e4b second, and measured gemma4:12b at 32–94 seconds with heavy reasoning. The latest operator choice supersedes that recommendation and the interim e4b choice: `gemma4:12b` is now the operational default/deployment intent, while every benchmark result remains historical evidence. Landed: tidy_reply shape/length contract; one generation slot per local backend + honest busy line; streaming local replies with post-early/edit-in-place (`stream_reply`, `Outbound::edit` on Discord/Telegram/Slack); one-shot Anthropic→local fallback. Gate 317 tests.
-- 2026-08-19 18:47Z live (PR #18 merged `b41783e`, bot on gpt-oss:20b): DM "explain in two short paragraphs why a token bucket is a good rate limiter" → Abbey's message posted at :39, finished at :44 (16 s end to end), Discord shows "(edited)", two clean paragraphs. **Observed:** streaming post-early/edit-in-place, tidy shape, gpt-oss latency. **Not observed live:** two concurrent DMs serialising (unit-tested), the Anthropic path and fallback (no key — recording transport only).
+- Privacy-safe 2026-08-19 evidence at `b41783e` records the result categories streaming
+  post-early/edit-in-place, tidy output shape, and bounded local latency. Concurrent DM
+  serialization and the Anthropic fallback remained source-tested only.
 
 ## Smarter agent — tools (sub-project 2 of "improve all")
 status: done
 - Spec `docs/superpowers/specs/2026-08-19-tools-design.md`. Landed: pure `tools.rs` (5 tools, both wire shapes, both parsers, dispatch/ToolHost), tool-aware `ChatTurn`/request builder/`extract_turn`/streamed tool-call merging in `llm.rs`, `ToolScope` host in `runtime.rs`, `pipeline::generate` loop (max 3 rounds, streams locally, 4xx degrade), `/persona ask` on the same loop, `ABBEY_BOT_LLM_TOOLS`. Gate 326 tests.
-- 2026-08-19 19:00Z live (gpt-oss:20b): DM "please remember that my favourite editor is Zed" → `tool call tool=remember_fact … Stored: The user's favorite editor is Zed` → "Got it—Zed is your favorite editor." (14 s); "what do you remember about my tools and editor?" → grounded honest answer (the fact arrived via WDBX recall in the context, so no second tool call — correct). **Not observed live:** `switch_persona`, `lookup_reputation`, `recent_messages` calls; the Anthropic shape (recording transport only); the 4xx degrade path (gpt-oss supports tools).
+- Privacy-safe 2026-08-19 evidence records one validated `remember_fact` call followed by a
+  grounded recall result. `switch_persona`, `lookup_reputation`, `recent_messages`, the Anthropic
+  wire shape, and 4xx degradation remained unobserved live.
 
 ## Breadth & ops (sub-project 4 of "improve all")
 status: in_progress
 - 2026-08-19: vision works on a local VLM — ollama `gemma4:e4b` described a screenshot correctly; `/v1` needed a 1,024-token budget (reasoning first) and a reasoning-exhausted error is now honest. launchd user agent for this Mac: `deploy/com.donaldfilimon.abbey-bot.plist` + `deploy/install-launchd.sh` (build, install, load; `--uninstall`).
-- 2026-08-20: launchd installation is now live and verified: the prior manually launched debug process stopped via SIGINT, the locked release binary installed under `~/.local/libexec/abbey-bot`, the owner-only env moved to `~/.config/abbey-bot/env`, persistent state is bound to `~/.local/share/abbey-bot/data`, and launchd reports the service running. Logs prove the OpenAI-compatible backend, MESSAGE_CONTENT request, instant sandbox registration, Discord connection as Abbey, real DM replies, and reward settlement after the restart; the persisted JSON validates with 60 guild settings, one loaded brain, and four memory entries. The real three-turn local-backend DM pipeline test passed against gpt-oss:20b; one earlier stochastic run returned an inadequate one-word third answer, which is recorded as model-quality variance rather than hidden. A follow-up inspection found launchd's inherited umask made the first state files 0644; the replacement now owns one fixed data path, handles launchd SIGTERM with a final persist, waits for the exact old PID to exit before repairing the whole private tree, stages and validates both artifacts, publishes with same-directory renames, requires one replacement PID to remain running for five seconds, and restores the prior binary/plist if bootstrap fails.
+- Historical 2026-08-20 installation evidence recorded the categories atomic launchd replacement,
+  owner-only environment and data state, successful gateway/DM/reward paths, persistence reload,
+  final-persist handling, permission repair, and rollback. It does not qualify the current source
+  or the currently manual process, and retains no raw logs, prompts, replies, or identities.
 - 2026-08-20 command-evidence reconciliation: the durable interaction ledger records successful `/stats`, `/remember`, `/reputation`, `/summarize`, `/whois`, `/perms`, `/modcall`, `/server`, `/voice status`, and `/voice leave` executions. `/forget`, `/ocr`, and `/webhook` remain unobserved. A live `/see` invocation reached the older path but failed on attachment MIME/decoding; current source fully decodes JPEG/PNG/WebP/GIF under 8192×8192-pixel and 96 MiB allocation ceilings, preserves validated JPEG/PNG/WebP, and normalizes GIF's first frame to PNG before transport, but needs a fresh live `/see` after deployment. Memory slash commands are self-only by default; cross-member `/remember`, `/forget`, and `/recall` require Manage Messages, Manage Guild, or Administrator, and new facts are normalized, non-empty, and capped at 300 Unicode characters.
 - Not done / needs external credentials or live acceptance: Telegram and Slack live (tokens); `/forget`, `/ocr`, and `/webhook`; the hardened `/see` attachment path after deployment; an actual `OverBudget` refusal. GitHub Actions is no longer listed as blocked here: the exact stable-toolchain gate executed successfully on PR #24.
-- 2026-08-19 (strict review pass): `pipeline.rs` split — the generation loop (streaming, tool rounds, typing) now lives in `src/generation.rs` (PR #23); no behavior change, gate 332 tests. Dependabot residual: all four open alerts are `rustls-webpki` 0.102.8 via serenity 0.12.5 → tokio-tungstenite 0.21 → rustls 0.22; every patch lands only on the 0.103 line, so this is blocked until serenity releases against rustls 0.23 — re-run `cargo update -p rustls-webpki@0.102.x` after any serenity bump. Practical exposure is low: the crate is a TLS client to Discord/ollama and the flaws are in CRL/name-constraint paths.
-- 2026-08-27 dependency-debt reconciliation, verified not assumed. The `rustls-webpki`
-  blocker recorded above is **resolved and its bullet is superseded**, not still open. The
-  condition it named ("blocked until serenity releases against rustls 0.23") has been met:
-  `Cargo.lock` now resolves a single `rustls` at `0.23.43` and a single `rustls-webpki` at
-  `0.103.14`, with no `0.102.x` or `0.22` line remaining anywhere in the lock. A full
-  `cargo audit` on this clean checkout (`main` at `72464a4`, 506 crate dependencies scanned
-  against 1226 advisories) exits **0 with zero vulnerabilities**; the only output is 5 allowed
-  warnings — `derivative`, `instant`, and `proc-macro-error2` unmaintained, `stable-vec`
-  unsound, `chacha20` yanked. No `rustls-webpki`, OpenMLS, HPKE, or libcrux finding appears.
-  This therefore also supersedes the "`cargo audit` remains red: four pre-existing
-  rustls-webpki findings plus six libcrux findings" line in the voice goal and the
-  "`cargo audit` stays deliberately non-green" line in the Complete Abbey goal. Those dated
-  observations stay as written; this entry records that their subject no longer holds.
-  The 5 remaining warnings are unmaintained/unsound/yanked advisories, not vulnerabilities,
-  and are unrelated to the TLS stack the original entry was about.
-- **2026-08-28 residual-count reconciliation: the "5 allowed warnings" figure above is stale, not
-  the audit-clean claim itself.** Commit `9895734` ("chore(deps): bump stable-vec to 0.4.3 and
-  chacha20 to 0.10.2") fixed the two findings that made up two of the five: `stable-vec` 0.4.2 to
-  0.4.3 (RUSTSEC-2026-0267, panic-safety unsoundness) and `chacha20` 0.9.1 to 0.10.2 (yanked
-  release), reached transitively through `songbird -> stream_lib -> hls_m3u8 -> stable-vec`.
-  `Cargo.lock` now resolves `stable-vec` at exactly `0.4.3`; a `chacha20` `0.10.2` entry is also
-  present (a second `chacha20` `0.9.1` entry remains from an unrelated dependency edge, but that
-  version is not itself flagged by the advisory database). A fresh `cargo audit` run on this clean
-  checkout (`main` at `cb265a4`, 506 crate dependencies scanned against 1226 advisories) exits **0
-  with zero vulnerabilities and 3 allowed warnings**, not 5: `derivative` 2.2.0 (RUSTSEC-2024-0388,
-  unmaintained), `instant` 0.1.13 (RUSTSEC-2024-0384, unmaintained), and `proc-macro-error2` 2.0.1
-  (RUSTSEC-2026-0173, unmaintained). Neither `stable-vec` nor `chacha20` appears in the output. The
-  audit-clean claim in the entry above still holds; only its enumerated count and crate list are
-  superseded.
+- The 2026-08-27 and 2026-08-28 zero-vulnerability reports were lockfile snapshots and are
+  superseded; they are not current audit-clean evidence. Commit `9895734` remains historical
+  maintenance provenance only.
+- **Current 2026-09-02 TLS debt is explicitly not audit-clean.** The portable Linux tree excludes
+  `native-tls`, `openssl`, and `openssl-sys`, but Serenity 0.12.5 still selects
+  `tokio-tungstenite` 0.21, Rustls 0.22.4, and `rustls-webpki` 0.102.8. Exactly these four
+  vulnerability records remain accepted and visible:
+  - `RUSTSEC-2026-0049` / `GHSA-pwjx-qhcg-rvj4`
+  - `RUSTSEC-2026-0098` / `GHSA-965h-392x-2mh5`
+  - `RUSTSEC-2026-0099` / `GHSA-xgp8-3hg3-c2mh`
+  - `RUSTSEC-2026-0104` / `GHSA-82j2-j2ch-gfr8`
+- The accepted records are bound by the gate to the exact package, version, source, checksum,
+  aliases, patched and unaffected ranges, categories, severity metadata, and dependency identity.
+  The malformed-CRL panic advisory stays visible. Any added, missing, or changed vulnerability
+  fails closed. The `cargo-audit` 0.22.2 pin is report-format tooling, not accepted debt.
+- The unrelated informational unmaintained warnings for `derivative`, `instant`, and
+  `proc-macro-error2` are reported separately. Re-review is required when Serenity publishes a
+  compatible Rustls/WebSocket edge or any accepted advisory evidence changes; no local
+  cryptographic fork is claimed.
+- Direct compatible majors moved to `sha2` 0.11, `base64` 0.23, and `tokio-tungstenite` 0.30.
+  Reqwest remains on 0.12 for Serenity feature compatibility, and Symphonia remains on 0.5 for
+  Songbird playback/error type compatibility.
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
@@ -127,7 +135,11 @@ status: done
 
 ## Modernize the Rust codebase and harden network boundaries
 status: done
-- Captured 2026-08-19 from "do all next steps and finish all codebase; merge all changes into main". Acceptance: exact supported Rust toolchain, compatible lock refresh, deployed release build in the gate, generated Discord mentions disabled, bounded/no-redirect model and vision responses, bounded shared Discord attachment downloads, pure hierarchy policy, clone-independent hooks, secret/data ignores, claim-honest docs, full green gate, and integration on `main`.
+- Captured 2026-08-19 from the approved modernization and mainline-delivery goal. Acceptance:
+  exact supported Rust toolchain, compatible lock refresh, deployed release build in the gate,
+  generated Discord mentions disabled, bounded/no-redirect model and vision responses, bounded
+  shared Discord attachment downloads, pure hierarchy policy, clone-independent hooks,
+  secret/data ignores, claim-honest docs, full green gate, and integration on `main`.
 - 2026-08-20 outcome: implementation commit `8da4717` merged through PR #24 as `24c95d2`; the exact stable Rust 1.97.1 GitHub gate passed (fmt, Clippy `-D warnings`, 335 passed + 1 intentionally ignored live-model test, locked release build). Startup rejects blank Discord tokens and remote plaintext model endpoints. `cargo audit` still reports the four documented `rustls-webpki` 0.102.8 advisories blocked on Serenity's Rustls 0.22 path, plus Poise's transitive unmaintained `derivative` warning; Docker/systemd and live mention/cooldown behavior remain explicitly unverified.
 - 2026-08-20 dependency recheck (Modernize goal): Rust 1.97.1 remains the current stable release and `cargo update --dry-run` resolves no compatible changes. Serenity 0.12.5 and Poise 0.6.2 remain current on crates.io; upgrading only reqwest/tokio-tungstenite would duplicate TLS stacks without removing Serenity's rustls 0.22 path. The complete locked gate passed again before the launchd restart. The four upstream `rustls-webpki` advisories therefore remain explicit rather than being hidden behind an unsafe fork or a deploy-stack TLS rewrite.
 
@@ -152,8 +164,8 @@ status: in_progress
   and image requests but silently turned an OpenAI custom-tool request into prose with no
   `tool_calls`, so its server endpoint must never be advertised as tool-capable; tools go through
   the schema-constrained `fm respond` adapter, and Abbey's allowlist/validation stays authoritative.
-  A model saying "I will remember that" without a validated tool request must not mutate memory or
-  report success.
+  Provider prose that merely claims an action, without a validated tool request, must not mutate
+  memory or report success.
 - **2026-08-20 slice 1 of 5 complete — reconcile and stabilize the concurrent candidate.** Verified,
   not assumed: branch `codex/live-voice-20260820` @ `ed7dc66`, 26 modified + 6 untracked files
   (+3548/-553), quiescence confirmed (no non-`.git` file touched in the preceding 10 minutes) before
@@ -187,16 +199,16 @@ status: in_progress
   hand-maintained cryptographic fork.
 - **2026-08-20 slice 2 — memory relevance (branch `codex/memory-revision-20260820`).** Fixed a
   concrete defect rather than adding a layer: `PersonaContext::render` joined *every* stored fact
-  into every prompt, so at the hundred-fact cap a message like "what time is it" carried up to
-  30,000 characters of unrelated biography. New pure `src/recall.rs` ranks facts against the
+  into every prompt, so at the hundred-fact cap an unrelated query carried up to 30,000
+  characters of biography. New pure `src/recall.rs` ranks facts against the
   message being answered — lexical overlap weighted by term rarity across that user's own facts —
   with no embedding call, no network, and nothing on the hot path that can stall. Ranking is not
   forgetting, enforced three ways: the prompt discloses held-back facts as "(+N more remembered
   facts not shown for this message)" so the model never mistakes a partial view for the whole
   file; a short fact list renders whole regardless of wording; `/recall` still lists everything and
   `/forget` remains the only deletion. A snapshot test caught a real flaw in the ranking itself —
-  rarity weighting made the "a" in "a rust question" look maximally distinctive because it
-  appeared in exactly one fact, floating an unrelated fact to the top; the cheap fix (drop tokens
+  rarity weighting made a stopword look maximally distinctive because it appeared in exactly one
+  fact, floating an unrelated fact to the top; the cheap fix (drop tokens
   under three characters) would have destroyed `go`, `ai`, `js`, `c`, and `os` as retrieval keys,
   so it is an explicit stopword list with regression tests in both directions. Gate: 428 passed /
   0 failed / 1 ignored, exit 0 (was 415).
@@ -234,8 +246,8 @@ status: in_progress
   away; raising `EMBED_DIM` would change the persisted vector format shared with abi. Retrieval
   stays lexical. Re-opening this requires a different embedding, not a threshold.
 
-- **Deliberately not built, with the reason recorded:** automatic contradiction detection ("I use
-  Rust" superseded by "I moved to Zig"). Deterministic supersession over free text mis-supersedes
+- **Deliberately not built, with the reason recorded:** automatic contradiction detection over
+  free-text technology-preference updates. Deterministic supersession over free text mis-supersedes
   real facts, and silently losing a user's memory is a worse failure than showing one stale line.
   It needs either an explicit `replaces` parameter or a model-judged path — each its own decision,
   neither a guess to slip in under "smarter memory".
@@ -278,25 +290,30 @@ status: in_progress
   as designed. This closes both remaining `--provider-self-test` and FM-vision/OCR-gating items in
   `tasks/todo.md`. It does **not** mean FM vision/OCR are production-qualified on this build — they
   are not, per the same evidence, and must not be advertised as such.
-- **2026-08-27 cross-platform source reconciliation.** Current `main` and
-  `origin/main` are the same commit,
-  `588cbe6eeaf7b11ec616657874ccba7e63ad4a3e`. GitHub Actions run
-  `33025176982` executed and completed all three real source gates successfully:
-  Ubuntu and macOS through `./check.sh`, Windows through `./check.ps1`. This
-  closes the Linux/Windows build-and-test portions of the cross-platform goal
-  at that exact head. It does not close Linux or Windows provider/runtime
-  qualification, systemd/Docker or foreground-process acceptance, installed
-  artifact identity, live connectors, service deployment, or the separately
-  consent-gated voice goal.
-- **2026-08-21 residual check, no branches or PRs pending.** `codex/live-voice-20260820` and
-  `codex/memory-revision-20260820` no longer exist as branches (their work is already folded into
-  main's history); `git worktree list` shows only the primary checkout; `gh pr list --state open`
-  is empty; local `main` equals `origin/main`. There is nothing outstanding to merge. The remaining
-  open items across every `in_progress` goal in this file are blocked on one of two things neither
-  fixable from source: (a) human presence in a live Discord voice/text session for consent,
-  wake-reply, barge-in, and `/see`/`/ocr`/`/webhook`/`OverBudget` acceptance, or (b) a deployed
-  MLX-VLM/MLX-Audio sidecar, which this Mac does not currently have — both launchd services and
-  their weights were deliberately uninstalled 2026-08-21, and redeploying them mid-slice was
-  explicitly declined in favor of building source-only and redeploying once at the end. Until one
-  of those two conditions changes, further "continue" work here is ledger honesty and source-level
-  slices like the one above, not the human/deployment-gated bullets themselves.
+- **Cross-platform evidence is commit-specific.** The older `588cbe6` / Actions run
+  `33025176982` result is historical only. Immediately before this stabilization wave,
+  `origin/main` was `9716f00`; Actions run `33218303755` supplied Ubuntu, macOS, and Windows
+  source-gate evidence for that pre-stabilization baseline only. Neither run proves the current
+  local stabilization commits, final pushed head, provider/runtime qualification, installed
+  artifact identity, live connectors, managed deployment, or consented voice. Fresh exact-head
+  three-platform CI is pending after the normal push to canonical `main`.
+- **2026-09-02 Core + Inspect source surface.** Production offers exactly seven tools in stable
+  order whenever the global tools policy is enabled: the original five Core tools followed by
+  `inspect_status` and `list_facts`. `abbey_tools()` remains the byte-compatible five-tool corpus.
+  Both OpenAI-compatible/Anthropic and Foundation Models decision schemas expose the seven-tool
+  production surface. The partial Inspect-only toggle no longer exists; only the global
+  tools-off boundary can hide tools. Inspect is read-only, guild/user scoped, non-provisioning,
+  snapshot-consistent, and returns only effective routable provider capabilities with safe
+  configured-versus-qualified provenance. HTTP and Discord acting tools remain deferred.
+- **Current evidence boundary and delivery.** The source-level coarse voice state is wired to
+  central lifecycle transitions and limited to `off`, `presence`, `awaiting-consent`, `active`,
+  or `paused`. The existing manual foreground process remains untouched and unqualified. The
+  isolated strict gate, locked release build, non-divergence review, normal push from canonical
+  `main`, and exact-head Ubuntu/macOS/Windows CI remain pending. Provider qualification,
+  installation, two-guild live acceptance, managed-service acceptance, and consented voice are
+  separate pending layers.
+- **Live protocol roles.** With operator-supplied sandbox inputs, Guild A starts with learning and
+  acting enabled under a small budget/cooldown while Guild B remains default-off. Exercise all
+  seven tools and bounded policy/provider behavior, prove no cross-guild leakage or unsolicited
+  Guild B behavior, swap the Guild A/B roles, repeat the isolation-sensitive subset, and restore
+  both guilds' initial settings. No concrete Discord identifier belongs in this ledger.

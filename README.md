@@ -31,16 +31,31 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
 | `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. The owner/admin-only local verifier spans join, participant pause/resume, and final leave with content-free in-memory counters; while armed it disables voice conversation commits. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
 
-**The model can call Abbey's own systems.** On mentions, DMs, and `/persona
-ask` the backend is offered five tools — `remember_fact`, `lookup_reputation`,
-`recall`, `switch_persona`, `recent_messages` — in the OpenAI or Anthropic
-shape as appropriate; calls run against the same memory/WDBX/reputation the
-slash commands use, scoped to the server and person in the conversation, for
-at most three rounds before the answer. None of them post, moderate, or change
-config. A backend that rejects tooled requests is retried once without and
-remembered (`ABBEY_BOT_LLM_TOOLS=off` disables outright). A 2026-08-19
-gpt-oss:20b session exercised `remember_fact`; that dated observation is
-historical evidence, not proof about the currently installed service.
+**The model can call Abbey's own systems.** Whenever the existing tools policy
+is enabled, production offers exactly `[Core, Inspect]` in this stable order:
+`remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
+`recent_messages`, `inspect_status`, `list_facts`. Both the OpenAI-compatible
+and Foundation Models decision schemas expose all seven, and the Anthropic
+request representation consumes the same shared definitions. The original
+`abbey_tools()` definition and wire fixtures remain the byte-compatible
+five-Core-tool corpus; Inspect is additive to that preserved contract. There
+is no partial Inspect toggle: `ABBEY_BOT_LLM_TOOLS=off` suppresses the complete
+vocabulary.
+
+Calls run against the same memory/WDBX/reputation the slash commands use,
+scoped to the server and person in the conversation, for at most three rounds.
+`list_facts` is a bounded canonical fact-and-pending-replacement snapshot, not
+semantic WDBX recall; it reports omitted facts and pending replacements
+separately and never clips a replacement into a misleading partial value.
+`inspect_status` exposes only effective routable capability categories and
+safe `configuration` versus `qualified-manifest` provenance. Its guild-scoped
+voice value is exactly `off`, `presence`, `awaiting-consent`, `active`, or
+`paused`; it exposes no identities, counts, consent epochs, model names,
+counters, timestamps, media, audio, or transcripts. None of the seven tools
+posts, moderates, or changes configuration. A backend that rejects tooled
+requests is retried once without tools and remembered. A 2026-08-19 gpt-oss:20b
+session exercised `remember_fact`; that dated observation is historical
+evidence, not proof about the currently installed service.
 
 **DMs work.** A DM to Abbey is always answered (through the backend), keeps a
 per-conversation transcript, and is its own one-person namespace
@@ -62,6 +77,16 @@ export DISCORD_TOKEN=...        # from the Developer Portal; never commit it
 export ABBEY_GUILD_ID=...       # optional, but see below
 cargo run
 ```
+
+Credential selection is source-aware and fail-closed. A present, nonblank
+`DISCORD_TOKEN` wins. `DISCORD_BOT_TOKEN` is consulted only when the primary is
+absent; a present-but-blank or non-Unicode primary is an error and never falls
+through. A blank or non-Unicode fallback has its own configuration error. The
+selected secret has no token-bearing debug/display representation. After the
+explicit token-free self-test modes, Abbey authenticates it with Discord
+before guild parsing, application state, voice, schedulers, Telegram/Slack, or
+framework setup. Accepted and rejected diagnostics name only the selected
+environment-variable source and never its value.
 
 `ABBEY_GUILD_ID` registers commands to a single guild, which takes effect
 immediately. Leave it unset and commands register globally, where propagation can
@@ -158,7 +183,7 @@ selected from the environment, first match wins:
 
 | Env var | Backend |
 |---|---|
-| `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. A secret with `DISCORD_TOKEN`'s exact handling: env only, never in a commit or an image layer. |
+| `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. This secret is environment-only and is never placed in a commit or image layer. |
 | `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (for example Ollama or llama.cpp/llama-server). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. Plain HTTP is accepted only for loopback; remote endpoints require HTTPS, and credentials/query strings in the base URL are rejected. The source default model name and next cross-platform deployment target is **`gemma4:12b`**; this is not a claim about the currently installed service. The operator choice supersedes both the interim `gemma4:e4b` choice and the 2026-08-19 benchmark's `gpt-oss:20b` recommendation. The dated benchmark remains historical timing evidence: gpt-oss answered in 7–25 s, e4b in 13–37 s, and 12b in 32–94 s on that host. Ollama uses the model field; a server bound to one model may ignore it. Local replies stream: the message appears within ~4 s and grows; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
 
 The backend contract is intentionally portable. Linux and Windows retain the
@@ -304,7 +329,7 @@ runs fully offline.
 | Env var | What it enables |
 |---|---|
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
-| `ABBEY_BOT_LLM_TOOLS` | `off` disables model tool calls; default on. A tool-contract rejection degrades only that provider's tool route. |
+| `ABBEY_BOT_LLM_TOOLS` | `off` disables the complete seven-tool Core-plus-Inspect vocabulary; default on. There is no separate Inspect switch. A tool-contract rejection degrades only that provider's tool route. |
 | `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` / `_CAPABILITY_MANIFEST` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. Enabling fallback also requires a matching owner-only qualification manifest. `system` is on-device; `pcc` is an explicit cloud selection and is not qualified by this repository's system-mode evidence. |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
@@ -317,27 +342,28 @@ runs fully offline.
 
 Abbey keeps these evidence layers separate; passing one never implies the next:
 
-1. `./check.sh` or `./check.ps1` proves the checked-out source on that host:
-   formatting, deployment/static validation, privacy logging rules, Clippy,
-   offline tests, and a locked release build. GitHub runs the corresponding
-   gate on Ubuntu, macOS, and Windows for every pull request and `main` push.
-   When the canonical sibling `wdbx` checkout is present, the gate also compares
-   both repositories' frozen WDBX-v1 conformance fixtures byte-for-byte. Set
-   `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` for integration/release runs where a
-   missing sibling must fail rather than explicitly skip that external layer.
-2. `--provider-self-test primary|fm|all --json` probes configured providers
-   with synthetic fixtures and ephemeral state before Discord credentials or
-   production data are loaded. Its JSON binds capability results to provider,
-   binary, OS, and fixture identities; it is provider qualification, not a
-   deployed-service claim.
-3. Installer output, launchd PID/listener ownership, exact model identity,
-   artifact hashes, and offline restart are installed-artifact evidence.
-4. An observed Discord text/tool/image round trip is live Discord evidence.
-   Telegram and Slack share source and CI coverage, but are not live-qualified
-   unless their own connector round trips are explicitly recorded.
-5. Voice requires a separate, current everyone-present consent record and an
-   authorized consent-bearing `/voice` command. Source tests, an offline WAV,
-   muted presence, or an earlier session do not authorize live capture.
+1. Focused source tests prove only their named contracts.
+2. An isolated `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` plus locked release
+   build proves the checked-out source on that host. It does not prove delivery.
+3. A reviewed local SHA equal to `origin/main` proves normal mainline delivery.
+4. Successful Ubuntu, macOS, and Windows jobs for that exact remote SHA prove
+   hosted source/build coverage. Windows CI is not a real Windows live-runtime
+   acceptance.
+5. Synthetic provider fixtures and an identity-bound manifest prove only the
+   exact provider binary/model/OS/schema/sandbox qualification they name.
+6. An atomic install record with matching artifact hashes, environment source,
+   listener ownership, and rollback target proves only installed identity.
+7. A controlled foreground two-guild text/tool/image run proves live Discord
+   behavior for that exact foreground binary and selected qualified provider.
+8. Fresh unanimous consent plus a human-witnessed 8/8 lifecycle proves only the
+   consented voice run.
+9. Repeating the complete protocol through the managed service proves the
+   managed deployment. It cannot be inferred from the foreground run.
+
+The complete privacy-preserving operator sequence is in
+`docs/live-test-protocol.md`. Telegram and Slack share source and CI coverage,
+but are not live-qualified unless their own connector round trips are
+explicitly recorded.
 
 For final local voice acceptance, an owner or administrator runs `/voice verify
 start` before the consented join and `/voice verify report` after the final
@@ -557,7 +583,7 @@ restart:
   `docker run --env-file`; never bake a token into an image layer.
 
 Honesty note: **live evidence is cumulative and command-specific.** On
-2026-08-19, Donald's Discord client verified gateway registration, generated
+2026-08-19, the operator's Discord client verified gateway registration, generated
 DM/guild replies, the adaptive policy and reward settlement, historical local
 `gpt-oss:20b` generation, and a model-initiated `remember_fact` call.
 The current `gemma4:12b` choice supersedes both the interim `gemma4:e4b` choice
@@ -570,7 +596,7 @@ vision path but failed on its attachment MIME/decoding behavior; the current
 source fully validates JPEG/PNG/WebP/GIF and normalizes GIF's first frame, but
 that fix still needs a post-deployment attachment revalidation.
 
-Space Engineering separately proved persistent muted/self-deafened
+An operator-designated sandbox voice channel separately proved persistent muted/self-deafened
 `DecodeMode::Pass` presence, an earlier consented `Decode` activation, an
 automatic participant-change pause, and a manager `/voice leave` recorded as
 successful. The current code closes the media epoch and physically disconnects
@@ -582,18 +608,42 @@ barge-in. A fresh everyone-present consent epoch, renewed `/voice resume`, an
 audible wake/reply, and interruption acceptance require their own current
 record and remain unclaimed by source evidence. OpenAI Realtime is
 an explicit degraded backup, not an offline path, and its spoken control is not
-authoritative. `tasks/goals.md` retains the dated dependency-audit history. The
-current root lock has zero reported vulnerabilities: Abbey carries a
-provenance-checked `openmls_rust_crypto` 0.5.1 compatibility patch whose Rust
-source is byte-identical to the crates.io archive and whose manifests only move
-the HPKE family from 0.6 to 0.7. Remove it when `davey` adopts a fixed upstream
-OpenMLS/HPKE line. `cargo audit` still reports the informational unmaintained
-`derivative`, `instant`, and `proc-macro-error2` warnings; those are not hidden
-or described as vulnerability fixes.
-This host has neither Docker nor systemd, so both
-deploy artifacts are **unverified as artifacts** — what is verified is that `cargo build --release
---locked` produces the binary they both wrap. The exact stable Rust + locked
-release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
+authoritative. `tasks/goals.md` retains the dated dependency-audit history.
+The Linux graph is now Rustls/WebPKI-only: the gate rejects `native-tls`,
+`openssl`, and `openssl-sys`, so the package-free Docker runtime uses compiled
+roots. Serenity 0.12.5's Rustls WebSocket edge still pins `rustls-webpki`
+0.102.8. Exactly four vulnerability records are accepted temporarily:
+
+- `RUSTSEC-2026-0049` / `GHSA-pwjx-qhcg-rvj4`
+- `RUSTSEC-2026-0098` / `GHSA-965h-392x-2mh5`
+- `RUSTSEC-2026-0099` / `GHSA-xgp8-3hg3-c2mh`
+- `RUSTSEC-2026-0104` / `GHSA-82j2-j2ch-gfr8` — malformed-CRL reachable panic
+
+The deterministic checker binds each record to the exact package, version,
+source, checksum, aliases, patched/unaffected ranges, categories, CVSS and
+informational state, withdrawal state, and dependency identity. Any missing,
+additional, or changed vulnerability fails closed. Its successful result says
+that four vulnerabilities remain and the audit is **not clean**. The
+`cargo-audit` 0.22.2 pin stabilizes report parsing; it is tooling, not a fifth
+accepted finding. Informational warnings are reported separately. The fixed
+0.103 line is not compatible with Serenity's current `tokio-tungstenite` 0.21
+edge, so re-review is required when that upstream route or support policy
+changes. Abbey also carries the provenance-checked `openmls_rust_crypto` 0.5.1
+compatibility patch.
+
+The checkout-local `launch.sh` and `run_bot.sh` are owner-private mode-0700
+helpers, untracked and locally excluded. Tracked gates do not read or validate
+them, and they must never be staged or used as public evidence. `bot.log` is
+ignored and remains unread while a manually launched process is active. A
+manual process is not a managed-service installation. Before any transition,
+re-resolve its exact PID, owner, parent, start time, working directory,
+executable path, and executable hash; signal only that verified process, never
+use a broad process-name kill, and never replace its executable during source
+work.
+
+This host has neither Docker nor systemd, so those deploy wrappers remain
+unverified as running artifacts. A locked release build proves only the built
+binary it produced, not an installation or service.
 
 ## Gate
 
@@ -604,21 +654,25 @@ release-build gate passed in GitHub Actions on PR #24 on 2026-08-20.
 ```
 
 CI (`.github/workflows/rust.yml`) runs Ubuntu and macOS through `check.sh` and
-Windows through `check.ps1`, all with the exact Rust 1.97.1 toolchain. Every
+Windows through `check.ps1`, all with the exact Rust 1.98.0 toolchain. Every
 lane proves formatting, Python syntax and hash locks, the static privacy gate,
-Clippy with warnings denied, the offline test suite, and the locked release
-build. The WDBX parity script runs in every lane but reports an explicit external
+the vendored Abbey corpus guard plus its Rust verifier, the Linux Rustls/WebPKI
+dependency-tree invariant, Clippy with warnings denied, the offline test suite,
+and the locked release build. The WDBX parity script runs in every lane but reports an explicit external
 skip in a standalone checkout; it becomes required when
 `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` and `ABBEY_WDBX_REPO` identifies the canonical
 sibling. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also
 runs where `plutil` exists.
 
-The latest checked-in source snapshot verified here is commit
-`588cbe6eeaf7b11ec616657874ccba7e63ad4a3e`: Actions run `33025176982`
-completed the Ubuntu, macOS, and Windows gate jobs successfully on 2026-08-27.
-That is cross-platform source build/test evidence only. Provider qualification,
-installed service identity, connector round trips, and current consented voice
-retain the separate acceptance layers above.
+The delivered pre-stabilization baseline is
+`9716f00f4b9dfe4c8ddfa1e126e74ba2cf9fdde1`. GitHub Actions run
+`33218303755` completed its Ubuntu, macOS, and Windows gate jobs successfully
+on 2026-08-28. That is historical cross-platform source/build evidence for
+that SHA only. This stabilization work still requires its isolated strict
+gate, locked release build, normal push, and exact-head CI before those layers
+can be claimed. Provider qualification, installed identity, foreground/live
+Discord, consented voice, managed-service acceptance, and real Windows runtime
+remain separate and unclaimed by that baseline run.
 
 The shared Rust sequence is
 `cargo fmt --all -- --check`, platform-appropriate deployment validation, then

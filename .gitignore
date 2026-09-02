@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .DS_Store
+bot.log
 .skill-telemetry/
 tasks/session-log.md
 /abbey-state.json
