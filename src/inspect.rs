@@ -1,57 +1,234 @@
-//! Pure, bounded renders for the Inspect skill pack.
+//! Pure renders for the Inspect skill pack. No serenity, no songbird, no clock.
 //!
-//! `ToolScope` gathers already-scoped inputs; this module only formats them.
+//! `ToolScope` gathers already-redacted inputs; this module only formats them.
 
 use crate::guild::GuildSettings;
 use crate::memory::PendingSupersession;
 use crate::tools::{self, InspectAspect, MAX_RESULT_CHARS};
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
 
-/// Redacted process facts for the runtime Inspect line.
+/// The complete voice vocabulary exposed by Inspect. It deliberately carries
+/// no participant, consent, media, provider, counter, or timestamp detail.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceInspectState {
+    #[default]
+    Off,
+    Presence,
+    AwaitingConsent,
+    Active,
+    Paused,
+}
+
+impl VoiceInspectState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Presence => "presence",
+            Self::AwaitingConsent => "awaiting-consent",
+            Self::Active => "active",
+            Self::Paused => "paused",
+        }
+    }
+}
+
+/// Guild-keyed, Songbird-free voice state published by the central voice
+/// lifecycle. Missing entries are `off`; publishing `off` removes the entry.
+#[derive(Debug, Default)]
+pub struct VoiceInspectRegistry {
+    states: Mutex<HashMap<String, VoiceInspectState>>,
+}
+
+impl VoiceInspectRegistry {
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, VoiceInspectState>> {
+        self.states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[must_use]
+    pub fn state_for(&self, scoped_guild: &str) -> VoiceInspectState {
+        self.lock().get(scoped_guild).copied().unwrap_or_default()
+    }
+
+    pub fn publish(&self, scoped_guild: &str, state: VoiceInspectState) {
+        let mut states = self.lock();
+        if state == VoiceInspectState::Off {
+            states.remove(scoped_guild);
+        } else {
+            states.insert(scoped_guild.to_owned(), state);
+        }
+    }
+
+    /// Close an active media view immediately when consent/media is revoked.
+    pub fn mark_media_revoked(&self, scoped_guild: &str) {
+        let mut states = self.lock();
+        if states.get(scoped_guild) == Some(&VoiceInspectState::Active) {
+            states.insert(scoped_guild.to_owned(), VoiceInspectState::Paused);
+        }
+    }
+
+    /// Actor failure or another adverse session event must never leave stale
+    /// active/presence copy visible to Inspect.
+    pub fn mark_session_adverse(&self, scoped_guild: &str) {
+        let mut states = self.lock();
+        if matches!(
+            states.get(scoped_guild),
+            Some(VoiceInspectState::Active | VoiceInspectState::Presence)
+        ) {
+            states.insert(scoped_guild.to_owned(), VoiceInspectState::Paused);
+        }
+    }
+}
+
+/// Redacted process facts for the `runtime` Inspect aspect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeInspect {
-    pub backend_label: &'static str,
+    pub generation_configured: bool,
     pub tools_on: bool,
     pub vision_on: bool,
     pub quiet: bool,
     pub data: bool,
-    pub fm: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderRouteLabel {
+    Primary,
+    FoundationModelsServer,
+    FoundationModelsCli,
+    Vision,
+}
+
+impl ProviderRouteLabel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::FoundationModelsServer => "foundation-models-server",
+            Self::FoundationModelsCli => "foundation-models-cli",
+            Self::Vision => "vision",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderProvenance {
+    Configuration,
+    QualifiedManifest,
+}
+
+impl ProviderProvenance {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Configuration => "configuration",
+            Self::QualifiedManifest => "qualified-manifest",
+        }
+    }
+}
+
+/// Closed, content-free provider view. Ineligible routes have every capability
+/// cleared by construction, so configured-but-unavailable features cannot be
+/// mistaken for effective capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderRouteInspect {
+    route: ProviderRouteLabel,
+    routable: bool,
+    text: bool,
+    tools: bool,
+    vision: bool,
+    ocr: bool,
+    provenance: ProviderProvenance,
+}
+
+impl ProviderRouteInspect {
+    #[must_use]
+    pub const fn new(
+        route: ProviderRouteLabel,
+        routable: bool,
+        text: bool,
+        tools: bool,
+        vision: bool,
+        ocr: bool,
+        provenance: ProviderProvenance,
+    ) -> Self {
+        Self {
+            route,
+            routable,
+            text: routable && text,
+            tools: routable && tools,
+            vision: routable && vision,
+            ocr: routable && ocr,
+            provenance,
+        }
+    }
 }
 
 pub fn render_status(
     aspect: InspectAspect,
     runtime: &RuntimeInspect,
     guild_line: Option<&str>,
+    voice: VoiceInspectState,
+    providers: &[ProviderRouteInspect],
 ) -> String {
     match aspect {
         InspectAspect::Runtime => render_runtime(runtime),
         InspectAspect::Guild => guild_line
             .unwrap_or("No guild settings on record.")
             .to_string(),
-        // Fixed copy cannot expose configured-but-unavailable provider data
-        // or process-global rich voice state.
-        InspectAspect::Voice => "voice: off".into(),
-        InspectAspect::Provider => "provider: unavailable".into(),
+        InspectAspect::Voice => render_voice(voice),
+        InspectAspect::Provider => render_provider(providers),
         InspectAspect::All => tools::truncate(&format!(
-            "{}\n{}\nvoice: off\nprovider: unavailable",
+            "{}\n{}\n{}\n{}",
             render_runtime(runtime),
             guild_line.unwrap_or("No guild settings on record."),
+            render_voice(voice),
+            render_provider(providers),
         )),
     }
 }
 
 pub fn render_runtime(runtime: &RuntimeInspect) -> String {
     format!(
-        "backend: {} · tools: {} · vision: {} · quiet: {} · data: {} · fm: {}",
-        runtime.backend_label,
+        "generation: {} · tools: {} · vision: {} · quiet: {} · data: {}",
+        if runtime.generation_configured {
+            "configured"
+        } else {
+            "off"
+        },
         on_off(runtime.tools_on),
         on_off(runtime.vision_on),
         on_off(runtime.quiet),
         if runtime.data { "yes" } else { "no" },
-        runtime.fm,
     )
 }
 
-/// Guild body without the markdown header.
+pub fn render_provider(providers: &[ProviderRouteInspect]) -> String {
+    if providers.is_empty() {
+        return "provider: unavailable".into();
+    }
+    providers
+        .iter()
+        .map(|provider| {
+            format!(
+                "provider {}: routable {} · text {} · tools {} · vision {} · ocr {} · provenance {}",
+                provider.route.as_str(),
+                yes_no(provider.routable),
+                yes_no(provider.text),
+                yes_no(provider.tools),
+                yes_no(provider.vision),
+                yes_no(provider.ocr),
+                provider.provenance.as_str(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn render_voice(voice: VoiceInspectState) -> String {
+    format!("voice: {}", voice.as_str())
+}
+
+/// Guild body without the markdown header (keeps `all` under the cap).
 pub fn render_guild_body(settings: &GuildSettings, tokens_left: f32) -> String {
     format!(
         "persona: {} · learning: {} · vision: {} · cooldown: {}s · act: {} · budget: {}/h ({:.1} left)",
@@ -73,9 +250,10 @@ pub fn render_facts(facts: &[String], pending: &[PendingSupersession]) -> String
         return "Nothing on record.".into();
     }
 
-    // Pending replacements are higher-priority because users need a complete
-    // old/new pair before deciding whether to confirm it. Candidate rendering
-    // reserves both categories' exact remainder lines before admitting items.
+    // Pending replacements remain the higher-priority part of the snapshot:
+    // users need the complete old/new pair before deciding whether to confirm
+    // it. The zero-displayed candidate reserves both categories' exact
+    // remainder lines before any item is admitted.
     let displayed_pending = (0..=pending.len())
         .rev()
         .find(|&count| {
@@ -144,6 +322,10 @@ fn on_off(flag: bool) -> &'static str {
     if flag { "on" } else { "off" }
 }
 
+fn yes_no(flag: bool) -> &'static str {
+    if flag { "yes" } else { "no" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,19 +333,18 @@ mod tests {
 
     fn runtime() -> RuntimeInspect {
         RuntimeInspect {
-            backend_label: "configured OpenAI-compatible endpoint",
+            generation_configured: true,
             tools_on: true,
             vision_on: true,
             quiet: false,
             data: true,
-            fm: "off",
         }
     }
 
     #[test]
     fn runtime_line_has_no_path_or_url() {
         let line = render_runtime(&runtime());
-        assert!(line.contains("backend: configured OpenAI-compatible endpoint"));
+        assert!(line.contains("generation: configured"));
         assert!(line.contains("data: yes"));
         assert!(!line.contains("127.0.0.1"));
         assert!(!line.contains("/Users"));
@@ -171,15 +352,88 @@ mod tests {
     }
 
     #[test]
-    fn provider_and_voice_are_fixed_safe_copy() {
+    fn voice_render_has_exactly_the_coarse_vocabulary() {
+        let cases = [
+            (VoiceInspectState::Off, "voice: off"),
+            (VoiceInspectState::Presence, "voice: presence"),
+            (
+                VoiceInspectState::AwaitingConsent,
+                "voice: awaiting-consent",
+            ),
+            (VoiceInspectState::Active, "voice: active"),
+            (VoiceInspectState::Paused, "voice: paused"),
+        ];
+        for (state, expected) in cases {
+            assert_eq!(render_voice(state), expected);
+        }
+    }
+
+    #[test]
+    fn voice_registry_is_guild_scoped_and_adverse_events_close_active_copy() {
+        let registry = VoiceInspectRegistry::default();
+        assert_eq!(registry.state_for("discord:one"), VoiceInspectState::Off);
+
+        registry.publish("discord:one", VoiceInspectState::Presence);
         assert_eq!(
-            render_status(InspectAspect::Voice, &runtime(), None),
-            "voice: off"
+            registry.state_for("discord:one"),
+            VoiceInspectState::Presence
         );
-        assert_eq!(
-            render_status(InspectAspect::Provider, &runtime(), None),
-            "provider: unavailable"
-        );
+        assert_eq!(registry.state_for("discord:two"), VoiceInspectState::Off);
+        registry.mark_session_adverse("discord:one");
+        assert_eq!(registry.state_for("discord:one"), VoiceInspectState::Paused);
+
+        registry.publish("discord:one", VoiceInspectState::Active);
+        registry.mark_media_revoked("discord:one");
+        assert_eq!(registry.state_for("discord:one"), VoiceInspectState::Paused);
+
+        registry.publish("discord:one", VoiceInspectState::Off);
+        assert_eq!(registry.state_for("discord:one"), VoiceInspectState::Off);
+    }
+
+    #[test]
+    fn provider_render_uses_only_closed_safe_fields() {
+        let routes = [
+            ProviderRouteInspect::new(
+                ProviderRouteLabel::Primary,
+                true,
+                true,
+                true,
+                false,
+                false,
+                ProviderProvenance::Configuration,
+            ),
+            ProviderRouteInspect::new(
+                ProviderRouteLabel::FoundationModelsCli,
+                false,
+                true,
+                true,
+                true,
+                true,
+                ProviderProvenance::QualifiedManifest,
+            ),
+        ];
+        let text = render_provider(&routes);
+        assert!(text.contains("provider primary: routable yes"));
+        assert!(text.contains("foundation-models-cli: routable no"));
+        assert!(text.contains("text no · tools no · vision no · ocr no"));
+        for canary in [
+            "http://",
+            "/Users/",
+            "gemma",
+            "on-device model",
+            "hash",
+            "manifest path",
+            "api key",
+            "credential",
+            "provider error",
+        ] {
+            assert!(!text.contains(canary), "leaked canary {canary:?}: {text}");
+        }
+    }
+
+    #[test]
+    fn no_provider_is_reported_without_inventing_capability() {
+        assert_eq!(render_provider(&[]), "provider: unavailable");
     }
 
     #[test]

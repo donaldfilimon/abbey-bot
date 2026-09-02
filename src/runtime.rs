@@ -226,6 +226,10 @@ pub struct AppState {
     /// ready time; needed to tell a mention from a message and to ignore
     /// Abbey's own traffic.
     pub self_ids: Mutex<Vec<String>>,
+    /// Guild-keyed coarse voice lifecycle published for the Inspect pack.
+    /// This carries no participant, consent, media, provider, or timestamp
+    /// detail and is never held while another process-state lock is held.
+    pub voice_inspect: Arc<crate::inspect::VoiceInspectRegistry>,
 }
 
 /// Default wait for a generation slot before answering "busy".
@@ -354,7 +358,7 @@ impl crate::tools::ToolHost for ToolScope<'_> {
 
     fn inspect_status(&mut self, aspect: crate::tools::InspectAspect) -> String {
         let runtime = crate::inspect::RuntimeInspect {
-            backend_label: self.state.generation_label().unwrap_or("none"),
+            generation_configured: self.state.generation_label().is_some(),
             tools_on: self
                 .state
                 .tools_enabled
@@ -362,12 +366,6 @@ impl crate::tools::ToolHost for ToolScope<'_> {
             vision_on: self.state.vision.is_some(),
             quiet: self.state.quiet,
             data: self.state.data_dir.is_some(),
-            fm: self
-                .state
-                .foundation_models
-                .as_ref()
-                .map(|fm| fm.config.mode.as_str())
-                .unwrap_or("off"),
         };
         let guild_line = if matches!(
             aspect,
@@ -389,7 +387,23 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         } else {
             None
         };
-        crate::inspect::render_status(aspect, &runtime, guild_line.as_deref())
+        let voice = if matches!(
+            aspect,
+            crate::tools::InspectAspect::Voice | crate::tools::InspectAspect::All
+        ) {
+            self.state.voice_inspect.state_for(&self.scoped_guild)
+        } else {
+            crate::inspect::VoiceInspectState::Off
+        };
+        let providers = if matches!(
+            aspect,
+            crate::tools::InspectAspect::Provider | crate::tools::InspectAspect::All
+        ) {
+            self.state.provider_inspect()
+        } else {
+            Vec::new()
+        };
+        crate::inspect::render_status(aspect, &runtime, guild_line.as_deref(), voice, &providers)
     }
 
     fn list_facts(&mut self) -> String {
@@ -480,6 +494,7 @@ impl AppState {
             vision: provider_setup.vision,
             data_dir,
             self_ids: Mutex::new(Vec::new()),
+            voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
         }))
     }
 
@@ -510,6 +525,7 @@ impl AppState {
             vision: None,
             data_dir: None,
             self_ids: Mutex::new(Vec::new()),
+            voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
         })
     }
 
@@ -583,6 +599,92 @@ impl AppState {
                 .filter(|fm| fm.config.fallback)
                 .map(FoundationModels::label)
         })
+    }
+
+    /// Content-free provider facts for Inspect. A route is listed when it is
+    /// explicitly configured/detected, but its capabilities are cleared unless
+    /// the current router may actually select it.
+    fn provider_inspect(&self) -> Vec<crate::inspect::ProviderRouteInspect> {
+        use crate::inspect::{ProviderProvenance, ProviderRouteInspect, ProviderRouteLabel};
+
+        let tools_on = self
+            .tools_enabled
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let mut routes = Vec::with_capacity(4);
+
+        if let Some(backend) = &self.backend {
+            let capabilities = self
+                .foundation_models
+                .as_ref()
+                .and_then(|fm| fm.router.routable_capabilities(ProviderRoute::Primary))
+                .or_else(|| {
+                    self.foundation_models
+                        .is_none()
+                        .then(|| ProviderCapabilities::primary(backend, tools_on))
+                });
+            let routable = capabilities.is_some();
+            let capabilities = capabilities.unwrap_or_default();
+            routes.push(ProviderRouteInspect::new(
+                ProviderRouteLabel::Primary,
+                routable,
+                capabilities.text,
+                capabilities.tools && tools_on,
+                capabilities.vision,
+                capabilities.ocr,
+                ProviderProvenance::Configuration,
+            ));
+        }
+
+        if let Some(fm) = &self.foundation_models {
+            let provenance = if fm.is_qualified() {
+                ProviderProvenance::QualifiedManifest
+            } else {
+                ProviderProvenance::Configuration
+            };
+            for (route, label) in [
+                (
+                    ProviderRoute::FoundationModelsServer,
+                    ProviderRouteLabel::FoundationModelsServer,
+                ),
+                (
+                    ProviderRoute::FoundationModelsCli,
+                    ProviderRouteLabel::FoundationModelsCli,
+                ),
+            ] {
+                let Some(configured) = fm.router.effective_capabilities(route) else {
+                    continue;
+                };
+                let routable = fm.router.routable_capabilities(route);
+                let effective = routable.unwrap_or(configured);
+                routes.push(ProviderRouteInspect::new(
+                    label,
+                    routable.is_some(),
+                    effective.text,
+                    effective.tools && tools_on,
+                    effective.vision,
+                    effective.ocr,
+                    provenance,
+                ));
+            }
+        }
+
+        if let Some(vision) = &self.vision {
+            let provenance = match vision {
+                ConfiguredVision::Remote(_) => ProviderProvenance::Configuration,
+                ConfiguredVision::FoundationModels(_) => ProviderProvenance::QualifiedManifest,
+            };
+            routes.push(ProviderRouteInspect::new(
+                ProviderRouteLabel::Vision,
+                true,
+                false,
+                false,
+                true,
+                true,
+                provenance,
+            ));
+        }
+
+        routes
     }
 
     /// Lock helper: a poisoned mutex means a panic elsewhere already took the
@@ -883,6 +985,75 @@ mod tests {
     #[test]
     fn topology_matches_the_spec() {
         assert_eq!(TOPOLOGY, [18, 64, 32, 3]);
+    }
+
+    #[test]
+    fn voice_inspect_is_exact_guild_only_and_dm_safe() {
+        let state = AppState::in_memory();
+        state
+            .voice_inspect
+            .publish("discord:g", crate::inspect::VoiceInspectState::Active);
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            now: 10,
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        assert_eq!(
+            crate::tools::ToolHost::inspect_status(&mut scope, crate::tools::InspectAspect::Voice),
+            "voice: active"
+        );
+        scope.scoped_guild = "discord:other".into();
+        assert_eq!(
+            crate::tools::ToolHost::inspect_status(&mut scope, crate::tools::InspectAspect::Voice),
+            "voice: off"
+        );
+        scope.scoped_guild = "discord:dm:u".into();
+        assert_eq!(
+            crate::tools::ToolHost::inspect_status(&mut scope, crate::tools::InspectAspect::Voice),
+            "voice: off"
+        );
+    }
+
+    #[test]
+    fn configured_but_ineligible_fm_routes_publish_no_capabilities() {
+        let mut state = AppState::in_memory();
+        Arc::get_mut(&mut state)
+            .expect("unique state")
+            .foundation_models = Some(FoundationModels::new(
+            crate::provider::FmConfig {
+                mode: crate::provider::FmMode::System,
+                endpoint: Some("http://127.0.0.1:8899".into()),
+                cli: PathBuf::from("/usr/bin/fm"),
+                fallback: false,
+                timeout_secs: 30,
+            },
+            None,
+            true,
+        ));
+        let rendered = crate::inspect::render_provider(&state.provider_inspect());
+
+        assert!(
+            rendered.contains("foundation-models-server: routable no"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("foundation-models-cli: routable no"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("text no · tools no · vision no · ocr no")
+                .count(),
+            2,
+            "{rendered}"
+        );
+        assert!(!rendered.contains("127.0.0.1"), "{rendered}");
+        assert!(!rendered.contains("/usr/bin"), "{rendered}");
     }
 
     #[test]

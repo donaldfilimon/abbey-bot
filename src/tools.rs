@@ -44,21 +44,23 @@ impl ToolResult {
     pub fn grounding_source(&self) -> Option<&str> {
         matches!(
             self.name.as_str(),
-            "lookup_reputation" | "recall" | "recent_messages"
+            "lookup_reputation" | "recall" | "recent_messages" | "inspect_status" | "list_facts"
         )
         .then_some(self.content.as_str())
     }
 }
 
-/// Closed aspect enum for the in-process Inspect status seam. The model-facing
-/// schema and parser are added together in Cycle 3.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Inspect aspects are activated with the complete schema and dispatch path"
-    )
-)]
+/// Named in-process tool groups. Not a plugin host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillPack {
+    /// Original five: remember_fact, lookup_reputation, recall,
+    /// switch_persona, recent_messages.
+    Core,
+    /// inspect_status, list_facts. Default on with Core when tools are enabled.
+    Inspect,
+}
+
+/// Closed aspect enum for `inspect_status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectAspect {
     Runtime,
@@ -68,6 +70,19 @@ pub enum InspectAspect {
     All,
 }
 
+impl InspectAspect {
+    pub fn parse(raw: Option<&str>) -> Option<Self> {
+        match raw.unwrap_or("runtime") {
+            "runtime" => Some(Self::Runtime),
+            "guild" => Some(Self::Guild),
+            "voice" => Some(Self::Voice),
+            "provider" => Some(Self::Provider),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+}
+
 /// Longest tool result handed back to the model.
 pub const MAX_RESULT_CHARS: usize = 600;
 /// Most recent messages `recent_messages` will return.
@@ -75,8 +90,32 @@ pub const MAX_RECENT: usize = 50;
 /// Rounds of call → result → call before the loop gives up and answers.
 pub const MAX_TOOL_ROUNDS: usize = 3;
 
-/// Abbey's tool vocabulary. Order is the order the model sees.
+/// The original five-tool compatibility vocabulary. Order and wire details are
+/// intentionally stable; production uses [`production_tools`] instead.
 pub fn abbey_tools() -> Vec<ToolSpec> {
+    tools_for(&[SkillPack::Core])
+}
+
+/// The complete production vocabulary whenever the global tools policy is on.
+pub fn production_tools() -> Vec<ToolSpec> {
+    let mut tools = abbey_tools();
+    tools.extend(inspect_tools());
+    tools
+}
+
+/// Assemble packs in stable order: Core, then Inspect. Never sort names.
+pub fn tools_for(packs: &[SkillPack]) -> Vec<ToolSpec> {
+    let mut out = Vec::new();
+    if packs.contains(&SkillPack::Core) {
+        out.extend(core_tools());
+    }
+    if packs.contains(&SkillPack::Inspect) {
+        out.extend(inspect_tools());
+    }
+    out
+}
+
+fn core_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "remember_fact",
@@ -123,6 +162,27 @@ pub fn abbey_tools() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 50 } }
             }),
+        },
+    ]
+}
+
+fn inspect_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "inspect_status",
+            description: "Read privacy-bounded status for this process and conversation. aspect=runtime (default): coarse runtime flags. aspect=guild: recorded settings for this server without creating defaults. aspect=voice: off, presence, awaiting-consent, active, or paused for this server only. aspect=provider: effective routable capability categories and configured-versus-qualified provenance. aspect=all: all four bounded views. Never returns endpoints, paths, model names, hashes, credentials, participant data, counters, timestamps, audio, or transcripts.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "aspect": { "type": "string", "enum": ["runtime", "guild", "voice", "provider", "all"] }
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "list_facts",
+            description: "Read a bounded canonical subject view of stored facts about the person you are talking to and replacements waiting for that person to confirm with /pending. Omitted facts and pending replacements are counted independently. This is not semantic search; use recall to search by meaning.",
+            parameters: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
     ]
 }
@@ -215,21 +275,7 @@ pub trait ToolHost {
     fn recall(&mut self, query: &str) -> String;
     fn switch_persona(&mut self, persona: Persona) -> String;
     fn recent_messages(&mut self, limit: usize) -> String;
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Inspect dispatch is activated atomically with its model schema"
-        )
-    )]
     fn inspect_status(&mut self, aspect: InspectAspect) -> String;
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Inspect dispatch is activated atomically with its model schema"
-        )
-    )]
     fn list_facts(&mut self) -> String;
 }
 
@@ -270,12 +316,44 @@ pub fn dispatch(call: &ToolCall, host: &mut dyn ToolHost) -> ToolResult {
                 .clamp(1, MAX_RECENT);
             host.recent_messages(limit)
         }
+        "inspect_status" => match inspect_aspect_argument(&call.arguments) {
+            Ok(aspect) => host.inspect_status(aspect),
+            Err(message) => message.into(),
+        },
+        "list_facts" => match empty_inspect_arguments(&call.arguments) {
+            Ok(()) => host.list_facts(),
+            Err(message) => message.into(),
+        },
         other => format!("Unknown tool `{other}`."),
     };
     ToolResult {
         call_id: call.id.clone(),
         name: call.name.clone(),
         content: truncate(&content),
+    }
+}
+
+fn inspect_aspect_argument(arguments: &Value) -> Result<InspectAspect, &'static str> {
+    let Value::Object(arguments) = arguments else {
+        return Err("inspect_status needs an arguments object.");
+    };
+    if arguments.keys().any(|key| key != "aspect") {
+        return Err("inspect_status received an unsupported argument.");
+    }
+    let raw = match arguments.get("aspect") {
+        None => None,
+        Some(Value::String(raw)) => Some(raw.as_str()),
+        Some(_) => return Err("inspect_status needs `aspect` to be a string."),
+    };
+    InspectAspect::parse(raw)
+        .ok_or("inspect_status needs `aspect` = runtime | guild | voice | provider | all.")
+}
+
+fn empty_inspect_arguments(arguments: &Value) -> Result<(), &'static str> {
+    match arguments {
+        Value::Object(arguments) if arguments.is_empty() => Ok(()),
+        Value::Object(_) => Err("list_facts does not accept arguments."),
+        _ => Err("list_facts needs an empty arguments object."),
     }
 }
 
@@ -330,21 +408,6 @@ mod tests {
             self.log.push("list_facts".into());
             "Nothing on record.".into()
         }
-    }
-
-    #[test]
-    fn inspect_aspect_domain_is_closed() {
-        assert_eq!(
-            [
-                InspectAspect::Runtime,
-                InspectAspect::Guild,
-                InspectAspect::Voice,
-                InspectAspect::Provider,
-                InspectAspect::All,
-            ]
-            .len(),
-            5
-        );
     }
 
     #[test]
@@ -476,11 +539,127 @@ mod tests {
             name: name.into(),
             content: "source".into(),
         };
-        for name in ["lookup_reputation", "recall", "recent_messages"] {
+        for name in [
+            "lookup_reputation",
+            "recall",
+            "recent_messages",
+            "inspect_status",
+            "list_facts",
+        ] {
             assert_eq!(result(name).grounding_source(), Some("source"), "{name}");
         }
         for name in ["remember_fact", "switch_persona", "unknown"] {
             assert_eq!(result(name).grounding_source(), None, "{name}");
         }
+    }
+
+    #[test]
+    fn inspect_pack_appends_after_core_without_reordering() {
+        let tools = production_tools();
+        let names: Vec<_> = tools.iter().map(|t| t.name).collect();
+        assert_eq!(
+            names,
+            [
+                "remember_fact",
+                "lookup_reputation",
+                "recall",
+                "switch_persona",
+                "recent_messages",
+                "inspect_status",
+                "list_facts",
+            ]
+        );
+        assert_eq!(abbey_tools().len(), 5);
+    }
+
+    #[test]
+    fn inspect_dispatch_defaults_and_rejects_unknown_aspect() {
+        let mut host = FakeHost::default();
+        let mk = |name: &str, args: Value| ToolCall {
+            id: "c".into(),
+            name: name.into(),
+            arguments: args,
+        };
+        assert_eq!(
+            dispatch(&mk("inspect_status", json!({})), &mut host).content,
+            "status:Runtime"
+        );
+        assert!(
+            dispatch(&mk("inspect_status", json!({"aspect": "nope"})), &mut host)
+                .content
+                .contains("runtime | guild")
+        );
+        assert_eq!(
+            dispatch(&mk("list_facts", json!({})), &mut host).content,
+            "Nothing on record."
+        );
+        assert_eq!(host.log, ["inspect:Runtime", "list_facts"]);
+    }
+
+    #[test]
+    fn inspect_dispatch_rejects_malformed_arguments_without_calling_the_host() {
+        let mut host = FakeHost::default();
+        let mk = |name: &str, arguments: Value| ToolCall {
+            id: "c".into(),
+            name: name.into(),
+            arguments,
+        };
+
+        for call in [
+            mk("inspect_status", json!({"aspect": 7})),
+            mk("inspect_status", json!({"aspect": " runtime "})),
+            mk("inspect_status", json!({"unexpected": true})),
+            mk("inspect_status", json!(null)),
+            mk("list_facts", json!({"user_id": "someone-else"})),
+            mk("list_facts", json!([])),
+        ] {
+            let result = dispatch(&call, &mut host);
+            assert!(
+                result.content.contains("needs")
+                    || result.content.contains("unsupported")
+                    || result.content.contains("does not accept"),
+                "{result:?}"
+            );
+        }
+        assert!(
+            host.log.is_empty(),
+            "malformed calls must not reach the host"
+        );
+    }
+
+    #[test]
+    fn production_wire_shapes_expose_exactly_the_same_seven_tools() {
+        let tools = production_tools();
+        let expected = [
+            "remember_fact",
+            "lookup_reputation",
+            "recall",
+            "switch_persona",
+            "recent_messages",
+            "inspect_status",
+            "list_facts",
+        ];
+        let openai = openai_tools_json(&tools);
+        let anthropic = anthropic_tools_json(&tools);
+        let openai_names: Vec<_> = openai
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        let anthropic_names: Vec<_> = anthropic
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(openai_names, expected);
+        assert_eq!(anthropic_names, expected);
+        assert_eq!(
+            abbey_tools().len(),
+            5,
+            "compatibility vocabulary remains five"
+        );
     }
 }

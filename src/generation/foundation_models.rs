@@ -98,7 +98,7 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
         .is_some_and(|capabilities| capabilities.tools);
     let vocabulary =
         (access.is_enabled() && fm_tools && state.tools_enabled.load(Ordering::Relaxed))
-            .then(crate::tools::abbey_tools);
+            .then(crate::tools::production_tools);
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {
@@ -149,7 +149,7 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
                 persona,
             ));
         }
-        let results = access.dispatch(offer, &turn.calls)?;
+        let results = access.dispatch(tools, &turn.calls)?;
         for call in &turn.calls {
             tracing::info!(tool = %call.name, scope, provider = "foundation_models_cli", "tool call completed");
         }

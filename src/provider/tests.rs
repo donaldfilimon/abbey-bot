@@ -164,6 +164,72 @@ fn server_can_never_inherit_cli_tools() {
 }
 
 #[test]
+fn routable_capabilities_apply_fallback_and_dynamic_disablement() {
+    let configured_only = ProviderRouter::new(
+        Some(&local()),
+        true,
+        Some(ProviderCapabilities::text()),
+        Some(ProviderCapabilities::text_with_tools()),
+        false,
+    );
+    assert!(
+        configured_only
+            .effective_capabilities(ProviderRoute::FoundationModelsCli)
+            .is_some()
+    );
+    assert_eq!(
+        configured_only.routable_capabilities(ProviderRoute::Primary),
+        Some(ProviderCapabilities::primary(&local(), true))
+    );
+    assert_eq!(
+        configured_only.routable_capabilities(ProviderRoute::FoundationModelsServer),
+        None
+    );
+    assert_eq!(
+        configured_only.routable_capabilities(ProviderRoute::FoundationModelsCli),
+        None
+    );
+
+    let fallback = ProviderRouter::new(
+        Some(&local()),
+        true,
+        Some(ProviderCapabilities::text()),
+        Some(ProviderCapabilities::text_with_tools()),
+        true,
+    );
+    assert!(
+        fallback
+            .routable_capabilities(ProviderRoute::FoundationModelsCli)
+            .unwrap()
+            .tools
+    );
+    fallback.disable_tools(ProviderRoute::FoundationModelsCli);
+    assert!(
+        !fallback
+            .routable_capabilities(ProviderRoute::FoundationModelsCli)
+            .unwrap()
+            .tools
+    );
+}
+
+#[test]
+fn qualification_provenance_is_a_safe_boolean() {
+    let configured = FoundationModels::new(config(FmMode::System), None, true);
+    assert!(!configured.is_qualified());
+
+    let qualified = FoundationModels::new_qualified(
+        config(FmMode::System),
+        None,
+        true,
+        VerifiedFmCapabilities {
+            server: Some(ProviderCapabilities::text()),
+            cli: ProviderCapabilities::text_with_tools(),
+        },
+    );
+    assert!(qualified.is_qualified());
+}
+
+#[test]
 fn invocation_uses_argv_and_stdin_without_transcript_saving() {
     let cfg = config(FmMode::Pcc);
     let private = "private memory: favorite color blue; $(touch /tmp/nope)";
@@ -277,6 +343,82 @@ fn schema_and_parser_yield_one_typed_decision() {
         json!({"fact": "Donald likes blue"})
     );
     assert_eq!(call.calls[0].id, "fm-1");
+}
+
+#[test]
+fn core_plus_inspect_schema_and_adapters_cover_exactly_seven_tools() {
+    let tools = crate::tools::production_tools();
+    assert_eq!(
+        tools.iter().map(|tool| tool.name).collect::<Vec<_>>(),
+        [
+            "remember_fact",
+            "lookup_reputation",
+            "recall",
+            "switch_persona",
+            "recent_messages",
+            "inspect_status",
+            "list_facts",
+        ]
+    );
+
+    let schema = decision_schema(&tools).unwrap();
+    assert_eq!(schema["anyOf"].as_array().unwrap().len(), 8);
+    assert_eq!(
+        schema["$defs"]["InspectStatus"]["properties"]["inspect_status"]["enum"],
+        json!(["runtime", "guild", "voice", "provider", "all"])
+    );
+    assert_eq!(
+        schema["$defs"]["ListFacts"]["properties"]["list_facts"]["enum"],
+        json!(["self"])
+    );
+
+    for aspect in ["runtime", "guild", "voice", "provider", "all"] {
+        let raw = json!({"inspect_status": aspect}).to_string();
+        let turn = parse_cli_output(&raw, &tools, "fm-inspect").unwrap();
+        assert_eq!(turn.calls.len(), 1, "{raw}");
+        assert_eq!(turn.calls[0].name, "inspect_status", "{raw}");
+        assert_eq!(turn.calls[0].arguments, json!({"aspect": aspect}), "{raw}");
+    }
+
+    let turn = parse_cli_output(r#"{"list_facts":"self"}"#, &tools, "fm-facts").unwrap();
+    assert_eq!(turn.calls.len(), 1);
+    assert_eq!(turn.calls[0].name, "list_facts");
+    assert_eq!(turn.calls[0].arguments, json!({}));
+}
+
+#[test]
+fn inspect_adapters_and_unknown_offered_tools_fail_closed() {
+    let tools = crate::tools::production_tools();
+    for raw in [
+        r#"{"inspect_status":""}"#,
+        r#"{"inspect_status":" runtime "}"#,
+        r#"{"inspect_status":"everything"}"#,
+        r#"{"inspect_status":7}"#,
+        r#"{"list_facts":"other"}"#,
+        r#"{"list_facts":" self "}"#,
+        r#"{"list_facts":""}"#,
+        r#"{"list_facts":{}}"#,
+    ] {
+        assert!(
+            parse_cli_output(raw, &tools, "fm-invalid-inspect").is_err(),
+            "{raw}"
+        );
+    }
+
+    let unsupported = crate::tools::ToolSpec {
+        name: "unsupported_tool",
+        description: "Synthetic protocol-drift fixture.",
+        parameters: json!({"type": "object"}),
+    };
+    assert!(decision_schema(std::slice::from_ref(&unsupported)).is_err());
+    assert!(
+        parse_cli_output(
+            r#"{"unsupported_tool":"value"}"#,
+            std::slice::from_ref(&unsupported),
+            "fm-unsupported",
+        )
+        .is_err()
+    );
 }
 
 #[test]

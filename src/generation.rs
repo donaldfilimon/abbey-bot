@@ -292,12 +292,20 @@ impl ToolAccess<'_, '_> {
 
     fn dispatch(
         &mut self,
-        offered: bool,
+        offered: &[crate::tools::ToolSpec],
         calls: &[crate::tools::ToolCall],
     ) -> Result<Vec<crate::tools::ToolResult>, llm::LlmError> {
-        if !offered && !calls.is_empty() {
+        if offered.is_empty() && !calls.is_empty() {
             return Err(llm::LlmError::backend(
                 "backend returned unrequested tool calls".into(),
+            ));
+        }
+        if calls
+            .iter()
+            .any(|call| !offered.iter().any(|tool| tool.name == call.name))
+        {
+            return Err(llm::LlmError::backend(
+                "backend requested a tool that was not offered".into(),
             ));
         }
         match self {
@@ -646,7 +654,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
             state.foundation_models.as_ref(),
             state.tools_enabled.load(Ordering::Relaxed),
         ))
-    .then(crate::tools::abbey_tools);
+    .then(crate::tools::production_tools);
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
@@ -733,7 +741,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
         // A model is not an authority boundary. If this request did not offer
         // tools, unsolicited calls must stop here before they can mutate
         // memory, WDBX, persona state, or any future capability.
-        let results = access.dispatch(offer, &calls)?;
+        let results = access.dispatch(tools, &calls)?;
         for call in &calls {
             // Tool results can contain private recalled facts. Keep operational
             // evidence (which scoped tool completed) without copying its

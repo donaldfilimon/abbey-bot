@@ -57,13 +57,6 @@ mod generation;
 mod grounding;
 mod guild;
 mod http_body;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Inspect internals are activated by the Cycle 3 schema and dispatch commit"
-    )
-)]
 mod inspect;
 mod llm;
 mod memory;
@@ -193,7 +186,12 @@ async fn main() -> Result<(), Error> {
     let state = runtime::AppState::from_env()?;
     let voice_runtime = voice::VoiceConfig::from_env()
         .map_err(runtime::StartupError)?
-        .map(voice_session::VoiceRuntime::new)
+        .map(|config| {
+            voice_session::VoiceRuntime::new_with_inspect(
+                config,
+                std::sync::Arc::clone(&state.voice_inspect),
+            )
+        })
         .map(std::sync::Arc::new);
     match &state.data_dir {
         Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),

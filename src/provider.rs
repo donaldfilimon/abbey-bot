@@ -292,11 +292,8 @@ impl ProviderRouter {
             ProviderRoute::FoundationModelsServer,
             ProviderRoute::FoundationModelsCli,
         ] {
-            if !self.fm_fallback && !matches!(route, ProviderRoute::Primary) {
-                continue;
-            }
             if self
-                .effective_capabilities(route)
+                .routable_capabilities(route)
                 .is_some_and(|capabilities| capabilities.satisfies(required))
             {
                 routes.push(route);
@@ -323,6 +320,17 @@ impl ProviderRouter {
         Some(capabilities)
     }
 
+    /// Capabilities that may actually be selected by the current routing
+    /// policy. Unlike [`Self::effective_capabilities`], this also applies the
+    /// explicit Foundation Models fallback boundary.
+    #[must_use]
+    pub fn routable_capabilities(&self, route: ProviderRoute) -> Option<ProviderCapabilities> {
+        if !self.fm_fallback && !matches!(route, ProviderRoute::Primary) {
+            return None;
+        }
+        self.effective_capabilities(route)
+    }
+
     pub fn disable_tools(&self, route: ProviderRoute) {
         match route {
             ProviderRoute::Primary => self.primary_tools_enabled.store(false, Ordering::Relaxed),
@@ -337,6 +345,7 @@ impl ProviderRouter {
 pub struct FoundationModels {
     pub config: FmConfig,
     pub router: ProviderRouter,
+    qualified: bool,
 }
 
 impl FoundationModels {
@@ -359,7 +368,11 @@ impl FoundationModels {
             cli,
             config.fallback,
         );
-        Self { config, router }
+        Self {
+            config,
+            router,
+            qualified: false,
+        }
     }
 
     #[must_use]
@@ -376,7 +389,18 @@ impl FoundationModels {
             Some(qualified.cli),
             config.fallback,
         );
-        Self { config, router }
+        Self {
+            config,
+            router,
+            qualified: true,
+        }
+    }
+
+    /// Whether the capabilities were loaded from a verified qualification
+    /// manifest rather than inferred from explicit configuration alone.
+    #[must_use]
+    pub const fn is_qualified(&self) -> bool {
+        self.qualified
     }
 
     #[must_use]
@@ -728,6 +752,14 @@ fn decision_schema(tools: &[crate::tools::ToolSpec]) -> Result<Value, LlmError> 
                 "RecentMessages",
                 json!({"type": "integer", "minimum": 1, "maximum": crate::tools::MAX_RECENT}),
             ),
+            "inspect_status" => (
+                "InspectStatus",
+                json!({"type": "string", "enum": ["runtime", "guild", "voice", "provider", "all"]}),
+            ),
+            // `list_facts` is always scoped to the person in the current
+            // conversation. The fixed sentinel gives FM's schema dialect a
+            // required scalar while the runtime still receives `{}`.
+            "list_facts" => ("ListFacts", json!({"type": "string", "enum": ["self"]})),
             "probe_status" => (
                 "ProbeStatus",
                 json!({"type": "string", "enum": ["abbey-provider-probe-v1"]}),
@@ -766,12 +798,20 @@ pub(crate) fn parse_cli_output(
     let object = value.as_object().ok_or_else(|| {
         LlmError::backend("the FM CLI structured output was not an object".into())
     })?;
-    if object.len() != 1 {
+    if object.is_empty() {
+        return Err(LlmError::backend(
+            "the FM CLI returned an empty decision object".into(),
+        ));
+    }
+    if object.len() > 1 {
         return Err(LlmError::backend(
             "the FM CLI returned more than one decision".into(),
         ));
     }
-    let (name, payload) = object.iter().next().expect("one entry checked above");
+    let (name, payload) = object
+        .iter()
+        .next()
+        .ok_or_else(|| LlmError::backend("the FM CLI returned an empty decision object".into()))?;
     if name == "answer" {
         let answer = payload
             .as_str()
@@ -821,6 +861,34 @@ pub(crate) fn parse_cli_output(
             }
             json!({"limit": limit})
         }
+        "inspect_status" => {
+            let aspect = payload
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    LlmError::backend("the FM inspect_status aspect was not a string".into())
+                })?;
+            if !matches!(aspect, "runtime" | "guild" | "voice" | "provider" | "all") {
+                return Err(LlmError::backend(
+                    "the FM inspect_status aspect was unsupported".into(),
+                ));
+            }
+            json!({"aspect": aspect})
+        }
+        "list_facts" => {
+            let scope = payload
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    LlmError::backend("the FM list_facts scope was not a string".into())
+                })?;
+            if scope != "self" {
+                return Err(LlmError::backend(
+                    "the FM list_facts scope was not self".into(),
+                ));
+            }
+            json!({})
+        }
         "probe_status" => {
             let nonce = required_string(payload, name)?;
             if nonce != "abbey-provider-probe-v1" {
@@ -830,7 +898,11 @@ pub(crate) fn parse_cli_output(
             }
             json!({"nonce": nonce})
         }
-        _ => unreachable!("availability check restricts names to the known vocabulary"),
+        other => {
+            return Err(LlmError::backend(format!(
+                "FM has no argument adapter for offered tool {other}"
+            )));
+        }
     };
     Ok(ModelTurn {
         text: String::new(),

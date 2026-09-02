@@ -128,8 +128,9 @@ fn dispatched_primary_tool_failure_plans_no_restart_or_duplicate_mutation() {
         name: "remember_fact".into(),
         arguments: serde_json::json!({"fact": "favorite color is blue"}),
     };
+    let offered = crate::tools::production_tools();
     ToolAccess::Enabled(&mut host)
-        .dispatch(true, &[call])
+        .dispatch(&offered, &[call])
         .unwrap();
 
     let routes = fallback_routes(false, false, true, true, false, true);
@@ -266,7 +267,7 @@ async fn max_round_boundary_dispatches_no_extra_tool() {
         10,
         "every tool round must reuse the ToolScope timestamp"
     );
-    assert_eq!(*fm.offered_counts.lock().unwrap(), [5, 5, 5, 0]);
+    assert_eq!(*fm.offered_counts.lock().unwrap(), [7, 7, 7, 0]);
 }
 
 #[tokio::test]
@@ -325,7 +326,7 @@ async fn continuation_failure_never_replays_the_completed_tool() {
         2,
         "the same prior call appears in continuation transcripts but was dispatched once"
     );
-    assert_eq!(*fm.offered_counts.lock().unwrap(), [5, 5, 0]);
+    assert_eq!(*fm.offered_counts.lock().unwrap(), [7, 7, 0]);
     assert!(
         fm.router
             .effective_capabilities(ProviderRoute::Primary)

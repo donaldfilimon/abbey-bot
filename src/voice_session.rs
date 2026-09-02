@@ -14,6 +14,7 @@ use songbird::tracks::TrackHandle;
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
+use crate::inspect::{VoiceInspectRegistry, VoiceInspectState};
 use crate::voice::VoiceConfig;
 
 mod control;
@@ -114,6 +115,7 @@ impl VoiceRuntime {
             inner.phase = phase;
             inner.status = bounded_status(status.into());
             self.current_epoch.store(next_epoch, Ordering::SeqCst);
+            self.publish_inspect_phase(phase, false);
             inner.control.take()
         };
         if let Some(control) = control {
@@ -163,6 +165,25 @@ struct RuntimeState {
     consent_epoch: u64,
     participants: HashSet<u64>,
     control: Option<SessionControl>,
+}
+
+struct VoiceInspectBinding {
+    registry: Arc<VoiceInspectRegistry>,
+    scoped_guild_id: String,
+}
+
+impl VoiceInspectBinding {
+    fn publish(&self, state: VoiceInspectState) {
+        self.registry.publish(&self.scoped_guild_id, state);
+    }
+
+    fn mark_media_revoked(&self) {
+        self.registry.mark_media_revoked(&self.scoped_guild_id);
+    }
+
+    fn mark_session_adverse(&self) {
+        self.registry.mark_session_adverse(&self.scoped_guild_id);
+    }
 }
 
 const RETIRED_DISCORD_SESSIONS: usize = 8;
@@ -235,12 +256,29 @@ pub struct VoiceRuntime {
     barge_ins: AtomicU64,
     completed_turns: AtomicU64,
     verification: SyncMutex<VerificationState>,
+    inspect: Option<VoiceInspectBinding>,
     inner: Mutex<RuntimeState>,
 }
 
 impl VoiceRuntime {
     #[must_use]
     pub fn new(config: VoiceConfig) -> Self {
+        Self::build(config, None)
+    }
+
+    #[must_use]
+    pub fn new_with_inspect(config: VoiceConfig, registry: Arc<VoiceInspectRegistry>) -> Self {
+        let guild_id = config.guild_id.to_string();
+        let inspect = VoiceInspectBinding {
+            registry,
+            scoped_guild_id: crate::guild::scoped_guild_id("discord", Some(&guild_id)),
+        };
+        let runtime = Self::build(config, Some(inspect));
+        runtime.publish_inspect(VoiceInspectState::Off);
+        runtime
+    }
+
+    fn build(config: VoiceConfig, inspect: Option<VoiceInspectBinding>) -> Self {
         let (start_changes, _) = watch::channel(0);
         Self {
             config,
@@ -257,6 +295,7 @@ impl VoiceRuntime {
             barge_ins: AtomicU64::new(0),
             completed_turns: AtomicU64::new(0),
             verification: SyncMutex::new(VerificationState::default()),
+            inspect,
             inner: Mutex::new(RuntimeState {
                 epoch: 0,
                 phase: VoicePhase::Disconnected,
@@ -266,6 +305,43 @@ impl VoiceRuntime {
                 control: None,
             }),
         }
+    }
+
+    fn publish_inspect(&self, state: VoiceInspectState) {
+        if let Some(inspect) = &self.inspect {
+            inspect.publish(state);
+        }
+    }
+
+    fn mark_inspect_media_revoked(&self) {
+        if let Some(inspect) = &self.inspect {
+            inspect.mark_media_revoked();
+        }
+    }
+
+    fn mark_inspect_session_adverse(&self) {
+        if let Some(inspect) = &self.inspect {
+            inspect.mark_session_adverse();
+        }
+    }
+
+    fn publish_inspect_phase(&self, phase: VoicePhase, media_enabled: bool) {
+        let state = match phase {
+            VoicePhase::Disconnected => VoiceInspectState::Off,
+            VoicePhase::PresenceOnly => VoiceInspectState::Presence,
+            VoicePhase::AwaitingConsent => VoiceInspectState::AwaitingConsent,
+            VoicePhase::Listening | VoicePhase::Thinking | VoicePhase::Speaking
+                if media_enabled =>
+            {
+                VoiceInspectState::Active
+            }
+            VoicePhase::Connecting
+            | VoicePhase::Listening
+            | VoicePhase::Thinking
+            | VoicePhase::Speaking
+            | VoicePhase::Failed => VoiceInspectState::Paused,
+        };
+        self.publish_inspect(state);
     }
 
     #[must_use]
@@ -293,9 +369,14 @@ impl VoiceRuntime {
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.media_epoch
+        let revoked = self
+            .media_epoch
             .compare_exchange(epoch, 0, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
+            .is_ok();
+        if revoked {
+            self.mark_inspect_media_revoked();
+        }
+        revoked
     }
 
     /// Linearize a short, non-async media side effect with activation and
@@ -375,6 +456,7 @@ impl VoiceRuntime {
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.media_epoch.store(0, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
+        self.mark_inspect_media_revoked();
     }
 
     /// Clear a completed/failed start reservation without invalidating a newer
@@ -485,6 +567,7 @@ impl VoiceRuntime {
         let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
+        self.mark_inspect_session_adverse();
         if relation == 0 {
             DiscordSessionEvent::Current {
                 epoch,
@@ -511,6 +594,7 @@ impl VoiceRuntime {
         let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
+        self.mark_inspect_session_adverse();
         epoch
     }
 
@@ -536,6 +620,7 @@ impl VoiceRuntime {
         let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
+        self.mark_inspect_media_revoked();
         Some(epoch)
     }
 
@@ -568,6 +653,7 @@ impl VoiceRuntime {
         inner.consent_epoch = inner.consent_epoch.saturating_add(1);
         inner.participants = participants;
         self.current_epoch.store(epoch, Ordering::SeqCst);
+        self.publish_inspect_phase(VoicePhase::Connecting, false);
         epoch
     }
 
@@ -618,6 +704,7 @@ impl VoiceRuntime {
         inner.status = status;
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.media_epoch.store(epoch, Ordering::SeqCst);
+        self.publish_inspect_phase(VoicePhase::Listening, true);
         if let Some(evidence) = verification {
             self.record_verification_activation(evidence, inner.consent_epoch);
         }
@@ -704,6 +791,7 @@ impl VoiceRuntime {
             inner.status = bounded_status(status.into());
             inner.participants = participants;
             self.current_epoch.store(next_epoch, Ordering::SeqCst);
+            self.publish_inspect_phase(VoicePhase::AwaitingConsent, false);
             inner.control.take()
         };
         // Stop in-flight STT/LLM/TTS/provider work as soon as the consent
@@ -731,9 +819,14 @@ impl VoiceRuntime {
             return;
         }
         let mut inner = self.inner.lock().await;
-        if inner.epoch == epoch && self.is_current(epoch) {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.epoch == epoch && self.current_epoch.load(Ordering::SeqCst) == epoch {
             inner.phase = phase;
             inner.status = bounded_status(status.into());
+            self.publish_inspect_phase(phase, self.media_epoch.load(Ordering::SeqCst) == epoch);
         }
     }
 
@@ -746,11 +839,16 @@ impl VoiceRuntime {
             return;
         }
         let mut inner = self.inner.lock().await;
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if inner.epoch == epoch
             && inner.phase == VoicePhase::Connecting
-            && !self.media_enabled(epoch)
+            && self.media_epoch.load(Ordering::SeqCst) != epoch
         {
             inner.status = bounded_status(status.into());
+            self.publish_inspect_phase(VoicePhase::Connecting, false);
         }
     }
 
@@ -845,6 +943,7 @@ impl VoiceRuntime {
                 inner.participants = participants;
             }
             self.current_epoch.store(epoch, Ordering::SeqCst);
+            self.publish_inspect_phase(phase, false);
             inner.control.take()
         };
         if let Some(control) = control {

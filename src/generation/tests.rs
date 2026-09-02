@@ -50,7 +50,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
         arguments: serde_json::json!({"fact": "private voice statement"}),
     }];
     let mut disabled = ToolAccess::Disabled(Persona::Abbey);
-    let error = disabled.dispatch(false, &calls).unwrap_err();
+    let error = disabled.dispatch(&[], &calls).unwrap_err();
     assert_eq!(error.detail(), "backend returned unrequested tool calls");
 
     let state = AppState::in_memory();
@@ -63,8 +63,9 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
         now: 10,
         persona: Persona::Abbey,
     };
+    let offered = crate::tools::production_tools();
     let results = ToolAccess::Enabled(&mut host)
-        .dispatch(true, &calls)
+        .dispatch(&offered, &calls)
         .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].content.starts_with("Stored:"), "{results:?}");
@@ -73,6 +74,47 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
             .memory
             .facts("discord:1", "discord:2"),
         ["private voice statement"]
+    );
+}
+
+#[test]
+fn a_registered_but_unoffered_tool_cannot_reach_the_host() {
+    let state = AppState::in_memory();
+    let mut host = crate::runtime::ToolScope {
+        state: &state,
+        network: crate::platform::SocialNetwork::Discord,
+        scoped_guild: "discord:1".into(),
+        scoped_user: "discord:2".into(),
+        scoped_channel: "discord:3".into(),
+        now: 10,
+        persona: Persona::Abbey,
+    };
+    let calls = [
+        crate::tools::ToolCall {
+            id: "call_1".into(),
+            name: "remember_fact".into(),
+            arguments: serde_json::json!({"fact": "must not be stored"}),
+        },
+        crate::tools::ToolCall {
+            id: "call_2".into(),
+            name: "list_facts".into(),
+            arguments: serde_json::json!({}),
+        },
+    ];
+
+    let error = ToolAccess::Enabled(&mut host)
+        .dispatch(&crate::tools::abbey_tools(), &calls)
+        .unwrap_err();
+    assert_eq!(
+        error.detail(),
+        "backend requested a tool that was not offered"
+    );
+    assert!(
+        AppState::lock(&state.stores)
+            .memory
+            .facts("discord:1", "discord:2")
+            .is_empty(),
+        "validate the complete call set before dispatching any side effect"
     );
 }
 
