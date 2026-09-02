@@ -160,11 +160,18 @@ async fn main() -> Result<(), Error> {
     // Read before building anything else: a missing token should fail in the
     // first millisecond with a sentence you can act on, not inside a gateway
     // handshake error.
-    let token = std::env::var("DISCORD_TOKEN")
-        .map_err(|_| "DISCORD_TOKEN is not set. Export the bot token; never hardcode it.")?;
-    if token.trim().is_empty() {
-        return Err("DISCORD_TOKEN is blank. Export the bot token; never hardcode it.".into());
+    let (http, credential_source) = {
+        let credential = read_discord_token(|source| std::env::var(source.env_name()))?;
+        let source = credential.source();
+        let http = serenity::http::HttpBuilder::new(credential.secret())
+            .default_allowed_mentions(gateway::no_mentions())
+            .build();
+        (http, source)
+    };
+    if let Err(error) = http.get_current_user().await {
+        return Err(map_discord_startup_error(error, credential_source));
     }
+    tracing::info!("{}", credential_source.accepted_diagnostic());
 
     let guild_id = match std::env::var("ABBEY_GUILD_ID") {
         Ok(raw) => {
@@ -342,16 +349,14 @@ async fn main() -> Result<(), Error> {
         })
         .build();
 
-    let http = serenity::http::HttpBuilder::new(&token)
-        .default_allowed_mentions(gateway::no_mentions())
-        .build();
     use songbird::SerenityInit;
     let mut client = serenity::client::ClientBuilder::new_with_http(http, intents)
         .framework(framework)
         .register_songbird_from_config(
             songbird::Config::default().decode_mode(songbird::driver::DecodeMode::Pass),
         )
-        .await?;
+        .await
+        .map_err(|error| map_discord_startup_error(error, credential_source))?;
 
     // Persist on interactive Ctrl-C and service-manager SIGTERM before taking
     // shards down. Otherwise a redeploy loses the current five-minute window.
@@ -376,8 +381,153 @@ async fn main() -> Result<(), Error> {
         voice.disconnect("Discord gateway stopped voice").await;
     }
     gateway::shutdown(&state);
-    result?;
+    result.map_err(|error| map_discord_startup_error(error, credential_source))?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscordTokenSource {
+    Primary,
+    Fallback,
+}
+
+impl DiscordTokenSource {
+    const fn env_name(self) -> &'static str {
+        match self {
+            Self::Primary => "DISCORD_TOKEN",
+            Self::Fallback => "DISCORD_BOT_TOKEN",
+        }
+    }
+
+    const fn blank_error(self) -> &'static str {
+        match self {
+            Self::Primary => {
+                "DISCORD_TOKEN is present but blank; refusing to consult DISCORD_BOT_TOKEN."
+            }
+            Self::Fallback => "DISCORD_BOT_TOKEN is present but blank.",
+        }
+    }
+
+    const fn non_unicode_error(self) -> &'static str {
+        match self {
+            Self::Primary => {
+                "DISCORD_TOKEN is not valid Unicode; refusing to consult DISCORD_BOT_TOKEN."
+            }
+            Self::Fallback => "DISCORD_BOT_TOKEN is not valid Unicode.",
+        }
+    }
+
+    const fn accepted_diagnostic(self) -> &'static str {
+        match self {
+            Self::Primary => {
+                "Discord authentication preflight accepted the credential from DISCORD_TOKEN."
+            }
+            Self::Fallback => {
+                "Discord authentication preflight accepted the credential from DISCORD_BOT_TOKEN."
+            }
+        }
+    }
+
+    const fn rejected_diagnostic(self) -> &'static str {
+        match self {
+            Self::Primary => {
+                "DISCORD_TOKEN was rejected by Discord during authentication. Reset the bot token in the Developer Portal, export the new value as DISCORD_TOKEN, and never hardcode it."
+            }
+            Self::Fallback => {
+                "DISCORD_BOT_TOKEN was rejected by Discord during authentication. Reset the bot token in the Developer Portal, export the new value as DISCORD_BOT_TOKEN, and never hardcode it."
+            }
+        }
+    }
+}
+
+struct DiscordToken(Box<str>);
+
+struct SelectedDiscordToken {
+    secret: DiscordToken,
+    source: DiscordTokenSource,
+}
+
+impl SelectedDiscordToken {
+    fn secret(&self) -> &str {
+        &self.secret.0
+    }
+
+    const fn source(&self) -> DiscordTokenSource {
+        self.source
+    }
+}
+
+fn read_discord_token(
+    mut read: impl FnMut(DiscordTokenSource) -> Result<String, std::env::VarError>,
+) -> Result<SelectedDiscordToken, String> {
+    match read(DiscordTokenSource::Primary) {
+        Ok(value) => select_present_discord_token(DiscordTokenSource::Primary, value),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(DiscordTokenSource::Primary.non_unicode_error().into())
+        }
+        Err(std::env::VarError::NotPresent) => {
+            match read(DiscordTokenSource::Fallback) {
+                Ok(value) => select_present_discord_token(DiscordTokenSource::Fallback, value),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    Err(DiscordTokenSource::Fallback.non_unicode_error().into())
+                }
+                Err(std::env::VarError::NotPresent) => Err(
+                    "Neither DISCORD_TOKEN nor DISCORD_BOT_TOKEN is set. Export one bot token; never hardcode it."
+                        .into(),
+                ),
+            }
+        }
+    }
+}
+
+fn select_present_discord_token(
+    source: DiscordTokenSource,
+    value: String,
+) -> Result<SelectedDiscordToken, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(source.blank_error().into());
+    }
+    Ok(SelectedDiscordToken {
+        secret: DiscordToken(value.into()),
+        source,
+    })
+}
+
+fn explain_discord_http_status(source: DiscordTokenSource, status: u16) -> Option<&'static str> {
+    (status == 401).then_some(source.rejected_diagnostic())
+}
+
+fn explain_discord_gateway_error(
+    source: DiscordTokenSource,
+    error: &serenity::gateway::GatewayError,
+) -> Option<&'static str> {
+    matches!(
+        error,
+        serenity::gateway::GatewayError::InvalidAuthentication
+    )
+    .then_some(source.rejected_diagnostic())
+}
+
+fn explain_discord_startup_error(
+    source: DiscordTokenSource,
+    error: &serenity::Error,
+) -> Option<&'static str> {
+    match error {
+        serenity::Error::Http(http) => http
+            .status_code()
+            .map(|code| code.as_u16())
+            .and_then(|status| explain_discord_http_status(source, status)),
+        serenity::Error::Gateway(error) => explain_discord_gateway_error(source, error),
+        _ => None,
+    }
+}
+
+fn map_discord_startup_error(error: serenity::Error, source: DiscordTokenSource) -> Error {
+    match explain_discord_startup_error(source, &error) {
+        Some(message) => message.into(),
+        None => error.into(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -549,6 +699,178 @@ mod startup_argument_tests {
             &["--provider-self-test", "fm", "--json", "extra"],
         ] {
             assert!(parse(invalid).is_err(), "accepted {invalid:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod discord_token_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn missing() -> Result<String, std::env::VarError> {
+        Err(std::env::VarError::NotPresent)
+    }
+
+    fn non_unicode() -> Result<String, std::env::VarError> {
+        Err(std::env::VarError::NotUnicode(std::ffi::OsString::from(
+            "private-byte-canary",
+        )))
+    }
+
+    fn select(
+        primary: Result<String, std::env::VarError>,
+        fallback: Result<String, std::env::VarError>,
+    ) -> Result<SelectedDiscordToken, String> {
+        let mut primary = Some(primary);
+        let mut fallback = Some(fallback);
+        read_discord_token(|source| match source {
+            DiscordTokenSource::Primary => primary.take().expect("primary read once"),
+            DiscordTokenSource::Fallback => fallback.take().expect("fallback read once"),
+        })
+    }
+
+    #[test]
+    fn missing_both_sources_fails_with_a_sentence() {
+        assert_eq!(
+            select(missing(), missing()).err().expect("must fail"),
+            "Neither DISCORD_TOKEN nor DISCORD_BOT_TOKEN is set. Export one bot token; never hardcode it."
+        );
+    }
+
+    #[test]
+    fn nonblank_primary_wins_without_reading_fallback() {
+        let fallback_reads = Cell::new(0);
+        let selected = read_discord_token(|source| match source {
+            DiscordTokenSource::Primary => Ok("  primary-token  ".into()),
+            DiscordTokenSource::Fallback => {
+                fallback_reads.set(fallback_reads.get() + 1);
+                Ok("fallback-token".into())
+            }
+        })
+        .expect("primary selected");
+        assert_eq!(selected.source(), DiscordTokenSource::Primary);
+        assert_eq!(selected.secret(), "primary-token");
+        assert_eq!(fallback_reads.get(), 0);
+    }
+
+    #[test]
+    fn blank_primary_fails_without_reading_fallback() {
+        let fallback_reads = Cell::new(0);
+        let error = read_discord_token(|source| match source {
+            DiscordTokenSource::Primary => Ok("  ".into()),
+            DiscordTokenSource::Fallback => {
+                fallback_reads.set(fallback_reads.get() + 1);
+                Ok("fallback-token".into())
+            }
+        })
+        .err()
+        .expect("blank primary must fail");
+        assert_eq!(
+            error,
+            "DISCORD_TOKEN is present but blank; refusing to consult DISCORD_BOT_TOKEN."
+        );
+        assert_eq!(fallback_reads.get(), 0);
+    }
+
+    #[test]
+    fn absent_primary_selects_nonblank_fallback() {
+        let selected = select(missing(), Ok(" fallback-token ".into())).expect("fallback selected");
+        assert_eq!(selected.source(), DiscordTokenSource::Fallback);
+        assert_eq!(selected.secret(), "fallback-token");
+    }
+
+    #[test]
+    fn blank_fallback_has_a_source_specific_error() {
+        assert_eq!(
+            select(missing(), Ok(" \t ".into()))
+                .err()
+                .expect("blank fallback must fail"),
+            "DISCORD_BOT_TOKEN is present but blank."
+        );
+    }
+
+    #[test]
+    fn non_unicode_primary_fails_without_reading_fallback_or_bytes() {
+        let fallback_reads = Cell::new(0);
+        let error = read_discord_token(|source| match source {
+            DiscordTokenSource::Primary => non_unicode(),
+            DiscordTokenSource::Fallback => {
+                fallback_reads.set(fallback_reads.get() + 1);
+                Ok("fallback-token".into())
+            }
+        })
+        .err()
+        .expect("non-Unicode primary must fail");
+        assert_eq!(
+            error,
+            "DISCORD_TOKEN is not valid Unicode; refusing to consult DISCORD_BOT_TOKEN."
+        );
+        assert!(!error.contains("private-byte-canary"));
+        assert_eq!(fallback_reads.get(), 0);
+    }
+
+    #[test]
+    fn non_unicode_fallback_fails_without_reproducing_bytes() {
+        let error = select(missing(), non_unicode())
+            .err()
+            .expect("non-Unicode fallback must fail");
+        assert_eq!(error, "DISCORD_BOT_TOKEN is not valid Unicode.");
+        assert!(!error.contains("private-byte-canary"));
+    }
+
+    #[test]
+    fn accepted_and_rejected_diagnostics_name_only_the_selected_source() {
+        for (source, selected_name, other_name) in [
+            (
+                DiscordTokenSource::Primary,
+                "DISCORD_TOKEN",
+                "DISCORD_BOT_TOKEN",
+            ),
+            (
+                DiscordTokenSource::Fallback,
+                "DISCORD_BOT_TOKEN",
+                "DISCORD_TOKEN",
+            ),
+        ] {
+            let accepted = source.accepted_diagnostic();
+            let rejected = source.rejected_diagnostic();
+            assert!(accepted.contains(selected_name));
+            assert!(rejected.contains(selected_name));
+            assert!(!accepted.contains(other_name));
+            assert!(!rejected.contains(other_name));
+            assert!(!accepted.contains("secret-canary"));
+            assert!(!rejected.contains("secret-canary"));
+        }
+    }
+
+    #[test]
+    fn auth_rejections_are_mapped_but_other_failures_are_preserved() {
+        for source in [DiscordTokenSource::Primary, DiscordTokenSource::Fallback] {
+            assert_eq!(
+                explain_discord_http_status(source, 401),
+                Some(source.rejected_diagnostic())
+            );
+            assert_eq!(explain_discord_http_status(source, 403), None);
+            assert_eq!(explain_discord_http_status(source, 500), None);
+            assert_eq!(
+                explain_discord_gateway_error(
+                    source,
+                    &serenity::gateway::GatewayError::InvalidAuthentication,
+                ),
+                Some(source.rejected_diagnostic())
+            );
+            assert_eq!(
+                explain_discord_gateway_error(
+                    source,
+                    &serenity::gateway::GatewayError::InvalidGatewayIntents,
+                ),
+                None
+            );
+            let original = serenity::gateway::GatewayError::InvalidGatewayIntents;
+            let expected = original.to_string();
+            let mapped = map_discord_startup_error(serenity::Error::Gateway(original), source);
+            assert_eq!(mapped.to_string(), expected);
         }
     }
 }
