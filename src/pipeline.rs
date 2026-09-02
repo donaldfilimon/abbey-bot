@@ -416,6 +416,7 @@ pub async fn handle<O: Outbound + Sync>(
                 scoped_guild: scoped_guild.clone(),
                 scoped_user: scoped_user.clone(),
                 scoped_channel: scoped_channel.clone(),
+                now,
                 persona: initial_persona,
             };
             generate_with_tools(state, &mut host, &ask, delivery).await

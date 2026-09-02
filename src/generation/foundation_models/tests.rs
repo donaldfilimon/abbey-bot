@@ -120,6 +120,7 @@ fn dispatched_primary_tool_failure_plans_no_restart_or_duplicate_mutation() {
         scoped_guild: "discord:1".into(),
         scoped_user: "discord:2".into(),
         scoped_channel: "discord:3".into(),
+        now: 10,
         persona: Persona::Abbey,
     };
     let call = crate::tools::ToolCall {
@@ -155,6 +156,7 @@ async fn refusal_is_final_text_and_has_no_side_effect() {
         scoped_guild: "discord:1".into(),
         scoped_user: "discord:2".into(),
         scoped_channel: "discord:3".into(),
+        now: 10,
         persona: Persona::Abbey,
     };
     let context = PersonaContext::empty();
@@ -231,6 +233,7 @@ async fn max_round_boundary_dispatches_no_extra_tool() {
         scoped_guild: "discord:1".into(),
         scoped_user: "discord:2".into(),
         scoped_channel: "discord:3".into(),
+        now: 10,
         persona: Persona::Abbey,
     };
     let context = PersonaContext::empty();
@@ -253,6 +256,15 @@ async fn max_round_boundary_dispatches_no_extra_tool() {
             .memory
             .facts("discord:1", "discord:2"),
         ["fact 0", "fact 1", "fact 2"]
+    );
+    assert_eq!(
+        AppState::lock(&state.stores)
+            .memory
+            .user("discord:1", "discord:2")
+            .expect("tool-created subject memory")
+            .updated_at,
+        10,
+        "every tool round must reuse the ToolScope timestamp"
     );
     assert_eq!(*fm.offered_counts.lock().unwrap(), [5, 5, 5, 0]);
 }
@@ -279,6 +291,7 @@ async fn continuation_failure_never_replays_the_completed_tool() {
         scoped_guild: "discord:1".into(),
         scoped_user: "discord:2".into(),
         scoped_channel: "discord:3".into(),
+        now: 10,
         persona: Persona::Abbey,
     };
     let context = PersonaContext::empty();

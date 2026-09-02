@@ -60,6 +60,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
         scoped_guild: "discord:1".into(),
         scoped_user: "discord:2".into(),
         scoped_channel: "discord:3".into(),
+        now: 10,
         persona: Persona::Abbey,
     };
     let results = ToolAccess::Enabled(&mut host)

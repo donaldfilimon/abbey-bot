@@ -268,6 +268,8 @@ pub struct ToolScope<'a> {
     pub scoped_guild: String,
     pub scoped_user: String,
     pub scoped_channel: String,
+    /// One timestamp captured by the caller for the complete tool conversation.
+    pub now: u64,
     /// The persona now answering; `switch_persona` changes it and the caller
     /// rebuilds the system prompt from it.
     pub persona: crate::persona::Persona,
@@ -282,10 +284,14 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         // able to confirm its own contested claim.
         let service = self.state.memory_service();
         let outcome = match supersedes {
-            Some(old) => {
-                service.remember_proposing(&self.scoped_guild, &self.scoped_user, fact, old, now())
-            }
-            None => service.remember(&self.scoped_guild, &self.scoped_user, fact, now()),
+            Some(old) => service.remember_proposing(
+                &self.scoped_guild,
+                &self.scoped_user,
+                fact,
+                old,
+                self.now,
+            ),
+            None => service.remember(&self.scoped_guild, &self.scoped_user, fact, self.now),
         };
         match outcome {
             Ok(RememberOutcome::Stored(fact)) => format!("Stored: {fact}"),
@@ -344,6 +350,52 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         } else {
             text
         }
+    }
+
+    fn inspect_status(&mut self, aspect: crate::tools::InspectAspect) -> String {
+        let runtime = crate::inspect::RuntimeInspect {
+            backend_label: self.state.generation_label().unwrap_or("none"),
+            tools_on: self
+                .state
+                .tools_enabled
+                .load(std::sync::atomic::Ordering::Relaxed),
+            vision_on: self.state.vision.is_some(),
+            quiet: self.state.quiet,
+            data: self.state.data_dir.is_some(),
+            fm: self
+                .state
+                .foundation_models
+                .as_ref()
+                .map(|fm| fm.config.mode.as_str())
+                .unwrap_or("off"),
+        };
+        let guild_line = if matches!(
+            aspect,
+            crate::tools::InspectAspect::Guild | crate::tools::InspectAspect::All
+        ) {
+            let stores = AppState::lock(&self.state.stores);
+            let guilds = AppState::lock(&self.state.guilds);
+            let settings = guilds.lookup(&self.scoped_guild, &*stores);
+            drop(guilds);
+            drop(stores);
+            settings.map(|settings| {
+                let left = AppState::lock(&self.state.budget).tokens_left(
+                    &self.scoped_guild,
+                    settings.unsolicited_per_hour,
+                    self.now,
+                );
+                crate::inspect::render_guild_body(&settings, left)
+            })
+        } else {
+            None
+        };
+        crate::inspect::render_status(aspect, &runtime, guild_line.as_deref())
+    }
+
+    fn list_facts(&mut self) -> String {
+        let service = self.state.memory_service();
+        let (facts, pending) = service.subject_snapshot(&self.scoped_guild, &self.scoped_user);
+        crate::inspect::render_facts(&facts, &pending)
     }
 }
 
@@ -739,6 +791,7 @@ fn guild_of_channel(stores: &Stores, scoped_channel: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::brain::social::ReputationStore;
+    use crate::guild::GuildSettings;
 
     #[test]
     fn dqn_round_trips_through_the_brain_trait() {
@@ -832,6 +885,153 @@ mod tests {
         assert_eq!(TOPOLOGY, [18, 64, 32, 3]);
     }
 
+    #[test]
+    fn unknown_guild_inspect_is_non_provisioning() {
+        let state = AppState::in_memory();
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:missing".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            now: 10,
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        let rendered =
+            crate::tools::ToolHost::inspect_status(&mut scope, crate::tools::InspectAspect::Guild);
+
+        assert_eq!(rendered, "No guild settings on record.");
+        assert!(AppState::lock(&state.stores).guilds.is_empty());
+        assert!(!AppState::lock(&state.guilds).is_cached("discord:missing"));
+    }
+
+    #[test]
+    fn durable_guild_inspect_does_not_fill_the_cache() {
+        let state = AppState::in_memory();
+        AppState::lock(&state.stores).guilds.insert(
+            "discord:g".into(),
+            GuildSettings {
+                default_persona: crate::persona::Persona::Abi,
+                ..GuildSettings::default()
+            },
+        );
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            now: 10,
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        let rendered =
+            crate::tools::ToolHost::inspect_status(&mut scope, crate::tools::InspectAspect::Guild);
+
+        assert!(rendered.contains("persona: abi"), "{rendered}");
+        assert!(!AppState::lock(&state.guilds).is_cached("discord:g"));
+    }
+
+    #[test]
+    fn cached_guild_inspect_uses_the_recorded_settings_and_injected_time() {
+        let state = AppState::in_memory();
+        {
+            let mut stores = AppState::lock(&state.stores);
+            let mut guilds = AppState::lock(&state.guilds);
+            guilds.update("discord:g", &mut *stores, |settings| {
+                settings.default_persona = crate::persona::Persona::Aviva;
+                settings.unsolicited_per_hour = 6;
+            });
+        }
+        {
+            let mut budget = AppState::lock(&state.budget);
+            for _ in 0..6 {
+                assert!(budget.try_take("discord:g", 6, 10_000));
+            }
+        }
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            now: 10_600,
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        let rendered =
+            crate::tools::ToolHost::inspect_status(&mut scope, crate::tools::InspectAspect::Guild);
+
+        assert!(rendered.contains("persona: aviva"), "{rendered}");
+        assert!(rendered.contains("(1.0 left)"), "{rendered}");
+        assert!(AppState::lock(&state.guilds).is_cached("discord:g"));
+    }
+
+    #[test]
+    fn all_tool_memory_writes_use_the_scope_timestamp() {
+        let state = AppState::in_memory();
+        state
+            .memory_service()
+            .remember("discord:g", "discord:u", "uses rust", 1)
+            .expect("seed");
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            now: 4_242,
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        crate::tools::ToolHost::remember_fact(&mut scope, "moved to zig", Some("uses rust"));
+        crate::tools::ToolHost::remember_fact(&mut scope, "likes compilers", None);
+
+        let stores = AppState::lock(&state.stores);
+        let memory = stores
+            .memory
+            .user("discord:g", "discord:u")
+            .expect("subject memory");
+        assert_eq!(memory.updated_at, 4_242);
+        assert_eq!(memory.pending_supersessions.len(), 1);
+        assert_eq!(memory.pending_supersessions[0].at, 4_242);
+    }
+
+    #[test]
+    fn list_facts_isolated_to_the_exact_canonical_subject() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service
+            .remember("discord:g", "discord:u", "own fact", 1)
+            .expect("own fact");
+        service
+            .remember_proposing("discord:g", "discord:u", "own replacement", "own fact", 2)
+            .expect("own pending");
+        service
+            .remember("discord:g", "discord:other", "other user fact", 3)
+            .expect("other user");
+        service
+            .remember("discord:other", "discord:u", "other guild fact", 4)
+            .expect("other guild");
+        let mut scope = ToolScope {
+            state: &state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:g".into(),
+            scoped_user: "discord:u".into(),
+            scoped_channel: "discord:c".into(),
+            now: 10,
+            persona: crate::persona::Persona::Abbey,
+        };
+
+        let rendered = crate::tools::ToolHost::list_facts(&mut scope);
+
+        assert!(rendered.contains("own fact"), "{rendered}");
+        assert!(rendered.contains("own replacement"), "{rendered}");
+        assert!(!rendered.contains("other user fact"), "{rendered}");
+        assert!(!rendered.contains("other guild fact"), "{rendered}");
+    }
+
     /// The safety property at its real integration point: a model calling
     /// `remember_fact` with `supersedes` must PROPOSE, never delete. Verified
     /// here through the actual `ToolHost` impl rather than by reading the
@@ -850,6 +1050,7 @@ mod tests {
             scoped_guild: "discord:g".into(),
             scoped_user: "discord:u".into(),
             scoped_channel: "discord:c".into(),
+            now: 10,
             persona: crate::persona::Persona::Abbey,
         };
 
@@ -879,6 +1080,7 @@ mod tests {
             scoped_guild: "discord:g".into(),
             scoped_user: "discord:u".into(),
             scoped_channel: "discord:c".into(),
+            now: 10,
             persona: crate::persona::Persona::Abbey,
         };
         assert_eq!(
@@ -920,6 +1122,7 @@ mod tests {
                 scoped_guild: guild,
                 scoped_user: format!("{}:self", network.as_str()),
                 scoped_channel: format!("{}:c", network.as_str()),
+                now: 10,
                 persona: crate::persona::Persona::Abbey,
             };
             let native_id = if network == SocialNetwork::Discord {
@@ -944,6 +1147,7 @@ mod tests {
             scoped_guild: "telegram:g".into(),
             scoped_user: "telegram:self".into(),
             scoped_channel: "telegram:c".into(),
+            now: 10,
             persona: crate::persona::Persona::Abbey,
         };
         assert_eq!(

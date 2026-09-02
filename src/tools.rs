@@ -50,6 +50,24 @@ impl ToolResult {
     }
 }
 
+/// Closed aspect enum for the in-process Inspect status seam. The model-facing
+/// schema and parser are added together in Cycle 3.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Inspect aspects are activated with the complete schema and dispatch path"
+    )
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectAspect {
+    Runtime,
+    Guild,
+    Voice,
+    Provider,
+    All,
+}
+
 /// Longest tool result handed back to the model.
 pub const MAX_RESULT_CHARS: usize = 600;
 /// Most recent messages `recent_messages` will return.
@@ -197,6 +215,22 @@ pub trait ToolHost {
     fn recall(&mut self, query: &str) -> String;
     fn switch_persona(&mut self, persona: Persona) -> String;
     fn recent_messages(&mut self, limit: usize) -> String;
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Inspect dispatch is activated atomically with its model schema"
+        )
+    )]
+    fn inspect_status(&mut self, aspect: InspectAspect) -> String;
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Inspect dispatch is activated atomically with its model schema"
+        )
+    )]
+    fn list_facts(&mut self) -> String;
 }
 
 /// Run one call against the host. Unknown tools and bad arguments produce a
@@ -288,6 +322,29 @@ mod tests {
             self.log.push(format!("recent:{limit}"));
             "a: hi\nb: yo".into()
         }
+        fn inspect_status(&mut self, aspect: InspectAspect) -> String {
+            self.log.push(format!("inspect:{aspect:?}"));
+            format!("status:{aspect:?}")
+        }
+        fn list_facts(&mut self) -> String {
+            self.log.push("list_facts".into());
+            "Nothing on record.".into()
+        }
+    }
+
+    #[test]
+    fn inspect_aspect_domain_is_closed() {
+        assert_eq!(
+            [
+                InspectAspect::Runtime,
+                InspectAspect::Guild,
+                InspectAspect::Voice,
+                InspectAspect::Provider,
+                InspectAspect::All,
+            ]
+            .len(),
+            5
+        );
     }
 
     #[test]

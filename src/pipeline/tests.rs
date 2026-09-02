@@ -129,6 +129,7 @@ async fn discord_telegram_and_slack_share_canonical_persona_tool_memory_and_visi
             scoped_guild: scoped_guild.clone(),
             scoped_user: scoped_user.clone(),
             scoped_channel: scoped_channel.clone(),
+            now: 42,
             persona: selected_persona,
         };
         let calls = [

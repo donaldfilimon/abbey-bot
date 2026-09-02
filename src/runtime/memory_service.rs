@@ -296,6 +296,20 @@ impl<'a> MemoryService<'a> {
             .to_vec()
     }
 
+    /// Clone one subject's canonical facts and pending replacements while
+    /// holding the store mutex once, so the two views describe one state.
+    pub fn subject_snapshot(
+        &self,
+        guild: &str,
+        user: &str,
+    ) -> (Vec<String>, Vec<memory::PendingSupersession>) {
+        let stores = AppState::lock(self.stores);
+        (
+            stores.memory.facts(guild, user).to_vec(),
+            stores.memory.pending_supersessions(guild, user).to_vec(),
+        )
+    }
+
     /// Facts from canonical JSON memory. Legacy WDBX-only rows are recovered
     /// once in `reconcile_loaded`, before `AppState` becomes observable.
     pub fn facts(&self, guild: &str, user: &str) -> Vec<String> {
@@ -385,9 +399,153 @@ fn fact_for_deletion(facts: &[String], requested: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
     use super::*;
+
+    fn install_subject_generation(stores: &mut Stores, label: &str, at: u64) {
+        let subject = stores.memory.user_mut("g", "u");
+        subject.facts = vec![format!("{label}-fact")];
+        subject.pending_supersessions = vec![memory::PendingSupersession {
+            new_fact: format!("{label}-new"),
+            old_fact: format!("{label}-old"),
+            at,
+        }];
+        subject.updated_at = at;
+    }
+
+    #[test]
+    fn subject_snapshot_clones_facts_and_pending_together() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g", "u", "uses rust", 1).expect("store");
+        service
+            .remember_proposing("g", "u", "moved to zig", "uses rust", 2)
+            .expect("propose");
+
+        let (mut facts, mut pending) = service.subject_snapshot("g", "u");
+        assert_eq!(facts, ["uses rust", "moved to zig"]);
+        assert_eq!(
+            pending,
+            [memory::PendingSupersession {
+                new_fact: "moved to zig".to_string(),
+                old_fact: "uses rust".to_string(),
+                at: 2,
+            }]
+        );
+
+        facts.clear();
+        pending.clear();
+        let (stored_facts, stored_pending) = service.subject_snapshot("g", "u");
+        assert_eq!(stored_facts, ["uses rust", "moved to zig"]);
+        assert_eq!(stored_pending.len(), 1, "the snapshot must own its clones");
+    }
+
+    #[test]
+    fn subject_snapshot_isolates_guilds_and_users() {
+        let state = AppState::in_memory();
+        let service = state.memory_service();
+        service.remember("g1", "u1", "g1-u1 old", 1).expect("seed");
+        service
+            .remember_proposing("g1", "u1", "g1-u1 new", "g1-u1 old", 2)
+            .expect("propose");
+        service.remember("g1", "u2", "g1-u2", 3).expect("seed");
+        service.remember("g2", "u1", "g2-u1", 4).expect("seed");
+
+        let (facts, pending) = service.subject_snapshot("g1", "u1");
+        assert_eq!(facts, ["g1-u1 old", "g1-u1 new"]);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].old_fact, "g1-u1 old");
+        assert_eq!(pending[0].new_fact, "g1-u1 new");
+
+        assert_eq!(service.subject_snapshot("g1", "u2").0, ["g1-u2"]);
+        assert!(service.subject_snapshot("g1", "u2").1.is_empty());
+        assert_eq!(service.subject_snapshot("g2", "u1").0, ["g2-u1"]);
+        assert!(service.subject_snapshot("g2", "u1").1.is_empty());
+
+        assert!(
+            AppState::lock(&state.stores)
+                .memory
+                .user("missing", "subject")
+                .is_none()
+        );
+        assert_eq!(
+            service.subject_snapshot("missing", "subject"),
+            (Vec::new(), Vec::new())
+        );
+        assert!(
+            AppState::lock(&state.stores)
+                .memory
+                .user("missing", "subject")
+                .is_none(),
+            "a snapshot read must not provision a subject"
+        );
+    }
+
+    #[test]
+    fn concurrent_subject_snapshots_never_mix_generations() {
+        const SNAPSHOTS: usize = 20_000;
+
+        let state = AppState::in_memory();
+        install_subject_generation(&mut AppState::lock(&state.stores), "A", 1);
+
+        let start = Arc::new(Barrier::new(2));
+        let stop = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let writer = {
+            let state = Arc::clone(&state);
+            let start = Arc::clone(&start);
+            let stop = Arc::clone(&stop);
+            let writes = Arc::clone(&writes);
+            std::thread::spawn(move || {
+                start.wait();
+                let mut use_a = false;
+                while !stop.load(Ordering::Acquire) {
+                    let label = if use_a { "A" } else { "B" };
+                    let at = writes.load(Ordering::Relaxed) as u64 + 2;
+                    install_subject_generation(&mut AppState::lock(&state.stores), label, at);
+                    writes.fetch_add(1, Ordering::Release);
+                    use_a = !use_a;
+                    std::thread::yield_now();
+                }
+            })
+        };
+
+        start.wait();
+        while writes.load(Ordering::Acquire) == 0 {
+            std::thread::yield_now();
+        }
+
+        let mut mismatch = None;
+        for _ in 0..SNAPSHOTS {
+            let snapshot = state.memory_service().subject_snapshot("g", "u");
+            let consistent = match (&snapshot.0[..], &snapshot.1[..]) {
+                ([fact], [pending]) if fact == "A-fact" => {
+                    pending.new_fact == "A-new" && pending.old_fact == "A-old"
+                }
+                ([fact], [pending]) if fact == "B-fact" => {
+                    pending.new_fact == "B-new" && pending.old_fact == "B-old"
+                }
+                _ => false,
+            };
+            if !consistent {
+                mismatch = Some(snapshot);
+                break;
+            }
+            std::thread::yield_now();
+        }
+        stop.store(true, Ordering::Release);
+        writer.join().expect("writer did not panic");
+
+        assert!(
+            mismatch.is_none(),
+            "facts and pending replacements came from different generations: {mismatch:?}"
+        );
+        assert!(writes.load(Ordering::Acquire) > 0);
+    }
 
     /// The explicit path is authoritative — it removes the named fact without
     /// any confirmation step, because the caller already gave the signal.

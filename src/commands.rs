@@ -307,6 +307,7 @@ pub async fn ask(
                 scoped_guild: scoped_guild.clone(),
                 scoped_user: scoped_user.clone(),
                 scoped_channel: scope.clone(),
+                now,
                 persona: routed,
             };
             let outcome = match state.acquire_generation().await {

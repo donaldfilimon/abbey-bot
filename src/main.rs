@@ -57,6 +57,14 @@ mod generation;
 mod grounding;
 mod guild;
 mod http_body;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Inspect internals are activated by the Cycle 3 schema and dispatch commit"
+    )
+)]
+mod inspect;
 mod llm;
 mod memory;
 mod moderation;

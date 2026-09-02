@@ -192,6 +192,22 @@ impl GuildRegistry {
         settings
     }
 
+    /// Read settings without provisioning or hydrating the cache.
+    ///
+    /// Inspect-style observers use this boundary so an unknown guild remains
+    /// absent. A cached row wins; otherwise the durable row is cloned directly
+    /// from the store and a miss stays `None`.
+    pub fn lookup(
+        &self,
+        scoped_guild_id: &str,
+        store: &dyn GuildConfigStore,
+    ) -> Option<GuildSettings> {
+        self.cache
+            .get(scoped_guild_id)
+            .cloned()
+            .or_else(|| store.load(scoped_guild_id))
+    }
+
     /// Mutate a guild's settings, updating the cache and writing through.
     /// Returns the settings after mutation.
     pub fn update(
@@ -399,6 +415,67 @@ mod tests {
         reg.evict(G);
         assert!(!reg.is_cached(G));
         assert!(reg.config(G, &mut store).voice_enabled);
+    }
+
+    #[test]
+    fn inspect_lookup_missing_does_not_provision_or_cache() {
+        let store = InMemoryGuildConfigStore::new();
+        let reg = GuildRegistry::new();
+
+        assert_eq!(reg.lookup(G, &store), None);
+        assert!(
+            store.rows.is_empty(),
+            "a read must not create a durable row"
+        );
+        assert!(!reg.is_cached(G), "a miss must not create a cache row");
+    }
+
+    #[test]
+    fn inspect_lookup_reads_cached_settings() {
+        let mut store = InMemoryGuildConfigStore::new();
+        let durable = GuildSettings {
+            default_persona: Persona::Aviva,
+            ..GuildSettings::default()
+        };
+        store.save(G, &durable);
+        let mut reg = GuildRegistry::new();
+        assert_eq!(reg.config(G, &mut store), durable);
+
+        let changed_durable = GuildSettings {
+            default_persona: Persona::Abi,
+            ..GuildSettings::default()
+        };
+        store.save(G, &changed_durable);
+
+        assert_eq!(reg.lookup(G, &store), Some(durable));
+        assert!(reg.is_cached(G));
+    }
+
+    #[test]
+    fn inspect_lookup_reads_durable_settings_without_caching() {
+        let mut store = InMemoryGuildConfigStore::new();
+        let first = GuildSettings {
+            vision_enabled: false,
+            ..GuildSettings::default()
+        };
+        store.save(G, &first);
+        let reg = GuildRegistry::new();
+
+        assert_eq!(reg.lookup(G, &store), Some(first));
+        assert!(!reg.is_cached(G));
+
+        let second = GuildSettings {
+            vision_enabled: true,
+            default_persona: Persona::Abi,
+            ..GuildSettings::default()
+        };
+        store.save(G, &second);
+
+        assert_eq!(reg.lookup(G, &store), Some(second));
+        assert!(
+            !reg.is_cached(G),
+            "a durable lookup must not silently hydrate the cache"
+        );
     }
 
     #[test]
