@@ -483,7 +483,12 @@ pub fn decode_pcm16_wav(wav: &[u8]) -> Result<DecodedAudio, String> {
         return Err(format!("local TTS audio exceeds {MAX_TTS_SECONDS} seconds"));
     }
     let mut pcm_f32 = Vec::with_capacity(frames * usize::from(channels) * 4);
-    for pair in wav[start..end].chunks_exact(2) {
+    let (pairs, remainder) = wav[start..end].as_chunks::<2>();
+    debug_assert!(
+        remainder.is_empty(),
+        "PCM frame validation rejects remainders"
+    );
+    for pair in pairs {
         let sample = f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0;
         pcm_f32.extend_from_slice(&sample.to_le_bytes());
     }
@@ -931,10 +936,11 @@ mod tests {
         let decoded = decode_pcm16_wav(&wav).unwrap();
         assert_eq!(decoded.sample_rate, 24_000);
         assert_eq!(decoded.channels, 1);
-        let values: Vec<f32> = decoded
-            .pcm_f32
-            .chunks_exact(4)
-            .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
+        let (values, remainder) = decoded.pcm_f32.as_chunks::<4>();
+        assert!(remainder.is_empty());
+        let values: Vec<f32> = values
+            .iter()
+            .map(|bytes| f32::from_ne_bytes(*bytes))
             .collect();
         assert_eq!(values.len(), 3);
         assert_eq!(values[0], -1.0);

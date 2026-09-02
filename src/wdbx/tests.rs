@@ -326,7 +326,7 @@ fn error_display_is_one_sentence_each() {
 /// suite (`crates/abi-wdbx/tests/abbey_bot_projection_conformance.rs`).
 ///
 /// Why a shared fixture instead of a dependency: this crate pins **stable
-/// 1.97.1** (`rust-toolchain.toml`), while `abi-compute` — which `abi-wdbx`
+/// 1.98.0** (`rust-toolchain.toml`), while `abi-compute` — which `abi-wdbx`
 /// depends on — requires `#![feature(portable_simd)]` on nightly. Linking
 /// `abi-wdbx` here, even as a dev-dependency, is not possible without reversing
 /// this crate's pinned-stable decision. The same shape is already used for the

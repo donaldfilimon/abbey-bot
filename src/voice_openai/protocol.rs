@@ -267,7 +267,8 @@ fn response_cancel_event(epoch: u64, sequence: &mut u64, response_id: &str) -> M
             "event_id": next_event_id(epoch, sequence),
             "response_id": response_id,
         })
-        .to_string(),
+        .to_string()
+        .into(),
     )
 }
 
@@ -285,7 +286,8 @@ pub(super) fn truncate_event(
             "content_index": 0,
             "audio_end_ms": audio_end_ms,
         })
-        .to_string(),
+        .to_string()
+        .into(),
     )
 }
 
@@ -296,7 +298,9 @@ pub(super) fn next_event_id(epoch: u64, sequence: &mut u64) -> String {
 
 pub(super) fn pcm16_to_f32(pcm: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(pcm.len() * 2);
-    for pair in pcm.chunks_exact(2) {
+    // Match `chunks_exact(2)`: a trailing partial PCM16 sample is ignored.
+    let (pairs, _remainder) = pcm.as_chunks::<2>();
+    for pair in pairs {
         let sample = f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0;
         output.extend_from_slice(&sample.to_le_bytes());
     }
@@ -552,13 +556,22 @@ mod tests {
         .concat();
         let output = pcm16_to_f32(&bytes);
         assert_eq!(output.len(), 3 * size_of::<f32>());
-        let samples: Vec<f32> = output
-            .chunks_exact(4)
-            .map(|chunk| f32::from_ne_bytes(chunk.try_into().unwrap()))
+        let (samples, remainder) = output.as_chunks::<4>();
+        assert!(remainder.is_empty());
+        let samples: Vec<f32> = samples
+            .iter()
+            .map(|chunk| f32::from_ne_bytes(*chunk))
             .collect();
         assert_eq!(samples[0], -1.0);
         assert_eq!(samples[1], 0.0);
         assert!((samples[2] - (32767.0 / 32768.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pcm16_conversion_ignores_a_trailing_partial_sample() {
+        let mut bytes = 123_i16.to_le_bytes().to_vec();
+        bytes.push(0xff);
+        assert_eq!(pcm16_to_f32(&bytes).len(), size_of::<f32>());
     }
 
     #[test]

@@ -720,7 +720,7 @@ pub async fn run_slack(state: Arc<AppState>, bot_token: String, app_token: Strin
             };
             if let Some(id) = &parsed.envelope_id {
                 let ack = serde_json::json!({ "envelope_id": id }).to_string();
-                if socket.send(WsMessage::Text(ack)).await.is_err() {
+                if socket.send(WsMessage::Text(ack.into())).await.is_err() {
                     break;
                 }
             }

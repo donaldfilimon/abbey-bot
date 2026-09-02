@@ -38,5 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The runner's rustup honours the exact stable release and components in
       # rust-toolchain.toml on the first Cargo invocation.
+      - name: Install pinned cargo-audit report tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Gate — fmt, privacy, locks, clippy, tests, release build
         run: ${{ matrix.command }}

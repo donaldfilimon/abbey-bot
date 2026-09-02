@@ -484,7 +484,18 @@ impl ContractCorpus {
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    let digest = Sha256::digest(bytes);
+    lower_hex(&digest)
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 fn aggregate_digest(manifest: &Manifest) -> Result<String, ContractError> {
@@ -530,7 +541,7 @@ fn aggregate_digest(manifest: &Manifest) -> Result<String, ContractError> {
         digest.update(sha256.as_bytes());
         digest.update(b"\n");
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(lower_hex(&digest.finalize()))
 }
 
 fn taxonomy(path: &'static str) -> Option<&'static str> {

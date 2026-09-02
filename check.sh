@@ -25,6 +25,10 @@ python3 deploy/test-publish-provider-qualification.py
 python3 scripts/check-privacy.py
 python3 scripts/test-check-abbey-contracts.py
 python3 scripts/check-abbey-contracts.py
+python3 scripts/test-check-linux-tls-tree.py
+python3 scripts/check-linux-tls-tree.py
+python3 scripts/test-check-rustsec-debt.py
+python3 scripts/check-rustsec-debt.py
 python3 scripts/test-check-wdbx-conformance.py
 python3 scripts/check-wdbx-conformance.py
 if command -v plutil >/dev/null 2>&1; then

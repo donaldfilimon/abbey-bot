@@ -90,12 +90,10 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
         HeaderValue::from_str(&config.authorization())
             .map_err(|_| "OPENAI_API_KEY contains invalid header bytes".to_string())?,
     );
-    let socket_config = WebSocketConfig {
-        max_message_size: Some(MAX_WS_MESSAGE_BYTES),
-        max_frame_size: Some(MAX_WS_MESSAGE_BYTES),
-        max_write_buffer_size: 2 * MAX_WS_MESSAGE_BYTES,
-        ..WebSocketConfig::default()
-    };
+    let mut socket_config = WebSocketConfig::default();
+    socket_config.max_message_size = Some(MAX_WS_MESSAGE_BYTES);
+    socket_config.max_frame_size = Some(MAX_WS_MESSAGE_BYTES);
+    socket_config.max_write_buffer_size = 2 * MAX_WS_MESSAGE_BYTES;
     let connect = tokio_tungstenite::connect_async_with_config(request, Some(socket_config), false);
     let (socket, _) = tokio::select! {
         result = connect => result.map_err(|error| format!("Realtime WebSocket connection failed: {error}"))?,
@@ -130,7 +128,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
         }
     });
     writer
-        .send(Message::Text(update.to_string()))
+        .send(Message::Text(update.to_string().into()))
         .await
         .map_err(|error| format!("sending Realtime session configuration failed: {error}"))?;
 
@@ -239,7 +237,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                     "type": "input_audio_buffer.append",
                     "event_id": next_event_id(session.epoch, &mut event_sequence),
                     "audio": base64::engine::general_purpose::STANDARD.encode(bytes),
-                }).to_string());
+                }).to_string().into());
                 if !send_media_message(
                     &mut writer,
                     &session.runtime,

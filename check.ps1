@@ -30,6 +30,12 @@ Invoke-Checked -Executable "python" -Arguments @(
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-mlx-primary.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-publish-provider-qualification.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-privacy.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-abbey-contracts.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-abbey-contracts.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-linux-tls-tree.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-linux-tls-tree.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-rustsec-debt.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-rustsec-debt.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-wdbx-conformance.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-wdbx-conformance.py")
 

@@ -854,7 +854,9 @@ mod tests {
             );
             socket
                 .send(Message::Text(
-                    serde_json::json!({"type": "session.updated"}).to_string(),
+                    serde_json::json!({"type": "session.updated"})
+                        .to_string()
+                        .into(),
                 ))
                 .await
                 .expect("session acknowledgement");
@@ -880,7 +882,8 @@ mod tests {
                         "type": "response.output_audio.delta",
                         "delta": base64::engine::general_purpose::STANDARD.encode(32767_i16.to_le_bytes())
                     })
-                    .to_string(),
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .expect("output delta");

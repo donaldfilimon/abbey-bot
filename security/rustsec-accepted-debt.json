@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "cargo_audit_version": "0.22.2",
+  "audit_state": "not-clean",
+  "rationale": "Serenity 0.12.5's WebSocket dependency path uses the rustls 0.22 compatibility line and resolves rustls-webpki 0.102.8. A fixed compatible line requires an upstream Serenity/tokio-tungstenite/rustls migration; replacing portable rustls or carrying a local cryptographic fork is outside this approved slice.",
+  "review_triggers": [
+    "The Serenity/tokio-tungstenite/rustls dependency path changes.",
+    "A compatible fixed rustls-webpki line becomes available.",
+    "The dependency topology, package source, version, or checksum changes.",
+    "Any accepted advisory fingerprint changes or a vulnerability appears or disappears.",
+    "The upstream support policy for rustls-webpki 0.102.x changes."
+  ],
+  "accepted_vulnerability_count": 4,
+  "accepted_vulnerabilities": [
+    {
+      "id": "RUSTSEC-2026-0049",
+      "advisory": {
+        "package": "rustls-webpki",
+        "source": null,
+        "aliases": [
+          "GHSA-pwjx-qhcg-rvj4"
+        ],
+        "categories": [
+          "privilege-escalation"
+        ],
+        "cvss": null,
+        "informational": null,
+        "withdrawn": null
+      },
+      "versions": {
+        "patched": [
+          ">=0.103.10"
+        ],
+        "unaffected": [
+          "<0.102.0-alpha.0"
+        ]
+      },
+      "affected": null,
+      "package": {
+        "name": "rustls-webpki",
+        "version": "0.102.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+      }
+    },
+    {
+      "id": "RUSTSEC-2026-0098",
+      "advisory": {
+        "package": "rustls-webpki",
+        "source": null,
+        "aliases": [
+          "GHSA-965h-392x-2mh5"
+        ],
+        "categories": [],
+        "cvss": null,
+        "informational": null,
+        "withdrawn": null
+      },
+      "versions": {
+        "patched": [
+          ">=0.103.12, <0.104.0-alpha.1",
+          ">=0.104.0-alpha.6"
+        ],
+        "unaffected": []
+      },
+      "affected": null,
+      "package": {
+        "name": "rustls-webpki",
+        "version": "0.102.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+      }
+    },
+    {
+      "id": "RUSTSEC-2026-0099",
+      "advisory": {
+        "package": "rustls-webpki",
+        "source": null,
+        "aliases": [
+          "GHSA-xgp8-3hg3-c2mh"
+        ],
+        "categories": [],
+        "cvss": null,
+        "informational": null,
+        "withdrawn": null
+      },
+      "versions": {
+        "patched": [
+          ">=0.103.12, <0.104.0-alpha.1",
+          ">=0.104.0-alpha.6"
+        ],
+        "unaffected": []
+      },
+      "affected": null,
+      "package": {
+        "name": "rustls-webpki",
+        "version": "0.102.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+      }
+    },
+    {
+      "id": "RUSTSEC-2026-0104",
+      "advisory": {
+        "package": "rustls-webpki",
+        "source": null,
+        "aliases": [
+          "GHSA-82j2-j2ch-gfr8"
+        ],
+        "categories": [
+          "denial-of-service"
+        ],
+        "cvss": null,
+        "informational": null,
+        "withdrawn": null
+      },
+      "versions": {
+        "patched": [
+          ">=0.103.13, <0.104.0-alpha.1",
+          ">=0.104.0-alpha.7"
+        ],
+        "unaffected": []
+      },
+      "affected": null,
+      "package": {
+        "name": "rustls-webpki",
+        "version": "0.102.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+      }
+    }
+  ]
+}
