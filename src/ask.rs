@@ -5,13 +5,14 @@
 //! (answer, failure, or no backend at all) into the reply text Discord posts —
 //! every one of which passes through `clamp_message` in the command layer.
 //!
-//! The persona text is a **transcription, not a dependency**. The canonical
-//! persona contracts live in abi-ai (`../abi/crates/abi-ai/src/identity.rs`,
-//! `profile_contract`), and abbey-bot deliberately does not take the sibling
-//! path dependency — it would break the second live clone's build (see the
-//! 2026-08-10 AI-backend proposal). The cost of that choice is drift: when the
-//! contracts change over there, this table must be updated from that file by
-//! hand.
+//! Aviva and Abi remain a **transcription, not a dependency**, of abi-ai
+//! (`../abi/crates/abi-ai/src/identity.rs`, `profile_contract`). abbey-bot
+//! deliberately does not take the sibling path dependency — it would break the
+//! second live clone's build (see the 2026-08-10 AI-backend proposal).
+//!
+//! Discord Abbey now follows Grok Bot Abbey (warm, sharp friend; result-first;
+//! honest) rather than that sibling `ProfileContract`, so Abbey will drift from
+//! abi-ai until that crate is updated separately.
 
 use crate::persona::Persona;
 
@@ -19,9 +20,11 @@ use crate::persona::Persona;
 /// strings are never public; callers may preserve only this exact literal.
 pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 
-/// The routed persona's operating description, transcribed verbatim from
-/// abi-ai's `ProfileContract::description` in
-/// `../abi/crates/abi-ai/src/identity.rs`.
+/// The routed persona's operating description.
+///
+/// Aviva and Abi are transcribed from abi-ai's `ProfileContract::description`
+/// in `../abi/crates/abi-ai/src/identity.rs`. Abbey follows Grok Bot Abbey
+/// rather than that sibling contract.
 ///
 /// Verbatim includes punctuation: Aviva's text carries a U+2014 em dash
 /// (`honest\u{2014}not`), written here with the same escape the source uses so
@@ -29,7 +32,7 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 const fn contract_description(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "Primary user-facing personality combining technical expertise, emotional intelligence, creativity, clear teaching, thoughtful judgment, and collaborative problem-solving. Used for most conversations when both human awareness and technical depth matter."
+            "Warm, sharp friend \u{2014} not a help desk. Technical range plus emotional intelligence. Leads with the result, matches the user\u{2019}s length, acts on ordinary work without asking permission, and reports blockers plainly. Honest about uncertainty; never condescending; no canned politeness or internals dumps."
         }
         Persona::Aviva => {
             "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, removes unnecessary softening, identifies weak assumptions, prefers concrete actions, and communicates uncertainty plainly. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety."
@@ -40,25 +43,27 @@ const fn contract_description(persona: Persona) -> &'static str {
     }
 }
 
-/// The routed persona's operating character, transcribed verbatim from
-/// abi-ai's `ProfileContract::response_suffix` in
-/// `../abi/crates/abi-ai/src/identity.rs`.
+/// The routed persona's operating character.
 ///
-/// abi-ai appends this text after the user's input when it assembles the model
-/// prompt. Here it is promoted to a standing system directive so the operating
-/// character governs the whole Discord turn rather than reading like more user
-/// text.
+/// Aviva and Abi are transcribed from abi-ai's `ProfileContract::response_suffix`
+/// in `../abi/crates/abi-ai/src/identity.rs`. Abbey's line is Grok Bot Abbey's
+/// voice, not the abi-ai suffix.
+///
+/// abi-ai appends Aviva/Abi suffix text after the user's input when it
+/// assembles the model prompt. Here every persona's operating character is a
+/// standing system directive so it governs the whole Discord turn rather than
+/// reading like more user text.
 ///
 /// The companion `response_prefix` (`"Abbey: "`) is deliberately **not**
 /// transcribed: [`tidy_reply`] exists specifically to strip that echo from
 /// model output, so carrying it here would fight this module's own contract.
 ///
-/// Verbatim includes punctuation: Abbey's line opens with a U+2019 right single
-/// quotation mark in `I\u{2019}ll`, not an ASCII apostrophe. A test pins it.
+/// Abbey's line opens with a U+2019 right single quotation mark in `I\u{2019}ll`,
+/// not an ASCII apostrophe. A test pins it.
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "I\u{2019}ll approach this with warmth, creativity, and technical care while keeping uncertainty explicit."
+            "I\u{2019}ll lead with the result \u{2014} warm, sharp, no help-desk fluff. If I\u{2019}m not sure, I\u{2019}ll say so."
         }
         Persona::Aviva => "Leading with the concrete answer, assumptions, and next action.",
         Persona::Abi => "Evaluating intent, risk, context, and the appropriate response mode.",
@@ -224,19 +229,20 @@ mod tests {
             let prompt = system_prompt(persona);
             assert!(prompt.contains(contract_character(persona)), "{prompt}");
         }
-        // Abbey's canonical character line is the one that makes her Abbey
-        // rather than a generic assistant; losing it would be a silent
-        // personality regression that no other assertion here would catch.
-        assert!(
-            contract_character(Persona::Abbey).contains("warmth, creativity, and technical care")
-        );
-        assert!(contract_character(Persona::Abbey).contains("uncertainty explicit"));
+        // Abbey's Grok Bot voice is the one that makes her Abbey rather than a
+        // generic assistant; losing it would be a silent personality regression
+        // that no other assertion here would catch.
+        assert!(contract_character(Persona::Abbey).contains("warm, sharp"));
+        assert!(contract_character(Persona::Abbey).contains("no help-desk fluff"));
+        assert!(contract_character(Persona::Abbey).contains("not sure"));
+        assert!(contract_description(Persona::Abbey).contains("not a help desk"));
+        assert!(contract_description(Persona::Abbey).contains("Leads with the result"));
     }
 
     #[test]
     fn abbeys_character_keeps_the_curly_apostrophe() {
-        // identity.rs writes `I\u{2019}ll` with a right single quotation mark;
-        // an ASCII apostrophe here would be a silent mis-transcription, the
+        // Abbey's line writes `I\u{2019}ll` with a right single quotation mark;
+        // an ASCII apostrophe here would be a silent voice regression, the
         // same failure mode the em-dash test below guards for Aviva.
         assert!(contract_character(Persona::Abbey).starts_with("I\u{2019}ll"));
         assert!(!contract_character(Persona::Abbey).contains('\''));
