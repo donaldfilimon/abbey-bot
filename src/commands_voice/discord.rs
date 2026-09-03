@@ -32,6 +32,8 @@ pub(super) fn required_voice_permissions() -> Permissions {
         | Permissions::SEND_MESSAGES
         | Permissions::CONNECT
         | Permissions::SPEAK
+        | Permissions::STREAM
+        | Permissions::USE_EMBEDDED_ACTIVITIES
 }
 
 pub(super) fn bot_has_required_voice_permissions(
@@ -75,7 +77,7 @@ pub(super) async fn verify_required_voice_permissions_live(
     );
     let (channel, member, guild) = fetched.map_err(|error| {
         tracing::warn!(%error, %guild_id, %channel_id, "could not revalidate Discord voice permissions");
-        "Discord could not revalidate Abbey's View Channel, Send Messages, Connect, and Speak permissions; voice stayed off."
+        "Discord could not revalidate Abbey's View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities permissions; voice stayed off."
             .to_string()
     })?;
     let Some(channel) = channel.guild() else {
@@ -93,7 +95,7 @@ pub(super) async fn verify_required_voice_permissions_live(
         .user_permissions_in(&channel, &member)
         .contains(required_voice_permissions())
     {
-        return Err("Abbey needs View Channel, Send Messages, Connect, and Speak in the configured voice channel; voice stayed off."
+        return Err("Abbey needs View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities in the configured voice channel; voice stayed off."
             .into());
     }
     Ok(())
@@ -383,6 +385,8 @@ mod tests {
             Permissions::SEND_MESSAGES,
             Permissions::CONNECT,
             Permissions::SPEAK,
+            Permissions::STREAM,
+            Permissions::USE_EMBEDDED_ACTIVITIES,
         ] {
             assert!(required.contains(expected), "missing {expected:?}");
         }
