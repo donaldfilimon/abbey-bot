@@ -1,3 +1,5 @@
+> **Update 2026-09-03 ~18:55 ET:** Minimal Activity client lives at `activity/` (GitHub Pages `/activity/` after merge). Portal URL map `/` → `donaldfilimon.github.io/abbey-bot/activity` is still a Donald click. Voice overwrites already had Stream + Use Activities; no PUT. Bots still cannot Go Live. Consent/wake-word unchanged.
+>
 > **Update 2026-09-03 ~18:48 ET:** Office Hours overwrites grant Stream + Use Embedded Activities for Member and Abbey roles. Voice join also requires those bits (`required_voice_permissions`). See `docs/activities.md` — Activity/rocket launch is the path; bots cannot classic Go Live.
 >
 > **Update 2026-09-03 ~18:30 ET:** Conversational voice waits for the shared generation slot (up to 180s) instead of failing busy against concurrent text; `ABBEY_VOICE_AUTOJOIN` is muted/self-deafened presence only (conversation still needs `/voice join consent:true`).
