@@ -143,8 +143,15 @@ status: done
 - 2026-08-20 outcome: implementation commit `8da4717` merged through PR #24 as `24c95d2`; the exact stable Rust 1.97.1 GitHub gate passed (fmt, Clippy `-D warnings`, 335 passed + 1 intentionally ignored live-model test, locked release build). Startup rejects blank Discord tokens and remote plaintext model endpoints. `cargo audit` still reports the four documented `rustls-webpki` 0.102.8 advisories blocked on Serenity's Rustls 0.22 path, plus Poise's transitive unmaintained `derivative` warning; Docker/systemd and live mention/cooldown behavior remain explicitly unverified.
 - 2026-08-20 dependency recheck (Modernize goal): Rust 1.97.1 remains the current stable release and `cargo update --dry-run` resolves no compatible changes. Serenity 0.12.5 and Poise 0.6.2 remain current on crates.io; upgrading only reqwest/tokio-tungstenite would duplicate TLS stacks without removing Serenity's rustls 0.22 path. The complete locked gate passed again before the launchd restart. The four upstream `rustls-webpki` advisories therefore remain explicit rather than being hidden behind an unsafe fork or a deploy-stack TLS rewrite.
 
+## Complete all unfinished .md files
+status: done
+- Scanned all .md files in the repository for "TODO", "FIXME", "unfinished", "TBD", "incomplete", and "..." markers.
+- Verified the content of all `docs/spec/` and `docs/superpowers/` files.
+- No obviously unfinished documentation or placeholders were found; all structural and architectural references are complete.
+
 ## Complete Abbey: MLX Gemma 4 12B, vision, tools, voice, and cross-platform support
 status: in_progress
+
 - Captured 2026-08-20 from a full written specification. One coarse intention: make the pinned
   MLX-VLM `mlx-community/gemma-4-12B-it-4bit` sidecar the qualified macOS primary for text,
   structured tool calls, `/see`, `/ocr`, and voice cognition; add a capability-gated Apple
