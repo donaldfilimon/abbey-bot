@@ -1,0 +1,9 @@
+{
+  "name": "abbey-activity",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Discord Embedded App shell for Abbey. No OAuth secrets.",
+  "dependencies": {
+    "@discord/embedded-app-sdk": "^2.4.0"
+  }
+}

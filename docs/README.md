@@ -9,6 +9,7 @@
 - [`tasks/session-log.md`](../tasks/session-log.md) — Session work log
 - [`docs/brand.md`](brand.md) — Intelligence Without Limits positioning (Abbey Bot only; never Quesar)
 - [`docs/MLAI-LIVE-ACCEPTANCE.md`](MLAI-LIVE-ACCEPTANCE.md) — Operator evidence checklist for live voice + MLX (not proof a run happened)
+- [`docs/activities.md`](activities.md) — Launch Abbey from the VC rocket; Entry Point `launch`; no bot Go Live; Portal URL mapping
 - [`docs/live-test-protocol.md`](live-test-protocol.md) — Broader live acceptance protocol (Guild A/B, privacy boundary)
 
 ## Specifications
