@@ -19,9 +19,11 @@ use crate::persona::Persona;
 /// strings are never public; callers may preserve only this exact literal.
 pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 
-/// The routed persona's operating description, transcribed verbatim from
-/// abi-ai's `ProfileContract::description` in
-/// `../abi/crates/abi-ai/src/identity.rs`.
+/// The routed persona's operating description.
+///
+/// Aviva and Abi are transcribed from abi-ai's `ProfileContract::description`
+/// in `../abi/crates/abi-ai/src/identity.rs`. Abbey follows Grok Bot Abbey
+/// rather than that sibling contract.
 ///
 /// Verbatim includes punctuation: Aviva's text carries a U+2014 em dash
 /// (`honest\u{2014}not`), written here with the same escape the source uses so
@@ -40,21 +42,23 @@ const fn contract_description(persona: Persona) -> &'static str {
     }
 }
 
-/// The routed persona's operating character, transcribed verbatim from
-/// abi-ai's `ProfileContract::response_suffix` in
-/// `../abi/crates/abi-ai/src/identity.rs`.
+/// The routed persona's operating character.
 ///
-/// abi-ai appends this text after the user's input when it assembles the model
-/// prompt. Here it is promoted to a standing system directive so the operating
-/// character governs the whole Discord turn rather than reading like more user
-/// text.
+/// Aviva and Abi are transcribed from abi-ai's `ProfileContract::response_suffix`
+/// in `../abi/crates/abi-ai/src/identity.rs`. Abbey's line is Grok Bot Abbey's
+/// voice, not the abi-ai suffix.
+///
+/// abi-ai appends Aviva/Abi suffix text after the user's input when it
+/// assembles the model prompt. Here every persona's operating character is a
+/// standing system directive so it governs the whole Discord turn rather than
+/// reading like more user text.
 ///
 /// The companion `response_prefix` (`"Abbey: "`) is deliberately **not**
 /// transcribed: [`tidy_reply`] exists specifically to strip that echo from
 /// model output, so carrying it here would fight this module's own contract.
 ///
-/// Verbatim includes punctuation: Abbey's line opens with a U+2019 right single
-/// quotation mark in `I\u{2019}ll`, not an ASCII apostrophe. A test pins it.
+/// Abbey's line opens with a U+2019 right single quotation mark in `I\u{2019}ll`,
+/// not an ASCII apostrophe. A test pins it.
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
@@ -233,8 +237,8 @@ mod tests {
 
     #[test]
     fn abbeys_character_keeps_the_curly_apostrophe() {
-        // identity.rs writes `I\u{2019}ll` with a right single quotation mark;
-        // an ASCII apostrophe here would be a silent mis-transcription, the
+        // Abbey's line writes `I\u{2019}ll` with a right single quotation mark;
+        // an ASCII apostrophe here would be a silent voice regression, the
         // same failure mode the em-dash test below guards for Aviva.
         assert!(contract_character(Persona::Abbey).starts_with("I\u{2019}ll"));
         assert!(!contract_character(Persona::Abbey).contains('\''));
