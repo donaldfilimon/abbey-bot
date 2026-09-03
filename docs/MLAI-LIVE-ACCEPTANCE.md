@@ -1,3 +1,5 @@
+> **Update 2026-09-03 ~17:15 ET:** Staged mlx-vlm 0.6.15 + Gemma 4 12B 4-bit (`73bcf090…`) **does** force `probe_status` and streamed `MLX_READY`. After a tool *result*, the 4-bit checkpoint loops `<|channel>thought\n<channel|>` into `content` until `finish_reason=length`. JSON tool-body→mapping + chat_template mapping-before-sequence are **necessary** (string bodies render as `value:"{…}"`; dicts otherwise hit Jinja `sequence` and 500) but **do not** stop the loop. `--enable-thinking` / thinking-budget / generation-prompt experiments also failed. `:8282` stays unpublished. Ollama `http://127.0.0.1:11434` remains the reasoner. Installer now patches encoding at install time so a later checkpoint can reuse the path; smoke still fail-closes on `TOOL_CONTINUATION_READY`.
+>
 # MLAI live acceptance — remaining parity gaps
 
 > **Update 2026-09-03 ~16:30 ET:** Voice/sidecar operator path **#47** is on `main` (`dd9e6b4`) and live. Binary at `~/.local/libexec/abbey-bot/abbey-bot` matches release build; launchd `com.donaldfilimon.abbey-bot` PID 92752; log shows `operator env key presence (values withheld)` with all 10 expected keys present and `connected user=Abbey`. `/voice status` now reports sidecar 2s probe + loopback LLM line; join fails closed before the 10-minute sidecar prepare when the loopback LLM is missing. Plan docs **#48** also on `main` (`e329340`).
@@ -178,9 +180,9 @@ Required semantic smokes (`deploy/smoke-mlx-vlm.py`, run by `deploy/install-mlx-
 
 | Probe | Exact pass marker | Evidence today |
 |---|---|---|
-| Streamed text with terminal marker | reply exactly `MLX_READY` and stream `[DONE]` | **NO** — no live :8282; 06:38 ET preflight on ephemeral `:53952` logged `stream_closed_before_completion` after 2 tokens |
-| Forced tool call + exact arguments | one streamed `probe_status` with `{"marker":"ready"}`, finish `tool_calls` | **NO** |
-| Tool-result continuation | final text exactly `TOOL_CONTINUATION_READY` | **NO** |
+| Streamed text with terminal marker | reply exactly `MLX_READY` and stream `[DONE]` | **PASS on staged ephemeral** (after #50 null `tool_calls` skip). **NO** published `:8282`. |
+| Forced tool call + exact arguments | one streamed `probe_status` with `{"marker":"ready"}`, finish `tool_calls` | **PASS on staged ephemeral**. **NO** published `:8282`. |
+| Tool-result continuation | final text exactly `TOOL_CONTINUATION_READY` | **FAIL** — 4-bit Gemma loops `<|channel>thought` into content until `finish_reason=length`. Encoding patches + `--enable-thinking` do not clear it. |
 | Color/scene vision fixture | exactly `red square, blue circle` | **NO** |
 | OCR fixture | exact embedded `OCR_TEXT` | **NO** |
 | Offline restart from pinned snapshot `73bcf09092aa277861d5a191b989b666f7f32e8f` | installer offline bind + health after restart | **NO** published service |
@@ -203,7 +205,7 @@ Required semantic smokes (`deploy/smoke-mlx-vlm.py`, run by `deploy/install-mlx-
 | Ollama `gemma4:12b` and `gemma4:12b-mlx` | tags **present** on `:11434`. This is the portable OpenAI-compatible seam / Ollama runtime, **not** the Abbey MLX-VLM sidecar and **not** MLX tool/vision evidence |
 | FM self-test (historical 2026-08-21) | `text`/`structured_output`/`tools` pass; `vision`/`ocr` **fail closed**. Not this report’s MLX claim; do not advertise FM vision/OCR |
 
-**Fail closed:** MLX is **not** selected as the Mac primary. Do not announce multimodal Gemma, tool-calling, or `/see`/`/ocr` via MLX until `install-mlx-vlm-launchd.sh` publishes a healthy :8282 **and** the six semantic probes above pass on that exact snapshot.
+**Fail closed:** MLX is **not** selected as the Mac primary. Tool *calls* on this 4-bit snapshot are not enough — tool-*result* continuation still loops thought-channel tokens, so `install-mlx-vlm-launchd.sh` must not publish `:8282`. Do not point `ABBEY_BOT_LLM_ENDPOINT` at MLX-VLM. Ollama `:11434` remains the reasoner until a later checkpoint passes `TOOL_CONTINUATION_READY` on that exact snapshot together with the other semantic probes.
 
 ---
 
