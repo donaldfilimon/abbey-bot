@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status (2026-09-03 ET):** Task 1–2 done — #47 merged at `dd9e6b4`, live binary reinstalled, operator env presence logging live, MLX-Audio `:8181` 200. #50 landed (`c97b28a`) so staged MLX-VLM `MLX_READY` + forced `probe_status` pass. #51 landed (`073d7ac`) install-time tool JSON encoding patches; smoke still fail-closes on `TOOL_CONTINUATION_READY`. Tool-result continuation still loops Gemma 4 thought-channel tokens — `:8282` unpublished; Ollama stays the reasoner (Task 6). Task 3–4 remain Donald-gated.
+**Status (2026-09-03 ~17:50 ET):** Unblocked code path closed. Abbey live on `main` @ `98a498a` (#47–#55), binary SHA `69f20f8f…` (installed ~17:37 ET, PID 7970, connected as Abbey). MLX-Audio `:8181` 200; Ollama `:11434` reasoner; `:8282` unpublished (Task 6). CLAUDE.md/AGENTS.md live-ops mirrors landed (#55). WWW #44 closed as superseded (design-sync already on `apps/web`). Dependabot `rustls-webpki` still open: serenity `next` clears webpki but breaks `poise 0.6.2` (`client` feature); wait for coordinated crates.io bump. Task 3 Discord structure OK (no mass grant). Task 4 quesar still Hostinger parking (`byte/pixel.dns-parking.com`) until LB IP + Cloudflare.
 
 **Goal:** Close remaining unblocked Abbey/MLAI work after IWL, personality, Discord gap-fill, and MLX-Audio came up; leave human-gated DNS and live voice as explicit Donald steps.
 
@@ -98,7 +98,7 @@ Expected: mlai has IWL from WWW #42; abbey/abi brand docs present.
 **Files:**
 - Optional post: `#bot-ops` only if documenting policy, not mutating structure
 
-- [ ] **Step 1: API snapshot confirm no unsafe gaps**
+- [x] **Step 1: API snapshot confirm no unsafe gaps** (2026-09-03: Member/#help/#bot-ops present; no mutations)
 
 ```bash
 # Bot API GET roles/channels; token from .env never echoed
@@ -139,7 +139,7 @@ dig +short NS quesar.cloud
 
 ### Task 5: Plan document commit (optional)
 
-- [ ] **Step 1: Commit this plan on a docs branch**
+- [x] **Step 1: Commit this plan on a docs branch**
 
 ```bash
 cd ~/dev/active/abbey-bot
@@ -155,6 +155,16 @@ gh pr create --title "docs: residual ops plan 2026-09-03" --body "Tracks unblock
 
 ---
 
+
+### Task 7: Dependabot rustls-webpki (blocked on serenity+poise)
+
+**Files:** `Cargo.toml` / `Cargo.lock` (serenity 0.12.5 → tokio-tungstenite 0.21 → rustls-webpki 0.102.8)
+
+- [x] **Step 1: Root cause** — alert #4 high (and #1–#3) from serenity's tungstenite pin; parallel tree already has webpki 0.103.15.
+- [x] **Step 2: Probe serenity `next`** — `[patch]` to `serenity-rs/serenity@next` fails resolve: poise 0.6.2 needs feature `client` removed/renamed on next. Do not ship.
+- [ ] **Step 3: Revisit** when crates.io serenity (≥ tungstenite 0.28) + matching poise land together. Abbey does not use CRL verification today.
+
+---
 ### Task 6: MLX-VLM tool-continuation (blocked on 4-bit Gemma)
 
 **Files:**
