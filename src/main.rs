@@ -368,6 +368,12 @@ async fn main() -> Result<(), Error> {
                         );
                     }
                 }
+                // Spec (botarchitecture / discordbmapi): Online + Listening "for questions".
+                ctx.set_presence(
+                    Some(serenity::gateway::ActivityData::listening("for questions")),
+                    serenity::model::user::OnlineStatus::Online,
+                );
+                tracing::info!("presence set: Online, listening for questions");
                 let voice_autojoin = std::env::var("ABBEY_VOICE_AUTOJOIN")
                     .map(|value| value.trim() == "1")
                     .unwrap_or(false);

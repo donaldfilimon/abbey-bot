@@ -90,7 +90,7 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
     let scope = "discord:voice:self-test";
     let context = PersonaContext::empty();
     let _slot = state
-        .acquire_generation()
+        .acquire_generation_for_voice()
         .await
         .map_err(|error| error.to_string())?;
     let (answer, _) = generation::generate_without_delivery(
