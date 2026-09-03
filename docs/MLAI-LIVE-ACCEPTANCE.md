@@ -1,5 +1,8 @@
 # MLAI live acceptance — remaining parity gaps
 
+> **Update 2026-09-03 ~15:34 ET (post-checklist):** Launchd Abbey now has `ABBEY_BOT_LLM_*` + `ABBEY_VISION_*` (Ollama `http://127.0.0.1:11434/v1` / `gemma4:12b`) — generation backend **configured**. `ABBEY_VOICE_LOCAL_ENDPOINT` set. MLX-Audio **install in progress** (HF snapshot fetch); `:8181` still down until that finishes and `com.donaldfilimon.abbey-mlx-audio` loads. MLX-VLM still not loaded. Human 8/8 voice acceptance still required in Office Hours.
+
+
 **Date:** 2026-09-03 (America/New_York)  
 **Checkout:** `/Users/donaldfilimon/dev/active/abbey-bot`  
 **Git:** `main` @ `a0d5a669f085a3111f48148a398aa7974a0be8cc` (ahead of `origin/main` by 4; dirty `AGENTS.md` / `tasks/todo.md`)  
