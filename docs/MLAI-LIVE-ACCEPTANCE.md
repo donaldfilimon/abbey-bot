@@ -1,6 +1,10 @@
 # MLAI live acceptance — remaining parity gaps
 
-> **Update 2026-09-03 ~15:56 ET:** MLX-Audio **live** — launchd `com.donaldfilimon.abbey-mlx-audio` on `127.0.0.1:8181`. Readiness is `GET /` or `GET /v1/models` (mlx-audio 0.5.0 has **no** `/health`). Whisper + Kokoro loaded; offline smoke passed. Install script now patches `webrtcvad` for setuptools 83 (`pkg_resources` removed).
+> **Update 2026-09-03 ~16:03 ET:** After `5a4a74a` reinstall, live OpenAPI includes `/health`. `GET /health` is HTTP 200 `{"status":"ok"}` (PID 21413, launchd runs=2). Stock mlx-audio 0.5.0 had no `/health` (404); the installer now shims `pkg_resources` for setuptools 83 and injects `/health`. Acceptance paths: `GET /`, `GET /health`, `GET /v1/models`, `POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/audio/voices?model=…`. `/voice status` still probes `/v1/models`.
+>
+> **Update 2026-09-03 ~16:05 ET (operator-path code):** `/voice join` checks loopback `ABBEY_BOT_LLM_ENDPOINT` *before* the 10-minute sidecar prepare. Sidecar-down / timeout errors name `127.0.0.1:8181`, `deploy/install-mlx-audio-launchd.sh`, setuptools, and `~/Library/Logs/abbey-bot/mlx-audio.log`. Mid-session connection-refused fails closed. `/voice status` probes sidecar `/v1/models` for 2s and reports loopback LLM presence. Launchd env key presence is logged at startup (values withheld); `deploy/check-launchd-env.sh` refuses a voice destination without an LLM endpoint. Barge-in / consent state machines were already complete in code; no human-in-VC automation was added.
+
+> **Update 2026-09-03 ~15:56 ET:** MLX-Audio **live** — launchd `com.donaldfilimon.abbey-mlx-audio` on `127.0.0.1:8181`. Readiness at that moment was `GET /` or `GET /v1/models` (stock mlx-audio 0.5.0 had **no** `/health`). Whisper + Kokoro loaded; offline smoke passed. Later `5a4a74a` injected `/health` and a `pkg_resources` shim (see 16:03 update).
 >
 > LLM: `ABBEY_BOT_LLM_ENDPOINT` must be host-only `http://127.0.0.1:11434` — `dialect.rs` already appends `/v1/chat/completions`. Vision keeps `/v1`. Generation backend configured; guild-scoped commands on MLAI `1275617641620443146`.
 >
@@ -9,7 +13,7 @@
 
 **Date:** 2026-09-03 (America/New_York)  
 **Checkout:** `/Users/donaldfilimon/dev/active/abbey-bot`  
-**Git:** `main` @ `a0d5a669f085a3111f48148a398aa7974a0be8cc` (ahead of `origin/main` by 4; dirty `AGENTS.md` / `tasks/todo.md`)  
+**Git:** `main` @ `5a4a74a633acf0bbf4c9c2316a4c99a9eab4f33a` (`origin/main`; webrtcvad/setuptools-83 + injected `/health`)  
 **Scope:** two remaining gaps only — (1) live voice acceptance, (2) MLX acceleration qualification. Fail closed where evidence is missing. Historical 2026-08-20/22 voice notes do **not** qualify this process, this binary, or this config.
 
 This file is an operator evidence checklist, not proof that the run happened. Do not treat source tests, provider logs, leftover venvs, Homebrew `mlx-lm`, Ollama `gemma4:12b-mlx`, or prior consent as substitutes.
@@ -44,20 +48,36 @@ Presence / booleans / ID match only. **No token or secret values.**
 
 Checkout extras (names only): `DISCORD_BOT_TOKEN` (secret withheld), `RUST_LOG`.
 
-### Running process vs sockets (2026-09-03 ~15:31 ET)
+### Running process vs sockets (2026-09-03 ~15:56 ET, MLX-Audio rechecked)
 
 | Item | Observed |
 |---|---|
 | `com.donaldfilimon.abbey-bot` | **loaded, running**, PID 14101, last exit 0, plist `~/Library/LaunchAgents/com.donaldfilimon.abbey-bot.plist` |
-| `com.donaldfilimon.abbey-mlx-audio` | **not loaded** — `launchctl print gui/501/…` = service not found; no LaunchAgents plist |
+| `com.donaldfilimon.abbey-mlx-audio` | **loaded, running**, PID 21413 (runs=2), plist `~/Library/LaunchAgents/com.donaldfilimon.abbey-mlx-audio.plist` |
 | `com.donaldfilimon.abbey-mlx-vlm` | **not loaded** — same; no LaunchAgents plist |
-| TCP `127.0.0.1:8181` (Abbey MLX-Audio) | **not listening** |
+| TCP `127.0.0.1:8181` (Abbey MLX-Audio) | **listening** — `GET /` 200 welcome; `GET /health` 200 `{"status":"ok"}`; `GET /v1/models` 200 (whisper + Kokoro) |
 | TCP `127.0.0.1:8282` (Abbey MLX-VLM) | **not listening** |
 | TCP `127.0.0.1:11434` | Ollama listening (checkout LLM/vision target) |
 | TCP `127.0.0.1:8080` | Homebrew `homebrew.mxcl.mlx-lm` PID 1069 listening; `GET /v1/models` returned HTTP 200 with **empty body** — **not** Abbey's pinned VLM sidecar |
 | Managed log | `WARN no generation backend — Abbey answers honestly that she cannot` (twice: 15:28 ET and 15:31 ET) |
 | Command registration | managed log: `registered global commands — propagation can take up to an hour` because launchd env lacks `ABBEY_GUILD_ID` |
 | Gateway | connected as `Abbey`; at least one MLAI guild message handled (`guild=Some(1275617641620443146)`) |
+
+### MLX-Audio live API (2026-09-03 ~16:03 ET)
+
+Live `GET http://127.0.0.1:8181/openapi.json` paths (after installer `/health` inject):
+
+| Path | Methods | Live check |
+|---|---|---|
+| `/` | GET | HTTP 200 welcome JSON (`Welcome to the MLX Audio API server!`) |
+| `/v1/models` | GET, POST, DELETE | GET 200; ids `mlx-community/whisper-large-v3-turbo-asr-fp16`, `mlx-community/Kokoro-82M-bf16` |
+| `/v1/audio/speech` | POST | TTS (Kokoro); used by installer offline smoke |
+| `/v1/audio/transcriptions` | POST | STT (Whisper); used by installer offline smoke |
+| `/v1/audio/voices` | GET | 200 with `?model=mlx-community/Kokoro-82M-bf16` (`af_heart` present); bare GET is 400 |
+| `/v1/audio/separations` | POST | Present in OpenAPI; not part of Abbey STT/TTS acceptance |
+| `/health` | GET | HTTP 200 `{"status":"ok"}` — injected by `install-mlx-audio-launchd.sh` (stock 0.5.0 had none) |
+
+Installer `wait_for_health` now curls `/health`; STT/TTS load still POSTs `/v1/models`.
 
 Voice destination vs MLAI: **guild ID matches**. Channel is the single 19-digit ID in the launchd env. Historical 2026-08-20 notes called a prior presence target **Engineering**; this checklist does not re-publish the current snowflake. Confirm the locked channel with `/voice status` inside MLAI Community before joining.
 
@@ -69,11 +89,11 @@ Required lifecycle (todo + `docs/live-test-protocol.md` §4):
 **join `consent:true` → wake → barge-in → membership-close → resume → leave**  
 plus owner/admin `/voice verify start` / `report` with `observed: 8/8`, written `stop listening`, and a human audible witness. Source tests and historical consent are **not** substitutes.
 
-### Preconditions (currently failing)
+### Preconditions (MLX-Audio sidecar is up; human 8/8 and in-VC consent still failing)
 
 Do **not** start the human run until these are true. Otherwise join will fail closed (local-speech health up to 600s) or produce no spoken reply.
 
-1. Abbey MLX-Audio is installed, launchd-loaded, and healthy on `127.0.0.1:8181` (Whisper + Kokoro + `af_heart`). **Not true today.**
+1. Abbey MLX-Audio is installed, launchd-loaded, and serving on `127.0.0.1:8181` (Whisper + Kokoro + `af_heart`). **True for process/API today.** OpenAPI: `GET /`, `GET /health`, `GET /v1/models`, `POST /v1/audio/speech`, `POST /v1/audio/transcriptions`, `GET /v1/audio/voices?model=…`. Human 8/8 in Office Hours is still required.
 2. A loopback reasoning backend is configured **in the env the running process actually loads**. Launchd env has **no** `ABBEY_BOT_LLM_ENDPOINT`. **Not true today.**
 3. Donald (Manage Server for join/resume/status; owner/Administrator for verify) is **physically in** the launchd-locked MLAI voice channel. Remote activation is refused.
 4. Fresh unanimous consent from **everyone currently present**. Silence, history, and one person speaking for another do not count.
@@ -176,7 +196,7 @@ Required semantic smokes (`deploy/smoke-mlx-vlm.py`, run by `deploy/install-mlx-
 | `:8282` | **not listening** |
 | Leftover staging dirs `~/.local/libexec/abbey-bot/.mlx-vlm-venv.new.*` (four) | leftover install attempts; not a live service |
 | `~/Library/Logs/abbey-bot/mlx-vlm-preflight.log` | 2361 bytes, 06:38 ET: model loaded on temp port, `/health` 200, then streamed chat **failed** `stream_closed_before_completion` and the process shut down |
-| MLX-Audio install (`whisper-large-v3-turbo-asr-fp16`, `Kokoro-82M-bf16`, `af_heart`, `run-mlx-audio`, launchd) | **not installed** — share dir exists with empty `rollback/` only; no Hugging Face cache; `:8181` down |
+| MLX-Audio install (`whisper-large-v3-turbo-asr-fp16`, `Kokoro-82M-bf16`, `af_heart`, `run-mlx-audio`, launchd) | **installed and running** — `com.donaldfilimon.abbey-mlx-audio` PID 21413; `:8181` listening. Live `GET /health` 200; `GET /v1/models` lists both models; `GET /v1/audio/voices?model=mlx-community/Kokoro-82M-bf16` includes `af_heart`. Installer TTS/STT smoke already passed; live human 8/8 is still pending. |
 | Provider capability manifest | **none** under `~/.config/abbey-bot` or `~/.local/share/abbey-bot` |
 | Homebrew `mlx-lm` on `:8080` | running, **unqualified** for Abbey tools/vision; empty `/v1/models` body |
 | Ollama `gemma4:12b` and `gemma4:12b-mlx` | tags **present** on `:11434`. This is the portable OpenAI-compatible seam / Ollama runtime, **not** the Abbey MLX-VLM sidecar and **not** MLX tool/vision evidence |
@@ -186,9 +206,19 @@ Required semantic smokes (`deploy/smoke-mlx-vlm.py`, run by `deploy/install-mlx-
 
 ---
 
+## Operator path when the sidecar is down or recovering
+
+Sidecar is live as of ~15:56 ET. If it dies or is still loading, do **not** start the 8/8 human run:
+
+1. `/voice status` in MLAI Community. Expect mode `local`, sidecar listening or a 2s down/timeout line, and loopback LLM named as configured or missing.
+2. If LLM is missing: it is missing from `~/.config/abbey-bot/env` (not checkout `.env`). `deploy/check-launchd-env.sh` / `deploy/install-launchd.sh` refuse a voice destination without `ABBEY_BOT_LLM_ENDPOINT`.
+3. If `:8181` is down: `deploy/install-mlx-audio-launchd.sh` (setuptools 83; `pkg_resources` shim for webrtcvad 2.0.10; injects `/health`). Probe `GET /health`, `GET /`, or `GET /v1/models`. Log: `~/Library/Logs/abbey-bot/mlx-audio.log`.
+4. `/voice join consent:true` fails closed immediately on connection-refused (no 10-minute hang for a missing LLM or a down TCP port). A sidecar that is up but still loading Whisper/Kokoro may still take up to 10 minutes; `/voice status` is the probe, not a second join.
+5. If the sidecar dies mid-session, capture stops (failed-safe). Resume only after `/voice status` shows the sidecar listening **and** fresh consent.
+
 ## Operator runbook after blockers are cleared
 
-Only after MLX-Audio is healthy on :8181, MLX-VLM smokes pass on :8282 (if that is the chosen reasoner), and the **launchd** env contains both voice IDs and a loopback LLM endpoint:
+Only after MLX-Audio is serving on :8181 (OpenAPI `GET /health` or `GET /` + `GET /v1/models`), MLX-VLM smokes pass on :8282 (if that is the chosen reasoner), and the **launchd** env contains both voice IDs and a loopback LLM endpoint:
 
 1. Restart only via the atomic installer / launchd path; do not mix checkout `.env` with `~/.config/abbey-bot/env` by hand in a way that drops voice or LLM.
 2. Prefer setting `ABBEY_GUILD_ID=1275617641620443146` in the launchd env so `/voice` re-registers instantly in MLAI instead of waiting on global propagation.
