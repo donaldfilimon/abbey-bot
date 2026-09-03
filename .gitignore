@@ -14,3 +14,4 @@ tasks/session-log.md
 
 # Agent scratch (superpowers brainstorm output), not source
 .superpowers/
+.playwright-mcp/

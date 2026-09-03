@@ -7,11 +7,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use super::manifest::{
+    FOUNDATION_MODELS_PROVIDER_ID, ManifestDocument, ManifestError, ProviderIdentityHashes,
+    QualificationStatus, production_tool_schema_sha256, read_manifest, sha256_bytes,
+};
 use super::{FmConfig, ProviderCapabilities};
 
 pub const QUALIFICATION_VERSION: u32 = 1;
 pub const FIXTURE_VERSION: &str = "abbey-provider-fixtures-v1";
-const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -271,30 +274,15 @@ pub fn primary_identity(endpoint: String, model: String) -> Result<ProviderIdent
     })
 }
 
-fn validate_owner_only_regular_file(path: &Path) -> Result<std::fs::Metadata, String> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|_| "ABBEY_FM_CAPABILITY_MANIFEST is missing or unreadable".to_string())?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("ABBEY_FM_CAPABILITY_MANIFEST must be a regular file, not a symlink".into());
-    }
-    if metadata.len() > MAX_MANIFEST_BYTES {
-        return Err("ABBEY_FM_CAPABILITY_MANIFEST exceeds the 256 KiB limit".into());
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        unsafe extern "C" {
-            fn geteuid() -> u32;
-        }
-        if metadata.mode() & 0o077 != 0 {
-            return Err("ABBEY_FM_CAPABILITY_MANIFEST must not be group- or world-readable".into());
-        }
-        // SAFETY: `geteuid` takes no arguments and has no preconditions.
-        if metadata.uid() != unsafe { geteuid() } {
-            return Err("ABBEY_FM_CAPABILITY_MANIFEST must be owned by the running user".into());
-        }
-    }
-    Ok(metadata)
+pub fn fm_manifest_identity(config: &FmConfig) -> Result<ProviderIdentityHashes, String> {
+    Ok(ProviderIdentityHashes {
+        abbey_binary_sha256: current_binary_sha256()?,
+        provider_binary_sha256: Some(file_sha256(&config.cli)?),
+        model_sha256: None,
+        os_sha256: Some(sha256_bytes(current_os_build()?.as_bytes())),
+        tool_schema_sha256: production_tool_schema_sha256().map_err(|error| error.to_string())?,
+        sandbox_sha256: None,
+    })
 }
 
 pub fn verify_fm_manifest(
@@ -306,11 +294,16 @@ pub fn verify_fm_manifest(
             "PCC remains intentionally unqualified; use ABBEY_FM_MODE=system or disable FM".into(),
         );
     }
-    validate_owner_only_regular_file(path)?;
-    let bytes = std::fs::read(path)
-        .map_err(|_| "ABBEY_FM_CAPABILITY_MANIFEST is unreadable".to_string())?;
-    let report: QualificationReport = serde_json::from_slice(&bytes)
-        .map_err(|_| "ABBEY_FM_CAPABILITY_MANIFEST is malformed".to_string())?;
+    match read_manifest(path).map_err(render_fm_manifest_error)? {
+        ManifestDocument::LegacyV1(report) => verify_legacy_fm_report(&report, config),
+        ManifestDocument::V2(manifest) => verify_v2_fm_manifest(&manifest, config),
+    }
+}
+
+fn verify_legacy_fm_report(
+    report: &QualificationReport,
+    config: &FmConfig,
+) -> Result<VerifiedFmCapabilities, String> {
     if report.version != QUALIFICATION_VERSION
         || report.fixture_version != FIXTURE_VERSION
         || report
@@ -375,6 +368,76 @@ pub fn verify_fm_manifest(
     Ok(VerifiedFmCapabilities { server, cli })
 }
 
+fn verify_v2_fm_manifest(
+    manifest: &super::manifest::ProviderManifest,
+    config: &FmConfig,
+) -> Result<VerifiedFmCapabilities, String> {
+    let provider_id = super::ProviderId::parse(FOUNDATION_MODELS_PROVIDER_ID)
+        .map_err(|_| "the Foundation Models provider identity is invalid".to_string())?;
+    let required = ProviderCapabilities {
+        text: true,
+        streaming: config.endpoint.is_some(),
+        structured_output: true,
+        tools: true,
+        vision: false,
+        ocr: false,
+    };
+    let record = manifest
+        .exact_qualified_record(
+            &provider_id,
+            super::ProviderClass::OsManagedLocal,
+            &fm_manifest_identity(config)?,
+            required,
+        )
+        .map_err(render_fm_manifest_error)?;
+    if !matches!(record.qualification_status, QualificationStatus::Qualified) {
+        return Err(
+            "ABBEY_FM_CAPABILITY_MANIFEST does not record a successful FM qualification".into(),
+        );
+    }
+
+    let qualified = record.declared_capabilities.as_provider_capabilities();
+    let cli = ProviderCapabilities {
+        streaming: false,
+        ..qualified
+    };
+    let server = config.endpoint.as_ref().map(|_| ProviderCapabilities {
+        text: true,
+        streaming: true,
+        structured_output: false,
+        tools: false,
+        vision: false,
+        ocr: false,
+    });
+    Ok(VerifiedFmCapabilities { server, cli })
+}
+
+fn render_fm_manifest_error(error: ManifestError) -> String {
+    match error {
+        #[cfg(unix)]
+        ManifestError::WrongMode => {
+            "ABBEY_FM_CAPABILITY_MANIFEST must not be group- or world-readable and must have mode 0600"
+                .to_string()
+        }
+        #[cfg(unix)]
+        ManifestError::WrongOwner => {
+            "ABBEY_FM_CAPABILITY_MANIFEST must be owned by the running user".to_string()
+        }
+        #[cfg(unix)]
+        ManifestError::Symlink | ManifestError::NotRegularFile => {
+            "ABBEY_FM_CAPABILITY_MANIFEST must be a regular file, not a symlink".to_string()
+        }
+        ManifestError::Oversized => {
+            "ABBEY_FM_CAPABILITY_MANIFEST exceeds the 256 KiB limit".to_string()
+        }
+        ManifestError::Malformed => "ABBEY_FM_CAPABILITY_MANIFEST is malformed".to_string(),
+        ManifestError::SchemaMismatch | ManifestError::FixtureMismatch => {
+            "ABBEY_FM_CAPABILITY_MANIFEST uses a stale fixture or format version".to_string()
+        }
+        other => format!("ABBEY_FM_CAPABILITY_MANIFEST rejected: {other}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,6 +451,7 @@ mod tests {
 
     #[cfg(unix)]
     struct TestFiles {
+        root: PathBuf,
         cli: PathBuf,
         manifest: PathBuf,
     }
@@ -395,18 +459,18 @@ mod tests {
     #[cfg(unix)]
     impl TestFiles {
         fn new() -> Self {
-            use std::os::unix::fs::OpenOptionsExt as _;
+            use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 
             let serial = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir();
-            let cli = root.join(format!(
-                ".abbey-qualification-test-{}-{serial}-fm",
+            let root = std::env::temp_dir().join(format!(
+                ".abbey-qualification-test-{}-{serial}",
                 std::process::id()
             ));
-            let manifest = root.join(format!(
-                ".abbey-qualification-test-{}-{serial}.json",
-                std::process::id()
-            ));
+            let mut root_builder = std::fs::DirBuilder::new();
+            root_builder.mode(0o700);
+            root_builder.create(&root).unwrap();
+            let cli = root.join(format!("fm-{}-{serial}", std::process::id(),));
+            let manifest = root.join(format!("manifest-{}-{serial}.json", std::process::id(),));
             let mut cli_file = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -414,7 +478,11 @@ mod tests {
                 .open(&cli)
                 .unwrap();
             cli_file.write_all(b"synthetic fm executable").unwrap();
-            Self { cli, manifest }
+            Self {
+                root,
+                cli,
+                manifest,
+            }
         }
 
         fn config(&self) -> FmConfig {
@@ -459,8 +527,7 @@ mod tests {
     #[cfg(unix)]
     impl Drop for TestFiles {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.cli);
-            let _ = std::fs::remove_file(&self.manifest);
+            let _ = std::fs::remove_dir_all(&self.root);
         }
     }
 
@@ -488,6 +555,34 @@ mod tests {
                 vision_identity: Some(fm_identity(config).unwrap()),
                 capabilities: passing,
             },
+        }
+    }
+
+    #[cfg(unix)]
+    fn successful_v2_fm_record(config: &FmConfig) -> super::super::ProviderRecord {
+        super::super::ProviderRecord {
+            version: super::super::PROVIDER_MANIFEST_VERSION,
+            fixture_version: FIXTURE_VERSION.to_string(),
+            provider_id: super::super::ProviderId::parse(FOUNDATION_MODELS_PROVIDER_ID).unwrap(),
+            provider_class: super::super::ProviderClass::OsManagedLocal,
+            identity: fm_manifest_identity(config).unwrap(),
+            declared_capabilities: super::super::DeclaredCapabilities {
+                text: true,
+                streaming: false,
+                structured_output: true,
+                tools: true,
+                vision: true,
+                ocr: true,
+            },
+            isolation_capabilities: super::super::QualifiedIsolation {
+                environment_cleared: true,
+                absolute_no_shell_execution: true,
+                process_tree_contained: false,
+                private_runtime_state: true,
+                loopback_only: false,
+                sandbox_attested: false,
+            },
+            qualification_status: QualificationStatus::Qualified,
         }
     }
 
@@ -562,6 +657,30 @@ mod tests {
         std::fs::set_permissions(&files.manifest, std::fs::Permissions::from_mode(0o644)).unwrap();
         let error = verify_fm_manifest(&files.manifest, &config).unwrap_err();
         assert!(error.contains("group- or world-readable"), "{error}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn v2_manifest_qualifies_the_same_exact_fm_identity_without_dynamic_eligibility() {
+        let files = TestFiles::new();
+        let config = files.config();
+        let record = successful_v2_fm_record(&config);
+        super::super::publish_v2(&files.manifest, &[record.clone()]).unwrap();
+
+        let verified = verify_fm_manifest(&files.manifest, &config).expect("exact v2 record");
+        assert!(verified.cli.text);
+        assert!(verified.cli.structured_output);
+        assert!(verified.cli.tools);
+        assert!(verified.cli.vision);
+        assert!(verified.cli.ocr);
+        assert!(!verified.cli.streaming);
+        assert!(verified.server.is_none());
+
+        let mut mismatched = record;
+        mismatched.identity.os_sha256 = Some("0".repeat(64));
+        super::super::publish_v2(&files.manifest, &[mismatched]).unwrap();
+        let error = verify_fm_manifest(&files.manifest, &config).unwrap_err();
+        assert!(error.contains("identity does not match"), "{error}");
     }
 
     #[test]

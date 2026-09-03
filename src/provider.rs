@@ -1,10 +1,11 @@
-//! Explicit Apple Foundation Models fallback and capability routing.
+//! Provider runtime contracts plus the compatible Foundation Models route.
 //!
-//! Foundation Models is never selected merely because `/usr/bin/fm` or a
-//! server happens to exist. The operator must select `system` or `pcc` and
-//! separately enable fallback. The HTTP server and `fm respond` CLI are also
-//! separate capabilities: the server is text-only here and can never inherit
-//! CLI tool capability.
+//! Generic provider configuration, discovery, qualification, and routing stay
+//! behind Abbey's existing turn and tool vocabulary. Foundation Models is
+//! never selected merely because `/usr/bin/fm` or a server happens to exist.
+//! The operator must select `system` or `pcc` and separately enable fallback.
+//! The HTTP server and `fm respond` CLI remain separate capabilities: the
+//! server is text-only here and can never inherit CLI tool capability.
 
 use std::ffi::OsString;
 use std::io::Write as _;
@@ -19,11 +20,34 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
+mod catalog;
+mod config;
+mod discovery;
+mod domain;
+mod manifest;
 mod qualification;
+pub use catalog::{CatalogPolicy, ProviderCatalog};
+pub use config::{
+    ProviderConfig, ProviderConfigError, ProviderCredential, ProviderSettings,
+};
+pub use discovery::{
+    DiscoveryLimits, DiscoveryRequest, DiscoveryResult, ExecutableIdentity, discover,
+};
+pub use domain::{
+    BlockedReason, DetectionState, DiscoveryBoundary, Eligibility, IsolationCapabilities,
+    ProviderClass, ProviderDescriptor, ProviderId, ProviderIdError, ProviderProvenance,
+    TemporaryUnavailableReason, TurnAdapter, TurnFuture,
+};
+pub use manifest::{
+    DeclaredCapabilities, ManifestDocument, ManifestError, PROVIDER_MANIFEST_VERSION,
+    ProviderIdentityHashes, ProviderManifest, ProviderRecord, QualificationStatus,
+    QualifiedIsolation, publish_v2, read_manifest,
+};
 pub use qualification::{
     CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, ProbeStatus, ProviderEvidence,
     ProviderIdentity, QUALIFICATION_VERSION, QualificationReport, QualificationTarget,
-    VerifiedFmCapabilities, fm_identity, primary_identity, unix_now, verify_fm_manifest,
+    VerifiedFmCapabilities, fm_identity, fm_manifest_identity, primary_identity, unix_now,
+    verify_fm_manifest,
 };
 
 const DEFAULT_FM_CLI: &str = "/usr/bin/fm";
