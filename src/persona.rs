@@ -17,7 +17,9 @@ pub enum Persona {
 impl Persona {
     pub const fn register(self) -> &'static str {
         match self {
-            Self::Abbey => "warm, sharp friend: result-first, clear and direct, honest about uncertainty",
+            Self::Abbey => {
+                "warm, sharp friend: result-first, clear and direct, honest about uncertainty"
+            }
             Self::Aviva => "concise direct expert: answer, assumptions, next action",
             Self::Abi => "orchestration, reasoning, policy, risk, and routing",
         }
@@ -25,7 +27,9 @@ impl Persona {
 
     pub const fn handles(self) -> &'static str {
         match self {
-            Self::Abbey => "everyday help, teaching, ops, coding, and anything that needs warmth plus depth",
+            Self::Abbey => {
+                "everyday help, teaching, ops, coding, and anything that needs warmth plus depth"
+            }
             Self::Aviva => "urgent execution, precise fixes, and deliberately terse answers",
             Self::Abi => "explicit system orchestration, governance, routing, and risk review",
         }

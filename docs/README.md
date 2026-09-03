@@ -7,6 +7,9 @@
 - [`tasks/goals.md`](../tasks/goals.md) — Authoritative ledger (12 goals, 8 done / 4 in_progress)
 - [`tasks/todo.md`](../tasks/todo.md) — Granular task checklist with live acceptance gates
 - [`tasks/session-log.md`](../tasks/session-log.md) — Session work log
+- [`docs/brand.md`](brand.md) — Intelligence Without Limits positioning (Abbey Bot only; never Quesar)
+- [`docs/MLAI-LIVE-ACCEPTANCE.md`](MLAI-LIVE-ACCEPTANCE.md) — Operator evidence checklist for live voice + MLX (not proof a run happened)
+- [`docs/live-test-protocol.md`](live-test-protocol.md) — Broader live acceptance protocol (Guild A/B, privacy boundary)
 
 ## Specifications
 

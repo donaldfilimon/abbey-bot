@@ -11,6 +11,7 @@ cargo fmt --all -- --check
 
 echo "== deployment and privacy validation =="
 sh -n deploy/install-launchd.sh
+sh -n deploy/check-launchd-env.sh
 sh -n deploy/install-mlx-audio-launchd.sh
 sh -n deploy/install-mlx-vlm-launchd.sh
 sh -n deploy/run-mlx-audio.sh
@@ -22,6 +23,9 @@ python3 deploy/check-python-locks.py \
   deploy/mlx-audio-build-constraints.txt
 python3 deploy/test-configure-mlx-primary.py
 python3 deploy/test-publish-provider-qualification.py
+python3 deploy/test-check-launchd-env.py
+python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
+python3 deploy/test-patch-mlx-vlm-tool-encoding.py
 python3 scripts/check-privacy.py
 python3 scripts/test-check-abbey-contracts.py
 python3 scripts/check-abbey-contracts.py

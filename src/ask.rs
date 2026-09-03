@@ -227,9 +227,7 @@ mod tests {
         // Abbey's canonical character line is the one that makes her Abbey
         // rather than a generic assistant; losing it would be a silent
         // personality regression that no other assertion here would catch.
-        assert!(
-            contract_character(Persona::Abbey).contains("lead with the answer")
-        );
+        assert!(contract_character(Persona::Abbey).contains("lead with the answer"));
         assert!(contract_character(Persona::Abbey).contains("when I\u{2019}m not sure"));
     }
 

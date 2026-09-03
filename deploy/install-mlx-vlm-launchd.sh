@@ -18,6 +18,7 @@ PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 RUNNER_SRC=deploy/run-mlx-vlm.sh
 SMOKE_SRC=deploy/smoke-mlx-vlm.py
 REQUIREMENTS=deploy/mlx-vlm-requirements.txt
+PATCH_SRC=deploy/patch-mlx-vlm-tool-encoding.py
 INSTALL_DIR="$HOME/.local/libexec/abbey-bot"
 RUNNER_DST="$INSTALL_DIR/run-mlx-vlm"
 VENV_DIR="$INSTALL_DIR/mlx-vlm-venv"
@@ -496,7 +497,7 @@ if [ "$MODE" = install ]; then
     echo "/usr/sbin/lsof is required to bind acceptance to one server process" >&2
     exit 1
   fi
-  for required in "$PLIST_SRC" "$RUNNER_SRC" "$SMOKE_SRC" "$REQUIREMENTS"; do
+  for required in "$PLIST_SRC" "$RUNNER_SRC" "$SMOKE_SRC" "$REQUIREMENTS" "$PATCH_SRC"; do
     if [ ! -f "$required" ]; then
       echo "missing required deployment file: $required" >&2
       exit 1
@@ -571,6 +572,9 @@ VENV_STAGE=$(mktemp -d "$INSTALL_DIR/.mlx-vlm-venv.new.XXXXXX")
 "$UV_BIN" pip install --python "$VENV_STAGE/bin/python" \
   --require-hashes --only-binary=:all: --requirement "$REQUIREMENTS"
 
+echo "== patch mlx-vlm tool JSON encoding for Gemma 4 =="
+"$VENV_STAGE/bin/python" "$PATCH_SRC" --apply-installed
+
 echo "== cache and verify exact Gemma 4 revision =="
 HF_HOME="$CACHE_DIR" \
 HF_HUB_CACHE="$CACHE_DIR/hub" \
@@ -596,6 +600,9 @@ if main_ref.read_text(encoding="utf-8") != expected:
     raise SystemExit(f"failed to pin the offline default ref for {model}")
 print(f"verified {model}@{expected}")
 '
+
+echo "== patch Gemma 4 chat_template mapping-before-sequence =="
+"$VENV_STAGE/bin/python" "$PATCH_SRC" --chat-template "$MODEL_DIR/chat_template.jinja"
 
 echo "== offline staged text, tool-loop, and vision smoke =="
 SMOKE_PORT=$("$VENV_STAGE/bin/python" -c '

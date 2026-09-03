@@ -243,8 +243,14 @@ class Client:
                             fail("MLX-VLM streamed a non-string finish reason")
                         if type(reason) is str:
                             finish_reason = reason
-                    if "tool_calls" in delta:
-                        merge_streamed_tool_deltas(calls, delta["tool_calls"])
+                    # mlx-vlm 0.6.x pydantic-dumps ChatMessage with
+                    # "tool_calls": null on plain-text deltas. Treat null the
+                    # same as omitted (OpenAI clients do too). Closing the HTTP
+                    # stream on that null is what produced
+                    # stream_closed_before_completion after two tokens.
+                    tool_calls = delta.get("tool_calls")
+                    if tool_calls is not None:
+                        merge_streamed_tool_deltas(calls, tool_calls)
         except (urllib.error.HTTPError, OSError, json.JSONDecodeError) as error:
             fail(f"MLX-VLM streamed chat failed: {error}")
         if not saw_done:
