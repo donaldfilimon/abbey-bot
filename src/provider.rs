@@ -27,9 +27,7 @@ mod domain;
 mod manifest;
 mod qualification;
 pub use catalog::{CatalogPolicy, ProviderCatalog};
-pub use config::{
-    ProviderConfig, ProviderConfigError, ProviderCredential, ProviderSettings,
-};
+pub use config::{ProviderConfig, ProviderConfigError, ProviderCredential, ProviderSettings};
 pub use discovery::{
     DiscoveryLimits, DiscoveryRequest, DiscoveryResult, ExecutableIdentity, discover,
 };

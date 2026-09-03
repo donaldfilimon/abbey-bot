@@ -95,11 +95,7 @@ async fn multiple_real_candidates_are_marked_ambiguous_without_execution() {
     write_executable(&first, &body);
     write_executable(&second, &body);
 
-    let result = discover(
-        request(vec![first, second]),
-        DiscoveryLimits::default(),
-    )
-    .await;
+    let result = discover(request(vec![first, second]), DiscoveryLimits::default()).await;
     assert_eq!(result.descriptor().detection, DetectionState::Ambiguous);
     assert!(!sentinel.exists(), "ambiguous candidates must not execute");
 }
@@ -165,10 +161,7 @@ fn validated_settings_map_to_safe_boundary_shapes_without_copying_values() {
         ProviderCapabilities::text(),
         IsolationCapabilities::default(),
     );
-    assert_eq!(
-        hybrid.discovery,
-        DiscoveryBoundary::ExactBinaryAndEndpoint
-    );
+    assert_eq!(hybrid.discovery, DiscoveryBoundary::ExactBinaryAndEndpoint);
 
     let remote = DiscoveryRequest::from_settings(
         config
