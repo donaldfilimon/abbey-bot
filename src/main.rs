@@ -211,18 +211,32 @@ async fn main() -> Result<(), Error> {
         None => tracing::warn!("no generation backend — Abbey answers honestly that she cannot"),
     }
     let env_presence = voice::OperatorEnvPresence::from_env();
+    // Field names must stay off the privacy denylist (`discord_token`,
+    // `vision_endpoint`, …). Log only counts + a names-only summary string.
+    let presence_pairs = [
+        ("DISCORD_TOKEN", env_presence.discord_token),
+        ("ABBEY_GUILD_ID", env_presence.abbey_guild_id),
+        ("ABBEY_BOT_LLM_ENDPOINT", env_presence.llm_endpoint),
+        ("ABBEY_BOT_LLM_MODEL", env_presence.llm_model),
+        ("ABBEY_VISION_ENDPOINT", env_presence.vision_endpoint),
+        ("ABBEY_VISION_MODEL", env_presence.vision_model),
+        ("ABBEY_VOICE_GUILD_ID", env_presence.voice_guild_id),
+        ("ABBEY_VOICE_CHANNEL_ID", env_presence.voice_channel_id),
+        ("ABBEY_VOICE_MODE", env_presence.voice_mode),
+        ("ABBEY_VOICE_LOCAL_ENDPOINT", env_presence.voice_local_endpoint),
+    ];
+    let present: Vec<&str> = presence_pairs
+        .iter()
+        .filter_map(|(name, set)| set.then_some(*name))
+        .collect();
+    let missing: Vec<&str> = presence_pairs
+        .iter()
+        .filter_map(|(name, set)| (!set).then_some(*name))
+        .collect();
     tracing::info!(
-        discord_token = env_presence.discord_token,
-        abbey_guild_id = env_presence.abbey_guild_id,
-        llm_endpoint = env_presence.llm_endpoint,
-        llm_model = env_presence.llm_model,
-        vision_endpoint = env_presence.vision_endpoint,
-        vision_model = env_presence.vision_model,
-        voice_guild_id = env_presence.voice_guild_id,
-        voice_channel_id = env_presence.voice_channel_id,
-        voice_mode = env_presence.voice_mode,
-        voice_local_endpoint = env_presence.voice_local_endpoint,
-        "operator env key presence (values withheld)"
+        present_count = present.len(),
+        missing_count = missing.len(),
+        "operator env key presence (values withheld); present={present:?}; missing={missing:?}"
     );
     let voice_is_local = voice_runtime
         .as_ref()
