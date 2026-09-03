@@ -5,14 +5,13 @@
 //! (answer, failure, or no backend at all) into the reply text Discord posts —
 //! every one of which passes through `clamp_message` in the command layer.
 //!
-//! Aviva and Abi remain a **transcription, not a dependency**, of abi-ai
-//! (`../abi/crates/abi-ai/src/identity.rs`, `profile_contract`). abbey-bot
-//! deliberately does not take the sibling path dependency — it would break the
-//! second live clone's build (see the 2026-08-10 AI-backend proposal).
-//!
-//! Discord Abbey now follows Grok Bot Abbey (warm, sharp friend; result-first;
-//! honest) rather than that sibling `ProfileContract`, so Abbey will drift from
-//! abi-ai until that crate is updated separately.
+//! The persona text is a **transcription, not a dependency**. The canonical
+//! abi-ai contracts live in `../abi/crates/abi-ai/src/identity.rs`
+//! (`profile_contract`); abbey-bot deliberately does not take the sibling path
+//! dependency. **Abbey\u{2019}s Discord voice (2026-09-03) follows Donald\u{2019}s
+//! Grok Bot Abbey** — warm, sharp, result-first — and may intentionally drift
+//! from abi-ai until that tree is updated to match. Aviva/Abi remain
+//! transcribed from abi-ai.
 
 use crate::persona::Persona;
 
@@ -32,7 +31,7 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 const fn contract_description(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "Warm, sharp friend \u{2014} not a help desk. Technical range plus emotional intelligence. Leads with the result, matches the user\u{2019}s length, acts on ordinary work without asking permission, and reports blockers plainly. Honest about uncertainty; never condescending; no canned politeness or internals dumps."
+            "Warm, sharp friend and default voice — not a help desk. Clear and direct with contractions; leads with the result; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t — no AGI claims, unverified benchmarks, or Quesar features dressed up as the bot."
         }
         Persona::Aviva => {
             "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, removes unnecessary softening, identifies weak assumptions, prefers concrete actions, and communicates uncertainty plainly. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety."
@@ -63,7 +62,7 @@ const fn contract_description(persona: Persona) -> &'static str {
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "I\u{2019}ll lead with the result \u{2014} warm, sharp, no help-desk fluff. If I\u{2019}m not sure, I\u{2019}ll say so."
+            "I\u{2019}ll lead with the answer, stay warm and direct, and say when I\u{2019}m not sure instead of bluffing."
         }
         Persona::Aviva => "Leading with the concrete answer, assumptions, and next action.",
         Persona::Abi => "Evaluating intent, risk, context, and the appropriate response mode.",
@@ -229,14 +228,11 @@ mod tests {
             let prompt = system_prompt(persona);
             assert!(prompt.contains(contract_character(persona)), "{prompt}");
         }
-        // Abbey's Grok Bot voice is the one that makes her Abbey rather than a
-        // generic assistant; losing it would be a silent personality regression
-        // that no other assertion here would catch.
-        assert!(contract_character(Persona::Abbey).contains("warm, sharp"));
-        assert!(contract_character(Persona::Abbey).contains("no help-desk fluff"));
-        assert!(contract_character(Persona::Abbey).contains("not sure"));
-        assert!(contract_description(Persona::Abbey).contains("not a help desk"));
-        assert!(contract_description(Persona::Abbey).contains("Leads with the result"));
+        // Abbey's canonical character line is the one that makes her Abbey
+        // rather than a generic assistant; losing it would be a silent
+        // personality regression that no other assertion here would catch.
+        assert!(contract_character(Persona::Abbey).contains("lead with the answer"));
+        assert!(contract_character(Persona::Abbey).contains("when I\u{2019}m not sure"));
     }
 
     #[test]

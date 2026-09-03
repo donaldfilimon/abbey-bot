@@ -258,6 +258,66 @@ impl VoiceConfig {
     }
 }
 
+/// Names-only operator checklist for the env the running process actually loaded.
+/// Values are never stored; `Debug` is booleans only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperatorEnvPresence {
+    pub discord_token: bool,
+    pub abbey_guild_id: bool,
+    pub llm_endpoint: bool,
+    pub llm_model: bool,
+    pub vision_endpoint: bool,
+    pub vision_model: bool,
+    pub voice_guild_id: bool,
+    pub voice_channel_id: bool,
+    pub voice_mode: bool,
+    pub voice_local_endpoint: bool,
+}
+
+impl OperatorEnvPresence {
+    pub fn from_env() -> Self {
+        Self::from_get(|name| std::env::var(name).ok())
+    }
+
+    pub fn from_get(get: impl Fn(&str) -> Option<String>) -> Self {
+        let present = |name: &str| {
+            get(name)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .is_some()
+        };
+        Self {
+            discord_token: present("DISCORD_TOKEN"),
+            abbey_guild_id: present("ABBEY_GUILD_ID"),
+            llm_endpoint: present("ABBEY_BOT_LLM_ENDPOINT"),
+            llm_model: present("ABBEY_BOT_LLM_MODEL"),
+            vision_endpoint: present("ABBEY_VISION_ENDPOINT"),
+            vision_model: present("ABBEY_VISION_MODEL"),
+            voice_guild_id: present("ABBEY_VOICE_GUILD_ID"),
+            voice_channel_id: present("ABBEY_VOICE_CHANNEL_ID"),
+            voice_mode: present("ABBEY_VOICE_MODE"),
+            voice_local_endpoint: present("ABBEY_VOICE_LOCAL_ENDPOINT"),
+        }
+    }
+
+    /// Local conversational voice cannot work without a loopback LLM. Returning
+    /// `Some` means `/voice join` will fail closed for that reason.
+    #[must_use]
+    pub fn local_voice_llm_gap(
+        self,
+        voice_is_local: bool,
+        has_loopback_llm: bool,
+    ) -> Option<&'static str> {
+        if voice_is_local && !has_loopback_llm {
+            Some(
+                "local voice is configured but ABBEY_BOT_LLM_ENDPOINT is missing or not loopback — /voice join will fail closed before sidecar prepare",
+            )
+        } else {
+            None
+        }
+    }
+}
+
 fn validate_local_voice_platform() -> Result<(), String> {
     if cfg!(target_os = "macos") {
         Ok(())
@@ -357,7 +417,7 @@ fn validate_openai_endpoint_for_build(
 }
 
 fn default_instructions() -> String {
-    "You are Abbey, a warm, sharp friend in a live Discord voice channel, not a help desk. Lead with the result; speak naturally, clearly, and concisely. Let people finish, handle interruptions gracefully, never pretend you saw a screen or stream you were not explicitly given, and never claim an external action succeeded without evidence. If you are not sure, say so.".to_string()
+    "You are Abbey — a warm, sharp friend in a live Discord voice channel, not a help desk. Lead with the point, keep it short, use contractions, and skip filler. Let people finish; handle interruptions gracefully. Never pretend you saw a screen or stream you were not given, never claim an external action succeeded without evidence, and say when you\u{2019}re not sure.".to_string()
 }
 
 #[cfg(test)]
@@ -525,6 +585,25 @@ mod tests {
                 "production path accepted {endpoint}"
             );
         }
+    }
+
+    #[test]
+    fn operator_env_presence_withholds_values_and_flags_a_local_voice_llm_gap() {
+        let presence = OperatorEnvPresence::from_get(|name| match name {
+            "DISCORD_TOKEN" => Some("secret-must-not-appear".into()),
+            "ABBEY_VOICE_GUILD_ID" => Some("1".into()),
+            "ABBEY_VOICE_CHANNEL_ID" => Some("2".into()),
+            "ABBEY_BOT_LLM_ENDPOINT" => Some("   ".into()),
+            _ => None,
+        });
+        let rendered = format!("{presence:?}");
+        assert!(!rendered.contains("secret"));
+        assert!(presence.discord_token);
+        assert!(presence.voice_guild_id && presence.voice_channel_id);
+        assert!(!presence.llm_endpoint);
+        assert!(presence.local_voice_llm_gap(true, false).is_some());
+        assert!(presence.local_voice_llm_gap(true, true).is_none());
+        assert!(presence.local_voice_llm_gap(false, false).is_none());
     }
 
     #[test]

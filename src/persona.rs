@@ -1,6 +1,6 @@
 //! Canonical ABI persona routing, transcribed from `abi-ai`.
 //!
-//! Abbey is the warm, sharp friend and neutral default, Aviva is the concise
+//! Abbey is the warm, sharp default friend, Aviva is the concise
 //! direct expert, and ABI/Abi is the orchestration and governance layer. The
 //! weights, keyword scores, prefix matching, exact leading-name selector, and
 //! tie order mirror `../abi/crates/abi-ai/src/{identity,keywords,router}.rs`.
@@ -17,7 +17,9 @@ pub enum Persona {
 impl Persona {
     pub const fn register(self) -> &'static str {
         match self {
-            Self::Abbey => "warm, sharp friend: result-first, honest, never a help desk",
+            Self::Abbey => {
+                "warm, sharp friend: result-first, clear and direct, honest about uncertainty"
+            }
             Self::Aviva => "concise direct expert: answer, assumptions, next action",
             Self::Abi => "orchestration, reasoning, policy, risk, and routing",
         }
@@ -25,7 +27,9 @@ impl Persona {
 
     pub const fn handles(self) -> &'static str {
         match self {
-            Self::Abbey => "most technical, emotional, creative, and teaching conversations",
+            Self::Abbey => {
+                "everyday help, teaching, ops, coding, and anything that needs warmth plus depth"
+            }
             Self::Aviva => "urgent execution, precise fixes, and deliberately terse answers",
             Self::Abi => "explicit system orchestration, governance, routing, and risk review",
         }

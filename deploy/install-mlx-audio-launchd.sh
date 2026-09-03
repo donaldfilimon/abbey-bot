@@ -298,7 +298,7 @@ wait_for_health() {
   health_name=$3
   attempts=0
   until curl --noproxy '*' --fail --silent --show-error --max-time 2 \
-    "http://127.0.0.1:$health_port/health" >/dev/null 2>&1; do
+    "http://127.0.0.1:$health_port/v1/models" >/dev/null 2>&1; do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge "$health_attempts" ]; then
       echo "$health_name did not become healthy within $health_attempts seconds" >&2
@@ -654,63 +654,49 @@ echo "== install pinned MLX-Audio environment in sibling venv =="
   --build-constraint "$BUILD_CONSTRAINTS" \
   --requirement "$REQUIREMENTS"
 
-# setuptools==83.0.0 is already hash-pinned in the runtime lock (mlx-audio's
-# server extra wanted <81, which is the vulnerable range). setuptools 82+
-# removed pkg_resources, and webrtcvad 2.0.10 still imports it for __version__.
-# Drop a tiny shim into site-packages instead of downgrading setuptools, and
-# expose /health so loopback probes do not have to load /v1/models.
-echo "== restore pkg_resources shim and /health in staged venv =="
+# setuptools>=82 removed pkg_resources; webrtcvad 2.0.10 still imports it only
+# for __version__. Rewrite that prologue so the offline smoke can start.
+echo "== patch webrtcvad for setuptools without pkg_resources =="
 "$STAGE_VENV/bin/python" <<'PY'
 from pathlib import Path
 import sys
 
-site = (
+path = (
     Path(sys.prefix)
     / "lib"
     / f"python{sys.version_info.major}.{sys.version_info.minor}"
     / "site-packages"
+    / "webrtcvad.py"
 )
-
-try:
-    import pkg_resources  # noqa: F401
-except ModuleNotFoundError:
-    shim = site / "pkg_resources.py"
-    if shim.exists() or (site / "pkg_resources").exists():
-        raise SystemExit(f"pkg_resources is missing but {shim} already exists")
-    shim.write_text(
-        "from importlib.metadata import version as _version\n"
-        "\n"
-        "class Distribution:\n"
-        "    def __init__(self, version):\n"
-        "        self.version = version\n"
-        "\n"
-        "def get_distribution(name):\n"
-        "    return Distribution(_version(name))\n",
-        encoding="utf-8",
-    )
-    import pkg_resources  # noqa: F401
-
+text = path.read_text(encoding="utf-8")
+old = (
+    "import pkg_resources\n"
+    "\n"
+    "import _webrtcvad\n"
+    "\n"
+    '__author__ = "John Wiseman jjwiseman@gmail.com"\n'
+    '__copyright__ = "Copyright (C) 2016 John Wiseman"\n'
+    '__license__ = "MIT"\n'
+    "__version__ = pkg_resources.get_distribution('webrtcvad').version\n"
+)
+new = (
+    "import _webrtcvad\n"
+    "\n"
+    "try:\n"
+    "    from importlib.metadata import version as _dist_version\n"
+    "    __version__ = _dist_version('webrtcvad')\n"
+    "except Exception:\n"
+    '    __version__ = "2.0.10"\n'
+    "\n"
+    '__author__ = "John Wiseman jjwiseman@gmail.com"\n'
+    '__copyright__ = "Copyright (C) 2016 John Wiseman"\n'
+    '__license__ = "MIT"\n'
+)
+if old not in text:
+    raise SystemExit(f"webrtcvad.py no longer matches the expected pkg_resources prologue: {path}")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
 import webrtcvad
-
-server = site / "mlx_audio" / "server.py"
-text = server.read_text(encoding="utf-8")
-if '@app.get("/health")' not in text:
-    needle = "app = FastAPI()\n"
-    if text.count(needle) != 1:
-        raise SystemExit(f"{server} no longer has a unique FastAPI() assignment")
-    text = text.replace(
-        needle,
-        "app = FastAPI()\n\n\n"
-        '@app.get("/health")\n'
-        "def health() -> dict:\n"
-        '    return {"status": "ok"}\n',
-        1,
-    )
-    server.write_text(text, encoding="utf-8")
-
-print(f"pkg_resources={pkg_resources.__file__}")
-print(f"webrtcvad={webrtcvad.__version__}")
-print(f"health_route={server}")
+print(f"patched {path} (__version__={webrtcvad.__version__})")
 PY
 
 echo "== cache and verify exact model revisions in sibling cache =="

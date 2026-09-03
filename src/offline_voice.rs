@@ -501,6 +501,79 @@ pub fn decode_pcm16_wav(wav: &[u8]) -> Result<DecodedAudio, String> {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalSpeechFailureKind {
+    NotListening,
+    TimedOut,
+    Other,
+}
+
+fn looks_like_connect_failure(lower: &str) -> bool {
+    lower.contains("connection refused")
+        || lower.contains("error trying to connect")
+        || lower.contains("tcp connect error")
+        || lower.contains("connect error")
+        || lower.contains("network is unreachable")
+        || lower.contains("no route to host")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+}
+
+fn looks_like_timeout(lower: &str) -> bool {
+    lower.contains("timed out") || lower.contains("timeout")
+}
+
+/// Classify a local-speech HTTP/transport failure without leaking request bodies.
+#[must_use]
+pub fn classify_local_speech_failure(raw: &str) -> LocalSpeechFailureKind {
+    let lower = raw.to_ascii_lowercase();
+    if looks_like_connect_failure(&lower) {
+        LocalSpeechFailureKind::NotListening
+    } else if looks_like_timeout(&lower) {
+        LocalSpeechFailureKind::TimedOut
+    } else {
+        LocalSpeechFailureKind::Other
+    }
+}
+
+/// Connection-refused / reset: the sidecar is down. Timeouts are *not* included
+/// because a live Whisper/Kokoro load can exceed one turn without meaning :8181
+/// is gone.
+#[must_use]
+pub fn sidecar_is_unavailable(raw: &str) -> bool {
+    classify_local_speech_failure(raw) == LocalSpeechFailureKind::NotListening
+}
+
+#[must_use]
+pub fn local_speech_operator_message(
+    kind: LocalSpeechFailureKind,
+    endpoint: &str,
+    stage: &str,
+    raw: &str,
+) -> String {
+    match kind {
+        LocalSpeechFailureKind::NotListening => format!(
+            "MLX-Audio is not listening at {endpoint} ({stage}). Run deploy/install-mlx-audio-launchd.sh (setuptools; webrtcvad/pkg_resources). Log: ~/Library/Logs/abbey-bot/mlx-audio.log."
+        ),
+        LocalSpeechFailureKind::TimedOut => format!(
+            "MLX-Audio at {endpoint} timed out during {stage} (starting or loading Whisper/Kokoro). Retry /voice status; do not wait on this command."
+        ),
+        LocalSpeechFailureKind::Other => format!("{stage} at {endpoint} failed: {raw}"),
+    }
+}
+
+fn map_speech_http_error(endpoint: &str, stage: &str, error: reqwest::Error) -> String {
+    let raw = error.to_string();
+    let kind = if error.is_connect() {
+        LocalSpeechFailureKind::NotListening
+    } else if error.is_timeout() {
+        LocalSpeechFailureKind::TimedOut
+    } else {
+        classify_local_speech_failure(&raw)
+    };
+    local_speech_operator_message(kind, endpoint, stage, &raw)
+}
+
 #[derive(Clone)]
 pub struct MlxAudioClient {
     config: OfflineVoiceConfig,
@@ -522,13 +595,17 @@ impl MlxAudioClient {
         Ok(Self { config, http })
     }
 
+    fn map_error(&self, stage: &'static str, error: reqwest::Error) -> String {
+        map_speech_http_error(self.config.endpoint_display(), stage, error)
+    }
+
     pub async fn health(&self) -> Result<(), String> {
         let response = self
             .http
             .get(self.config.url("v1/models")?)
             .send()
             .await
-            .map_err(|e| format!("local speech service is unavailable: {e}"))?;
+            .map_err(|e| self.map_error("health", e))?;
         if response.status().is_success() {
             Ok(())
         } else {
@@ -557,7 +634,7 @@ impl MlxAudioClient {
                 .query(&[("model_name", model)])
                 .send()
                 .await
-                .map_err(|e| format!("loading local speech model {model} failed: {e}"))?;
+                .map_err(|e| self.map_error("model load", e))?;
             if !response.status().is_success() {
                 return Err(format!(
                     "loading local speech model {model} returned HTTP {}",
@@ -600,7 +677,7 @@ impl MlxAudioClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| format!("local speech recognition failed: {e}"))?;
+            .map_err(|e| self.map_error("speech recognition", e))?;
         let status = response.status();
         if response
             .content_length()
@@ -668,7 +745,7 @@ impl MlxAudioClient {
             }))
             .send()
             .await
-            .map_err(|e| format!("local speech synthesis failed: {e}"))?;
+            .map_err(|e| self.map_error("speech synthesis", e))?;
         let status = response.status();
         if response
             .content_length()
@@ -975,5 +1052,56 @@ mod tests {
         let client = MlxAudioClient::new(config).unwrap();
         let error = client.transcribe_wav(b"not a wave file").await.unwrap_err();
         assert!(error.contains("RIFF/WAVE"), "{error}");
+    }
+
+    #[test]
+    fn connect_failures_are_operator_not_listening_copy() {
+        let raw = "error sending request for url (http://127.0.0.1:8181/v1/models): error trying to connect: tcp connect error: Connection refused (os error 61)";
+        assert_eq!(
+            classify_local_speech_failure(raw),
+            LocalSpeechFailureKind::NotListening
+        );
+        assert!(sidecar_is_unavailable(raw));
+        let message = local_speech_operator_message(
+            LocalSpeechFailureKind::NotListening,
+            "http://127.0.0.1:8181/",
+            "health",
+            raw,
+        );
+        assert!(message.contains("not listening"));
+        assert!(message.contains("install-mlx-audio-launchd.sh"));
+        assert!(message.contains("setuptools"));
+        assert!(!message.contains("os error 61"));
+        assert!(
+            message.chars().count() <= 240,
+            "{}",
+            message.chars().count()
+        );
+    }
+
+    #[test]
+    fn timeouts_tell_the_operator_to_retry_status_not_wait_on_discord() {
+        let raw = "operation timed out";
+        assert_eq!(
+            classify_local_speech_failure(raw),
+            LocalSpeechFailureKind::TimedOut
+        );
+        assert!(
+            !sidecar_is_unavailable(raw),
+            "a slow Whisper/Kokoro load must not tear down an active session"
+        );
+        let message = local_speech_operator_message(
+            LocalSpeechFailureKind::TimedOut,
+            "http://127.0.0.1:8181/",
+            "health",
+            raw,
+        );
+        assert!(message.contains("timed out"));
+        assert!(message.contains("/voice status"));
+        assert!(
+            message.chars().count() <= 240,
+            "{}",
+            message.chars().count()
+        );
     }
 }

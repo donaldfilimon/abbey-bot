@@ -34,6 +34,7 @@ pub use verification::voice_verify;
 const INPUT_QUEUE_FRAMES: usize = 64;
 const OPENAI_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const LOCAL_HEALTH_TIMEOUT: Duration = Duration::from_secs(600);
+const SIDECAR_STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Clear this exact slow-start reservation on every return path. A newer
 /// request is unaffected because `finish_start_attempt` compares generations.
@@ -171,6 +172,16 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
 
     let local_runtime = match runtime.config.mode() {
         VoiceMode::Local => {
+            // Fail closed on the loopback LLM *before* the 10-minute sidecar
+            // prepare. A missing ABBEY_BOT_LLM_ENDPOINT must not look like a
+            // hung MLX-Audio install.
+            let backend = match select_local_backend(&ctx.data().state) {
+                Ok(backend) => backend,
+                Err(error) => {
+                    ctx.say(error).await?;
+                    return Ok(());
+                }
+            };
             let Some(config) = runtime.config.local().cloned() else {
                 ctx.say("Local speech configuration is incomplete.").await?;
                 return Ok(());
@@ -211,18 +222,12 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
                     return Ok(());
                 }
                 Err(_) => {
-                    ctx.say("Local speech models did not become ready within ten minutes; no audio was captured.")
+                    ctx.say("Local speech models did not become ready within ten minutes. If 127.0.0.1:8181 is down, run deploy/install-mlx-audio-launchd.sh and retry /voice status; no audio was captured.")
                         .await?;
                     return Ok(());
                 }
             }
-            match select_local_backend(&ctx.data().state) {
-                Ok(backend) => Some((client, backend)),
-                Err(error) => {
-                    ctx.say(error).await?;
-                    return Ok(());
-                }
-            }
+            Some((client, backend))
         }
         _ => None,
     };
@@ -874,8 +879,34 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         }
         VoiceBackendConfig::Disabled => "Speech models: none".into(),
     };
+    let sidecar = match runtime.config.local() {
+        Some(config) => match MlxAudioClient::new(config.clone()) {
+            Ok(client) => match tokio::time::timeout(SIDECAR_STATUS_TIMEOUT, client.health()).await
+            {
+                Ok(Ok(())) => format!(
+                    "Local speech sidecar: listening at `{}`",
+                    config.endpoint_display()
+                ),
+                Ok(Err(error)) => format!("Local speech sidecar: {}", public_error(&error)),
+                Err(_) => format!(
+                    "Local speech sidecar: not responding at `{}` within 2s (down or still loading Whisper/Kokoro)",
+                    config.endpoint_display()
+                ),
+            },
+            Err(error) => format!("Local speech sidecar: {}", public_error(&error)),
+        },
+        None => "Local speech sidecar: not used in this mode".into(),
+    };
+    let loopback_llm = if runtime.config.mode() == VoiceMode::Local {
+        match select_local_backend(&ctx.data().state) {
+            Ok(_) => "Loopback LLM: configured".into(),
+            Err(error) => format!("Loopback LLM: missing — {error}"),
+        }
+    } else {
+        "Loopback LLM: not required for this voice mode".into()
+    };
     ctx.say(format!(
-        "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
+        "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{}\n{}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
         runtime.config.mode().label(),
         snapshot.phase.label(),
         if snapshot.media_enabled { "open" } else { "closed" },
@@ -884,6 +915,8 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         snapshot.consent_epoch,
         snapshot.participant_count,
         speech_models,
+        sidecar,
+        loopback_llm,
         snapshot.dropped_input,
         snapshot.aborted_overruns,
         snapshot.barge_ins,
