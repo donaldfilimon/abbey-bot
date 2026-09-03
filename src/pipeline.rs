@@ -362,8 +362,8 @@ pub async fn handle<O: Outbound + Sync>(
             BotAction::Reply
         } else {
             let q = brain.q_values(&encoded);
-            let chosen =
-                BotAction::from_index(brain.select_action(&encoded)).unwrap_or(BotAction::Stay);
+            let chosen = BotAction::from_index(brain.select_action(&encoded))
+                .expect("DqnAgent::select_action returned out-of-range index");
             if let Some(stats) = brains.stats_mut(&scoped_guild) {
                 stats.record_decision(&encoded, &q, chosen);
             }

@@ -5,6 +5,11 @@
 //! clock, so the same input always yields the same state and stored replays stay
 //! valid across restarts.
 
+use std::ops::{
+    Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
+    RangeToInclusive,
+};
+
 use crate::brain::intent::Intent;
 
 /// What the bot may do in response to a message.
@@ -42,6 +47,243 @@ const LENGTH_CAP: usize = 400;
 /// Messages in the last five minutes beyond which channel heat saturates.
 const HEAT_CAP: u32 = 30;
 
+/// Named indices for the non-intent dimensions — replaces magic numbers.
+///
+/// Intent occupies `[0..9)` via [`Intent::index`]; the remaining nine slots are
+/// typed here so `s[9]` becomes `s[StateField::Reputation]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StateField {
+    Reputation = 9,
+    Length = 10,
+    MentionsBot = 11,
+    IsQuestion = 12,
+    HasImage = 13,
+    Sin = 14,
+    Cos = 15,
+    Heat = 16,
+    Sentiment = 17,
+}
+
+/// Newtype around the 18-float state vector — typed indexing and named accessors.
+///
+/// Derefs to `[f32]` so `&StateVector` coerces to `&[f32]` for `q_values` and
+/// `select_action`, and `to_vec()` / `len()` / slicing work without a wrapper
+/// method. `Index<StateField>` removes the `s[9]` magic.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StateVector(pub [f32; STATE_DIMENSIONS]);
+
+impl StateVector {
+    /// View as a slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &[f32] {
+        &self.0
+    }
+
+    /// View as a mutable slice.
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [f32] {
+        &mut self.0
+    }
+
+    /// Consume into the inner array.
+    #[must_use]
+    pub fn into_array(self) -> [f32; STATE_DIMENSIONS] {
+        self.0
+    }
+
+    #[must_use]
+    pub fn reputation(&self) -> f32 {
+        self[StateField::Reputation]
+    }
+
+    #[must_use]
+    pub fn length(&self) -> f32 {
+        self[StateField::Length]
+    }
+
+    #[must_use]
+    pub fn mentions_bot(&self) -> f32 {
+        self[StateField::MentionsBot]
+    }
+
+    #[must_use]
+    pub fn is_question(&self) -> f32 {
+        self[StateField::IsQuestion]
+    }
+
+    #[must_use]
+    pub fn has_image(&self) -> f32 {
+        self[StateField::HasImage]
+    }
+
+    #[must_use]
+    pub fn sin(&self) -> f32 {
+        self[StateField::Sin]
+    }
+
+    #[must_use]
+    pub fn cos(&self) -> f32 {
+        self[StateField::Cos]
+    }
+
+    #[must_use]
+    pub fn heat(&self) -> f32 {
+        self[StateField::Heat]
+    }
+
+    #[must_use]
+    pub fn sentiment(&self) -> f32 {
+        self[StateField::Sentiment]
+    }
+}
+
+impl Default for StateVector {
+    fn default() -> Self {
+        Self([0.0; STATE_DIMENSIONS])
+    }
+}
+
+impl Deref for StateVector {
+    type Target = [f32];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for StateVector {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl AsRef<[f32]> for StateVector {
+    fn as_ref(&self) -> &[f32] {
+        &self.0
+    }
+}
+
+impl AsMut<[f32]> for StateVector {
+    fn as_mut(&mut self) -> &mut [f32] {
+        &mut self.0
+    }
+}
+
+impl From<[f32; STATE_DIMENSIONS]> for StateVector {
+    fn from(arr: [f32; STATE_DIMENSIONS]) -> Self {
+        Self(arr)
+    }
+}
+
+impl From<StateVector> for [f32; STATE_DIMENSIONS] {
+    fn from(v: StateVector) -> Self {
+        v.0
+    }
+}
+
+impl Index<StateField> for StateVector {
+    type Output = f32;
+    fn index(&self, field: StateField) -> &Self::Output {
+        &self.0[field as usize]
+    }
+}
+
+impl IndexMut<StateField> for StateVector {
+    fn index_mut(&mut self, field: StateField) -> &mut Self::Output {
+        &mut self.0[field as usize]
+    }
+}
+
+impl Index<usize> for StateVector {
+    type Output = f32;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl IndexMut<usize> for StateVector {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+impl Index<Range<usize>> for StateVector {
+    type Output = [f32];
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.0[range]
+    }
+}
+
+impl IndexMut<Range<usize>> for StateVector {
+    fn index_mut(&mut self, range: Range<usize>) -> &mut Self::Output {
+        &mut self.0[range]
+    }
+}
+
+impl Index<RangeFrom<usize>> for StateVector {
+    type Output = [f32];
+    fn index(&self, range: RangeFrom<usize>) -> &Self::Output {
+        &self.0[range]
+    }
+}
+
+impl IndexMut<RangeFrom<usize>> for StateVector {
+    fn index_mut(&mut self, range: RangeFrom<usize>) -> &mut Self::Output {
+        &mut self.0[range]
+    }
+}
+
+impl Index<RangeTo<usize>> for StateVector {
+    type Output = [f32];
+    fn index(&self, range: RangeTo<usize>) -> &Self::Output {
+        &self.0[range]
+    }
+}
+
+impl IndexMut<RangeTo<usize>> for StateVector {
+    fn index_mut(&mut self, range: RangeTo<usize>) -> &mut Self::Output {
+        &mut self.0[range]
+    }
+}
+
+impl Index<RangeFull> for StateVector {
+    type Output = [f32];
+    fn index(&self, _: RangeFull) -> &Self::Output {
+        &self.0[..]
+    }
+}
+
+impl IndexMut<RangeFull> for StateVector {
+    fn index_mut(&mut self, _: RangeFull) -> &mut Self::Output {
+        &mut self.0[..]
+    }
+}
+
+impl Index<RangeInclusive<usize>> for StateVector {
+    type Output = [f32];
+    fn index(&self, range: RangeInclusive<usize>) -> &Self::Output {
+        &self.0[range]
+    }
+}
+
+impl IndexMut<RangeInclusive<usize>> for StateVector {
+    fn index_mut(&mut self, range: RangeInclusive<usize>) -> &mut Self::Output {
+        &mut self.0[range]
+    }
+}
+
+impl Index<RangeToInclusive<usize>> for StateVector {
+    type Output = [f32];
+    fn index(&self, range: RangeToInclusive<usize>) -> &Self::Output {
+        &self.0[range]
+    }
+}
+
+impl IndexMut<RangeToInclusive<usize>> for StateVector {
+    fn index_mut(&mut self, range: RangeToInclusive<usize>) -> &mut Self::Output {
+        &mut self.0[range]
+    }
+}
+
 /// Everything the encoder needs, already extracted from the platform event.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StateInput<'a> {
@@ -70,19 +312,19 @@ pub struct StateInput<'a> {
 /// - `[15]` hour-of-day cos, −1…1
 /// - `[16]` channel heat capped at 30, 0…1
 /// - `[17]` deterministic sentiment, −1…1
-pub fn encode(input: &StateInput) -> [f32; STATE_DIMENSIONS] {
-    let mut s = [0.0f32; STATE_DIMENSIONS];
-    s[input.intent.index()] = 1.0;
-    s[9] = input.reputation as f32;
-    s[10] = input.text.chars().count().min(LENGTH_CAP) as f32 / LENGTH_CAP as f32;
-    s[11] = if input.mentions_bot { 1.0 } else { 0.0 };
-    s[12] = if input.text.ends_with('?') { 1.0 } else { 0.0 };
-    s[13] = if input.has_image { 1.0 } else { 0.0 };
+pub fn encode(input: &StateInput) -> StateVector {
+    let mut s = StateVector([0.0f32; STATE_DIMENSIONS]);
+    s.0[input.intent.index()] = 1.0;
+    s[StateField::Reputation] = input.reputation as f32;
+    s[StateField::Length] = input.text.chars().count().min(LENGTH_CAP) as f32 / LENGTH_CAP as f32;
+    s[StateField::MentionsBot] = if input.mentions_bot { 1.0 } else { 0.0 };
+    s[StateField::IsQuestion] = if input.text.ends_with('?') { 1.0 } else { 0.0 };
+    s[StateField::HasImage] = if input.has_image { 1.0 } else { 0.0 };
     let angle = 2.0 * std::f64::consts::PI * f64::from(input.hour_of_day) / 24.0;
-    s[14] = angle.sin() as f32;
-    s[15] = angle.cos() as f32;
-    s[16] = input.channel_heat.min(HEAT_CAP) as f32 / HEAT_CAP as f32;
-    s[17] = sentiment_score(input.text);
+    s[StateField::Sin] = angle.sin() as f32;
+    s[StateField::Cos] = angle.cos() as f32;
+    s[StateField::Heat] = input.channel_heat.min(HEAT_CAP) as f32 / HEAT_CAP as f32;
+    s[StateField::Sentiment] = sentiment_score(input.text);
     s
 }
 
@@ -107,22 +349,22 @@ const NEGATIVE_EMOJI: [char; 4] = ['💀', '👎', '😡', '🤮'];
 /// are the lowercased text split on non-alphanumeric characters. Intentionally
 /// not an ML model: reproducibility beats accuracy for a reward-shaping feature.
 pub fn sentiment_score(text: &str) -> f32 {
-    let lower = text.to_lowercase();
-    let tokens: Vec<&str> = lower
+    let mut token_count = 0usize;
+    let mut score: i32 = 0;
+    for token in text
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
-        .collect();
-    if tokens.is_empty() {
-        return 0.0;
-    }
-    let mut score: i32 = 0;
-    for t in &tokens {
-        if POSITIVE_WORDS.contains(t) {
+    {
+        token_count += 1;
+        if POSITIVE_WORDS.iter().any(|w| token.eq_ignore_ascii_case(w)) {
             score += 1;
         }
-        if NEGATIVE_WORDS.contains(t) {
+        if NEGATIVE_WORDS.iter().any(|w| token.eq_ignore_ascii_case(w)) {
             score -= 1;
         }
+    }
+    if token_count == 0 {
+        return 0.0;
     }
     for c in text.chars() {
         if POSITIVE_EMOJI.contains(&c) {
@@ -131,7 +373,7 @@ pub fn sentiment_score(text: &str) -> f32 {
             score -= 1;
         }
     }
-    (score as f32 / tokens.len().max(4) as f32).clamp(-1.0, 1.0)
+    (score as f32 / token_count.max(4) as f32).clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]
@@ -300,5 +542,56 @@ mod tests {
     fn sentiment_clamps_to_unit_range() {
         assert_eq!(sentiment_score("love 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥"), 1.0);
         assert_eq!(sentiment_score("hate 💀💀💀💀💀💀💀💀💀💀"), -1.0);
+    }
+
+    #[test]
+    fn state_vector_named_accessors_match_indexed_slots() {
+        let mut inp = input("ping");
+        inp.reputation = 0.9;
+        inp.mentions_bot = true;
+        inp.has_image = true;
+        inp.hour_of_day = 6;
+        inp.channel_heat = 15;
+        let s = encode(&inp);
+        assert!(approx(s.reputation(), s[StateField::Reputation]));
+        assert!(approx(s.length(), s[StateField::Length]));
+        assert_eq!(s.mentions_bot(), s[StateField::MentionsBot]);
+        assert_eq!(s.is_question(), s[StateField::IsQuestion]);
+        assert_eq!(s.has_image(), s[StateField::HasImage]);
+        assert!(approx(s.sin(), s[StateField::Sin]));
+        assert!(approx(s.cos(), s[StateField::Cos]));
+        assert!(approx(s.heat(), s[StateField::Heat]));
+        assert!(approx(s.sentiment(), s[StateField::Sentiment]));
+        // Typed index and legacy usize index point at the same slot.
+        assert!(approx(
+            s[StateField::Reputation],
+            s[StateField::Reputation as usize]
+        ));
+    }
+
+    #[test]
+    fn state_field_indices_match_spec_layout() {
+        assert_eq!(StateField::Reputation as usize, 9);
+        assert_eq!(StateField::Length as usize, 10);
+        assert_eq!(StateField::MentionsBot as usize, 11);
+        assert_eq!(StateField::IsQuestion as usize, 12);
+        assert_eq!(StateField::HasImage as usize, 13);
+        assert_eq!(StateField::Sin as usize, 14);
+        assert_eq!(StateField::Cos as usize, 15);
+        assert_eq!(StateField::Heat as usize, 16);
+        assert_eq!(StateField::Sentiment as usize, 17);
+    }
+
+    #[test]
+    fn state_vector_derefs_to_slice_and_converts() {
+        let s = encode(&input("hello"));
+        let slice: &[f32] = &s;
+        assert_eq!(slice.len(), STATE_DIMENSIONS);
+        let vec = s.to_vec();
+        assert_eq!(vec.len(), STATE_DIMENSIONS);
+        let arr: [f32; STATE_DIMENSIONS] = s.into_array();
+        assert_eq!(arr.len(), STATE_DIMENSIONS);
+        let from_arr = StateVector::from(arr);
+        assert_eq!(from_arr, s);
     }
 }
