@@ -152,7 +152,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
     if !bot_has_required_voice_permissions(ctx.serenity_context(), &channel) {
-        ctx.say("Abbey needs View Channel, Send Messages, Connect, and Speak in the configured voice channel; voice stayed off.")
+        ctx.say("Abbey needs View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities in the configured voice channel; voice stayed off.")
             .await?;
         return Ok(());
     }

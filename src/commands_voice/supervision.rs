@@ -436,7 +436,7 @@ pub(super) async fn on_voice_permissions_changed(
     let _ = channel_id
         .say(
             &ctx.http,
-            "Abbey stopped voice because she needs View Channel, Send Messages, Connect, and Speak for a public bidirectional session. Restore those permissions, then use `/voice join consent:true`.",
+            "Abbey stopped voice because she needs View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities for a public bidirectional session. Restore those permissions, then use `/voice join consent:true`.",
         )
         .await;
 }

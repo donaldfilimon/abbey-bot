@@ -1,3 +1,5 @@
+> **Update 2026-09-03 ~18:48 ET:** Office Hours overwrites grant Stream + Use Embedded Activities for Member and Abbey roles. Voice join also requires those bits (`required_voice_permissions`). See `docs/activities.md` — Activity/rocket launch is the path; bots cannot classic Go Live.
+>
 > **Update 2026-09-03 ~18:30 ET:** Conversational voice waits for the shared generation slot (up to 180s) instead of failing busy against concurrent text; `ABBEY_VOICE_AUTOJOIN` is muted/self-deafened presence only (conversation still needs `/voice join consent:true`).
 >
 > **Update 2026-09-03 ~18:03 ET:** `cargo build --release --locked` on `main` `c5f95d1`, installed to `~/.local/libexec/abbey-bot/abbey-bot`. Binary SHA `a61c6a53c56930cb…`, launchd PID **11541** (runs=15, last exit=0), `connected user=Abbey`. Sidecars unchanged: MLX-Audio `:8181` 200; Ollama `:11434` 200 host-only LLM; MLX-VLM `:8282` unpublished.
@@ -24,6 +26,8 @@
 **Checkout:** `/Users/donaldfilimon/dev/active/abbey-bot`  
 **Git:** `main` — this commit keeps webrtcvad `importlib.metadata` patch + `/v1/models` readiness; records live MLX-Audio + host-only LLM evidence  
 **Scope:** two remaining gaps only — (1) live voice acceptance, (2) MLX acceleration qualification. Fail closed where evidence is missing. Historical 2026-08-20/22 voice notes do **not** qualify this process, this binary, or this config.
+
+Activities / Entry Point (rocket, `/launch`) and Stream/Use Embedded Activities fail-closed join bits: see `docs/activities.md`.
 
 This file is an operator evidence checklist, not proof that the run happened. Do not treat source tests, provider logs, leftover venvs, Homebrew `mlx-lm`, Ollama `gemma4:12b-mlx`, or prior consent as substitutes.
 
@@ -106,7 +110,7 @@ Do **not** start the human run until these are true. Otherwise join will fail cl
 2. A loopback reasoning backend is configured **in the env the running process actually loads**. Launchd `ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434` (host-only — `dialect.rs` appends `/v1/chat/completions`); vision keeps `http://127.0.0.1:11434/v1`. **True today.**
 3. Donald (Manage Server for join/resume/status; owner/Administrator for verify) is **physically in** the launchd-locked MLAI voice channel. Remote activation is refused.
 4. Fresh unanimous consent from **everyone currently present**. Silence, history, and one person speaking for another do not count.
-5. Abbey has View Channel, Send Messages, Connect, Speak in that VC and is not server-muted/deafened/suppressed.
+5. Abbey has View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities in that VC and is not server-muted/deafened/suppressed.
 
 ### Exact slash commands (MLAI Community, locked VC)
 
