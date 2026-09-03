@@ -7,6 +7,7 @@
 - [`tasks/goals.md`](../tasks/goals.md) — Authoritative ledger (12 goals, 8 done / 4 in_progress)
 - [`tasks/todo.md`](../tasks/todo.md) — Granular task checklist with live acceptance gates
 - [`tasks/session-log.md`](../tasks/session-log.md) — Session work log
+- [`docs/brand.md`](brand.md) — Intelligence Without Limits positioning (Abbey Bot only; never Quesar)
 
 ## Specifications
 
