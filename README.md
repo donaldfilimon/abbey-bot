@@ -1,5 +1,11 @@
 # Abbey Bot
 
+**Intelligence Without Limits.**
+
+Abbey is your Discord companion for routing, memory, and calm ops help — with personas that say what they know and what they don’t.
+
+Persona routing · Durable memory · Ops with guardrails. Invite Abbey · `/persona ask` · `/help`.
+
 Abbey's Discord operational layer, in Rust — [serenity](https://github.com/serenity-rs/serenity)
 0.12 with [poise](https://github.com/serenity-rs/poise) 0.6 for slash commands.
 
