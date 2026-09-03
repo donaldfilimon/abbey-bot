@@ -1,6 +1,10 @@
 # MLAI live acceptance — remaining parity gaps
 
-> **Update 2026-09-03 ~15:34 ET (post-checklist):** Launchd Abbey now has `ABBEY_BOT_LLM_*` + `ABBEY_VISION_*` (Ollama `http://127.0.0.1:11434/v1` / `gemma4:12b`) — generation backend **configured**. `ABBEY_VOICE_LOCAL_ENDPOINT` set. MLX-Audio **install in progress** (HF snapshot fetch); `:8181` still down until that finishes and `com.donaldfilimon.abbey-mlx-audio` loads. MLX-VLM still not loaded. Human 8/8 voice acceptance still required in Office Hours.
+> **Update 2026-09-03 ~15:56 ET:** MLX-Audio **live** — launchd `com.donaldfilimon.abbey-mlx-audio` on `127.0.0.1:8181`. Readiness is `GET /` or `GET /v1/models` (mlx-audio 0.5.0 has **no** `/health`). Whisper + Kokoro loaded; offline smoke passed. Install script now patches `webrtcvad` for setuptools 83 (`pkg_resources` removed).
+>
+> LLM: `ABBEY_BOT_LLM_ENDPOINT` must be host-only `http://127.0.0.1:11434` — `dialect.rs` already appends `/v1/chat/completions`. Vision keeps `/v1`. Generation backend configured; guild-scoped commands on MLAI `1275617641620443146`.
+>
+> Still human-gated: live `/voice` consent in Office Hours (8/8). MLX-VLM still not loaded. `quesar.cloud` still Hostinger parking (`byte.dns-parking.com` / `pixel.dns-parking.com`).
 
 
 **Date:** 2026-09-03 (America/New_York)  

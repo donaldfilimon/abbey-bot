@@ -654,6 +654,51 @@ echo "== install pinned MLX-Audio environment in sibling venv =="
   --build-constraint "$BUILD_CONSTRAINTS" \
   --requirement "$REQUIREMENTS"
 
+# setuptools>=82 removed pkg_resources; webrtcvad 2.0.10 still imports it only
+# for __version__. Rewrite that prologue so the offline smoke can start.
+echo "== patch webrtcvad for setuptools without pkg_resources =="
+"$STAGE_VENV/bin/python" <<'PY'
+from pathlib import Path
+import sys
+
+path = (
+    Path(sys.prefix)
+    / "lib"
+    / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    / "site-packages"
+    / "webrtcvad.py"
+)
+text = path.read_text(encoding="utf-8")
+old = (
+    "import pkg_resources\n"
+    "\n"
+    "import _webrtcvad\n"
+    "\n"
+    '__author__ = "John Wiseman jjwiseman@gmail.com"\n'
+    '__copyright__ = "Copyright (C) 2016 John Wiseman"\n'
+    '__license__ = "MIT"\n'
+    "__version__ = pkg_resources.get_distribution('webrtcvad').version\n"
+)
+new = (
+    "import _webrtcvad\n"
+    "\n"
+    "try:\n"
+    "    from importlib.metadata import version as _dist_version\n"
+    "    __version__ = _dist_version('webrtcvad')\n"
+    "except Exception:\n"
+    '    __version__ = "2.0.10"\n'
+    "\n"
+    '__author__ = "John Wiseman jjwiseman@gmail.com"\n'
+    '__copyright__ = "Copyright (C) 2016 John Wiseman"\n'
+    '__license__ = "MIT"\n'
+)
+if old not in text:
+    raise SystemExit(f"webrtcvad.py no longer matches the expected pkg_resources prologue: {path}")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+import webrtcvad
+print(f"patched {path} (__version__={webrtcvad.__version__})")
+PY
+
 echo "== cache and verify exact model revisions in sibling cache =="
 HF_HOME="$STAGE_CACHE" \
 HF_HUB_CACHE="$STAGE_CACHE/hub" \
