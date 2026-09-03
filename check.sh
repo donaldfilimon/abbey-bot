@@ -24,6 +24,7 @@ python3 deploy/check-python-locks.py \
 python3 deploy/test-configure-mlx-primary.py
 python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
+python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
 python3 scripts/check-privacy.py
 python3 scripts/test-check-abbey-contracts.py
 python3 scripts/check-abbey-contracts.py
