@@ -99,7 +99,7 @@ impl From<SeverityChoice> for Severity {
 /// error branch that apologised for it.
 #[derive(Debug, poise::ChoiceParameter)]
 pub enum PersonaChoice {
-    #[name = "abbey — empathetic polymath and default"]
+    #[name = "abbey — warm sharp friend and default"]
     Abbey,
     #[name = "aviva — concise direct expert"]
     Aviva,

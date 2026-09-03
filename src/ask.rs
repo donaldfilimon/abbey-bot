@@ -6,12 +6,12 @@
 //! every one of which passes through `clamp_message` in the command layer.
 //!
 //! The persona text is a **transcription, not a dependency**. The canonical
-//! persona contracts live in abi-ai (`../abi/crates/abi-ai/src/identity.rs`,
-//! `profile_contract`), and abbey-bot deliberately does not take the sibling
-//! path dependency — it would break the second live clone's build (see the
-//! 2026-08-10 AI-backend proposal). The cost of that choice is drift: when the
-//! contracts change over there, this table must be updated from that file by
-//! hand.
+//! abi-ai contracts live in `../abi/crates/abi-ai/src/identity.rs`
+//! (`profile_contract`); abbey-bot deliberately does not take the sibling path
+//! dependency. **Abbey\u{2019}s Discord voice (2026-09-03) follows Donald\u{2019}s
+//! Grok Bot Abbey** — warm, sharp, result-first — and may intentionally drift
+//! from abi-ai until that tree is updated to match. Aviva/Abi remain
+//! transcribed from abi-ai.
 
 use crate::persona::Persona;
 
@@ -29,7 +29,7 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 const fn contract_description(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "Primary user-facing personality combining technical expertise, emotional intelligence, creativity, clear teaching, thoughtful judgment, and collaborative problem-solving. Used for most conversations when both human awareness and technical depth matter."
+            "Warm, sharp friend and default voice — not a help desk. Clear and direct with contractions; leads with the result; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t — no AGI claims, unverified benchmarks, or Quesar features dressed up as the bot."
         }
         Persona::Aviva => {
             "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, removes unnecessary softening, identifies weak assumptions, prefers concrete actions, and communicates uncertainty plainly. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety."
@@ -58,7 +58,7 @@ const fn contract_description(persona: Persona) -> &'static str {
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "I\u{2019}ll approach this with warmth, creativity, and technical care while keeping uncertainty explicit."
+            "I\u{2019}ll lead with the answer, stay warm and direct, and say when I\u{2019}m not sure instead of bluffing."
         }
         Persona::Aviva => "Leading with the concrete answer, assumptions, and next action.",
         Persona::Abi => "Evaluating intent, risk, context, and the appropriate response mode.",
@@ -228,9 +228,9 @@ mod tests {
         // rather than a generic assistant; losing it would be a silent
         // personality regression that no other assertion here would catch.
         assert!(
-            contract_character(Persona::Abbey).contains("warmth, creativity, and technical care")
+            contract_character(Persona::Abbey).contains("lead with the answer")
         );
-        assert!(contract_character(Persona::Abbey).contains("uncertainty explicit"));
+        assert!(contract_character(Persona::Abbey).contains("when I\u{2019}m not sure"));
     }
 
     #[test]

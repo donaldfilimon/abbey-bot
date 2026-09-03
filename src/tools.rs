@@ -148,7 +148,7 @@ fn core_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "switch_persona",
-            description: "Hand this conversation to a persona better suited to it: abbey (warm polymath), aviva (direct, technical), or abi (orchestrating, de-escalating). The transcript is kept.",
+            description: "Hand this conversation to a persona better suited to it: abbey (warm sharp friend, result-first), aviva (direct, technical), or abi (orchestrating, de-escalating). The transcript is kept.",
             parameters: json!({
                 "type": "object",
                 "properties": { "persona": { "type": "string", "enum": ["abbey", "aviva", "abi"] } },
