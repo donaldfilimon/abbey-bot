@@ -482,8 +482,8 @@ caller. Any new, unknown, or unattested speaker revokes the media epoch before
 that frame can enter the bounded 20 ms input queue, cancels work/playback, and
 disconnects the conversational `Decode` call. Local mode runs Whisper STT, canonical Abbey
 cognition, and Kokoro TTS on loopback; voice turns are read-only and raw audio
-is not persisted. Abbey must retain View Channel, Send Messages, Connect, and
-Speak and must not be server-muted/deafened/suppressed; startup rechecks those
+is not persisted. Abbey must retain View Channel, Send Messages, Connect, Speak, Stream, and
+Use Embedded Activities and must not be server-muted/deafened/suppressed; startup rechecks those
 conditions around activation, and channel/role/member changes stop the media
 epoch if the call could become receive-only. `/voice leave` tears down both
 sides, while `/voice status`
