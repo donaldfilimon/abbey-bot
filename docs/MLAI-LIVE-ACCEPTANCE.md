@@ -1,6 +1,12 @@
 # MLAI live acceptance — remaining parity gaps
 
-> **Update 2026-09-03 ~16:08 ET:** MLX-Audio is **LIVE** via launchd `com.donaldfilimon.abbey-mlx-audio` on `127.0.0.1:8181`. Readiness is `GET /` or `GET /v1/models` (**NOT** `/health` — stock mlx-audio 0.5.0 returns 404). Whisper + Kokoro loaded; offline smoke passed. Installer patches `webrtcvad` with `importlib.metadata` for setuptools 83 (`pkg_resources` removed). Do **not** probe `/health` for operator readiness.
+> **Update 2026-09-03 ~16:30 ET:** Voice/sidecar operator path **#47** is on `main` (`dd9e6b4`) and live. Binary at `~/.local/libexec/abbey-bot/abbey-bot` matches release build; launchd `com.donaldfilimon.abbey-bot` PID 92752; log shows `operator env key presence (values withheld)` with all 10 expected keys present and `connected user=Abbey`. `/voice status` now reports sidecar 2s probe + loopback LLM line; join fails closed before the 10-minute sidecar prepare when the loopback LLM is missing. Plan docs **#48** also on `main` (`e329340`).
+>
+> MLX-Audio still live (`com.donaldfilimon.abbey-mlx-audio`); operator readiness remains `GET /` or `GET /v1/models`. Live process may also answer `GET /health` 200 — do not treat `/health` as the only probe.
+>
+> LLM host-only `http://127.0.0.1:11434` unchanged. Still human-gated: Office Hours live `/voice` 8/8; Discord Member mass-grant + Admin Administrator policy; quesar.cloud NS (Hostinger parking until LB IP + Cloudflare).
+
+> **Update 2026-09-03 ~16:08 ET:** MLX-Audio is **LIVE** via launchd `com.donaldfilimon.abbey-mlx-audio` on `127.0.0.1:8181`. Readiness is `GET /` or `GET /v1/models` (prefer those; live process may also expose `/health`). Whisper + Kokoro loaded; offline smoke passed. Installer patches `webrtcvad` with `importlib.metadata` for setuptools 83 (`pkg_resources` removed). Do **not** probe `/health` for operator readiness.
 >
 > LLM: `ABBEY_BOT_LLM_ENDPOINT` must be host-only `http://127.0.0.1:11434` because `src/llm/dialect.rs` appends `/v1/chat/completions`. Vision keeps `/v1` (`http://127.0.0.1:11434/v1`). Generation backend configured; guild-scoped commands on MLAI `1275617641620443146`.
 >
