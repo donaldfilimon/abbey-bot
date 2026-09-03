@@ -210,6 +210,37 @@ async fn main() -> Result<(), Error> {
         Some(label) => tracing::info!(backend = label, "generation backend configured"),
         None => tracing::warn!("no generation backend — Abbey answers honestly that she cannot"),
     }
+    let env_presence = voice::OperatorEnvPresence::from_env();
+    tracing::info!(
+        discord_token = env_presence.discord_token,
+        abbey_guild_id = env_presence.abbey_guild_id,
+        llm_endpoint = env_presence.llm_endpoint,
+        llm_model = env_presence.llm_model,
+        vision_endpoint = env_presence.vision_endpoint,
+        vision_model = env_presence.vision_model,
+        voice_guild_id = env_presence.voice_guild_id,
+        voice_channel_id = env_presence.voice_channel_id,
+        voice_mode = env_presence.voice_mode,
+        voice_local_endpoint = env_presence.voice_local_endpoint,
+        "operator env key presence (values withheld)"
+    );
+    let voice_is_local = voice_runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.config.mode() == voice::VoiceMode::Local);
+    let has_loopback_llm = state
+        .backend
+        .as_ref()
+        .into_iter()
+        .chain(state.fallback.as_ref())
+        .any(|backend| backend.is_loopback_openai_compatible());
+    if let Some(warning) = env_presence.local_voice_llm_gap(voice_is_local, has_loopback_llm) {
+        tracing::warn!("{warning}");
+    }
+    if voice_is_local && !env_presence.voice_local_endpoint {
+        tracing::info!(
+            "ABBEY_VOICE_LOCAL_ENDPOINT unset — local speech defaults to http://127.0.0.1:8181"
+        );
+    }
     if let Some(fm) = &state.foundation_models {
         tracing::info!(
             mode = fm.config.mode.as_str(),

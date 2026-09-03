@@ -448,6 +448,25 @@ pub async fn run(mut session: LocalSession) {
                         }
                     }
                     TurnOutcome::Failed { turn, stage, error } if turn == turn_generation => {
+                        if crate::offline_voice::sidecar_is_unavailable(&error) {
+                            tracing::warn!(
+                                stage,
+                                error = %brief(&error),
+                                "local speech sidecar became unavailable; failing closed"
+                            );
+                            session
+                                .runtime
+                                .actor_failed(
+                                    session.epoch,
+                                    format!(
+                                        "local speech sidecar became unavailable during {stage}; audio stopped"
+                                    ),
+                                )
+                                .await;
+                            disconnect_call(&session.call).await;
+                            let _ = stop_playback(&session.playback).await;
+                            break;
+                        }
                         tracing::warn!(stage, error = %brief(&error), "local voice turn failed");
                         session.runtime
                             .set_status(
