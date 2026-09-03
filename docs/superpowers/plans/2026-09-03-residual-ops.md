@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status (2026-09-03 ET):** Task 1–2 done — #47 merged at `dd9e6b4`, live binary reinstalled (PID via launchd), operator env presence logging live, MLX `:8181` 200. #42 was already on main. mlai/abbey FF to IWL tips; abi rebased (local judo commits still ahead, unpushed). Task 3–4 remain Donald-gated. Task 5 optional.
+**Status (2026-09-03 ET):** Task 1–2 done — #47 merged at `dd9e6b4`, live binary reinstalled, operator env presence logging live, MLX-Audio `:8181` 200. #50 landed (`c97b28a`) so staged MLX-VLM `MLX_READY` + forced `probe_status` pass. Tool-result continuation still loops Gemma 4 thought-channel tokens — `:8282` unpublished; Ollama stays the reasoner (Task 6). Task 3–4 remain Donald-gated.
 
 **Goal:** Close remaining unblocked Abbey/MLAI work after IWL, personality, Discord gap-fill, and MLX-Audio came up; leave human-gated DNS and live voice as explicit Donald steps.
 
@@ -152,8 +152,26 @@ gh pr create --title "docs: residual ops plan 2026-09-03" --body "Tracks unblock
 
 ---
 
+
+---
+
+### Task 6: MLX-VLM tool-continuation (blocked on 4-bit Gemma)
+
+**Files:**
+- `deploy/patch-mlx-vlm-tool-encoding.py` (install-time openai.py / prompt_utils.py JSON parse + chat_template mapping-before-sequence)
+- `deploy/install-mlx-vlm-launchd.sh` (runs the patcher; still fail-closes on `TOOL_CONTINUATION_READY`)
+- `docs/MLAI-LIVE-ACCEPTANCE.md`
+
+- [x] **Step 1: Confirm encoding vs model**
+
+JSON tool-body→mapping and `tool_body is mapping` before `is sequence` are required (string bodies become `value:"{…}"`; dicts 500 on Jinja sequence). They do **not** stop the `<|channel>thought` loop after a tool result. `--enable-thinking` is not sufficient.
+
+- [ ] **Step 2: Do not publish `:8282`**
+
+Keep `ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434`. Re-run `deploy/install-mlx-vlm-launchd.sh` only after a later snapshot/checkpoint actually returns exact `TOOL_CONTINUATION_READY`.
+
 ## Self-Review
 
-1. Spec coverage: unblocked code = Task 1–2; Discord policy = Task 3; DNS = Task 4; plan persistence = Task 5.
+1. Spec coverage: unblocked code = Task 1–2; Discord policy = Task 3; DNS = Task 4; plan persistence = Task 5; VLM continuation = Task 6 (blocked).
 2. No placeholders for code tasks; Donald gates are explicit stop points.
 3. #47 supersedes #42 — do not try to merge both.
