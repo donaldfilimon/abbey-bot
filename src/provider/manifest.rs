@@ -367,7 +367,7 @@ pub fn publish_v2(path: &Path, records: &[ProviderRecord]) -> Result<(), Manifes
     #[cfg(not(unix))]
     {
         let _ = (path, records);
-        return Err(ManifestError::SecurityUnsupported);
+        Err(ManifestError::SecurityUnsupported)
     }
 
     #[cfg(unix)]
