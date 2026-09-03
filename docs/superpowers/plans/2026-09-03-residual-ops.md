@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status (2026-09-03 ET):** Task 1–2 done — #47 merged at `dd9e6b4`, live binary reinstalled, operator env presence logging live, MLX-Audio `:8181` 200. #50 landed (`c97b28a`) so staged MLX-VLM `MLX_READY` + forced `probe_status` pass. Tool-result continuation still loops Gemma 4 thought-channel tokens — `:8282` unpublished; Ollama stays the reasoner (Task 6). Task 3–4 remain Donald-gated.
+**Status (2026-09-03 ET):** Task 1–2 done — #47 merged at `dd9e6b4`, live binary reinstalled, operator env presence logging live, MLX-Audio `:8181` 200. #50 landed (`c97b28a`) so staged MLX-VLM `MLX_READY` + forced `probe_status` pass. #51 landed (`073d7ac`) install-time tool JSON encoding patches; smoke still fail-closes on `TOOL_CONTINUATION_READY`. Tool-result continuation still loops Gemma 4 thought-channel tokens — `:8282` unpublished; Ollama stays the reasoner (Task 6). Task 3–4 remain Donald-gated.
 
 **Goal:** Close remaining unblocked Abbey/MLAI work after IWL, personality, Discord gap-fill, and MLX-Audio came up; leave human-gated DNS and live voice as explicit Donald steps.
 

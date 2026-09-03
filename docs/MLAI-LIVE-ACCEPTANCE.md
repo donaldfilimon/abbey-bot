@@ -215,13 +215,13 @@ Sidecar is live as of ~15:56 ET. If it dies or is still loading, do **not** star
 
 1. `/voice status` in MLAI Community. Expect mode `local`, sidecar listening or a 2s down/timeout line, and loopback LLM named as configured or missing.
 2. If LLM is missing: it is missing from `~/.config/abbey-bot/env` (not checkout `.env`). `deploy/check-launchd-env.sh` / `deploy/install-launchd.sh` refuse a voice destination without `ABBEY_BOT_LLM_ENDPOINT`.
-3. If `:8181` is down: `deploy/install-mlx-audio-launchd.sh` (setuptools 83; `pkg_resources` shim for webrtcvad 2.0.10; injects `/health`). Probe `GET /health`, `GET /`, or `GET /v1/models`. Log: `~/Library/Logs/abbey-bot/mlx-audio.log`.
+3. If `:8181` is down: `deploy/install-mlx-audio-launchd.sh` (setuptools 83; webrtcvad patched via `importlib.metadata`). Operator readiness: `GET /` or `GET /v1/models` (**not** `/health` for stock mlx-audio 0.5.0). Log: `~/Library/Logs/abbey-bot/mlx-audio.log`.
 4. `/voice join consent:true` fails closed immediately on connection-refused (no 10-minute hang for a missing LLM or a down TCP port). A sidecar that is up but still loading Whisper/Kokoro may still take up to 10 minutes; `/voice status` is the probe, not a second join.
 5. If the sidecar dies mid-session, capture stops (failed-safe). Resume only after `/voice status` shows the sidecar listening **and** fresh consent.
 
 ## Operator runbook after blockers are cleared
 
-Only after MLX-Audio is serving on :8181 (OpenAPI `GET /health` or `GET /` + `GET /v1/models`), MLX-VLM smokes pass on :8282 (if that is the chosen reasoner), and the **launchd** env contains both voice IDs and a loopback LLM endpoint:
+Only after MLX-Audio is serving on :8181 (`GET /` or `GET /v1/models`; do not require `/health`), MLX-VLM smokes pass including exact `TOOL_CONTINUATION_READY` before any `:8282` publish (if that is the chosen reasoner), and the **launchd** env contains both voice IDs and a loopback LLM endpoint:
 
 1. Restart only via the atomic installer / launchd path; do not mix checkout `.env` with `~/.config/abbey-bot/env` by hand in a way that drops voice or LLM.
 2. `ABBEY_GUILD_ID=1275617641620443146` is already in the launchd env; `/voice` is guild-scoped. Keep `ABBEY_BOT_LLM_ENDPOINT` host-only (`http://127.0.0.1:11434`); do not add `/v1`.

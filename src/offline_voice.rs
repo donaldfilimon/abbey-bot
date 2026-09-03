@@ -553,7 +553,7 @@ pub fn local_speech_operator_message(
 ) -> String {
     match kind {
         LocalSpeechFailureKind::NotListening => format!(
-            "MLX-Audio is not listening at {endpoint} ({stage}). Run deploy/install-mlx-audio-launchd.sh (setuptools; webrtcvad/pkg_resources). Log: ~/Library/Logs/abbey-bot/mlx-audio.log."
+            "MLX-Audio is not listening at {endpoint} ({stage}). Run deploy/install-mlx-audio-launchd.sh (setuptools 83; webrtcvad via importlib.metadata; readiness GET /v1/models). Log: ~/Library/Logs/abbey-bot/mlx-audio.log."
         ),
         LocalSpeechFailureKind::TimedOut => format!(
             "MLX-Audio at {endpoint} timed out during {stage} (starting or loading Whisper/Kokoro). Retry /voice status; do not wait on this command."
@@ -1071,6 +1071,8 @@ mod tests {
         assert!(message.contains("not listening"));
         assert!(message.contains("install-mlx-audio-launchd.sh"));
         assert!(message.contains("setuptools"));
+        assert!(message.contains("importlib.metadata"));
+        assert!(!message.contains("pkg_resources"));
         assert!(!message.contains("os error 61"));
         assert!(
             message.chars().count() <= 240,
