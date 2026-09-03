@@ -142,6 +142,8 @@ def _discover(corpus: Path) -> tuple[str, ...]:
                 relative = candidate.relative_to(corpus).as_posix()
                 raise GuardError("symlink_forbidden", f"corpus/{relative}")
         for name in file_names:
+            if name == ".DS_Store":
+                continue
             candidate = current / name
             relative = candidate.relative_to(corpus).as_posix()
             if candidate.is_symlink():

@@ -11,15 +11,17 @@
 //! in tests behind a recording `Outbound`.
 
 use std::future::Future;
+use std::sync::Mutex;
 
 use crate::ask;
+use crate::brain::budget::Budget;
 use crate::brain::intent;
 use crate::brain::outcome::{self, ReplyOutcome};
 use crate::brain::reward::ReplyTurn;
 use crate::brain::state::{self, BotAction, StateInput};
 use crate::engine;
 use crate::generation::{Ask, Delivery, generate_read_only, generate_with_tools, with_typing};
-use crate::guild::GuildSettings;
+use crate::guild::{GuildSettings, ReplyCooldown};
 use crate::llm;
 use crate::memory::PersonaContext;
 use crate::persona::Persona;
@@ -74,6 +76,109 @@ pub enum Outcome {
     Reacted,
     Replied,
     ReplyFailed(String),
+}
+
+// ---------------------------------------------------------------------------
+// Guard-chain judo — ordered, unit-testable, no FakeOut required
+// ---------------------------------------------------------------------------
+
+macro_rules! ensure {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            return Err($err);
+        }
+    };
+}
+
+/// Ordered context for the guard chain — everything a gate needs to decide
+/// without touching the network. Constructed once after triage / bookkeeping
+/// so each `ensure!` can be tested with a plain `Ctx` and an `AppState`
+/// (no `Outbound` fake required). Mirrors the waterfall at 109-501 but as
+/// data.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct Ctx {
+    pub event: SocialEvent,
+    pub text: String,
+    pub attachments: Vec<RemoteAttachment>,
+    pub forced: bool,
+    pub settings: GuildSettings,
+    pub heat: u32,
+    pub scoped_user: String,
+    pub scoped_guild: String,
+    pub scoped_channel: String,
+}
+
+/// Shared unsolicited-speech gates — `quiet` then `act off`, in that order,
+/// each respecting `forced` (mention/DM bypass). This is the unification
+/// point for the duplication at 142-147 (Welcome) and 222-230 (normal flow):
+/// both paths call this ordered chain, normal flow adds the learning gate.
+fn check_unsolicited(settings: &GuildSettings, quiet: bool, forced: bool) -> Result<(), Outcome> {
+    ensure!(forced || !quiet, Outcome::Ignored("quiet"));
+    ensure!(forced || settings.unsolicited, Outcome::Ignored("act off"));
+    Ok(())
+}
+
+/// Ordered guard chain for an unsolicited message — mirrors the waterfall
+/// but as `Result<(), Outcome>` so each gate is `ensure!` and unit-testable
+/// without `FakeOut`. Preserves exact order and `!forced` semantics.
+pub(crate) fn guards(ctx: &Ctx, state: &AppState) -> Result<(), Outcome> {
+    ensure!(
+        !state.is_self(&ctx.scoped_user),
+        Outcome::Ignored("own traffic")
+    );
+    ensure!(
+        !ctx.text.trim().is_empty() || !ctx.attachments.is_empty() || ctx.forced,
+        Outcome::Ignored("no content available")
+    );
+    ensure!(ctx.forced || !state.quiet, Outcome::Ignored("quiet"));
+    ensure!(
+        ctx.forced || ctx.settings.unsolicited,
+        Outcome::Ignored("act off")
+    );
+    ensure!(
+        ctx.forced || ctx.settings.learning_enabled,
+        Outcome::Ignored("learning off")
+    );
+    Ok(())
+}
+
+/// Atomic rate-limit acquisition for unsolicited output — per-channel
+/// cooldown (burst guard) + per-guild hourly budget (volume guard) in one
+/// lock pair. `try_acquire` checks both, records both on success, and
+/// returns the same `OverBudget` / `CooledDown` the waterfall previously
+/// produced via three separate `try_take` / `try_reserve` sites.
+pub(crate) struct RateLimits<'a> {
+    pub cooldown: &'a Mutex<ReplyCooldown>,
+    pub budget: &'a Mutex<Budget>,
+}
+
+impl RateLimits<'_> {
+    pub fn try_acquire(
+        &self,
+        scoped_guild: &str,
+        scoped_channel: &str,
+        settings: &GuildSettings,
+        now: u64,
+    ) -> Result<(), Outcome> {
+        // AppState lock order is `cooldown` → `budget`; holding both
+        // together makes the check+record atomic for this guild/channel.
+        let mut cooldown = AppState::lock(self.cooldown);
+        let mut budget = AppState::lock(self.budget);
+        if budget.tokens_left(scoped_guild, settings.unsolicited_per_hour, now) < 1.0 {
+            return Err(Outcome::OverBudget);
+        }
+        if !cooldown.permitted(scoped_channel, settings.reply_cooldown_seconds, now) {
+            return Err(Outcome::CooledDown);
+        }
+        // Both gates passed — reserve atomically. `tokens_left` is a
+        // read-only view, so `try_take` does the real refill+deduct.
+        cooldown.record_reply(scoped_channel, now);
+        if !budget.try_take(scoped_guild, settings.unsolicited_per_hour, now) {
+            return Err(Outcome::OverBudget);
+        }
+        Ok(())
+    }
 }
 
 /// Canonical ABI text routing with the guild default retained only for neutral
@@ -137,13 +242,10 @@ pub async fn handle<O: Outbound + Sync>(
             return Outcome::Rewarded;
         }
         RouteDecision::Welcome { display_name } => {
-            // A welcome is unsolicited speech: the operator's QUIET and the
-            // guild's `/admin act on` gate it exactly like a policy reply.
-            if state.quiet {
-                return Outcome::Ignored("quiet");
-            }
-            if !settings.unsolicited {
-                return Outcome::Ignored("act off");
+            // A welcome is unsolicited speech: unified with the normal-flow
+            // `quiet` → `act off` chain via `check_unsolicited`.
+            if let Err(outcome) = check_unsolicited(&settings, state.quiet, false) {
+                return outcome;
             }
             return welcome(state, out, &event.native_channel_id, &display_name).await;
         }
@@ -212,21 +314,22 @@ pub async fn handle<O: Outbound + Sync>(
     // is not a mention or a DM. There is nothing to learn from a blank, so the
     // policy is not consulted — it would be training on noise.
     let forced = mentions_bot || event.native_guild_id.is_none();
-    if text.trim().is_empty() && attachments.is_empty() && !forced {
-        return Outcome::Ignored("no content available");
-    }
-    // Gates on unsolicited speech, checked before the policy so nothing is
-    // learned from a message Abbey was never allowed to answer — in order:
-    // the operator's `ABBEY_QUIET=1` (wins over any guild), the guild's own
-    // `/admin act on` (opt-in, default off), and `/admin learning off`.
-    if !forced && state.quiet {
-        return Outcome::Ignored("quiet");
-    }
-    if !forced && !settings.unsolicited {
-        return Outcome::Ignored("act off");
-    }
-    if !forced && !settings.learning_enabled {
-        return Outcome::Ignored("learning off");
+    // Ordered guard chain — blank + unsolicited speech gates, unified with
+    // the welcome path. Each `ensure!` preserves exact `!forced` semantics
+    // and the string identity the tests pin.
+    let ctx = Ctx {
+        event: event.clone(),
+        text: text.clone(),
+        attachments: attachments.clone(),
+        forced,
+        settings: settings.clone(),
+        heat,
+        scoped_user: scoped_user.clone(),
+        scoped_guild: scoped_guild.clone(),
+        scoped_channel: scoped_channel.clone(),
+    };
+    if let Err(outcome) = guards(&ctx, state) {
+        return outcome;
     }
 
     let enriched = enrich_with_vision(state, out, &settings, &text, &attachments).await;
@@ -284,47 +387,18 @@ pub async fn handle<O: Outbound + Sync>(
         return Outcome::Stayed;
     }
 
-    // Unsolicited output is rate-limited twice: per channel (cooldown, the
-    // burst guard) and per guild (hourly budget, the volume guard). Mentions
-    // and DMs bypass both. Over budget, the decision is not acted on and not
-    // learned — silence was not the policy's choice.
-    if !forced {
-        // Budget is only *checked* here; a token is reserved immediately before
-        // the network action below. A missing backend costs nothing, while an
-        // attempted react/reply consumes quota even if delivery later fails so
-        // a broken endpoint cannot bypass the volume guard indefinitely.
-        let within_budget = AppState::lock(&state.budget).tokens_left(
-            &scoped_guild,
-            settings.unsolicited_per_hour,
-            now,
-        ) >= 1.0;
-        if !within_budget {
-            return Outcome::OverBudget;
-        }
-        // The cooldown is reserved atomically (check + record in one lock), so
-        // two messages in the same channel handled concurrently cannot both
-        // pass. Reserved before the budget is spent and before any network
-        // call; a reservation that then fails to send still counts — quiet is
-        // the safe direction.
-        let reserved = AppState::lock(&state.cooldown).try_reserve(
-            &scoped_channel,
-            settings.reply_cooldown_seconds,
-            now,
-        );
-        if !reserved {
-            return Outcome::CooledDown;
-        }
-    }
+    // ---- Action dispatch — React vs Reply, each with atomic RateLimits ----
 
     if action == BotAction::React {
-        if !forced
-            && !AppState::lock(&state.budget).try_take(
-                &scoped_guild,
-                settings.unsolicited_per_hour,
-                now,
-            )
-        {
-            return Outcome::OverBudget;
+        if !forced {
+            let limits = RateLimits {
+                budget: &state.budget,
+                cooldown: &state.cooldown,
+            };
+            if let Err(outcome) = limits.try_acquire(&scoped_guild, &scoped_channel, &settings, now)
+            {
+                return outcome;
+            }
         }
         if let Err(e) = out
             .react(
@@ -370,18 +444,17 @@ pub async fn handle<O: Outbound + Sync>(
         };
     };
 
-    // Discord's typing indicator expires after ~10 s and a local model takes
-    // ~25 s, so one broadcast reads as "dead" mid-generation. Keep it alive
-    // until the answer is in hand; the keepalive task is dropped with the
-    // guard below.
-    if !forced
-        && !AppState::lock(&state.budget).try_take(
-            &scoped_guild,
-            settings.unsolicited_per_hour,
-            now,
-        )
-    {
-        return Outcome::OverBudget;
+    // Unsolicited reply — atomic cooldown+budget acquisition after the
+    // backend check so a missing backend costs nothing (the policy's choice
+    // was not acted on).
+    if !forced {
+        let limits = RateLimits {
+            budget: &state.budget,
+            cooldown: &state.cooldown,
+        };
+        if let Err(outcome) = limits.try_acquire(&scoped_guild, &scoped_channel, &settings, now) {
+            return outcome;
+        }
     }
     out.typing(&event.native_channel_id).await;
     let context = assemble_context(

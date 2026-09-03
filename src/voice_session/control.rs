@@ -187,25 +187,6 @@ pub fn requests_consent_withdrawal(text: &str, snapshot: &VoiceSnapshot) -> bool
         && voice_control_intent(text, snapshot) == Some(VoiceControlIntent::WithdrawConsent)
 }
 
-/// Normalize only for the operational grammar. Apostrophes are removed so
-/// `don't listen` remains two useful words; other punctuation is a boundary.
-fn normalized_voice_text(text: &str) -> String {
-    let mut normalized = String::with_capacity(text.len());
-    let mut at_separator = true;
-    for character in text.chars().flat_map(char::to_lowercase) {
-        if character.is_alphanumeric() {
-            normalized.push(character);
-            at_separator = false;
-        } else if matches!(character, '\'' | '\u{2019}') {
-            // Keep contractions together: `don't` -> `dont`.
-        } else if !at_separator {
-            normalized.push(' ');
-            at_separator = true;
-        }
-    }
-    normalized.trim_end().to_string()
-}
-
 fn contains_phrase(normalized: &str, phrase: &str) -> bool {
     let mut haystack = String::with_capacity(normalized.len() + 2);
     haystack.push(' ');
@@ -364,7 +345,7 @@ fn is_voice_control_text(text: &str) -> bool {
         "is audio processing active",
     ];
 
-    let normalized = normalized_voice_text(text);
+    let normalized = crate::text::normalize(text);
     if normalized.is_empty() || !contains_any_phrase(&normalized, VOICE_CONTEXT) {
         return false;
     }
@@ -388,7 +369,7 @@ fn is_standalone_consent_response(text: &str) -> bool {
         "we opt in",
     ];
 
-    let normalized = normalized_voice_text(text);
+    let normalized = crate::text::normalize(text);
     let normalized = normalized.strip_prefix("abbey ").unwrap_or(&normalized);
     RESPONSES.contains(&normalized)
 }
@@ -404,7 +385,7 @@ fn parse_withdrawal_clause(text: &str) -> Option<WithdrawalClause> {
         return None;
     }
 
-    let normalized = normalized_voice_text(text);
+    let normalized = crate::text::normalize(text);
     let tokens = normalized.split_whitespace().collect::<Vec<_>>();
     let (core, modifiers) = peel_withdrawal_modifiers(&tokens);
     if core.is_empty() || is_question_stem(core[0]) {

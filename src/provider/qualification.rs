@@ -665,7 +665,7 @@ mod tests {
         let files = TestFiles::new();
         let config = files.config();
         let record = successful_v2_fm_record(&config);
-        super::super::publish_v2(&files.manifest, &[record.clone()]).unwrap();
+        super::super::publish_v2(&files.manifest, std::slice::from_ref(&record)).unwrap();
 
         let verified = verify_fm_manifest(&files.manifest, &config).expect("exact v2 record");
         assert!(verified.cli.text);

@@ -276,18 +276,23 @@ fn detection_is_total_and_deterministic() {
 
 #[test]
 fn normalization_folds_apostrophes_and_punctuation() {
-    assert_eq!(normalize("Can't—stop!"), " cant stop ");
-    assert_eq!(normalize(""), " ");
+    // Unified text::normalize is trimmed (no padding); word-boundary checks
+    // remain via contains_phrase's start/end handling.
+    assert_eq!(crate::text::normalize("Can't—stop!"), "cant stop");
+    assert_eq!(crate::text::normalize(""), "");
     assert!(contains_phrase(
-        &normalize("I don't understand this"),
+        &crate::text::normalize("I don't understand this"),
         "dont understand"
     ));
     assert!(
-        !contains_phrase(&normalize("misunderstanding"), "dont understand"),
+        !contains_phrase(
+            &crate::text::normalize("misunderstanding"),
+            "dont understand"
+        ),
         "phrases must match on word boundaries"
     );
     assert!(
-        !contains_phrase(&normalize("nowhere"), "now"),
+        !contains_phrase(&crate::text::normalize("nowhere"), "now"),
         "a soft cue must not match inside a longer word"
     );
 }

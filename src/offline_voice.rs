@@ -46,9 +46,17 @@ impl OfflineVoiceConfig {
         voice: Option<String>,
         language: Option<String>,
     ) -> Result<Self, String> {
-        let endpoint = nonblank(endpoint).unwrap_or_else(|| Self::DEFAULT_ENDPOINT.to_string());
+        let endpoint = endpoint
+            .as_deref()
+            .and_then(crate::text::non_blank)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Self::DEFAULT_ENDPOINT.to_string());
         let endpoint = validate_loopback_endpoint(&endpoint)?;
-        let voice = nonblank(voice).unwrap_or_else(|| Self::DEFAULT_VOICE.to_string());
+        let voice = voice
+            .as_deref()
+            .and_then(crate::text::non_blank)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Self::DEFAULT_VOICE.to_string());
         let tts_language_code = kokoro_language_code(&voice)?;
         Ok(Self {
             endpoint,
@@ -82,14 +90,12 @@ impl OfflineVoiceConfig {
     }
 }
 
-fn nonblank(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 fn safe_identifier(value: Option<String>, default: &str, label: &str) -> Result<String, String> {
-    let value = nonblank(value).unwrap_or_else(|| default.to_string());
+    let value = value
+        .as_deref()
+        .and_then(crate::text::non_blank)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default.to_string());
     if value.len() <= 200
         && value
             .chars()

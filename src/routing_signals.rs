@@ -280,7 +280,7 @@ impl Signals {
     /// every table is a fixed-order array and every score is an integer.
     #[must_use]
     pub fn detect(input: &str) -> Self {
-        let normalized = normalize(input);
+        let normalized = crate::text::normalize(input);
         let words = normalized.split_ascii_whitespace().count();
         let shape = shape_of(input, &normalized);
         let emphasis = has_emphasis(input);
@@ -467,33 +467,6 @@ pub fn describe(route: &ComposedRoute) -> String {
         route.adjustment.why(),
         route.signals.summary()
     )
-}
-
-/// Lowercase, drop apostrophes so "can't" and "cant" score alike, turn every
-/// other non-alphanumeric run into a single space, and pad both ends so phrase
-/// lookups can test word boundaries without a special case.
-fn normalize(input: &str) -> String {
-    let mut out = String::with_capacity(input.len() + 2);
-    out.push(' ');
-    let mut at_space = true;
-    for ch in input.chars() {
-        if ch == '\'' || ch == '\u{2019}' {
-            continue;
-        }
-        if ch.is_alphanumeric() {
-            for lower in ch.to_lowercase() {
-                out.push(lower);
-            }
-            at_space = false;
-        } else if !at_space {
-            out.push(' ');
-            at_space = true;
-        }
-    }
-    if !at_space {
-        out.push(' ');
-    }
-    out
 }
 
 /// Whole-word `contains` over normalized text. Byte comparison against `b' '`

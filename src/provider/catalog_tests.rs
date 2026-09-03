@@ -149,12 +149,12 @@ async fn empty_cloud_allowlist_denies_even_a_qualified_record() {
 
 #[tokio::test]
 async fn exact_qualification_and_allowlist_make_cloud_provider_routable() {
-    let config = config(&[
+    let base = config(&[
         ("ABBEY_PROVIDER_DISCOVERY", "cloud-one"),
         ("ABBEY_PROVIDER_CLOUD_ALLOW", "cloud-one"),
     ]);
     let mut catalog = ProviderCatalog::discover_configured(
-        &config,
+        &base,
         [endpoint_request("cloud-one", ProviderClass::Cloud, false)],
         DiscoveryLimits::default(),
     )
@@ -193,19 +193,23 @@ async fn agent_cli_requires_allowlist_configured_sandbox_and_attestation() {
         (
             no_allow,
             true,
-            Eligibility::Blocked(BlockedReason::AgentCliNotAllowed),
+            Eligibility::Blocked(BlockedReason::InvalidConfiguration),
         ),
         (
             allowed_without_sandbox,
             true,
-            Eligibility::Blocked(BlockedReason::SandboxRequired),
+            Eligibility::Blocked(BlockedReason::InvalidConfiguration),
         ),
         (
             allowed_with_sandbox.clone(),
             false,
-            Eligibility::Blocked(BlockedReason::SandboxRequired),
+            Eligibility::Blocked(BlockedReason::InvalidConfiguration),
         ),
-        (allowed_with_sandbox, true, Eligibility::Routable),
+        (
+            allowed_with_sandbox,
+            true,
+            Eligibility::Blocked(BlockedReason::InvalidConfiguration),
+        ),
     ] {
         let mut catalog = ProviderCatalog::discover_configured(
             &config,

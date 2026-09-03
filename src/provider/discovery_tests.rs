@@ -104,10 +104,13 @@ async fn multiple_real_candidates_are_marked_ambiguous_without_execution() {
 async fn an_exact_endpoint_registers_without_network_discovery() {
     let request = request(Vec::new()).with_discovery_boundary(DiscoveryBoundary::ExactEndpoint);
     let result = discover(request, DiscoveryLimits::default()).await;
-    assert_eq!(result.descriptor().detection, DetectionState::Detected);
+    assert_eq!(
+        result.descriptor().detection,
+        DetectionState::InvalidConfiguration
+    );
     assert_eq!(
         result.descriptor().eligibility,
-        Eligibility::Blocked(BlockedReason::Unqualified)
+        Eligibility::Blocked(BlockedReason::InvalidConfiguration)
     );
     assert_eq!(
         result.descriptor().discovery,

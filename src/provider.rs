@@ -7,6 +7,8 @@
 //! The HTTP server and `fm respond` CLI remain separate capabilities: the
 //! server is text-only here and can never inherit CLI tool capability.
 
+#![allow(dead_code, unused_imports)]
+
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};

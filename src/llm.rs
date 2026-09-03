@@ -19,13 +19,15 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
+mod dialect;
 mod protocol;
 mod stream;
 mod transport;
 
-pub use protocol::{
-    build_chat_request, build_chat_request_with_tools, build_request, extract_text, extract_turn,
-};
+#[allow(unused_imports)]
+pub use dialect::Dialect;
+pub use dialect::build_chat_request_with_tools;
+pub use protocol::{build_chat_request, build_request, extract_text, extract_turn};
 #[cfg(test)]
 pub use stream::SseAccumulator;
 pub use stream::{StreamTransport, build_stream_request};
@@ -128,18 +130,25 @@ impl Backend {
         endpoint: Option<String>,
         model: Option<String>,
     ) -> Option<Self> {
-        let non_blank = |value: Option<String>| {
-            value
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        };
-        if let Some(api_key) = non_blank(anthropic_api_key) {
+        if let Some(api_key) = anthropic_api_key
+            .as_deref()
+            .and_then(crate::text::non_blank)
+            .map(|s| s.to_string())
+        {
             return Some(Self::Anthropic { api_key });
         }
-        non_blank(endpoint).map(|endpoint| Self::OpenAiCompatible {
-            endpoint,
-            model: non_blank(model).unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string()),
-        })
+        endpoint
+            .as_deref()
+            .and_then(crate::text::non_blank)
+            .map(|s| s.to_string())
+            .map(|endpoint| Self::OpenAiCompatible {
+                endpoint,
+                model: model
+                    .as_deref()
+                    .and_then(crate::text::non_blank)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string()),
+            })
     }
 
     /// Selection from the real environment — the runtime path. Tests go

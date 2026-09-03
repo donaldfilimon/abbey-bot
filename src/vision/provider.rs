@@ -171,26 +171,36 @@ impl VisionConfig {
         fallback_llm_endpoint: Option<String>,
         fallback_llm_model: Option<String>,
     ) -> Option<Self> {
-        let non_blank = |value: Option<String>| {
-            value
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        };
-        let (base_url, reused_llm_endpoint) = match non_blank(vision_endpoint) {
+        let (base_url, reused_llm_endpoint) = match vision_endpoint
+            .as_deref()
+            .and_then(crate::text::non_blank)
+            .map(|s| s.to_string())
+        {
             Some(off) if off.eq_ignore_ascii_case("off") => return None,
             Some(explicit) => (explicit, false),
             None => (
                 format!(
                     "{}/v1",
-                    non_blank(fallback_llm_endpoint)?.trim_end_matches('/')
+                    fallback_llm_endpoint
+                        .as_deref()
+                        .and_then(crate::text::non_blank)?
+                        .trim_end_matches('/')
                 ),
                 true,
             ),
         };
-        let model = non_blank(vision_model)
+        let model = vision_model
+            .as_deref()
+            .and_then(crate::text::non_blank)
+            .map(|s| s.to_string())
             .or_else(|| {
                 reused_llm_endpoint
-                    .then(|| non_blank(fallback_llm_model))
+                    .then(|| {
+                        fallback_llm_model
+                            .as_deref()
+                            .and_then(crate::text::non_blank)
+                            .map(|s| s.to_string())
+                    })
                     .flatten()
             })
             .unwrap_or_else(|| {
@@ -203,7 +213,11 @@ impl VisionConfig {
         Some(Self {
             base_url,
             model,
-            api_key: non_blank(vision_key).unwrap_or_default(),
+            api_key: vision_key
+                .as_deref()
+                .and_then(crate::text::non_blank)
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
         })
     }
 

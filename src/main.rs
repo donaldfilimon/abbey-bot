@@ -43,13 +43,13 @@
 //! over REST instead, which is why [`profile::summarize`] states that
 //! presence is unavailable rather than guessing at it.
 
-#[cfg(test)]
-mod abbey_contracts;
 mod ask;
 mod brain;
 mod commands;
 mod commands_brain;
 mod commands_voice;
+#[cfg(test)]
+mod contracts;
 mod embedding;
 mod engine;
 mod gateway;
@@ -74,6 +74,7 @@ mod recall;
 mod routing_signals;
 mod runtime;
 mod server;
+mod text;
 mod tools;
 mod vision;
 mod voice;
