@@ -37,15 +37,26 @@ integration/release run where absence must fail.
 The pure modules hold every decision the bot makes, and **none of them import
 serenity or poise**. The entire decision suite runs with no gateway connection.
 
-The five files that form the entire Discord surface (they import serenity/poise):
+The Discord/network surface (imports serenity/poise / adapters):
 
 | File | Role |
 |---|---|
-| `commands.rs`, `commands_brain.rs`, `commands_voice.rs` | Translate Discord data into plain structs and lifecycle calls |
-| `gateway.rs` | Gateway events (serenity FullEvent → SocialEvent → pipeline::handle) plus Telegram/Slack adapters |
+| `commands.rs`, `commands_brain.rs`, `commands_voice.rs` (+ `commands_voice/`) | Translate Discord data into plain structs and lifecycle calls |
+| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | Gateway events (FullEvent → SocialEvent → pipeline::handle) plus Telegram/Slack adapters |
 | `main.rs` | Env parsing and framework wiring only; reads no guild data |
 
 **If you find yourself writing an `if` inside a `#[poise::command]` function that isn't about fetching data, it belongs in a pure module instead.**
+
+**Abbey default voice (code):** warm, sharp friend — result-first, clear, honest about uncertainty (`src/persona.rs` / `src/ask.rs`). Do not rewrite prompts toward help-desk filler.
+
+## Live Mac backends (2026-09-03 — fail closed)
+
+- **Reasoner:** Ollama host-only `ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434`. `src/llm/dialect.rs` appends `/v1/chat/completions`. Do **not** put `/v1` on the LLM base URL.
+- **Vision:** keeps `/v1` (live: `http://127.0.0.1:11434/v1`).
+- **MLX-Audio:** launchd `127.0.0.1:8181` via `deploy/install-mlx-audio-launchd.sh`. Operator readiness: `GET /` or `GET /v1/models` — **not** `/health` as the probe.
+- **MLX-VLM:** `:8282` **unpublished**. Staged 4-bit Gemma tool-result continuation loops `<|channel>thought` into content until length; installer still fail-closes on `TOOL_CONTINUATION_READY`. Ollama remains the reasoner. Do not point `ABBEY_BOT_LLM_ENDPOINT` at `:8282` until that probe passes on the exact snapshot.
+- **Discord ops:** Bot API + launchd (`deploy/install-launchd.sh`), not an Electron UI. Gap-fill only; **no mass Member grant** without Donald.
+- **Gate / installers:** `./check.sh`; `deploy/install-mlx-audio-launchd.sh`; `deploy/install-mlx-vlm-launchd.sh` (publish only after smokes pass).
 
 ## Rules that are not preferences
 
@@ -206,23 +217,18 @@ Configuration is env-only: `DISCORD_TOKEN`, optional `ABBEY_GUILD_ID`,
 `/etc/abbey-bot/env` (systemd) or `~/.config/abbey-bot/env` (launchd), never
 baked into image layers.
 
-`./check.sh` is the gate: `cargo fmt --all -- --check`, then
+`./check.sh` is the gate: fmt, then deploy shell/python/plist checks (including
+mlx installers, privacy, contracts, rustsec, wdbx), then
 `cargo clippy --all-targets --locked -- -D warnings`, then `cargo test --locked`,
 then `cargo build --release --locked`.
 
 ## What has and has not been verified
 
-As of 2026-08-20 the following had been seen live from the operator's Discord
-client: gateway + registration (16 commands, 58 guilds), slash commands
-answering, DM and guild-mention replies (streamed, edited in place), the per-guild
-policy deciding/reacting in an opted-in server, cooldown and act-off gates
-holding, rewards settling into replay buffers, a model-initiated
-`remember_fact` tool call, vision on gemma4:e4b, and the launchd-managed release
-service with persistent state plus local generation/vision configuration.
-
-Not seen live: Anthropic path/fallback (no key), Telegram/Slack (no tokens),
-`/see`/`/ocr` from a client, an `OverBudget` refusal, a refreshed rolling
-summary.
+Authoritative live Mac acceptance notes live in `docs/MLAI-LIVE-ACCEPTANCE.md`
+(refresh there, not here). As of 2026-09-03 ET: Ollama `:11434` is the reasoner;
+MLX-Audio `:8181` is up; MLX-VLM `:8282` is not published (tool-continuation
+blocked). Do not treat README MLX primary cutover snippets as the current
+launchd primary.
 
 ## Related, and easy to confuse
 

@@ -13,8 +13,6 @@ Apply every body edit to both, or they drift.
 
 ```bash
 ./check.sh              # gate: fmt, clippy -D warnings, tests, release build
-                        # runs --locked; a Cargo.toml bump without a regenerated
-                        # lock keeps CI green while every deploy build dies
 ./check.ps1             # same gate on Windows (no POSIX/plist checks)
 cargo test <name>       # single test, substring-matched against full path;
                         # no -p or --workspace (single binary crate, tests in bin)
@@ -23,7 +21,10 @@ cargo test <name>       # single test, substring-matched against full path;
 ./target/release/abbey-bot --provider-self-test all --json
 ```
 
-`cargo test moderation::` runs one module's tests.
+`cargo test moderation::` runs one module's tests. Gate runs `--locked` on
+purpose: a Cargo.toml bump without a regenerated lock keeps CI green while every
+deploy build dies. The gate proves the property the deploy depends on — do not
+remove the flag to "fix" a lock error; regenerate the lock.
 
 The gate runs `scripts/check-wdbx-conformance.py`. With the canonical sibling
 `../wdbx` checkout present, it compares frozen WDBX-v1 fixtures byte for byte.
@@ -36,15 +37,26 @@ integration/release run where absence must fail.
 The pure modules hold every decision the bot makes, and **none of them import
 serenity or poise**. The entire decision suite runs with no gateway connection.
 
-The five files that form the entire Discord surface (they import serenity/poise):
+The Discord/network surface (imports serenity/poise / adapters):
 
 | File | Role |
 |---|---|
-| `commands.rs`, `commands_brain.rs`, `commands_voice.rs` | Translate Discord data into plain structs and lifecycle calls |
-| `gateway.rs` | Gateway events (serenity FullEvent → SocialEvent → pipeline::handle) plus Telegram/Slack adapters |
+| `commands.rs`, `commands_brain.rs`, `commands_voice.rs` (+ `commands_voice/`) | Translate Discord data into plain structs and lifecycle calls |
+| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | Gateway events (FullEvent → SocialEvent → pipeline::handle) plus Telegram/Slack adapters |
 | `main.rs` | Env parsing and framework wiring only; reads no guild data |
 
 **If you find yourself writing an `if` inside a `#[poise::command]` function that isn't about fetching data, it belongs in a pure module instead.**
+
+**Abbey default voice (code):** warm, sharp friend — result-first, clear, honest about uncertainty (`src/persona.rs` / `src/ask.rs`). Do not rewrite prompts toward help-desk filler.
+
+## Live Mac backends (2026-09-03 — fail closed)
+
+- **Reasoner:** Ollama host-only `ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434`. `src/llm/dialect.rs` appends `/v1/chat/completions`. Do **not** put `/v1` on the LLM base URL.
+- **Vision:** keeps `/v1` (live: `http://127.0.0.1:11434/v1`).
+- **MLX-Audio:** launchd `127.0.0.1:8181` via `deploy/install-mlx-audio-launchd.sh`. Operator readiness: `GET /` or `GET /v1/models` — **not** `/health` as the probe.
+- **MLX-VLM:** `:8282` **unpublished**. Staged 4-bit Gemma tool-result continuation loops `<|channel>thought` into content until length; installer still fail-closes on `TOOL_CONTINUATION_READY`. Ollama remains the reasoner. Do not point `ABBEY_BOT_LLM_ENDPOINT` at `:8282` until that probe passes on the exact snapshot.
+- **Discord ops:** Bot API + launchd (`deploy/install-launchd.sh`), not an Electron UI. Gap-fill only; **no mass Member grant** without Donald.
+- **Gate / installers:** `./check.sh`; `deploy/install-mlx-audio-launchd.sh`; `deploy/install-mlx-vlm-launchd.sh` (publish only after smokes pass).
 
 ## Rules that are not preferences
 
@@ -52,6 +64,9 @@ The five files that form the entire Discord surface (they import serenity/poise)
 interaction token 3 seconds after issuing it, and one cold REST round-trip can
 spend that alone. Every command calls `ctx.defer()` or `ctx.defer_ephemeral()` first.
 A command that defers only when it looks slow is a command that races eventually.
+The one exception: `/voice leave` closes the voice media gate before its first
+await, so its guard paths answer the interaction directly inside the 3-second
+window and the defer runs concurrently with the transition lock.
 
 **Never declare a `GuildChannel` parameter.** Poise resolves it with a REST fetch
 *during argument parsing*, before the body and its defer ever run. Take `ChannelId`
@@ -60,7 +75,9 @@ and fetch after deferring, the way `/perms` does.
 **Every rendered answer passes through `clamp_message`.** Discord rejects messages
 over 2,000 codepoints after the defer has already succeeded, surfacing as "Message
 too large." Every call that posts the output of a pure module is wrapped through
-`clamp_message`. Fixed guard strings of known length are exempt.
+`clamp_message`. The exception is fixed guard strings of known length (e.g.
+"This one only works inside a server.", thread-redirect line that interpolates a
+channel id).
 
 **Intents stay `non_privileged()` by default.** That set carries guild message and
 reaction events; it does *not* carry message content, presence, or the member list.
@@ -118,10 +135,11 @@ it, not re-derive the rules at the call site.
 ## Traps this repository has already hit
 
 **`Permissions` does not `Debug` into flag names.** It prints `Permissions(3072)` —
-a raw bitfield. Use `get_permission_names()`, which returns client-facing strings
-(`"View Channel"`, `"Ban Members"`). Two tests pin the strings this codebase
-hardcodes against that vocabulary, because a typo there fails silently —
-`/modcall` would tell every moderator they cannot act.
+a raw bitfield. An early version derived permission names by scraping that and
+would have rendered numbers into chat. Use `get_permission_names()`, which returns
+client-facing strings (`"View Channel"`, `"Ban Members"`). Two tests pin the
+strings this codebase hardcodes against that vocabulary, because a typo there
+fails silently — `/modcall` would tell every moderator they cannot act.
 
 **`Backend` and `LlmRequest` hand-write `Debug` — never `#[derive(Debug)]` on
 anything that carries a credential.** Both hold the Anthropic key (in the enum
@@ -199,6 +217,30 @@ Configuration is env-only: `DISCORD_TOKEN`, optional `ABBEY_GUILD_ID`,
 `/etc/abbey-bot/env` (systemd) or `~/.config/abbey-bot/env` (launchd), never
 baked into image layers.
 
-`./check.sh` is the gate: `cargo fmt --all -- --check`, then
+`./check.sh` is the gate: fmt, then deploy shell/python/plist checks (including
+mlx installers, privacy, contracts, rustsec, wdbx), then
 `cargo clippy --all-targets --locked -- -D warnings`, then `cargo test --locked`,
 then `cargo build --release --locked`.
+
+## What has and has not been verified
+
+Authoritative live Mac acceptance notes live in `docs/MLAI-LIVE-ACCEPTANCE.md`
+(refresh there, not here). As of 2026-09-03 ET: Ollama `:11434` is the reasoner;
+MLX-Audio `:8181` is up; MLX-VLM `:8282` is not published (tool-continuation
+blocked). Do not treat README MLX primary cutover snippets as the current
+launchd primary.
+
+## Related, and easy to confuse
+
+**The authoritative live checkout is `~/dev/active/abbey-bot`.** The former
+`~/sources/repos/abbey-bot` path is absent; a discarded redundant clone under
+Trash is not an authority. Concurrent sessions can still share the active
+working tree, so inspect its current status before editing and fetch before
+making claims about `origin/main`.
+
+`~/dev/archive/swift-discord` is a home-grown Swift Discord library with its
+own gateway and REST targets. It shares no code with this crate and is not a
+dependency, a port source, or a reference implementation. The separate active
+Swift/Vapor/DiscordBM product is `~/dev/active/AbbeyBot`; it shares no code
+with this Rust crate. Treat its architecture as an adjacent implementation, not
+a dependency or source of runtime truth for this project.
