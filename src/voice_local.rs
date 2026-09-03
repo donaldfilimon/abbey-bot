@@ -605,7 +605,7 @@ async fn process_turn(work: TurnWork) -> TurnOutcome {
     } else {
         PersonaContext::empty()
     };
-    let generation = match work.state.acquire_generation().await {
+    let generation = match work.state.acquire_generation_for_voice().await {
         Err(error) => Err(error),
         Ok(_slot) => {
             generation::generate_without_delivery(

@@ -1,3 +1,5 @@
+> **Update 2026-09-03 ~18:30 ET:** Conversational voice waits for the shared generation slot (up to 180s) instead of failing busy against concurrent text; `ABBEY_VOICE_AUTOJOIN` is muted/self-deafened presence only (conversation still needs `/voice join consent:true`).
+>
 > **Update 2026-09-03 ~18:03 ET:** `cargo build --release --locked` on `main` `c5f95d1`, installed to `~/.local/libexec/abbey-bot/abbey-bot`. Binary SHA `a61c6a53c56930cb…`, launchd PID **11541** (runs=15, last exit=0), `connected user=Abbey`. Sidecars unchanged: MLX-Audio `:8181` 200; Ollama `:11434` 200 host-only LLM; MLX-VLM `:8282` unpublished.
 >
 > **Update 2026-09-03 ~17:50 ET:** Live Abbey reinstalled after #53–#55 (`main` `98a498a`). Binary SHA `69f20f8fb0aa86f2…`, launchd PID **7970**, `connected user=Abbey`. Personality warm/sharp friend in binary. CLAUDE.md/AGENTS.md synced to live topology (#55). Sidecars unchanged: MLX-Audio `:8181` 200; Ollama `:11434` 200 host-only LLM; MLX-VLM `:8282` unpublished. `quesar.cloud` still Hostinger DNS parking. Dependabot rustls-webpki awaits serenity+poise crates.io bump (serenity `next` incompatible with poise 0.6.2).

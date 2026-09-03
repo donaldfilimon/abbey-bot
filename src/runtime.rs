@@ -234,6 +234,10 @@ pub struct AppState {
 
 /// Default wait for a generation slot before answering "busy".
 pub const DEFAULT_QUEUE_SECS: u64 = 90;
+/// Live Discord voice waits at least this long for the same one-slot
+/// semaphore. A short text reply must not fail-close an in-channel turn.
+/// Still one permit — local gemma4:12b is one-at-a-time.
+pub const DEFAULT_VOICE_QUEUE_SECS: u64 = 180;
 
 /// Concurrency for the configured backend: 1 for a local endpoint, 4 for
 /// Anthropic, `ABBEY_BOT_LLM_CONCURRENCY` if set (blank/garbage/zero ignored).
@@ -255,6 +259,12 @@ pub fn queue_secs_from_value(value: Option<String>) -> u64 {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(DEFAULT_QUEUE_SECS)
+}
+
+/// Voice never waits less than the text queue, and at least
+/// [`DEFAULT_VOICE_QUEUE_SECS`].
+pub fn voice_queue_secs(text_queue_secs: u64) -> u64 {
+    text_queue_secs.max(DEFAULT_VOICE_QUEUE_SECS)
 }
 
 /// The honest copy when no slot frees up in time.
@@ -535,12 +545,24 @@ impl AppState {
     pub async fn acquire_generation(
         &self,
     ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
-        match tokio::time::timeout(
-            Duration::from_secs(self.queue_secs),
-            self.generation.acquire(),
-        )
-        .await
-        {
+        self.acquire_generation_waiting(Duration::from_secs(self.queue_secs))
+            .await
+    }
+
+    /// Same one-slot semaphore as text, but a longer wait so a concurrent
+    /// Discord reply does not fail-close live voice.
+    pub async fn acquire_generation_for_voice(
+        &self,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
+        self.acquire_generation_waiting(Duration::from_secs(voice_queue_secs(self.queue_secs)))
+            .await
+    }
+
+    pub(crate) async fn acquire_generation_waiting(
+        &self,
+        timeout: Duration,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
+        match tokio::time::timeout(timeout, self.generation.acquire()).await {
             Ok(Ok(permit)) => Ok(permit),
             Ok(Err(_)) => Err(crate::llm::LlmError::backend(
                 "the generation queue is closed".into(),
@@ -932,6 +954,73 @@ mod tests {
         assert_eq!(queue_secs_from_value(None), DEFAULT_QUEUE_SECS);
         assert_eq!(queue_secs_from_value(Some("30".into())), 30);
         assert_eq!(queue_secs_from_value(Some("0".into())), DEFAULT_QUEUE_SECS);
+    }
+
+    #[test]
+    fn voice_queue_never_shorter_than_text_and_has_a_floor() {
+        assert_eq!(voice_queue_secs(1), DEFAULT_VOICE_QUEUE_SECS);
+        assert_eq!(
+            voice_queue_secs(DEFAULT_QUEUE_SECS),
+            DEFAULT_VOICE_QUEUE_SECS
+        );
+        assert_eq!(
+            voice_queue_secs(DEFAULT_VOICE_QUEUE_SECS),
+            DEFAULT_VOICE_QUEUE_SECS
+        );
+        assert_eq!(voice_queue_secs(240), 240);
+    }
+
+    #[tokio::test]
+    async fn voice_generation_waits_out_a_short_text_busy_window() {
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().queue_secs = 1;
+        assert_eq!(state.generation.available_permits(), 1);
+        let first = state.acquire_generation().await.expect("first slot");
+        assert_eq!(state.generation.available_permits(), 0);
+
+        let waiting = tokio::spawn({
+            let state = std::sync::Arc::clone(&state);
+            async move {
+                let permit = state
+                    .acquire_generation_waiting(Duration::from_secs(3))
+                    .await?;
+                drop(permit);
+                Ok::<_, crate::llm::LlmError>(())
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(
+            !waiting.is_finished(),
+            "voice still waiting after the 1s text busy window"
+        );
+        drop(first);
+        waiting
+            .await
+            .expect("join")
+            .expect("voice acquired after text released the slot");
+        assert_eq!(
+            state.generation.available_permits(),
+            1,
+            "still a single generation slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn voice_generation_still_times_out_if_the_slot_never_frees() {
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().queue_secs = 1;
+        let _first = state.acquire_generation().await.expect("first slot");
+        let started = std::time::Instant::now();
+        let second = state
+            .acquire_generation_waiting(Duration::from_secs(1))
+            .await;
+        assert_eq!(second.unwrap_err().to_string(), BUSY_REPLY);
+        assert!(
+            started.elapsed().as_millis() >= 900,
+            "waited for the voice window"
+        );
+        assert_eq!(state.generation.available_permits(), 0);
     }
 
     #[test]
