@@ -21,7 +21,8 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-use crate::offline_voice::{FrameSequence, frame_is_voice};
+use crate::offline_voice::FrameSequence;
+use crate::vad::{ComposedVad, Vad, VadCtx};
 use crate::voice_session::{
     PlaybackTermination, SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime,
     register_playback_termination,
@@ -32,7 +33,6 @@ use protocol::{
 };
 
 const MAX_WS_MESSAGE_BYTES: usize = 512 * 1024;
-const SPEECH_END_SILENCE_FRAMES: usize = 15;
 
 pub struct OpenAiSession {
     pub runtime: Arc<VoiceRuntime>,
@@ -132,8 +132,7 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
         .await
         .map_err(|error| format!("sending Realtime session configuration failed: {error}"))?;
 
-    let mut human_speaking = false;
-    let mut silence_frames = 0_usize;
+    let vad = ComposedVad::default();
     let mut responses = ResponseBuffer::default();
     let mut frame_sequence = FrameSequence::default();
     let mut playing_item_id: Option<String> = None;
@@ -208,29 +207,11 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                     &session.runtime,
                     frame.sequence,
                 )?;
-                let voiced = frame_is_voice(&frame.samples);
-                if voiced && !human_speaking {
-                    human_speaking = true;
-                    silence_frames = 0;
-                    if interrupt_response(
-                        &mut writer,
-                        session.epoch,
-                        &mut event_sequence,
-                        &mut responses,
-                        &session.playback,
-                        &mut playing_item_id,
-                        &mut playing_turn,
-                    ).await? {
-                        session.runtime.note_barge_in();
-                    }
-                } else if voiced {
-                    silence_frames = 0;
-                } else if human_speaking {
-                    silence_frames = silence_frames.saturating_add(1);
-                    if silence_frames >= SPEECH_END_SILENCE_FRAMES {
-                        human_speaking = false;
-                        silence_frames = 0;
-                    }
+                // Energy is the pre-filter: silent frames never reach the
+                // provider. This prevents local silence from clipping a turn
+                // before the provider's semantic VAD can fire.
+                if !vad.is_voice(&frame.samples) {
+                    continue;
                 }
                 let bytes: Vec<u8> = frame.samples.into_iter().flat_map(i16::to_le_bytes).collect();
                 let append = Message::Text(serde_json::json!({
@@ -274,17 +255,24 @@ async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
                             .await;
                     }
                     Some("input_audio_buffer.speech_started") => {
-                        human_speaking = true;
-                        silence_frames = 0;
-                        if interrupt_response(
-                            &mut writer,
-                            session.epoch,
-                            &mut event_sequence,
-                            &mut responses,
-                            &session.playback,
-                            &mut playing_item_id,
-                            &mut playing_turn,
-                        ).await? {
+                        // Semantic is the sole interruption decision: only the
+                        // provider's `speech_started` event may cancel a
+                        // response. No local silence counter remains.
+                        let ctx = VadCtx {
+                            provider_speech_started: true,
+                        };
+                        if vad.should_interrupt(&ctx)
+                            && interrupt_response(
+                                &mut writer,
+                                session.epoch,
+                                &mut event_sequence,
+                                &mut responses,
+                                &session.playback,
+                                &mut playing_item_id,
+                                &mut playing_turn,
+                            )
+                            .await?
+                        {
                             session.runtime.note_barge_in();
                         }
                     }

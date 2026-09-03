@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+use crate::vad::{EnergyVad, Vad};
+
 pub const INPUT_SAMPLE_RATE: u32 = 24_000;
 pub const FRAME_SAMPLES: usize = 480;
 const PRE_ROLL_FRAMES: usize = 10;
@@ -244,6 +246,8 @@ struct ActiveUtterance {
 /// Deterministic, allocation-bounded turn segmentation for Songbird's 20 ms
 /// callback frames. MLX/Whisper still performs transcription; this immediate
 /// energy gate exists so local playback can stop before a transcript arrives.
+/// The local MLX path uses [`EnergyVad`] only; thresholds are unified in
+/// [`crate::vad`] so the offline and Realtime pre-filter cannot drift.
 #[derive(Debug, Default)]
 pub struct Segmenter {
     pre_roll: VecDeque<VoiceFrame>,
@@ -251,6 +255,7 @@ pub struct Segmenter {
     candidate_speaker: Option<u64>,
     active: Option<ActiveUtterance>,
     sequence: FrameSequence,
+    vad: EnergyVad,
 }
 
 impl Segmenter {
@@ -274,7 +279,7 @@ impl Segmenter {
             }
         }
 
-        let voiced = frame_is_voice(&frame.samples);
+        let voiced = self.vad.is_voice(&frame.samples);
         if let Some(active) = &mut self.active {
             active.total_frames += 1;
             active.overlap |= frame.overlap;
@@ -347,7 +352,7 @@ impl Segmenter {
         let mut pcm = Vec::with_capacity(MAX_UTTERANCE_FRAMES.min(100) * FRAME_SAMPLES);
         for buffered in &self.pre_roll {
             pcm.extend_from_slice(&buffered.samples);
-            if frame_is_voice(&buffered.samples) {
+            if self.vad.is_voice(&buffered.samples) {
                 attribution_uncertain |= buffered.overlap || buffered.speaker_id.is_none();
                 match (speaker_id, buffered.speaker_id) {
                     (None, Some(id)) => speaker_id = Some(id),
@@ -374,21 +379,12 @@ impl Segmenter {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn frame_is_voice(samples: &[i16]) -> bool {
-    if samples.is_empty() {
-        return false;
-    }
-    let mut squared = 0_u64;
-    let mut peak = 0_i32;
-    for sample in samples {
-        let value = i32::from(*sample).unsigned_abs();
-        peak = peak.max(i32::try_from(value).unwrap_or(i32::MAX));
-        squared = squared.saturating_add(u64::from(value) * u64::from(value));
-    }
-    let mean = squared / u64::try_from(samples.len()).unwrap_or(1);
-    // Squared RMS >= 280^2 and a meaningful peak rejects codec-room noise
-    // without doing floating-point work on Songbird's callback thread.
-    mean >= 78_400 && peak >= 900
+    // Unified threshold source; delegating here keeps the historic call sites
+    // in `commands_voice::receive` and tests correct while guaranteeing the
+    // two voice paths cannot drift.
+    EnergyVad::default().is_voice(samples)
 }
 
 #[derive(Debug, Clone, PartialEq)]

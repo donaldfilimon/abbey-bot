@@ -9,7 +9,8 @@ use songbird::events::{CoreEvent, Event, EventContext, EventHandler};
 use tokio::sync::{Mutex, mpsc, watch};
 
 use super::discord::{pause_call_for_consent, remove_call_for_consent};
-use crate::offline_voice::{FRAME_SAMPLES, VoiceFrame, frame_is_voice};
+use crate::offline_voice::{FRAME_SAMPLES, VoiceFrame};
+use crate::vad::{EnergyVad, Vad};
 use crate::voice_session::{VoicePhase, VoiceRuntime};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,7 +40,7 @@ fn classify_tick<'a>(
         let Some(samples) = decoded_voice else {
             continue;
         };
-        if !frame_is_voice(samples) {
+        if !EnergyVad::default().is_voice(samples) {
             continue;
         }
         let energy = samples.iter().fold(0_u64, |sum, sample| {
@@ -165,7 +166,7 @@ impl EventHandler for DiscordAudioForwarder {
                     unreachable!("unattested tick returned above")
                 };
                 frame.sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-                let voiced = frame_is_voice(&frame.samples);
+                let voiced = EnergyVad::default().is_voice(&frame.samples);
                 let sent = self.runtime.with_media_enabled(self.epoch, || {
                     let sent = self.tx.try_send(frame);
                     if voiced && sent.is_ok() {

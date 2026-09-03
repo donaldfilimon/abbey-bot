@@ -76,6 +76,7 @@ mod runtime;
 mod server;
 mod text;
 mod tools;
+mod vad;
 mod vision;
 mod voice;
 mod voice_local;

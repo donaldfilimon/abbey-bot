@@ -175,15 +175,7 @@ fn top_role_position(member: &Member, guild: &PartialGuild) -> u16 {
 /// over 2,000) fails the followup outright and the user gets a raw
 /// "Message too large." instead of their walkthrough.
 pub(crate) fn clamp_message(text: String) -> String {
-    const LIMIT: usize = 2000;
-    const MARKER: &str = "\n… (truncated to fit Discord's 2,000-character limit)";
-    if text.chars().count() <= LIMIT {
-        return text;
-    }
-    let keep = LIMIT - MARKER.chars().count();
-    let mut clamped: String = text.chars().take(keep).collect();
-    clamped.push_str(MARKER);
-    clamped
+    crate::gateway::shared::clamp_message(text)
 }
 
 // ---------------------------------------------------------------------------
