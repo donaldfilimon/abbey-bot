@@ -151,6 +151,8 @@ OpenAI-compatible endpoint seam. This operator choice supersedes both the interi
 `gemma4:e4b` choice and the earlier `gpt-oss:20b` benchmark recommendation;
 dated results below remain historical evidence.
 
+**Current live topology (2026-09-03 ~18:00 ET):** Ollama `:11434` is the reasoner; MLX-Audio `:8181` is live; MLX-VLM `:8282` is unpublished. Do not point `ABBEY_BOT_LLM_ENDPOINT` at `:8282` until the installer smoke passes on the exact snapshot.
+
 On Apple Silicon, the optional unified Gemma 4 acceleration profile is a
 separate, pinned MLX-VLM service (it does not share MLX-Audio's environment):
 
@@ -195,7 +197,7 @@ selected from the environment, first match wins:
 The backend contract is intentionally portable. Linux and Windows retain the
 same OpenAI-compatible endpoint seam and may use Ollama, llama.cpp, or another
 runtime that passes Abbey's exact interface tests. On macOS, the pinned
-MLX-VLM profile above is the unified Gemma adapter; its installer will not
+MLX-VLM profile above is the *optional* unified Gemma adapter (live reasoner remains Ollama `:11434`; `:8282` unpublished); its installer will not
 publish the service unless the production text/tool/vision wire shapes pass
 offline. Apple `fm serve` is an optional OpenAI-compatible adapter, not the
 cross-platform default; its current facade is suitable only with Abbey tools
