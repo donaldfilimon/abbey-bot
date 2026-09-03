@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cargo_audit_version": "0.22.2",
   "audit_state": "not-clean",
   "rationale": "Serenity 0.12.5's WebSocket dependency path uses the rustls 0.22 compatibility line and resolves rustls-webpki 0.102.8. A fixed compatible line requires an upstream Serenity/tokio-tungstenite/rustls migration; replacing portable rustls or carrying a local cryptographic fork is outside this approved slice.",
@@ -10,6 +10,67 @@
     "Any accepted advisory fingerprint changes or a vulnerability appears or disappears.",
     "The upstream support policy for rustls-webpki 0.102.x changes."
   ],
+  "locked_dependency_path": {
+    "scope": "all-resolved-targets",
+    "nodes": [
+      {
+        "name": "serenity",
+        "version": "0.12.5",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "9bde37f42765dfdc34e2a039e0c84afbf79a3101c1941763b0beb816c2f17541",
+        "replace": null,
+        "dependency_to_next": {
+          "name": "tokio_tungstenite",
+          "kinds": [
+            {
+              "kind": null,
+              "target": null
+            }
+          ]
+        }
+      },
+      {
+        "name": "tokio-tungstenite",
+        "version": "0.21.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38",
+        "replace": null,
+        "dependency_to_next": {
+          "name": "rustls",
+          "kinds": [
+            {
+              "kind": null,
+              "target": null
+            }
+          ]
+        }
+      },
+      {
+        "name": "rustls",
+        "version": "0.22.4",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432",
+        "replace": null,
+        "dependency_to_next": {
+          "name": "webpki",
+          "kinds": [
+            {
+              "kind": null,
+              "target": null
+            }
+          ]
+        }
+      },
+      {
+        "name": "rustls-webpki",
+        "version": "0.102.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
+        "replace": null,
+        "dependency_to_next": null
+      }
+    ]
+  },
   "accepted_vulnerability_count": 4,
   "accepted_vulnerabilities": [
     {
@@ -40,7 +101,25 @@
         "name": "rustls-webpki",
         "version": "0.102.8",
         "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
+        "dependencies": [
+          {
+            "name": "ring",
+            "version": "0.17.14",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "rustls-pki-types",
+            "version": "1.15.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "untrusted",
+            "version": "0.9.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "replace": null
       }
     },
     {
@@ -68,7 +147,25 @@
         "name": "rustls-webpki",
         "version": "0.102.8",
         "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
+        "dependencies": [
+          {
+            "name": "ring",
+            "version": "0.17.14",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "rustls-pki-types",
+            "version": "1.15.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "untrusted",
+            "version": "0.9.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "replace": null
       }
     },
     {
@@ -96,7 +193,25 @@
         "name": "rustls-webpki",
         "version": "0.102.8",
         "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
+        "dependencies": [
+          {
+            "name": "ring",
+            "version": "0.17.14",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "rustls-pki-types",
+            "version": "1.15.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "untrusted",
+            "version": "0.9.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "replace": null
       }
     },
     {
@@ -126,7 +241,25 @@
         "name": "rustls-webpki",
         "version": "0.102.8",
         "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
+        "dependencies": [
+          {
+            "name": "ring",
+            "version": "0.17.14",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "rustls-pki-types",
+            "version": "1.15.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "untrusted",
+            "version": "0.9.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "replace": null
       }
     }
   ]

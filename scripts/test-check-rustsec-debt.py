@@ -53,6 +53,37 @@ EXPECTED_RANGES_AND_CATEGORIES = {
     },
 }
 PACKAGE_CHECKSUM = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+REGISTRY_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
+EXPECTED_AUDIT_DEPENDENCIES = [
+    {"name": "ring", "version": "0.17.14", "source": REGISTRY_SOURCE},
+    {
+        "name": "rustls-pki-types",
+        "version": "1.15.1",
+        "source": REGISTRY_SOURCE,
+    },
+    {"name": "untrusted", "version": "0.9.0", "source": REGISTRY_SOURCE},
+]
+EXPECTED_DEPENDENCY_PATH = (
+    (
+        "serenity",
+        "0.12.5",
+        "9bde37f42765dfdc34e2a039e0c84afbf79a3101c1941763b0beb816c2f17541",
+        "tokio_tungstenite",
+    ),
+    (
+        "tokio-tungstenite",
+        "0.21.0",
+        "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38",
+        "rustls",
+    ),
+    (
+        "rustls",
+        "0.22.4",
+        "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432",
+        "webpki",
+    ),
+    ("rustls-webpki", "0.102.8", PACKAGE_CHECKSUM, None),
+)
 
 
 def accepted_policy() -> dict[str, object]:
@@ -66,11 +97,6 @@ def exact_report() -> dict[str, object]:
         record = copy.deepcopy(accepted)
         advisory_id = record.pop("id")
         record["advisory"] = {"id": advisory_id, **record["advisory"]}
-        record["package"] = {
-            **record["package"],
-            "dependencies": [],
-            "replace": None,
-        }
         records.append(record)
     return {
         "database": {
@@ -95,6 +121,82 @@ def exact_report() -> dict[str, object]:
             "unmaintained": [{"advisory": {}}, {"advisory": {}}, {"advisory": {}}]
         },
     }
+
+
+def exact_metadata() -> dict[str, object]:
+    policy = accepted_policy()
+    path = policy["locked_dependency_path"]["nodes"]
+    package_ids = [
+        f"{node['source']}#{node['name']}@{node['version']}" for node in path
+    ]
+    root_id = "path+file:///fixture/abbey-bot#0.1.0"
+    packages = [
+        {
+            "id": root_id,
+            "name": "abbey-bot",
+            "version": "0.1.0",
+            "source": None,
+        },
+        *[
+            {
+                "id": package_id,
+                "name": node["name"],
+                "version": node["version"],
+                "source": node["source"],
+            }
+            for package_id, node in zip(package_ids, path, strict=True)
+        ],
+    ]
+    nodes = [
+        {
+            "id": root_id,
+            "deps": [
+                {
+                    "name": "serenity",
+                    "pkg": package_ids[0],
+                    "dep_kinds": [{"kind": None, "target": None}],
+                }
+            ],
+        }
+    ]
+    for index, (package_id, path_node) in enumerate(
+        zip(package_ids, path, strict=True)
+    ):
+        dependencies = []
+        edge = path_node["dependency_to_next"]
+        if edge is not None:
+            dependencies.append(
+                {
+                    "name": edge["name"],
+                    "pkg": package_ids[index + 1],
+                    "dep_kinds": copy.deepcopy(edge["kinds"]),
+                }
+            )
+        nodes.append({"id": package_id, "deps": dependencies})
+    return {"packages": packages, "resolve": {"root": root_id, "nodes": nodes}}
+
+
+def lockfile_for_path(path: list[dict[str, object]]) -> str:
+    lines = ["version = 4", ""]
+    for node in path:
+        lines.extend(
+            [
+                "[[package]]",
+                f"name = {json.dumps(node['name'])}",
+                f"version = {json.dumps(node['version'])}",
+                f"source = {json.dumps(node['source'])}",
+                f"checksum = {json.dumps(node['checksum'])}",
+            ]
+        )
+        if node["replace"] is not None:
+            lines.append(f"replace = {json.dumps(node['replace'])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def exact_lockfile() -> str:
+    policy = accepted_policy()
+    return lockfile_for_path(policy["locked_dependency_path"]["nodes"])
 
 
 def synchronize_count(report: dict[str, object]) -> None:
@@ -122,6 +224,10 @@ class RustsecDebtCheckTests(unittest.TestCase):
         version_returncode: int = 0,
         version_stderr: str = "",
         report_stderr: str = "",
+        metadata: dict[str, object] | None = None,
+        metadata_text: str | None = None,
+        metadata_returncode: int = 0,
+        metadata_stderr: str = "",
     ) -> tuple[int, str, str, mock.Mock]:
         version_result = subprocess.CompletedProcess(
             args=["cargo", "audit", "--version"],
@@ -137,12 +243,22 @@ class RustsecDebtCheckTests(unittest.TestCase):
             stdout=report_text,
             stderr=report_stderr,
         )
+        if metadata_text is None:
+            metadata_text = json.dumps(
+                metadata if metadata is not None else exact_metadata()
+            )
+        metadata_result = subprocess.CompletedProcess(
+            args=["cargo", "metadata"],
+            returncode=metadata_returncode,
+            stdout=metadata_text,
+            stderr=metadata_stderr,
+        )
         stdout = StringIO()
         stderr = StringIO()
         with mock.patch.object(
             CHECKER.subprocess,
             "run",
-            side_effect=[version_result, report_result],
+            side_effect=[version_result, report_result, metadata_result],
         ) as run:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 status = CHECKER.main()
@@ -162,6 +278,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
     def test_policy_pins_the_exact_four_vulnerabilities(self) -> None:
         policy = accepted_policy()
 
+        self.assertEqual(policy["schema_version"], 2)
         self.assertEqual(policy["cargo_audit_version"], "0.22.2")
         self.assertEqual(policy["audit_state"], "not-clean")
         self.assertEqual(policy["accepted_vulnerability_count"], 4)
@@ -192,11 +309,162 @@ class RustsecDebtCheckTests(unittest.TestCase):
                 self.assertEqual(record["affected"], None)
                 self.assertEqual(record["package"]["name"], "rustls-webpki")
                 self.assertEqual(record["package"]["version"], "0.102.8")
-                self.assertEqual(
-                    record["package"]["source"],
-                    "registry+https://github.com/rust-lang/crates.io-index",
-                )
+                self.assertEqual(record["package"]["source"], REGISTRY_SOURCE)
                 self.assertEqual(record["package"]["checksum"], PACKAGE_CHECKSUM)
+                self.assertEqual(
+                    record["package"]["dependencies"],
+                    EXPECTED_AUDIT_DEPENDENCIES,
+                )
+                self.assertEqual(record["package"]["replace"], None)
+
+        dependency_path = policy["locked_dependency_path"]
+        self.assertEqual(dependency_path["scope"], "all-resolved-targets")
+        nodes = dependency_path["nodes"]
+        self.assertEqual(len(nodes), len(EXPECTED_DEPENDENCY_PATH))
+        for node, (name, version, checksum, edge_name) in zip(
+            nodes,
+            EXPECTED_DEPENDENCY_PATH,
+            strict=True,
+        ):
+            self.assertEqual(node["name"], name)
+            self.assertEqual(node["version"], version)
+            self.assertEqual(node["source"], REGISTRY_SOURCE)
+            self.assertEqual(node["checksum"], checksum)
+            self.assertEqual(node["replace"], None)
+            if edge_name is None:
+                self.assertEqual(node["dependency_to_next"], None)
+            else:
+                self.assertEqual(node["dependency_to_next"]["name"], edge_name)
+                self.assertEqual(
+                    node["dependency_to_next"]["kinds"],
+                    [{"kind": None, "target": None}],
+                )
+
+    def test_policy_pins_the_unfiltered_metadata_scope(self) -> None:
+        dependency_policy = copy.deepcopy(
+            accepted_policy()["locked_dependency_path"]
+        )
+        dependency_policy["scope"] = "x86_64-unknown-linux-gnu-only"
+
+        with self.assertRaisesRegex(
+            CHECKER.DebtCheckError,
+            "locked dependency scope mismatch",
+        ):
+            CHECKER._load_dependency_path_policy(dependency_policy)
+
+    def test_cargo_lock_v4_package_fingerprints_are_bound_for_every_path_node(
+        self,
+    ) -> None:
+        _, _, _, expected_path = CHECKER.load_policy()
+        CHECKER._verify_lockfile_path(exact_lockfile(), expected_path)
+        mutations = (
+            ("name", "changed-package"),
+            ("version", "999.0.0"),
+            ("source", "registry+https://example.invalid/index"),
+            ("checksum", "0" * 64),
+            (
+                "replace",
+                "replacement 1.0.0 (registry+https://example.invalid/index)",
+            ),
+        )
+        original_nodes = accepted_policy()["locked_dependency_path"]["nodes"]
+        for index, original in enumerate(original_nodes):
+            for field, value in mutations:
+                with self.subTest(node=original["name"], field=field):
+                    nodes = copy.deepcopy(original_nodes)
+                    nodes[index][field] = value
+
+                    with self.assertRaises(CHECKER.DebtCheckError):
+                        CHECKER._verify_lockfile_path(
+                            lockfile_for_path(nodes),
+                            expected_path,
+                        )
+
+    def test_cargo_lock_format_version_is_explicitly_v4(self) -> None:
+        _, _, _, expected_path = CHECKER.load_policy()
+
+        with self.assertRaisesRegex(
+            CHECKER.DebtCheckError,
+            "Cargo.lock format version mismatch",
+        ):
+            CHECKER._verify_lockfile_path(
+                exact_lockfile().replace("version = 4", "version = 3", 1),
+                expected_path,
+            )
+
+    def test_metadata_binds_every_path_node_identity_and_source(self) -> None:
+        _, _, _, expected_path = CHECKER.load_policy()
+        for index, expected in enumerate(expected_path):
+            for field, value in (
+                ("name", "changed-package"),
+                ("version", "999.0.0"),
+                ("source", "registry+https://example.invalid/index"),
+            ):
+                with self.subTest(node=expected["name"], field=field):
+                    metadata = exact_metadata()
+                    metadata["packages"][index + 1][field] = value
+
+                    with self.assertRaises(CHECKER.DebtCheckError):
+                        CHECKER._verify_metadata_path(
+                            json.dumps(metadata),
+                            expected_path,
+                        )
+
+    def test_every_metadata_path_edge_fingerprint_is_bound(self) -> None:
+        cases = ("name", "kind", "target")
+        for edge_index in range(len(EXPECTED_DEPENDENCY_PATH) - 1):
+            for field in cases:
+                with self.subTest(edge=edge_index, field=field):
+                    metadata = exact_metadata()
+                    dependency = metadata["resolve"]["nodes"][edge_index + 1][
+                        "deps"
+                    ][0]
+                    if field == "name":
+                        dependency["name"] = "changed_edge"
+                    elif field == "kind":
+                        dependency["dep_kinds"][0]["kind"] = "build"
+                    else:
+                        dependency["dep_kinds"][0]["target"] = "cfg(windows)"
+
+                    result = self.run_check(metadata=metadata)
+
+                    self.assert_failure(result, "edge fingerprint mismatch")
+
+    def test_missing_metadata_path_edge_is_rejected(self) -> None:
+        for edge_index in range(len(EXPECTED_DEPENDENCY_PATH) - 1):
+            with self.subTest(edge=edge_index):
+                metadata = exact_metadata()
+                metadata["resolve"]["nodes"][edge_index + 1]["deps"] = []
+
+                result = self.run_check(metadata=metadata)
+
+                self.assert_failure(result, "dependency path edge mismatch")
+
+    def test_added_bypass_route_for_any_kind_or_target_is_rejected(self) -> None:
+        cases = (
+            (None, None),
+            ("build", None),
+            ("dev", None),
+            (None, "cfg(windows)"),
+        )
+        for kind, target in cases:
+            with self.subTest(kind=kind, target=target):
+                metadata = exact_metadata()
+                vulnerable_id = metadata["packages"][-1]["id"]
+                metadata["resolve"]["nodes"][0]["deps"].append(
+                    {
+                        "name": "bypass_webpki",
+                        "pkg": vulnerable_id,
+                        "dep_kinds": [{"kind": kind, "target": target}],
+                    }
+                )
+
+                result = self.run_check(metadata=metadata)
+
+                self.assert_failure(
+                    result,
+                    "alternate route bypassing serenity 0.12.5",
+                )
 
     def test_exact_exit_one_report_passes_and_says_not_clean(self) -> None:
         status, stdout, stderr, run = self.run_check()
@@ -215,7 +483,17 @@ class RustsecDebtCheckTests(unittest.TestCase):
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(
             commands,
-            [["cargo", "audit", "--version"], ["cargo", "audit", "--json"]],
+            [
+                ["cargo", "audit", "--version"],
+                ["cargo", "audit", "--json"],
+                [
+                    "cargo",
+                    "metadata",
+                    "--locked",
+                    "--format-version",
+                    "1",
+                ],
+            ],
         )
         self.assertFalse(any("--ignore" in argument for command in commands for argument in command))
 
@@ -392,6 +670,84 @@ class RustsecDebtCheckTests(unittest.TestCase):
 
                 self.assert_failure(result, "vulnerability fingerprint mismatch")
 
+    def test_changed_missing_or_added_cargo_audit_dependency_is_rejected(self) -> None:
+        for mutation in ("missing", "added", "changed"):
+            with self.subTest(mutation=mutation):
+                report = exact_report()
+                dependencies = report["vulnerabilities"]["list"][0]["package"][
+                    "dependencies"
+                ]
+                if mutation == "missing":
+                    dependencies.pop()
+                elif mutation == "added":
+                    dependencies.append(
+                        {
+                            "name": "new-dependency",
+                            "version": "1.0.0",
+                            "source": REGISTRY_SOURCE,
+                        }
+                    )
+                else:
+                    dependencies[0]["version"] = "999.0.0"
+
+                result = self.run_check(report)
+
+                self.assert_failure(result, "vulnerability fingerprint mismatch")
+
+    def test_cargo_audit_dependency_order_is_canonicalized(self) -> None:
+        report = exact_report()
+        report["vulnerabilities"]["list"][0]["package"][
+            "dependencies"
+        ].reverse()
+
+        status, stdout, stderr, _ = self.run_check(report)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("4 vulnerabilities remain; audit is NOT clean", stdout)
+
+    def test_duplicate_cargo_audit_dependency_is_rejected(self) -> None:
+        report = exact_report()
+        dependencies = report["vulnerabilities"]["list"][0]["package"][
+            "dependencies"
+        ]
+        dependencies.append(copy.deepcopy(dependencies[0]))
+
+        result = self.run_check(report)
+
+        self.assert_failure(result, "package dependencies contains duplicate entries")
+
+    def test_missing_cargo_audit_dependencies_field_is_rejected(self) -> None:
+        report = exact_report()
+        del report["vulnerabilities"]["list"][0]["package"]["dependencies"]
+
+        result = self.run_check(report)
+
+        self.assert_failure(result, "package schema mismatch")
+
+    def test_non_null_or_missing_cargo_audit_replace_is_rejected(self) -> None:
+        for mutation in ("non-null", "missing"):
+            with self.subTest(mutation=mutation):
+                report = exact_report()
+                package = report["vulnerabilities"]["list"][0]["package"]
+                if mutation == "non-null":
+                    package["replace"] = {
+                        "name": "rustls-webpki",
+                        "version": "0.102.9",
+                        "source": REGISTRY_SOURCE,
+                    }
+                else:
+                    del package["replace"]
+
+                result = self.run_check(report)
+
+                expected = (
+                    "vulnerability fingerprint mismatch"
+                    if mutation == "non-null"
+                    else "package schema mismatch"
+                )
+                self.assert_failure(result, expected)
+
     def test_changed_package_identity_is_rejected(self) -> None:
         report = exact_report()
         record = report["vulnerabilities"]["list"][0]
@@ -470,6 +826,23 @@ class RustsecDebtCheckTests(unittest.TestCase):
         )
 
         self.assert_failure(result, "report command failed with exit 2")
+        self.assertNotIn(sentinel, result[2])
+
+    def test_metadata_command_failure_fails_without_echo(self) -> None:
+        sentinel = "DO-NOT-ECHO-CARGO-METADATA-STDERR"
+        result = self.run_check(
+            metadata_returncode=101,
+            metadata_stderr=sentinel,
+        )
+
+        self.assert_failure(result, "cargo metadata command failed with exit 101")
+        self.assertNotIn(sentinel, result[2])
+
+    def test_malformed_metadata_fails_closed_without_echo(self) -> None:
+        sentinel = "DO-NOT-ECHO-METADATA-CONTENT"
+        result = self.run_check(metadata_text="{" + sentinel)
+
+        self.assert_failure(result, "cargo metadata output is malformed JSON")
         self.assertNotIn(sentinel, result[2])
 
 
