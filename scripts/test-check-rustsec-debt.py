@@ -228,6 +228,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
         metadata_text: str | None = None,
         metadata_returncode: int = 0,
         metadata_stderr: str = "",
+        metadata_decode_error: UnicodeDecodeError | None = None,
     ) -> tuple[int, str, str, mock.Mock]:
         version_result = subprocess.CompletedProcess(
             args=["cargo", "audit", "--version"],
@@ -253,12 +254,17 @@ class RustsecDebtCheckTests(unittest.TestCase):
             stdout=metadata_text,
             stderr=metadata_stderr,
         )
+        metadata_outcome: subprocess.CompletedProcess[str] | UnicodeDecodeError = (
+            metadata_decode_error
+            if metadata_decode_error is not None
+            else metadata_result
+        )
         stdout = StringIO()
         stderr = StringIO()
         with mock.patch.object(
             CHECKER.subprocess,
             "run",
-            side_effect=[version_result, report_result, metadata_result],
+            side_effect=[version_result, report_result, metadata_outcome],
         ) as run:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 status = CHECKER.main()
@@ -496,6 +502,10 @@ class RustsecDebtCheckTests(unittest.TestCase):
             ],
         )
         self.assertFalse(any("--ignore" in argument for command in commands for argument in command))
+        for call in run.call_args_list:
+            self.assertTrue(call.kwargs["text"])
+            self.assertEqual(call.kwargs["encoding"], "utf-8")
+            self.assertEqual(call.kwargs["errors"], "strict")
 
     def test_exact_exit_zero_report_is_also_accepted(self) -> None:
         status, stdout, stderr, _ = self.run_check(report_returncode=0)
@@ -837,6 +847,43 @@ class RustsecDebtCheckTests(unittest.TestCase):
 
         self.assert_failure(result, "cargo metadata command failed with exit 101")
         self.assertNotIn(sentinel, result[2])
+
+    def test_metadata_decode_failures_are_redacted_and_fail_closed(self) -> None:
+        decode_errors = (
+            UnicodeDecodeError(
+                "charmap",
+                b"\x9dDO-NOT-ECHO-CARGO-METADATA",
+                0,
+                1,
+                "character maps to <undefined>",
+            ),
+            UnicodeDecodeError(
+                "utf-8",
+                b"\xffDO-NOT-ECHO-CARGO-METADATA",
+                0,
+                1,
+                "invalid start byte",
+            ),
+        )
+        for decode_error in decode_errors:
+            with self.subTest(encoding=decode_error.encoding):
+                status, stdout, stderr, run = self.run_check(
+                    metadata_decode_error=decode_error
+                )
+
+                self.assertEqual(status, 1)
+                self.assertEqual(stdout, "")
+                self.assertEqual(
+                    stderr,
+                    "rustsec-debt-check: FAIL: "
+                    "Cargo tooling output is not valid UTF-8\n",
+                )
+                self.assertNotIn("DO-NOT-ECHO-CARGO-METADATA", stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertEqual(run.call_count, 3)
+                metadata_call = run.call_args_list[-1]
+                self.assertEqual(metadata_call.kwargs["encoding"], "utf-8")
+                self.assertEqual(metadata_call.kwargs["errors"], "strict")
 
     def test_malformed_metadata_fails_closed_without_echo(self) -> None:
         sentinel = "DO-NOT-ECHO-METADATA-CONTENT"

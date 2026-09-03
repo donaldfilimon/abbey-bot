@@ -979,7 +979,11 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
         )
+    except UnicodeDecodeError:
+        raise DebtCheckError("Cargo tooling output is not valid UTF-8") from None
     except OSError:
         raise DebtCheckError("Cargo tooling is unavailable") from None
 
