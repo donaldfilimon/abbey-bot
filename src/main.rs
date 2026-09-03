@@ -223,7 +223,10 @@ async fn main() -> Result<(), Error> {
         ("ABBEY_VOICE_GUILD_ID", env_presence.voice_guild_id),
         ("ABBEY_VOICE_CHANNEL_ID", env_presence.voice_channel_id),
         ("ABBEY_VOICE_MODE", env_presence.voice_mode),
-        ("ABBEY_VOICE_LOCAL_ENDPOINT", env_presence.voice_local_endpoint),
+        (
+            "ABBEY_VOICE_LOCAL_ENDPOINT",
+            env_presence.voice_local_endpoint,
+        ),
     ];
     let present: Vec<&str> = presence_pairs
         .iter()
