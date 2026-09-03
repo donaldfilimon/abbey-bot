@@ -1,5 +1,9 @@
 # Abbey Bot
 
+> **Intelligence Without Limits** — Abbey’s Discord operational layer (Rust).  
+> Persona routing, memory/WDBX, reputation, and consent-gated voice tooling.  
+> Adjacent to the Swift `AbbeyBot` product; shared contracts, not shared runtime.
+
 **Intelligence Without Limits.**
 
 Abbey is your Discord companion for routing, memory, and calm ops help — with personas that say what they know and what they don’t.
