@@ -260,13 +260,22 @@ and for a bot that answers (not the honest 'no backend' line):
 optional, as you ran it by hand: ABBEY_VISION_ENDPOINT/ABBEY_VISION_MODEL,
   ABBEY_GUILD_ID, ABBEY_MESSAGE_CONTENT, ABBEY_QUIET, RUST_LOG; live voice also
   needs ABBEY_VOICE_GUILD_ID + ABBEY_VOICE_CHANNEL_ID. Local mode is the
-  default and uses deploy/install-mlx-audio-launchd.sh; OpenAI audio is selected
-  only by ABBEY_VOICE_MODE=openai and then requires OPENAI_API_KEY.
-  Apple-silicon Gemma 4 reasoning + tools + vision can use the separately
-  pinned deploy/install-mlx-vlm-launchd.sh profile on 127.0.0.1:8282; use the
-  exact snapshot path printed by that installer as both model variables.
+  default and uses deploy/install-mlx-audio-launchd.sh (setuptools 83;
+  webrtcvad patched via importlib.metadata; readiness GET /v1/models);
+  OpenAI audio is selected only by ABBEY_VOICE_MODE=openai and then requires
+  OPENAI_API_KEY. Apple-silicon Gemma 4 reasoning + tools + vision can use the
+  separately pinned deploy/install-mlx-vlm-launchd.sh profile on 127.0.0.1:8282;
+  use the exact snapshot path printed by that installer as both model variables.
+This file is what launchd loads — checkout .env is not. Missing LLM/voice keys
+here are silent in the managed process unless this installer refuses them.
 (launchd always uses $DATA_DIR; ABBEY_DATA_DIR in this file is ignored.)
 MSG
+  exit 1
+fi
+
+echo "== launchd env key presence (values withheld)"
+if ! sh deploy/check-launchd-env.sh "$ENV_FILE"; then
+  echo "fix $ENV_FILE (names-only check failed; values were not printed)" >&2
   exit 1
 fi
 
