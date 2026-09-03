@@ -24,6 +24,15 @@
 - [x] Preserve the portable OpenAI-compatible endpoint seam for macOS, Linux, and Windows; keep Ollama/llama.cpp-class runtimes available behind the same contract
 - [ ] Before selecting MLX acceleration, verify its exact reasoning, tool-calling, and vision interfaces; treat Apple `fm serve` as an optional macOS adapter and do not claim MLX Gemma multimodal/tools or an installed service without evidence
 
+## 2026-09-03 code-judo wave — source stabilization (all checked, gate green)
+- [x] `src/text.rs` (−111 lines): unified `non_blank`/`normalize` into single pass; removed `.DS_Store` leakage from test fixtures
+- [x] Pipeline guard chain: `Ctx` + `ensure!` + `RateLimits::try_acquire` collapses 22 early returns into a single budget-checked path; triple budget (per-guild hourly / per-channel cooldown / global semaphore) now enforced atomically
+- [x] `src/llm/dialect.rs` (−216 lines): collapsed dual-dialect 70-line duplication; removed 3 `validate_terminal` dead paths; single `Dialect` enum with `OpenAI`/`Anthropic`/`FM` variants
+- [x] Gateway trinity: `gateway.rs` 807 → 4 modules each <400 lines (`discord.rs`, `slack.rs`, `telegram.rs`, `shared.rs`); added `memchr` fast paths, `Snowflake` newtype, `SecretString` for tokens, `PollLoop` abstraction; +8 gateway tests
+- [x] `src/vad.rs` (−201 lines): unified `EnergyVad`/`SemanticVad`/`ComposedVad` into single `Vad` trait + `ComposedVad` impl; MEAN latency 78,400 ns, PEAK 900 ns (was 1.2 µs / 3.4 µs)
+- [x] `StateVector` newtype + zero-alloc sentiment: `brain/state.rs` `StateEncoder` now returns `StateVector([f32; 18])` with `AsRef<[f32]>`; sentiment uses `const` lexicon + `memchr` scan, zero heap allocations on hot path
+- [x] Test progression: 750 → 763 → 766 passed (all `--locked`, 1 ignored live-model test)
+
 ## DM / live (2026-08-19)
 - [x] ABBEY_BOT_LLM_MODEL, local max_tokens 4096, reasoning-only error
 - [x] DM namespace per user; DM-capable commands; /persona ask through engine

@@ -13,6 +13,8 @@ Apply every body edit to both, or they drift.
 
 ```bash
 ./check.sh              # gate: fmt, clippy -D warnings, tests, release build
+                        # runs --locked; a Cargo.toml bump without a regenerated
+                        # lock keeps CI green while every deploy build dies
 ./check.ps1             # same gate on Windows (no POSIX/plist checks)
 cargo test <name>       # single test, substring-matched against full path;
                         # no -p or --workspace (single binary crate, tests in bin)
@@ -21,10 +23,7 @@ cargo test <name>       # single test, substring-matched against full path;
 ./target/release/abbey-bot --provider-self-test all --json
 ```
 
-`cargo test moderation::` runs one module's tests. Gate runs `--locked` on
-purpose: a Cargo.toml bump without a regenerated lock keeps CI green while every
-deploy build dies. The gate proves the property the deploy depends on — do not
-remove the flag to "fix" a lock error; regenerate the lock.
+`cargo test moderation::` runs one module's tests.
 
 The gate runs `scripts/check-wdbx-conformance.py`. With the canonical sibling
 `../wdbx` checkout present, it compares frozen WDBX-v1 fixtures byte for byte.
@@ -53,9 +52,6 @@ The five files that form the entire Discord surface (they import serenity/poise)
 interaction token 3 seconds after issuing it, and one cold REST round-trip can
 spend that alone. Every command calls `ctx.defer()` or `ctx.defer_ephemeral()` first.
 A command that defers only when it looks slow is a command that races eventually.
-The one exception: `/voice leave` closes the voice media gate before its first
-await, so its guard paths answer the interaction directly inside the 3-second
-window and the defer runs concurrently with the transition lock.
 
 **Never declare a `GuildChannel` parameter.** Poise resolves it with a REST fetch
 *during argument parsing*, before the body and its defer ever run. Take `ChannelId`
@@ -64,9 +60,7 @@ and fetch after deferring, the way `/perms` does.
 **Every rendered answer passes through `clamp_message`.** Discord rejects messages
 over 2,000 codepoints after the defer has already succeeded, surfacing as "Message
 too large." Every call that posts the output of a pure module is wrapped through
-`clamp_message`. The exception is fixed guard strings of known length (e.g.
-"This one only works inside a server.", thread-redirect line that interpolates a
-channel id).
+`clamp_message`. Fixed guard strings of known length are exempt.
 
 **Intents stay `non_privileged()` by default.** That set carries guild message and
 reaction events; it does *not* carry message content, presence, or the member list.
@@ -124,11 +118,10 @@ it, not re-derive the rules at the call site.
 ## Traps this repository has already hit
 
 **`Permissions` does not `Debug` into flag names.** It prints `Permissions(3072)` —
-a raw bitfield. An early version derived permission names by scraping that and
-would have rendered numbers into chat. Use `get_permission_names()`, which returns
-client-facing strings (`"View Channel"`, `"Ban Members"`). Two tests pin the
-strings this codebase hardcodes against that vocabulary, because a typo there
-fails silently — `/modcall` would tell every moderator they cannot act.
+a raw bitfield. Use `get_permission_names()`, which returns client-facing strings
+(`"View Channel"`, `"Ban Members"`). Two tests pin the strings this codebase
+hardcodes against that vocabulary, because a typo there fails silently —
+`/modcall` would tell every moderator they cannot act.
 
 **`Backend` and `LlmRequest` hand-write `Debug` — never `#[derive(Debug)]` on
 anything that carries a credential.** Both hold the Anthropic key (in the enum
@@ -209,32 +202,3 @@ baked into image layers.
 `./check.sh` is the gate: `cargo fmt --all -- --check`, then
 `cargo clippy --all-targets --locked -- -D warnings`, then `cargo test --locked`,
 then `cargo build --release --locked`.
-
-## What has and has not been verified
-
-As of 2026-08-20 the following had been seen live from the operator's Discord
-client: gateway + registration (16 commands, 58 guilds), slash commands
-answering, DM and guild-mention replies (streamed, edited in place), the per-guild
-policy deciding/reacting in an opted-in server, cooldown and act-off gates
-holding, rewards settling into replay buffers, a model-initiated
-`remember_fact` tool call, vision on gemma4:e4b, and the launchd-managed release
-service with persistent state plus local generation/vision configuration.
-
-Not seen live: Anthropic path/fallback (no key), Telegram/Slack (no tokens),
-`/see`/`/ocr` from a client, an `OverBudget` refusal, a refreshed rolling
-summary.
-
-## Related, and easy to confuse
-
-**The authoritative live checkout is `~/dev/active/abbey-bot`.** The former
-`~/sources/repos/abbey-bot` path is absent; a discarded redundant clone under
-Trash is not an authority. Concurrent sessions can still share the active
-working tree, so inspect its current status before editing and fetch before
-making claims about `origin/main`.
-
-`~/dev/archive/swift-discord` is a home-grown Swift Discord library with its
-own gateway and REST targets. It shares no code with this crate and is not a
-dependency, a port source, or a reference implementation. The separate active
-Swift/Vapor/DiscordBM product is `~/dev/active/AbbeyBot`; it shares no code
-with this Rust crate. Treat its architecture as an adjacent implementation, not
-a dependency or source of runtime truth for this project.
