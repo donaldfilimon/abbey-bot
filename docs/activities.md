@@ -22,18 +22,21 @@ muted/self-deafened presence only.
 
 Do **not** fake screenshare. In-voice visuals go through Activities.
 
-## Live overwrite snapshot (2026-09-03 ~18:55 ET)
+## Live overwrite snapshot (2026-09-03 ~18:55–19:00 ET)
 
-Guild `1275617641620443146`. Office Hours `1495755277859815595` plus the other
-type-2 VOICE channels under category `1275617642614362268` (Community Lounge,
-Pair Programming, Gaming, Town Hall, Chill / AFK):
+Guild `1275617641620443146`. Office Hours `1495755277859815595` plus all other
+type-2 VOICE channels (Community Lounge, Pair Programming, Gaming, Town Hall,
+Chill / AFK):
 
-- Abbey `@me` roles (Abbey, Admin, Member, Moderator, Residents, Land Lord) and
-  the Member role `1545150308244521044` already **allow** View, Send, Connect,
-  Speak, Stream, and Use Embedded Activities. Abbey also has Administrator at
-  guild level.
-- **No overwrite PUT** this run. Existing allows were not stripped.
-- `#bot-ops` was not posted because nothing mutated.
+- **PUT only to add missing allows** (no wipe) for Abbey bot member
+  `1147940171099152464`, Abbey's roles, and Member `1545150308244521044`.
+- Bits ensured: View, Send, Connect, Speak, Stream (`1<<9`), Use Embedded
+  Activities (`1<<39`).
+- Office Hours: roles mostly needed Send Messages; bot member overwrite gained
+  Stream + Use Embedded Activities. Post-verify: all targets
+  Connect+Speak+Stream+Use Embedded Activities = true.
+- Other voice channels: similar gap-fill (48 successful `204` PUTs total).
+- `#bot-ops` message `1545205023808430150` recorded the mutation.
 
 `/voice` join/supervision fail-closed requires:
 `View Channel, Send Messages, Connect, Speak, Stream, Use Embedded Activities`.
