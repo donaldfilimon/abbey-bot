@@ -472,6 +472,7 @@ pub async fn handle<O: Outbound + Sync>(
         // someone addressed Abbey — budgeted policy replies stay single-shot.
         let _slot = state.acquire_generation().await?;
         let ask = Ask {
+            session_mode: crate::generation::SessionMode::Shared,
             scope: &scoped_channel,
             context: &context,
             user_input: &enriched,

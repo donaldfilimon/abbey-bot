@@ -48,6 +48,23 @@ status: in_progress
   membership-change pause, renewed consent, written stop, and final leave with no remaining media.
 - Stream/video ingestion remains outside this voice goal; only explicitly supplied still images
   are part of the documented vision surface.
+- **2026-09-04 03:5x — wake names are operator-configurable; nothing about acceptance changes.**
+  `ABBEY_VOICE_WAKE_WORDS` replaces the built-in list (`abbey`, `abby`, `aviva`, `abi`) when set.
+  Words are lowercased and must be ASCII-alphabetic and at most 32 bytes, which is exactly what
+  the matcher's tokenizer can produce, so a configured word can always be spoken into a match. A
+  blank, absent, or fully invalid value keeps the default rather than leaving Abbey unaddressable
+  — a typo in the operator env is not allowed to silently deafen the wake gate. The wake gate
+  itself, the continuation window, and the speaker scoping are unchanged, so this adds no live
+  evidence: it changes which names open a turn, not whether a turn was ever witnessed. The
+  duplicated `contains_wake_name` in `voice_local.rs` and `voice_self_test.rs` was collapsed to
+  one `voice::contains_wake_name`, so the self-test and the live session can no longer drift.
+  Everything listed above as pending acceptance is still pending.
+- **Not landed, and deliberately so: `/voice mode`.** An untracked working tree from 00:16 added a
+  MANAGE_GUILD `/voice mode` that wrote a `pending_voice_mode` nothing read, and whose OpenAI arm
+  refused unconditionally — a command that promised a switch it could not perform. It was dropped
+  rather than completed here. A real switch requires `VoiceConfig` to retain complete-but-unselected
+  backends so a switch can be validated against something real; that work is in flight on
+  `cursor/voice-mode-multi-backend` and is owned there.
 
 - **2026-09-04 reconciliation.** Two corrections, both verified rather than inferred. (1) The
   line above describing "the existing manually launched process" is stale: `launchctl list` on
@@ -148,6 +165,29 @@ status: in_progress
 - Direct compatible majors moved to `sha2` 0.11, `base64` 0.23, and `tokio-tungstenite` 0.30.
   Reqwest remains on 0.12 for Serenity feature compatibility, and Symphonia remains on 0.5 for
   Songbird playback/error type compatibility.
+- **2026-09-04 03:5x — context menus shipped (code); two roadmap rows corrected.** The Discord
+  roadmap's gap table listed context menus as **Missing** with no `context_menu` anywhere in
+  `src/`. Both now exist: "Abbey: profile" (USER) renders the same summary as `/whois` through a
+  shared `member_profile`, and "Ask Abbey" (MESSAGE) routes a message's own text through the same
+  `answer_question` path `/persona ask` uses, so identical text cannot get two different answers,
+  cooldowns, or transcript scopes. Both are ephemeral. The message menu does **not** commit to the
+  channel transcript (`Commit::No`): an ephemeral exchange must not steer a conversation nobody
+  saw it enter, and a right-click must not pull a third party's words into Abbey's context in a
+  guild where Abbey holds no message-content access of its own. Empty resolved content is reported
+  plainly instead of answered. This is source evidence only — no live invocation is claimed, and
+  the unobserved-command list (`/forget`, `/ocr`, `/webhook`, post-deploy `/see`) is unchanged.
+- **`/webhook` is not an unimplemented gap; it is a refusal.** The roadmap row read "Guide only,
+  no create-webhook call", which reads like unfinished work. `commands::webhook` emits setup steps
+  on purpose: a bot-minted webhook URL is a credential the bot would then hold. Reclassified in
+  the roadmap as "Guide only, by decision" so no later session "finishes" it.
+- **User-install (P3) is not a pure code change, and the roadmap now says why.** Crate support
+  exists in the pinned poise 0.6.2 (`Command::install_context` / `interaction_context`), but a
+  global bulk overwrite carrying `USER_INSTALL` is rejected until the Developer Portal enables
+  User Install — and that overwrite runs in the `ready` callback, so a rejection breaks command
+  registration for the running service. Any slice must be off by default behind an operator env
+  flag, and must decide per command what a user-installed invocation may touch: `persona ask`
+  writes a channel-scoped transcript, so invoking it inside a guild Abbey was never installed in
+  would create context for a server that never consented. Unstarted.
 
 - **2026-09-04 gate evidence: the accepted TLS debt is unchanged and the re-review trigger has
   NOT fired.** Verified by running the repository's own gate rather than re-reading the bullet

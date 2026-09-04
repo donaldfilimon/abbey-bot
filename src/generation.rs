@@ -261,12 +261,40 @@ fn finalize_reply(persona: Persona, reply: &str, grounding: &Grounding) -> Strin
 type RoundOutcome =
     Result<(Option<String>, Option<String>, Vec<crate::tools::ToolCall>), llm::LlmError>;
 
+/// Whether prompt preparation may update shared conversation state.
+#[derive(Clone, Copy)]
+pub enum SessionMode {
+    Shared,
+    Ephemeral,
+}
+
 /// What generation is asked to do, independent of delivery and capabilities.
 pub struct Ask<'a> {
+    pub session_mode: SessionMode,
     pub scope: &'a str,
     pub context: &'a PersonaContext,
     pub user_input: &'a str,
     pub now: u64,
+}
+
+impl Ask<'_> {
+    fn prepare(&self, state: &AppState, persona: Persona) -> crate::engine::PreparedTurn {
+        match self.session_mode {
+            SessionMode::Shared => AppState::lock(&state.engine).prepare(
+                self.scope,
+                persona,
+                self.context,
+                self.user_input,
+                self.now,
+            ),
+            SessionMode::Ephemeral => AppState::lock(&state.engine).prepare_ephemeral(
+                self.scope,
+                persona,
+                self.context,
+                self.user_input,
+            ),
+        }
+    }
 }
 
 /// The complete tool-capability boundary for one generation. Disabled turns
@@ -361,6 +389,7 @@ pub async fn generate_with_tools<O: Outbound + Sync>(
                 ask,
                 delivery,
                 None,
+                llm::ResponseStyle::Default,
             )
             .await
         }
@@ -406,6 +435,7 @@ pub async fn generate_with_tools<O: Outbound + Sync>(
                     ask,
                     delivery,
                     None,
+                    llm::ResponseStyle::Default,
                 )
                 .await
                 {
@@ -480,6 +510,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                 ask,
                 delivery,
                 None,
+                llm::ResponseStyle::Default,
             )
             .await
         }
@@ -538,6 +569,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                     ask,
                     delivery,
                     None,
+                    llm::ResponseStyle::Default,
                 )
                 .await
                 {
@@ -569,6 +601,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                     ask,
                     delivery,
                     None,
+                    llm::ResponseStyle::Default,
                 )
                 .await
                 {
@@ -610,7 +643,9 @@ fn no_backend_error() -> llm::LlmError {
 /// The voice surface uses this seam to require a loopback backend even when a
 /// remote text provider is configured as the process-wide default. The
 /// optional suffix adds presentation constraints without replacing persona
-/// policy.
+/// policy. Its explicit spoken response style skips optional model thinking
+/// only on the measured local Ollama/Gemma deployment; ordinary text and
+/// tool-capable generation retain provider defaults.
 pub async fn generate_without_delivery(
     state: &AppState,
     backend: &llm::Backend,
@@ -625,6 +660,7 @@ pub async fn generate_without_delivery(
         ask,
         None,
         system_suffix,
+        llm::ResponseStyle::Spoken,
     )
     .await?;
     debug_assert!(posted.is_none(), "no-delivery generation cannot post");
@@ -638,14 +674,10 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
     system_suffix: Option<&str>,
+    response_style: llm::ResponseStyle,
 ) -> Result<(String, Option<String>, Persona), llm::LlmError> {
     use std::sync::atomic::Ordering;
-    let Ask {
-        scope,
-        context,
-        user_input,
-        now,
-    } = *ask;
+    let scope = ask.scope;
     // Constructing the vocabulary is intentionally capability-gated. This is
     // more than an empty slice at dispatch time: disabled voice turns never
     // allocate or even materialize model-callable tool descriptions.
@@ -659,8 +691,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
-        let prepared =
-            AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
+        let prepared = ask.prepare(state, persona);
         let system_prompt = match system_suffix {
             Some(suffix) if !suffix.trim().is_empty() => {
                 format!("{}\n\n{}", prepared.system_prompt, suffix.trim())
@@ -698,22 +729,29 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
                     Err(e) => Err(e),
                 }
             }
-            _ => llm::chat_turn(&state.llm, backend, &system_prompt, &turns, tools)
-                .await
-                .map(|t| {
-                    let is_final = t.calls.is_empty();
-                    let text = if t.text.trim().is_empty() {
-                        None
-                    } else if is_final {
-                        Some(finalize_reply(persona, &t.text, &grounding))
-                    } else {
-                        // Preserve prior tool-round shaping, but do not append
-                        // a user-visible hedge to assistant prose that will
-                        // only be sent back to the model for continuation.
-                        Some(ask::tidy_reply(persona, &t.text))
-                    };
-                    (text, None, t.calls)
-                }),
+            _ => llm::chat_turn_with_style(
+                &state.llm,
+                backend,
+                &system_prompt,
+                &turns,
+                tools,
+                response_style,
+            )
+            .await
+            .map(|t| {
+                let is_final = t.calls.is_empty();
+                let text = if t.text.trim().is_empty() {
+                    None
+                } else if is_final {
+                    Some(finalize_reply(persona, &t.text, &grounding))
+                } else {
+                    // Preserve prior tool-round shaping, but do not append
+                    // a user-visible hedge to assistant prose that will
+                    // only be sent back to the model for continuation.
+                    Some(ask::tidy_reply(persona, &t.text))
+                };
+                (text, None, t.calls)
+            }),
         };
 
         let (text, posted, calls) = match turn {

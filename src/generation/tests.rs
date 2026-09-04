@@ -480,3 +480,58 @@ fn only_evidence_bearing_read_tool_results_ground_a_final_candidate() {
         "validated tool results are grounding"
     );
 }
+
+#[test]
+fn ephemeral_preparation_preserves_shared_persona_history_and_idle_time() {
+    let state = AppState::in_memory();
+    let context = PersonaContext::empty();
+    AppState::lock(&state.engine).prepare("channel", Persona::Abbey, &context, "public", 1);
+    AppState::lock(&state.engine).commit("channel", "public", "answer", 1);
+    let prepared = Ask {
+        session_mode: SessionMode::Ephemeral,
+        scope: "channel",
+        context: &context,
+        user_input: "private question",
+        now: 100,
+    }
+    .prepare(&state, Persona::Aviva);
+    assert!(prepared.system_prompt.starts_with("You are Aviva. "));
+    assert_eq!(
+        prepared.turns,
+        vec![
+            llm::ChatTurn::user("public"),
+            llm::ChatTurn::assistant("answer"),
+            llm::ChatTurn::user("private question"),
+        ]
+    );
+    let mut engine = AppState::lock(&state.engine);
+    assert_eq!(engine.session_persona("channel"), Some(Persona::Abbey));
+    assert_eq!(engine.session_len("channel"), 2);
+    assert_eq!(
+        engine.evict_idle(100, 10),
+        1,
+        "private lookup must not refresh shared idle time"
+    );
+}
+
+#[test]
+fn ephemeral_preparation_does_not_create_a_shared_session() {
+    let state = AppState::in_memory();
+    let context = PersonaContext::empty();
+    let prepared = Ask {
+        session_mode: SessionMode::Ephemeral,
+        scope: "new-channel",
+        context: &context,
+        user_input: "private question",
+        now: 1,
+    }
+    .prepare(&state, Persona::Aviva);
+    assert_eq!(
+        prepared.turns,
+        vec![llm::ChatTurn::user("private question")]
+    );
+    assert_eq!(
+        AppState::lock(&state.engine).session_persona("new-channel"),
+        None
+    );
+}

@@ -86,12 +86,7 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
     mut access: ToolAccess<'_, '_>,
     ask: &Ask<'_>,
 ) -> Result<(String, Option<String>, Persona), llm::LlmError> {
-    let Ask {
-        scope,
-        context,
-        user_input,
-        now,
-    } = *ask;
+    let scope = ask.scope;
     let fm_tools = fm
         .router()
         .effective_capabilities(ProviderRoute::FoundationModelsCli)
@@ -103,8 +98,7 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
-        let prepared =
-            AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
+        let prepared = ask.prepare(state, persona);
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
         let grounding = grounding_for_round(&prepared, &grounding_results);

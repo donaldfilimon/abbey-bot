@@ -415,7 +415,49 @@ pub async fn chat_turn<T: Transport>(
     turns: &[ChatTurn],
     tools: &[crate::tools::ToolSpec],
 ) -> Result<ModelTurn, LlmError> {
-    let request = build_chat_request_with_tools(backend, system_prompt, turns, tools);
+    chat_turn_with_style(
+        transport,
+        backend,
+        system_prompt,
+        turns,
+        tools,
+        ResponseStyle::Default,
+    )
+    .await
+}
+
+/// Explicit delivery purpose; read-only text is not automatically voice.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ResponseStyle {
+    Default,
+    Spoken,
+}
+
+pub async fn chat_turn_with_style<T: Transport>(
+    transport: &T,
+    backend: &Backend,
+    system_prompt: &str,
+    turns: &[ChatTurn],
+    tools: &[crate::tools::ToolSpec],
+    style: ResponseStyle,
+) -> Result<ModelTurn, LlmError> {
+    let mut request = build_chat_request_with_tools(backend, system_prompt, turns, tools);
+    // This exact local deployment was measured with the supported Ollama
+    // option. Other servers/models keep their existing request contract.
+    // Never alter tool-capable or ordinary text generation through this path.
+    if style == ResponseStyle::Spoken
+        && tools.is_empty()
+        && let Backend::OpenAiCompatible { endpoint, model } = backend
+        && model == "gemma4:12b"
+        && reqwest::Url::parse(endpoint).is_ok_and(|url| {
+            url.scheme() == "http"
+                && url_is_loopback(&url)
+                && url.port() == Some(11434)
+                && url.path() == "/"
+        })
+    {
+        request.body["reasoning_effort"] = serde_json::json!("none");
+    }
     let raw = transport.post(&request).await?;
     extract_turn(backend, &raw)
 }

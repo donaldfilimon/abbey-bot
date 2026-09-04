@@ -56,6 +56,26 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
 | `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. The owner/admin-only local verifier spans join, participant pause/resume, and final leave with content-free in-memory counters; while armed it disables voice conversation commits. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
 
+**To talk with Abbey:** join the configured voice channel, notify everyone
+present, then run `/voice join consent:true` once everyone agrees. Once voice
+is active, say **Abbey**, **Abby**, **Abi**, or **Aviva** before your question;
+you do not need a slash command or a new permission for each reply. The same
+speaker can continue after Abbey starts speaking, and for 45 seconds after her
+reply, without repeating the name. While she is still preparing an answer,
+use her name again to replace that question. New people
+joining require renewed consent and `/voice resume consent:true`. `/voice status`
+shows whether voice is active, awaiting consent, preparing a reply, or speaking.
+Automatic voice-channel presence after a restart is muted and does not activate
+conversation. Ordinary speech does not cancel a reply still being prepared;
+speaking over audible playback stops it immediately.
+
+Local conversational voice and the offline voice audition request
+`reasoning_effort: "none"` for the measured `gemma4:12b` deployment at an HTTP
+loopback root URL on port `11434`. This reduces optional thinking before a
+spoken answer while retaining the full persona/context prompt. Other models,
+endpoints, text conversations, and tool requests keep their existing defaults.
+Content-free voice logs separate generation queue, generation, and synthesis time.
+
 **The model can call Abbey's own systems.** Whenever the existing tools policy
 is enabled, production offers exactly `[Core, Inspect]` in this stable order:
 `remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
@@ -497,7 +517,16 @@ caller. Any new, unknown, or unattested speaker revokes the media epoch before
 that frame can enter the bounded 20 ms input queue, cancels work/playback, and
 disconnects the conversational `Decode` call. Local mode runs Whisper STT, canonical Abbey
 cognition, and Kokoro TTS on loopback; voice turns are read-only and raw audio
-is not persisted. Abbey must retain View Channel, Send Messages, Connect, Speak, Stream, and
+is not persisted. After activation, the default spoken names are Abbey, Abby,
+Aviva, and Abi; no slash command is needed for each reply. Ordinary speech
+preserves an answer being prepared. A ready answer starts when speech is quiet,
+without waiting for older transcription work to finish. A newly recognized
+addressed question can replace that answer, and actual speech still interrupts
+playback. Same-speaker follow-ups are timed from when the speech was captured,
+so an earlier aside cannot become a follow-up merely because transcription ran
+late. If live recognition cannot finish within ten seconds of capture, Abbey
+stops the session so a later withdrawal cannot remain hidden behind stalled
+transcription. Abbey must retain View Channel, Send Messages, Connect, Speak, Stream, and
 Use Embedded Activities and must not be server-muted/deafened/suppressed; startup rechecks those
 conditions around activation, and channel/role/member changes stop the media
 epoch if the call could become receive-only. `/voice leave` tears down both
