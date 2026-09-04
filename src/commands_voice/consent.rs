@@ -114,14 +114,21 @@ pub(super) fn caller_may_stop(
     runtime: &VoiceRuntime,
     user: u64,
 ) -> bool {
-    // Unknown gateway membership fails closed. A known absent member may
-    // withdraw their receipt without interrupting other people's call.
-    super::discord::cached_participants_from_serenity(
+    let participants = super::discord::cached_participants_from_serenity(
         ctx,
         GuildId::new(runtime.config.guild_id),
         ChannelId::new(runtime.config.channel_id),
-    )
-    .is_none_or(|users| users.contains(&user))
+    );
+    roster_authorizes_stop(participants.as_ref(), user)
+}
+
+fn roster_authorizes_stop(
+    participants: Option<&std::collections::HashSet<u64>>,
+    user: u64,
+) -> bool {
+    // Unknown gateway membership fails closed. A known absent member may
+    // withdraw their receipt without interrupting other people's call.
+    participants.is_some_and(|users| users.contains(&user))
 }
 
 pub(super) async fn component(
@@ -237,5 +244,31 @@ pub(super) fn coverage_text(
             }
         ),
         Err(error) => error.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::roster_authorizes_stop;
+
+    #[test]
+    fn missing_roster_does_not_authorize_stopping_the_call() {
+        assert!(!roster_authorizes_stop(None, 42));
+    }
+
+    #[test]
+    fn known_absent_user_does_not_authorize_stopping_the_call() {
+        let participants = HashSet::from([7, 11]);
+
+        assert!(!roster_authorizes_stop(Some(&participants), 42));
+    }
+
+    #[test]
+    fn known_present_user_authorizes_stopping_the_call() {
+        let participants = HashSet::from([7, 42]);
+
+        assert!(roster_authorizes_stop(Some(&participants), 42));
     }
 }
