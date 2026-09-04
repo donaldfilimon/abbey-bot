@@ -24,8 +24,8 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 | Layer | Status | Evidence |
 |-------|--------|----------|
-| Source gate (`./check.sh`) | **PASS** | 786 tests, clippy clean, locked release build (measured 2026-09-04 at `057e6b1` with the #72 fmt fix applied) |
-| Cross-platform CI (Ubuntu/macOS/Windows) | **FAIL** at head | Run `33835423344` at `057e6b1` failed on all three at `cargo fmt --check`. Fix in PR #72, which is green on all three. The older `33218303755` at `9716f00` is a pre-stabilization baseline, not current status. |
+| Source gate (`./check.sh`) | **PASS** | 787 tests, clippy clean, locked release build (measured 2026-09-04 03:51 on `e0825b9` plus the context-menu / wake-word branch) |
+| Cross-platform CI (Ubuntu/macOS/Windows) | **Repaired, unverified at new head** | Run `33835423344` at `057e6b1` failed on all three at `cargo fmt --check`; PR #72 fixed it and merged as `e0825b9`. That fix was green on all three *on the PR branch* — no post-merge `main` run has been read here, so this is a repair, not a fresh pass. The older `33218303755` at `9716f00` is a pre-stabilization baseline, not current status. |
 | Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
 | Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
 | Live Discord (2-guild isolation) | **PENDING** | Requires exact-head CI green + operator sandbox guilds |

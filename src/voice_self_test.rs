@@ -54,7 +54,10 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
     // opening a microphone or capturing another person.
     let stimulus_wav = client.synthesize_wav(TEST_UTTERANCE).await?;
     let transcript = client.transcribe_wav(&stimulus_wav).await?;
-    if !contains_wake_name(&transcript) {
+    if !crate::voice::contains_wake_name(
+        &transcript,
+        &crate::voice::VoiceConfig::default_wake_words(),
+    ) {
         return Err("local Whisper did not preserve an Abbey/Abi/Aviva wake name".into());
     }
 
@@ -198,29 +201,9 @@ fn normalized_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn contains_wake_name(text: &str) -> bool {
-    text.split(|character: char| !character.is_ascii_alphabetic())
-        .any(|word| {
-            matches!(
-                word.to_ascii_lowercase().as_str(),
-                "abbey" | "abby" | "aviva" | "abi"
-            )
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn self_test_wake_names_are_token_bounded() {
-        assert!(contains_wake_name("Abbey, privacy please."));
-        assert!(contains_wake_name("Abby, privacy please."));
-        assert!(contains_wake_name("AVIVA is direct."));
-        assert!(contains_wake_name("abi: coordinate."));
-        assert!(!contains_wake_name("an abbeylike building"));
-        assert!(!contains_wake_name("ordinary speech"));
-    }
 
     #[test]
     fn quality_score_is_case_punctuation_and_duplicate_tolerant() {

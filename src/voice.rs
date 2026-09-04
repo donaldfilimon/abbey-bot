@@ -100,6 +100,7 @@ pub struct VoiceConfig {
     pub channel_id: u64,
     pub backend: VoiceBackendConfig,
     pub wake_word_required: bool,
+    pub wake_words: Vec<String>,
 }
 
 #[derive(Default)]
@@ -118,6 +119,7 @@ struct VoiceEnv {
     local_tts_voice: Option<String>,
     local_language: Option<String>,
     wake_word_required: Option<String>,
+    wake_words: Option<String>,
 }
 
 impl VoiceConfig {
@@ -137,6 +139,7 @@ impl VoiceConfig {
             local_tts_voice: std::env::var("ABBEY_VOICE_LOCAL_TTS_VOICE").ok(),
             local_language: std::env::var("ABBEY_VOICE_LOCAL_LANGUAGE").ok(),
             wake_word_required: std::env::var("ABBEY_VOICE_WAKE_WORD_REQUIRED").ok(),
+            wake_words: std::env::var("ABBEY_VOICE_WAKE_WORDS").ok(),
         })
     }
 
@@ -211,6 +214,7 @@ impl VoiceConfig {
                 true,
                 "ABBEY_VOICE_WAKE_WORD_REQUIRED",
             )?,
+            wake_words: parse_wake_words(values.wake_words),
         }))
     }
 
@@ -221,6 +225,14 @@ impl VoiceConfig {
             VoiceBackendConfig::Local(_) => VoiceMode::Local,
             VoiceBackendConfig::OpenAi(_) => VoiceMode::OpenAi,
         }
+    }
+
+    #[must_use]
+    pub fn default_wake_words() -> Vec<String> {
+        DEFAULT_WAKE_WORDS
+            .iter()
+            .map(|w| (*w).to_string())
+            .collect()
     }
 
     #[must_use]
@@ -352,6 +364,42 @@ fn parse_bool(value: Option<String>, default: bool, name: &str) -> Result<bool, 
             "{name} must be one of 1/0, true/false, yes/no, or on/off; got {other:?}"
         )),
     }
+}
+
+/// Parse a comma-separated wake-word list.
+///
+/// Words are lowercased and must be ASCII-alphabetic and at most 32 bytes, so a
+/// configured word can always be produced by `contains_wake_name`'s tokenizer.
+/// A blank, absent, or fully invalid value falls back to the default list
+/// rather than leaving Abbey unaddressable.
+/// Wake names Abbey answers to when `ABBEY_VOICE_WAKE_WORDS` is unset.
+pub const DEFAULT_WAKE_WORDS: [&str; 4] = ["abbey", "abby", "aviva", "abi"];
+
+/// Whether `text` addresses Abbey by one of `wake_words`.
+///
+/// Matching is token-bounded on ASCII-alphabetic runs, so "an abbeylike
+/// building" is not an address. Callers own the word list; there is no implicit
+/// default here.
+#[must_use]
+pub fn contains_wake_name(text: &str, wake_words: &[String]) -> bool {
+    text.split(|character: char| !character.is_ascii_alphabetic())
+        .any(|word| {
+            let lower = word.to_ascii_lowercase();
+            wake_words.iter().any(|candidate| candidate == &lower)
+        })
+}
+
+fn parse_wake_words(value: Option<String>) -> Vec<String> {
+    let default = VoiceConfig::default_wake_words();
+    let Some(raw) = nonblank(value) else {
+        return default;
+    };
+    let words: Vec<String> = raw
+        .split(',')
+        .map(|w| w.trim().to_ascii_lowercase())
+        .filter(|w| !w.is_empty() && w.len() <= 32 && w.chars().all(|c| c.is_ascii_alphabetic()))
+        .collect();
+    if words.is_empty() { default } else { words }
 }
 
 fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String, String> {
@@ -604,6 +652,43 @@ mod tests {
         assert!(presence.local_voice_llm_gap(true, false).is_some());
         assert!(presence.local_voice_llm_gap(true, true).is_none());
         assert!(presence.local_voice_llm_gap(false, false).is_none());
+    }
+
+    #[test]
+    fn wake_names_are_token_bounded_and_case_insensitive() {
+        let words = VoiceConfig::default_wake_words();
+        assert!(contains_wake_name("Abbey, can you help?", &words));
+        assert!(contains_wake_name("Abby, can you help?", &words));
+        assert!(contains_wake_name("AVIVA be direct", &words));
+        assert!(contains_wake_name("abi: orchestrate", &words));
+        assert!(!contains_wake_name("an abbeylike building", &words));
+        assert!(!contains_wake_name("ordinary speech", &words));
+    }
+
+    #[test]
+    fn wake_words_default_when_unset_or_unusable() {
+        let default = VoiceConfig::default_wake_words();
+        assert_eq!(parse_wake_words(None), default);
+        assert_eq!(parse_wake_words(Some("   ".into())), default);
+        // Every candidate is rejected, so the guild is not left unaddressable.
+        assert_eq!(parse_wake_words(Some("42, !!, ,".into())), default);
+        assert_eq!(
+            parse_wake_words(Some(format!("{}, abbey", "a".repeat(33)))),
+            vec!["abbey".to_string()]
+        );
+    }
+
+    #[test]
+    fn wake_words_are_trimmed_lowercased_and_replace_the_default() {
+        assert_eq!(
+            parse_wake_words(Some("  Nova , HELIX,nova  ".into())),
+            vec!["nova".to_string(), "helix".to_string(), "nova".to_string()]
+        );
+        // A custom list replaces the default rather than extending it.
+        assert!(!contains_wake_name(
+            "abbey are you there",
+            &parse_wake_words(Some("nova".into()))
+        ));
     }
 
     #[test]

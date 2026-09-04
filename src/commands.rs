@@ -255,12 +255,25 @@ pub async fn ask(
     // explains a choice, while this one decides who actually answers. Hardcoding
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
+    let reply = answer_question(ctx, &question, r#as.map(Into::into)).await;
+    ctx.say(clamp_message(reply)).await?;
+    Ok(())
+}
+
+/// Answer `question` on this interaction's channel and render the reply.
+///
+/// Shared by `/persona ask` and the "Ask Abbey" message context menu so the two
+/// never disagree about identical text: one routing decision, one cooldown, one
+/// transcript scope, one tool loop. The caller owns the defer and the post —
+/// this returns the message body, including the cooldown notice, because a
+/// context menu wants it ephemeral and a slash command does not.
+async fn answer_question(ctx: Context<'_>, question: &str, forced: Option<Persona>) -> String {
     let state = &ctx.data().state;
     let scope = format!("discord:{}", ctx.channel_id().get());
     // Same composition the message pipeline uses, so `/persona ask` and an
     // ordinary message never disagree about identical text. Session stickiness
     // still applies, but only to text neither layer has an opinion about.
-    let route = routing_signals::route(&question, r#as.map(Into::into));
+    let route = routing_signals::route(question, forced);
     let routed = if route.is_decisive() {
         route.persona
     } else {
@@ -275,10 +288,9 @@ pub async fn ask(
     let scoped_user = format!("discord:{}", ctx.author().id.get());
     let now = runtime::now();
     if !reserve_ask(state, &scoped_user, now) {
-        ctx.say(ASK_COOLDOWN_REPLY).await?;
-        return Ok(());
+        return ASK_COOLDOWN_REPLY.to_string();
     }
-    let reply = match state.generation_label() {
+    match state.generation_label() {
         None => ask::degraded_reply(routed),
         Some(backend_label) => {
             // Same per-channel transcript, memory context, and tool loop the
@@ -290,7 +302,7 @@ pub async fn ask(
                 &scoped_guild,
                 &scoped_user,
                 &scope,
-                &question,
+                question,
                 reputation,
             );
             let mut host = runtime::ToolScope {
@@ -311,7 +323,7 @@ pub async fn ask(
                         &generation::Ask {
                             scope: &scope,
                             context: &context,
-                            user_input: &question,
+                            user_input: question,
                             now,
                         },
                     )
@@ -320,7 +332,7 @@ pub async fn ask(
             };
             match outcome {
                 Ok((answer, persona, provider_label)) => {
-                    AppState::lock(&state.engine).commit(&scope, &question, &answer, now);
+                    AppState::lock(&state.engine).commit(&scope, question, &answer, now);
                     ask::render_answer(persona, provider_label, &answer)
                 }
                 Err(error) => {
@@ -329,9 +341,7 @@ pub async fn ask(
                 }
             }
         }
-    };
-    ctx.say(clamp_message(reply)).await?;
-    Ok(())
+    }
 }
 
 /// Read a member's profile.
@@ -347,6 +357,17 @@ pub async fn whois(
         return Ok(());
     };
 
+    let summary = member_profile(ctx, guild_id, &user).await?;
+    ctx.say(clamp_message(summary)).await?;
+    Ok(())
+}
+
+/// Render one member's profile summary.
+///
+/// Shared by `/whois` and the "Abbey: profile" user context menu so the right
+/// click and the slash command describe a member identically. Fetches over
+/// REST, so the caller must have deferred already.
+async fn member_profile(ctx: Context<'_>, guild_id: GuildId, user: &User) -> Result<String, Error> {
     let (member, guild) = fetch_member_and_guild(ctx, guild_id, user.id).await?;
 
     // Highest-first, so `roles.first()` is the top role the summary reports.
@@ -375,7 +396,54 @@ pub async fn whois(
         is_owner: user.id == guild.owner_id,
     };
 
-    ctx.say(clamp_message(profile::summarize(&facts))).await?;
+    Ok(profile::summarize(&facts))
+}
+
+/// Right-click a member -> Apps -> "Abbey: profile".
+///
+/// Same summary `/whois` renders, reached without typing a name. Ephemeral:
+/// reading someone's roles is a lookup, not an announcement about them.
+#[poise::command(context_menu_command = "Abbey: profile", guild_only, ephemeral)]
+pub async fn profile_context_menu(ctx: Context<'_>, user: User) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("This one only works inside a server.").await?;
+        return Ok(());
+    };
+
+    let summary = member_profile(ctx, guild_id, &user).await?;
+    ctx.say(clamp_message(summary)).await?;
+    Ok(())
+}
+
+/// Right-click a message -> Apps -> "Ask Abbey".
+///
+/// Routes the message's own text through the same path `/persona ask` uses, so
+/// a question someone already typed does not have to be retyped. Two limits are
+/// deliberate and reported rather than papered over: only text is read (an
+/// image needs `/see`), and if Abbey holds no message-content access to that
+/// message the resolved content arrives empty, which this says plainly instead
+/// of answering a blank question. Ephemeral, because a right-click is a private
+/// lookup and should not put words in the original author's thread.
+#[poise::command(context_menu_command = "Ask Abbey", ephemeral)]
+pub async fn ask_context_menu(
+    ctx: Context<'_>,
+    message: serenity::all::Message,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let question = message.content.trim();
+    if question.is_empty() {
+        ctx.say(
+            "That message carries no text Abbey can read. Attachments, embeds, and stickers are not part of this path — use `/see` for an image, or `/persona ask` to type the question.",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let reply = answer_question(ctx, question, None).await;
+    ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
 

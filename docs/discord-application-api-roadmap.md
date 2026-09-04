@@ -30,6 +30,8 @@ backlog; implement in order unless a phase is explicitly deferred.
 | Activity client (`ready()` + channel/guild UI + participants) | Live on Pages after merge | `activity/` → `https://donaldfilimon.github.io/abbey-bot/activity/` |
 | Stream (`1<<9`) + Use Embedded Activities (`1<<39`) overwrite gap-fill; `/voice` fail-closed on missing bits | Live | `src/commands_voice/discord.rs`, `docs/activities.md` |
 | `/pending list` classic Confirm/Dismiss buttons + collector | Live (code) | `src/commands_brain.rs` (P1; Components V2 blocked on crates) |
+| Context menus: "Abbey: profile" (USER), "Ask Abbey" (MESSAGE) | Live (code) | `src/commands.rs`, registered in `src/main.rs` |
+| Configurable wake names (`ABBEY_VOICE_WAKE_WORDS`) | Live (code) | `src/voice.rs`; falls back to the default list rather than leaving Abbey unaddressable |
 
 Shipped means code + docs exist and Gate can pass. Live rocket iframe still
 needs Donald’s Portal URL mapping (P0). Live spoken turns still need a human
@@ -44,7 +46,7 @@ Relative to Discord Application + Interactions surface. Source: live checkout + 
 | Surface | Status | Notes |
 |---|---|---|
 | Chat-input `/` commands | **Done** | Full set in `src/main.rs` (persona, voice, admin, memory, vision, …) |
-| Context menus (USER / MESSAGE) | **Missing** | No `context_menu` in `src/` |
+| Context menus (USER / MESSAGE) | **Done** | `commands::profile_context_menu` (USER), `commands::ask_context_menu` (MESSAGE) |
 | Buttons / selects / modals | **Partial** | `/pending list` Confirm/Dismiss Action Rows (classic); slash confirm/dismiss remain |
 | Components V2 layouts | **Blocked (crates)** | serenity 0.12.5 / poise 0.6.2 expose classic Action Rows only — no Container/Section/IS_COMPONENTS_V2 builders |
 | Interaction HTTP endpoint | **N/A (by design)** | Gateway + poise defer/follow-up only |
@@ -53,7 +55,7 @@ Relative to Discord Application + Interactions surface. Source: live checkout + 
 | Activity authorize / channel / participants / setActivity | **Partial (P2 slice)** | Pre-auth channel/guild + participants (no OAuth); authorize/setActivity wait on secret host |
 | Stream + Use Embedded Activities gate | **Done** | Fail-closed on `/voice` |
 | Privileged intents (PRESENCES, members) | **Partial** | `non_privileged` + `GUILD_VOICE_STATES`; optional `MESSAGE_CONTENT` |
-| Webhook create API | **Guide only** | `/webhook` docs, no create-webhook call |
+| Webhook create API | **Guide only, by decision** | `/webhook` emits setup steps. A bot-minted URL is a credential the bot then holds; that is a deliberate refusal (`commands::webhook` doc comment), not an unimplemented gap. |
 | Polls / Stage / SKUs | **Out / deferred** | See Later + Out of scope |
 | Bot Go Live | **Never** | No Discord API |
 
@@ -186,6 +188,13 @@ secret endpoint (not Pages).
 - **Linked Roles / role connections** metadata endpoint so Discord can gate a
   role on verified external state (e.g. Residents holder) without manual grants
   where product policy allows.
+- **Context menus** — **shipped 2026-09-04.** "Abbey: profile" (USER) renders the
+  same summary as `/whois`; "Ask Abbey" (MESSAGE) routes a message's own text
+  through the shared `answer_question` path `/persona ask` uses, so identical
+  text cannot get two different answers. Both are ephemeral: a right-click is a
+  private lookup, not an announcement about the person or the author. The
+  message menu reports empty resolved content plainly instead of answering a
+  blank question, and points at `/see` for images.
 - **Forum / channel helpers:** thread create, tag suggest, first-post templates
   for `#help` and similar — API-first, gap-fill permissions, no wipe of existing
   overwrites (same discipline as voice overwrite work).
@@ -193,6 +202,25 @@ secret endpoint (not Pages).
 **Done when:** user-install path documented + gated commands registered;
   role-connection endpoint (if adopted) behind operator env; forum helpers have
   a live checklist entry without breaking Onboarding constraints.
+
+### Operator prerequisite for user-install (read before writing the code)
+
+User-install is **not** a pure code change. Sending `integration_types` with
+`USER_INSTALL` in the global bulk overwrite is rejected unless the application
+has User Install enabled under **Installation → Installation Contexts** in the
+Developer Portal. The bulk overwrite runs in the `ready` callback
+(`register_globally_keeping_entry_point`), so a rejected overwrite breaks
+command registration for the running service — the same failure mode the Entry
+Point preservation exists to avoid. Any user-install slice must therefore be
+**off by default and behind an operator env flag**, and it must decide, per
+command, what a user-installed invocation is allowed to touch: `persona ask`
+writes a channel-scoped transcript, so invoking it inside a guild Abbey was
+never installed in would create memory for a server that never consented.
+`persona route` and `server` are pure and carry no such question.
+
+**Status:** unstarted; crate support confirmed (`poise::Command::install_context`
+/ `interaction_context` exist in the pinned 0.6.2), Portal click and the
+per-command consent decision are not.
 
 ---
 
