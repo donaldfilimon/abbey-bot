@@ -149,9 +149,19 @@ impl Fixture {
         let actor = tokio::spawn(run(LocalSession {
             runtime: Arc::clone(&runtime),
             state: AppState::in_memory(),
-            call: Arc::new(Mutex::new(songbird::Call::standalone(
+            // Each fixture owns its scheduler. On songbird's process-global
+            // default scheduler, standalone drivers created and dropped by
+            // concurrent tests interfere: a freshly played track's command
+            // channel closed within ~100 µs (`stop()` -> `Err(Finished)`, no
+            // `End` event), so the speech-triggered stop counted nothing and
+            // the barge-in assertions timed out in about half of parallel
+            // runs. Serial runs and a private scheduler never reproduce it.
+            call: Arc::new(Mutex::new(songbird::Call::standalone_from_config(
                 std::num::NonZeroU64::new(1).unwrap(),
                 std::num::NonZeroU64::new(99).unwrap(),
+                songbird::Config::default().scheduler(songbird::driver::Scheduler::new(
+                    songbird::driver::SchedulerConfig::default(),
+                )),
             ))),
             client: MlxAudioClient::new(config).unwrap(),
             epoch,
