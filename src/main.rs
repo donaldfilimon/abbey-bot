@@ -79,6 +79,8 @@ mod tools;
 mod vad;
 mod vision;
 mod voice;
+mod voice_consent;
+mod voice_consent_store;
 mod voice_local;
 mod voice_openai;
 mod voice_self_test;
@@ -196,9 +198,14 @@ async fn main() -> Result<(), Error> {
     let voice_runtime = voice::VoiceConfig::from_env()
         .map_err(runtime::StartupError)?
         .map(|config| {
+            let consent = std::sync::Arc::new(voice_consent_store::ConsentStore::load(
+                state.data_dir.as_deref(),
+                config.guild_id,
+            ));
             voice_session::VoiceRuntime::new_with_inspect(
                 config,
                 std::sync::Arc::clone(&state.voice_inspect),
+                consent,
             )
         })
         .map(std::sync::Arc::new);

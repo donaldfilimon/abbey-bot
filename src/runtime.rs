@@ -52,9 +52,13 @@ pub const SUMMARIZE_EVERY: Duration = Duration::from_secs(600);
 /// Unix seconds now. The single place the wall clock is read; everything pure
 /// takes the value as a parameter.
 pub fn now() -> u64 {
+    now_millis() / 1000
+}
+
+pub fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
 }
 

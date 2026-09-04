@@ -19,6 +19,7 @@ use crate::voice_openai::OpenAiSession;
 use crate::voice_session::{SessionControl, SharedPlayback, VerificationActivation, VoiceRuntime};
 use crate::{Context, Error};
 
+mod consent;
 mod discord;
 mod events;
 mod receive;
@@ -28,6 +29,7 @@ mod verification;
 use discord::*;
 use receive::{ReceiveHandlerInstall, install_receive_handlers};
 
+pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
 pub use verification::voice_verify;
@@ -61,7 +63,9 @@ impl Drop for StartAttempt {
         "voice_leave",
         "voice_status",
         "voice_verify",
-        "voice_mode"
+        "voice_mode",
+        "voice_consent",
+        "voice_notice"
     )
 )]
 pub async fn voice(_ctx: Context<'_>) -> Result<(), Error> {
@@ -183,6 +187,20 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     };
     let effective_mode = effective_backend.mode();
+
+    if !runtime
+        .consent
+        .coverage(&participants, effective_mode)
+        .is_ok_and(|missing| missing.is_empty())
+    {
+        ctx.say(clamp_message(consent::coverage_text(
+            &runtime,
+            &participants,
+            effective_mode,
+        )))
+        .await?;
+        return Ok(());
+    }
 
     let local_runtime = match effective_mode {
         VoiceMode::Local => {
@@ -925,8 +943,17 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
     } else {
         "Loopback LLM: not required for this voice mode".into()
     };
-    ctx.say(format!(
-        "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{}\n{}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
+    let choices = cached_participants_from_serenity(
+        ctx.serenity_context(),
+        GuildId::new(runtime.config.guild_id),
+        ChannelId::new(runtime.config.channel_id),
+    )
+    .map_or_else(
+        || "Saved voice choices: current voice roster unavailable; activation is blocked.".into(),
+        |users| consent::coverage_text(runtime, &users, effective_mode),
+    );
+    ctx.say(clamp_message(format!(
+        "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{choices}\n{}\n{}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
         effective_mode.label(),
         snapshot.phase.label(),
         if snapshot.media_enabled { "open" } else { "closed" },
@@ -942,7 +969,7 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         snapshot.barge_ins,
         snapshot.completed_turns,
         snapshot.epoch,
-    ))
+    )))
     .await?;
     Ok(())
 }

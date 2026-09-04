@@ -54,20 +54,43 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint. JPEG, PNG, WebP, and GIF are fully decoded locally under 8192×8192-pixel and 96 MiB allocation ceilings before transport; GIF's first rendered frame is normalized to PNG. |
 | `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
-| `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. The owner/admin-only local verifier spans join, participant pause/resume, and final leave with content-free in-memory counters; while armed it disables voice conversation commits. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
+| `/voice consent`; `/voice notice`; `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | `/voice consent` lets each member review, agree or withdraw privately. A manager can publish the same controls with `/voice notice`. Join/resume require Manage Server, the caller to be present, saved individual agreement from every current participant for the selected processing mode, and public disclosure before the media gate opens. New or unidentified participants stop and disconnect the call. Leave is available to someone present or a manager. The owner/admin-only local verifier uses content-free in-memory counters and disables voice conversation commits while armed. Automatic presence is muted and self-deafened. |
 
-**To talk with Abbey:** join the configured voice channel, notify everyone
-present, then run `/voice join consent:true` once everyone agrees. Once voice
+**To talk with Abbey:** open `/voice consent` or the voice channel's pinned
+notice and choose **Agree** for the displayed processing mode. Each member
+makes their own choice once; a manager then runs `/voice join consent:true`
+when everyone in the configured channel has a saved agreement. Once voice
 is active, say **Abbey**, **Abby**, **Abi**, or **Aviva** before your question;
 you do not need a slash command or a new permission for each reply. The same
 speaker can continue after Abbey starts speaking, and for 45 seconds after her
 reply, without repeating the name. While she is still preparing an answer,
 use her name again to replace that question. New people
-joining require renewed consent and `/voice resume consent:true`. `/voice status`
+joining pause the call; uncovered members agree, then a manager uses
+`/voice resume consent:true`. Already-saved choices still count. `/voice status`
 shows whether voice is active, awaiting consent, preparing a reply, or speaking.
 Automatic voice-channel presence after a restart is muted and does not activate
 conversation. Ordinary speech does not cancel a reply still being prepared;
 speaking over audible playback stops it immediately.
+
+**Your choice is remembered and reversible.** Agreement is scoped to the server,
+member, local/OpenAI processing mode and disclosure version, and persists across
+visits and bot restarts. A host's `consent:true`, membership, silence or output
+mute never creates another member's agreement. **Stop / withdraw** removes your
+agreement for both modes and, when you are in the call, immediately closes the
+media gate and tears down the conversational connection. Typing `stop listening`
+in the configured voice chat does the same, including while already paused.
+Clearly attributed spoken withdrawal works in local mode. `/voice leave` stops
+only the current call; it does not delete saved choices.
+
+Saved choices require a writable `ABBEY_DATA_DIR`. The separate owner-only
+`voice-consent.json` contains member IDs, policy versions, acknowledgment times
+and Discord interaction IDs, never audio or transcripts. Writes are serialized
+and atomic; successful agreement is acknowledged only after persistence. An
+interrupted write leaves `voice-consent.pending`, which blocks receipt loading.
+If storage fails, new activation stays blocked and the operator must investigate
+before restarting; never clear the marker to revive older agreements. Recovery
+requires retiring the affected consent files and collecting fresh member choices.
+The ordinary memory flush does not overwrite this consent file.
 
 Local conversational voice and the offline voice audition request
 `reasoning_effort: "none"` for the measured `gemma4:12b` deployment at an HTTP
@@ -375,7 +398,7 @@ runs fully offline.
 
 | Env var | What it enables |
 |---|---|
-| `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
+| `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory), `wdbx.seg.0.jsonl` (semantic memory), and the independent `voice-consent.json` (member voice choices). Unset = in-memory learning and memory; conversational voice cannot activate without durable choices. |
 | `ABBEY_BOT_LLM_TOOLS` | `off` disables the complete seven-tool Core-plus-Inspect vocabulary; default on. There is no separate Inspect switch. A tool-contract rejection degrades only that provider's tool route. |
 | `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` / `_CAPABILITY_MANIFEST` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. Enabling fallback also requires a matching owner-only qualification manifest. `system` is on-device; `pcc` is an explicit cloud selection and is not qualified by this repository's system-mode evidence. |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
@@ -511,9 +534,10 @@ Discord DAVE/MLS transport. A conversational call is constructed in decode
 mode from the outset because Songbird cannot promote a running
 `DecodeMode::Pass` UDP receiver to `Decode`; Discord mute/self-deafen plus a
 separate epoch-bound software media gate keep frames inaccessible until the
-public disclosure and final participant check pass. `/voice join consent:true`
+public disclosure, saved member choices and final participant check pass. `/voice join consent:true`
 and `/voice resume consent:true` require Manage Server and an in-channel
-caller. Any new, unknown, or unattested speaker revokes the media epoch before
+caller. Each member's receipt must cover the current disclosure version and the
+exact local/OpenAI processing mode chosen for that call. Any new, unknown, or unattested speaker revokes the media epoch before
 that frame can enter the bounded 20 ms input queue, cancels work/playback, and
 disconnects the conversational `Decode` call. Local mode runs Whisper STT, canonical Abbey
 cognition, and Kokoro TTS on loopback; voice turns are read-only and raw audio
