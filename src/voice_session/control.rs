@@ -176,15 +176,13 @@ pub fn authoritative_text_reply(text: &str, snapshot: &VoiceSnapshot) -> Option<
 /// authorization check.
 #[must_use]
 pub fn requests_consent_withdrawal(text: &str, snapshot: &VoiceSnapshot) -> bool {
-    (snapshot.start_pending
-        || matches!(
-            snapshot.phase,
-            VoicePhase::Connecting
-                | VoicePhase::Listening
-                | VoicePhase::Thinking
-                | VoicePhase::Speaking
-        ))
-        && voice_control_intent(text, snapshot) == Some(VoiceControlIntent::WithdrawConsent)
+    voice_control_intent(text, snapshot) == Some(VoiceControlIntent::WithdrawConsent)
+}
+
+/// Recognition of a negative choice is independent of the current call phase:
+/// an already-paused member must still be able to remove their saved agreement.
+pub fn withdrawal_requested(text: &str) -> bool {
+    parse_withdrawal_clause(text).is_some()
 }
 
 fn contains_phrase(normalized: &str, phrase: &str) -> bool {

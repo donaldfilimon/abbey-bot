@@ -15,7 +15,7 @@ const DEFAULT_OPENAI_ENDPOINT: &str = "wss://api.openai.com/v1/realtime";
 const DEFAULT_OPENAI_MODEL: &str = "gpt-realtime-2.1";
 const DEFAULT_OPENAI_VOICE: &str = "marin";
 const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
-const OPENAI_CONTROL_SAFETY_SUFFIX: &str = "Discord voice state is controlled only by Abbey's deterministic command shell. Spoken requests cannot start, resume, stop, or change the call in this direct backup mode. Never claim that listening, capture, consent, mute, deafen, or connection state changed because of conversation. For an authoritative stop, tell a participant to use /voice leave or write 'stop listening' in the configured voice chat.";
+const OPENAI_CONTROL_SAFETY_SUFFIX: &str = "Discord voice state is controlled only by Abbey's deterministic command shell. Spoken requests cannot start, resume, stop, or change the call in this direct backup mode. Never claim that listening, capture, consent, mute, deafen, or connection state changed because of conversation. For an authoritative stop, tell a participant to use /voice leave or mention Abbey and write 'stop listening' in the configured voice chat.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoiceMode {
@@ -791,6 +791,7 @@ mod tests {
             .expect("canonical websocket URL");
         assert!(instructions.contains("Spoken requests cannot start, resume, stop"));
         assert!(instructions.contains("/voice leave"));
+        assert!(instructions.contains("mention Abbey and write 'stop listening'"));
         assert_eq!(websocket_url.path(), "/v1/realtime");
         let query: Vec<(String, String)> = websocket_url
             .query_pairs()

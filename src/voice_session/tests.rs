@@ -51,8 +51,144 @@ fn runtime_with_inspect(guild_id: u64) -> (VoiceRuntime, Arc<VoiceInspectRegistr
     let runtime = VoiceRuntime::new_with_inspect(
         VoiceConfig::selected_only(guild_id, 2, VoiceBackendConfig::Disabled, true),
         Arc::clone(&inspect),
+        Arc::new(crate::voice_consent_store::ConsentStore::load(
+            None, guild_id,
+        )),
     );
     (runtime, inspect)
+}
+
+#[tokio::test]
+async fn saved_consent_is_required_at_both_activation_paths_for_the_exact_roster() {
+    for verified in [false, true] {
+        let mut runtime = runtime();
+        runtime.set_effective_mode(VoiceMode::Local);
+        let start = runtime.reserve_start();
+        let epoch = runtime.begin(HashSet::from([10, 20])).await;
+        assert!(!runtime.activate(epoch, start, "missing storage").await);
+        runtime.consent = Arc::new(
+            crate::voice_consent_store::ConsentStore::acknowledged_fixture(
+                1,
+                &[10],
+                VoiceMode::Local,
+            ),
+        );
+        let evidence = VerificationActivation {
+            manager_authorized: true,
+            caller_present: true,
+            participant_count: 2,
+            resumed: false,
+        };
+        // Test the two production entry points, not just the policy helper.
+        let accepted = if verified {
+            runtime
+                .activate_verified(epoch, start, "active", evidence)
+                .await
+        } else {
+            runtime.activate(epoch, start, "active").await
+        };
+        assert!(!accepted);
+        assert!(!runtime.media_enabled(epoch));
+        runtime.consent = Arc::new(
+            crate::voice_consent_store::ConsentStore::acknowledged_fixture(
+                1,
+                &[10, 20],
+                VoiceMode::OpenAi,
+            ),
+        );
+        assert!(
+            !runtime
+                .activate(epoch, start, "wrong processing scope")
+                .await
+        );
+        runtime.consent = Arc::new(
+            crate::voice_consent_store::ConsentStore::acknowledged_fixture(
+                1,
+                &[10, 20],
+                VoiceMode::Local,
+            ),
+        );
+        let accepted = if verified {
+            runtime
+                .activate_verified(epoch, start, "active", evidence)
+                .await
+        } else {
+            runtime.activate(epoch, start, "active").await
+        };
+        assert!(accepted);
+    }
+}
+
+#[tokio::test]
+async fn withdrawal_closes_media_and_invalidates_a_reserved_start_before_disk_wait() {
+    let mut runtime = runtime();
+    runtime.set_effective_mode(VoiceMode::Local);
+    runtime.consent = Arc::new(
+        crate::voice_consent_store::ConsentStore::acknowledged_fixture(1, &[10], VoiceMode::Local),
+    );
+    let start = runtime.reserve_start();
+    let epoch = runtime.begin(HashSet::from([10])).await;
+    assert!(runtime.activate(epoch, start, "active").await);
+    let pending = runtime.reserve_start();
+    let save = runtime.change_consent(10, 2, crate::voice_consent::Choice::Withdraw, 2, true);
+    assert!(!runtime.media_enabled(epoch));
+    assert!(!runtime.start_is_current(pending));
+    assert!(!runtime.consent.agrees(10, VoiceMode::Local));
+    // This unit fixture intentionally has no disk. Failure may never undo
+    // synchronous revocation or make an old start eligible again.
+    assert!(save.saved.await.unwrap().is_err());
+    let epoch = runtime.begin(HashSet::from([10])).await;
+    let start = runtime.reserve_start();
+    assert!(!runtime.activate(epoch, start, "cannot revive").await);
+}
+
+#[tokio::test]
+async fn absent_attested_withdrawal_closes_the_epoch_but_stale_stop_does_not() {
+    let mut runtime = runtime();
+    runtime.set_effective_mode(VoiceMode::Local);
+    runtime.consent = Arc::new(
+        crate::voice_consent_store::ConsentStore::acknowledged_fixture(1, &[10], VoiceMode::Local),
+    );
+    let start = runtime.reserve_start();
+    let epoch = runtime.begin(HashSet::from([10])).await;
+    assert!(runtime.activate(epoch, start, "active").await);
+    let stale = runtime.change_consent(10, 1, crate::voice_consent::Choice::Withdraw, 2, true);
+    assert_eq!(stale.epoch_to_stop, None);
+    assert!(runtime.media_enabled(epoch));
+    assert!(!stale.saved.await.unwrap().unwrap());
+    // The caller is absent now, but remains in the immutable receive epoch.
+    let withdrawn = runtime.change_consent(10, 2, crate::voice_consent::Choice::Withdraw, 2, false);
+    assert_eq!(withdrawn.epoch_to_stop, Some(epoch));
+    assert!(!runtime.media_enabled(epoch));
+    assert_eq!(runtime.revoke_for_unattested_participant(10), None);
+    assert!(
+        !runtime.media_enabled(epoch),
+        "rejoin must not revive old attestation"
+    );
+    assert!(withdrawn.saved.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn unattested_outsider_withdrawal_does_not_stop_other_participants_call() {
+    let mut runtime = runtime();
+    runtime.set_effective_mode(VoiceMode::Local);
+    runtime.consent = Arc::new(
+        crate::voice_consent_store::ConsentStore::acknowledged_fixture(
+            1,
+            &[10, 20],
+            VoiceMode::Local,
+        ),
+    );
+    let start = runtime.reserve_start();
+    let epoch = runtime.begin(HashSet::from([10])).await;
+    assert!(runtime.activate(epoch, start, "active").await);
+
+    let withdrawn = runtime.change_consent(20, 2, crate::voice_consent::Choice::Withdraw, 2, false);
+
+    assert_eq!(withdrawn.epoch_to_stop, None);
+    assert!(runtime.media_enabled(epoch));
+    assert!(!runtime.consent.agrees(20, VoiceMode::Local));
+    assert!(withdrawn.saved.await.unwrap().is_err());
 }
 
 #[test]
@@ -248,7 +384,7 @@ fn only_explicit_negative_language_requests_active_epoch_revocation() {
     }
 
     let inactive = voice_snapshot(VoicePhase::AwaitingConsent);
-    assert!(!requests_consent_withdrawal("I do not consent", &inactive));
+    assert!(requests_consent_withdrawal("I do not consent", &inactive));
 }
 
 #[test]

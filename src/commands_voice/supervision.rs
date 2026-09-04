@@ -131,36 +131,28 @@ pub async fn autojoin_self_deafened(
     Ok(())
 }
 
-/// Honor a typed negative control intent only for a human who is currently in
-/// the configured channel. Cache absence is fail-closed for consent: it may
-/// permit a stop, but never activation.
-pub(super) async fn withdraw_voice_from_text(
+/// Tear down the exact epoch already revoked by an authenticated member choice.
+/// A newer cache or replacement call cannot erase or expand that authority.
+pub(super) async fn stop_voice_for_withdrawal(
     ctx: &serenity::all::Context,
     runtime: &VoiceRuntime,
-    author_id: u64,
+    epoch: u64,
 ) -> bool {
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
     let participants = cached_participants_from_serenity(ctx, guild_id, channel_id);
-    if participants
-        .as_ref()
-        .is_some_and(|participants| !participants.contains(&author_id))
-    {
-        return false;
-    }
-
-    runtime.cancel_pending_start();
     let snapshot = runtime.snapshot().await;
-    if !matches!(
-        snapshot.phase,
-        VoicePhase::Connecting
-            | VoicePhase::Listening
-            | VoicePhase::Thinking
-            | VoicePhase::Speaking
-    ) {
+    if snapshot.epoch != epoch
+        || !matches!(
+            snapshot.phase,
+            VoicePhase::Connecting
+                | VoicePhase::Listening
+                | VoicePhase::Thinking
+                | VoicePhase::Speaking
+        )
+    {
         return true;
     }
-    let epoch = snapshot.epoch;
     let manager = songbird::get(ctx).await;
     let exact_call = manager.as_ref().and_then(|manager| manager.get(guild_id));
     let Some(pause) = runtime
@@ -356,7 +348,7 @@ async fn stop_for_new_participant(
     let _ = channel_id
         .say(
             &ctx.http,
-            "Abbey disconnected voice because someone new joined. Capture and playback are stopped. Notify everyone now present, then use `/voice resume consent:true`.",
+            "Abbey disconnected voice because someone new joined. Capture and playback are stopped. Each uncovered member can choose Agree in `/voice consent` or the pinned voice notice. Saved choices still count; a manager can then use `/voice resume consent:true`.",
         )
         .await;
 }

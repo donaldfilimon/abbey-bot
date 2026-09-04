@@ -12,11 +12,11 @@ voice channel. Local Apple-silicon speech is the default: MLX-Audio performs
 Whisper STT and Kokoro TTS, while Abbey's existing loopback text backend runs
 canonical persona/cognition. OpenAI Realtime is an explicit degraded backup
 only; provider transcription is not an authoritative spoken-control channel, so
-`/voice leave` or a written `stop listening` in the configured voice chat is
-the deterministic stop path. The feature is safe to deploy with persistent
-presence because autojoin never creates a conversational actor or enables
-decoding, regardless of backend configuration. No destination means no voice
-surface, and a provider key never selects cloud audio by itself.
+`/voice leave` or mentioning Abbey and writing `stop listening` in the
+configured voice chat is the deterministic stop path. The feature is safe to
+deploy with persistent presence because autojoin never creates a conversational
+actor or enables decoding, regardless of backend configuration. No destination
+means no voice surface, and a provider key never selects cloud audio by itself.
 
 ## Boundaries
 
@@ -33,8 +33,8 @@ surface, and a provider key never selects cloud audio by itself.
   `ABBEY_VOICE_MODE=openai`, a key, and WSS (loopback WS is test-only); it is a
   direct, whole-response-buffered degraded backup without local ABI routing or
   WDBX context. It must not claim that spoken requests changed Discord voice
-  state; participants use `/voice leave` or written withdrawal in the
-  configured voice chat when the backup is active.
+  state; participants use `/voice leave` or mention Abbey and write
+  `stop listening` in the configured voice chat when the backup is active.
 - Conversational Songbird calls start in mono 24 kHz `Decode` mode because
   Songbird 0.6 cannot promote a running `Pass` receiver to `Decode`. Mapping,
   transport-liveness, and `VoiceTick` handlers are installed before the join so

@@ -95,6 +95,25 @@ status: in_progress
   three-platform matrix was still pending when this was written. Recorded follow-ups: autojoin
   leaves the runtime `PresenceOnly`, which the `Disconnected`-only guard rejects, and
   `activate_inner` does not re-check the mode between arming and activation.
+- **2026-09-04 (later): #76 is merged as `4681509`; its follow-ups are in PR #82.** The two
+  items above are closed there, plus one more of the same class found on review: the `/voice
+  mode` phase check became a pure `voice_session::mode_switch_blocker` sharing one idle predicate
+  (`VoicePhase::accepts_backend_change`: Disconnected, PresenceOnly, Failed) with `/voice verify
+  start`, so the autojoin presence no longer blocks a switch; leaving local is refused while a
+  verification run is armed, closing the arm-then-switch-then-join window at the switch; and
+  `/voice verify start` now holds `transition` through the arm so the two admin commands cannot
+  interleave into a run armed under OpenAI. `activate_inner` was left untouched by analysis (both
+  the switch and the join hold `transition` through activation). #82 is green on all three
+  platforms at `21fa7cd` with 828 passed / 0 failed / 2 ignored; merge is Donald's. Still not
+  live-verified. The timeout in `audible_playback_still_stops_on_speech` (from #79) is diagnosed,
+  not a lost wakeup: the turn-test module failed about one parallel run in two (5 of 10 at
+  `be2915f`, 3 of 6 at `ac909b9`), never serially (5 of 5) and never alone (2 of 2). Probes showed
+  a freshly played track's `stop()` returning `Err(Finished)` about 100 µs after the handle was
+  stored, with no `End` event, so the speech-triggered stop correctly counted no barge-in and the
+  assertion waited for a count that could not come. The only condition observed is many standalone
+  drivers created and dropped concurrently on songbird's process-global default scheduler; the
+  scheduler-internal mechanism is not pinned. PR #85 gives each fixture a private `Scheduler`
+  (8 of 8 parallel runs clean, full suite 835 passed). Test-only; the actor is unchanged.
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
@@ -509,3 +528,36 @@ status: in_progress
   "generation-prompt experiments also failed" already covered the prefill-after-tool-response
   candidate. `tasks/todo.md:108` still closes only on a live `deploy/smoke-mlx-vlm.py` run passing
   `TOOL_CONTINUATION_READY`; not on the spec, and not on a template patch with a green unit test.
+- **2026-09-04 (later) CLOSED again at a new head: `main` `be2915f` is green on all three
+  platforms (run `33882682404`) and the Pages build is green (run `33882680758`).** The path there
+  is the lesson. #77 (`cff28c3`), #76 (`4681509`), and #78 merged in sequence after Donald's #79
+  (`12df0e4`), each green against its own base. `main` at `4681509` was then **red on all three
+  platforms** (run `33879118089`): #79 built `VoiceConfig` with a struct literal and #76 made two
+  of its fields private the same morning, so the test binary no longer compiled. The Pages build
+  failed at the same head because the diagnosis spec from #77 quotes Jinja that Jekyll's Liquid
+  parser rejects (a Jinja `set` tag), and this repository has no `_config.yml` or `.nojekyll`. #80
+  (`be2915f`) fixed both: the fixture now uses `VoiceConfig::selected_only`, and the two quoted
+  blocks sit inside Liquid raw tags. Two individually green PRs producing a red `main` is the concrete
+  argument for requiring the three Gate checks on `main`; that is a repository setting and
+  Donald's call. As before, this closes only the exact-head CI item; nothing here qualifies the
+  provider, the installed artifact, live connectors, managed deployment, or consented voice.
+  **Superseded before this line merged:** `main` then moved to `ac909b9` (#83, Donald's
+  member-consent feature) and run `33885035333` is **red on Gate (Windows)** in
+  `audible_playback_still_stops_on_speech` (Ubuntu and macOS passed). That is the shared-scheduler
+  test defect diagnosed in the voice section; PR #85 restores the gate and its merge is Donald's.
+  That exact-head item closed at `53836c0`: run `33891829308` passed Ubuntu, macOS, and Windows
+  after #85 landed. The merge of this ledger repair will create a newer `main` head whose push
+  gates remain a separate requirement.
+  **And again, same mistake, same day:** the Pages build failed at `bb65c81` (#84) and `a4ca221`
+  (#85) because the ledger bullet above quoted the Jinja tag and the Liquid raw tag literally, and
+  Jekyll parses `tasks/goals.md` too. Fixed by rewriting those tokens as prose and by adding
+  `scripts/check-pages-liquid.py` to the gate, which fails on any Liquid-looking token in Markdown
+  outside a raw span, so the gate catches this before Pages does.
+  The exact merged repair head `20e9d83` then closed both upstream layers: Pages run
+  `33894994514` succeeded, and Rust run `33894995541` passed Ubuntu, macOS, and Windows. A
+  follow-up selector audit found that the first preventive gate modeled only `.md` and scanned
+  indexed metadata that Jekyll does not render. The follow-up now pins the observed Pages v232
+  source set, covers all five case-insensitive Jekyll Markdown suffixes, mirrors default entry and
+  optional-front-matter/readme-index behavior, and fails closed when configuration, front-matter
+  routing, symlinks, or Jekyll magic directories invalidate that model. Its merge will again create
+  a newer head whose hosted gates must be evaluated separately.

@@ -27,6 +27,8 @@ python3 deploy/test-check-launchd-env.py
 python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
 python3 deploy/test-patch-mlx-vlm-tool-encoding.py
 python3 scripts/check-privacy.py
+python3 scripts/test-check-pages-liquid.py
+python3 scripts/check-pages-liquid.py
 python3 scripts/test-check-abbey-contracts.py
 python3 scripts/check-abbey-contracts.py
 python3 scripts/test-check-linux-tls-tree.py
