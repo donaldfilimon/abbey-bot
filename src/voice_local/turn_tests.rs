@@ -124,13 +124,20 @@ impl Fixture {
             None,
         )
         .unwrap();
-        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig {
-            guild_id: 1,
-            channel_id: 2,
-            backend: crate::voice::VoiceBackendConfig::Local(config.clone()),
-            wake_word_required: true,
-            wake_words: crate::voice::VoiceConfig::default_wake_words(),
-        }));
+        let mut runtime = VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Local(config.clone()),
+            true,
+        ));
+        runtime.consent = Arc::new(
+            crate::voice_consent_store::ConsentStore::acknowledged_fixture(
+                1,
+                &[1, 2],
+                crate::voice::VoiceMode::Local,
+            ),
+        );
+        let runtime = Arc::new(runtime);
         let start = runtime.reserve_start();
         let epoch = runtime.begin(HashSet::from([1, 2])).await;
         assert!(runtime.activate(epoch, start, "test session active").await);
