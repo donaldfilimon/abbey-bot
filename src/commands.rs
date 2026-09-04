@@ -255,9 +255,23 @@ pub async fn ask(
     // explains a choice, while this one decides who actually answers. Hardcoding
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
-    let reply = answer_question(ctx, &question, r#as.map(Into::into)).await;
+    let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
     ctx.say(clamp_message(reply)).await?;
     Ok(())
+}
+
+/// Whether an answered question joins the channel's running transcript.
+///
+/// Only a publicly posted answer may. The transcript is shared context for
+/// whoever speaks in that channel next, so committing an ephemeral exchange
+/// would let a private lookup steer a conversation nobody saw it enter. It also
+/// keeps the message context menu from pulling a third party's words into
+/// Abbey's context in a guild where Abbey holds no message-content access of
+/// its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Commit {
+    Yes,
+    No,
 }
 
 /// Answer `question` on this interaction's channel and render the reply.
@@ -266,8 +280,17 @@ pub async fn ask(
 /// never disagree about identical text: one routing decision, one cooldown, one
 /// transcript scope, one tool loop. The caller owns the defer and the post —
 /// this returns the message body, including the cooldown notice, because a
-/// context menu wants it ephemeral and a slash command does not.
-async fn answer_question(ctx: Context<'_>, question: &str, forced: Option<Persona>) -> String {
+/// context menu wants it ephemeral and a slash command does not. It also owns
+/// the [`Commit`] decision; see that type for why the two differ.
+///
+/// The cooldown is charged either way: reading an answer costs the same backend
+/// call whether or not it is remembered.
+async fn answer_question(
+    ctx: Context<'_>,
+    question: &str,
+    forced: Option<Persona>,
+    commit: Commit,
+) -> String {
     let state = &ctx.data().state;
     let scope = format!("discord:{}", ctx.channel_id().get());
     // Same composition the message pipeline uses, so `/persona ask` and an
@@ -332,7 +355,9 @@ async fn answer_question(ctx: Context<'_>, question: &str, forced: Option<Person
             };
             match outcome {
                 Ok((answer, persona, provider_label)) => {
-                    AppState::lock(&state.engine).commit(&scope, question, &answer, now);
+                    if commit == Commit::Yes {
+                        AppState::lock(&state.engine).commit(&scope, question, &answer, now);
+                    }
                     ask::render_answer(persona, provider_label, &answer)
                 }
                 Err(error) => {
@@ -420,12 +445,14 @@ pub async fn profile_context_menu(ctx: Context<'_>, user: User) -> Result<(), Er
 /// Right-click a message -> Apps -> "Ask Abbey".
 ///
 /// Routes the message's own text through the same path `/persona ask` uses, so
-/// a question someone already typed does not have to be retyped. Two limits are
-/// deliberate and reported rather than papered over: only text is read (an
-/// image needs `/see`), and if Abbey holds no message-content access to that
+/// a question someone already typed does not have to be retyped. Three limits
+/// are deliberate and reported rather than papered over: only text is read (an
+/// image needs `/see`); if Abbey holds no message-content access to that
 /// message the resolved content arrives empty, which this says plainly instead
-/// of answering a blank question. Ephemeral, because a right-click is a private
-/// lookup and should not put words in the original author's thread.
+/// of answering a blank question; and the exchange is [`Commit::No`], so a
+/// third party's words never join the channel transcript through a right-click.
+/// Ephemeral, because a right-click is a private lookup and should not put
+/// words in the original author's thread.
 #[poise::command(context_menu_command = "Ask Abbey", ephemeral)]
 pub async fn ask_context_menu(
     ctx: Context<'_>,
@@ -442,7 +469,7 @@ pub async fn ask_context_menu(
         return Ok(());
     }
 
-    let reply = answer_question(ctx, question, None).await;
+    let reply = answer_question(ctx, question, None, Commit::No).await;
     ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
