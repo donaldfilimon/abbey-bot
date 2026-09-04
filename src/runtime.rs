@@ -810,12 +810,12 @@ impl AppState {
     }
 
     fn persist_all_at(&self, t: u64) -> PersistReport {
+        Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
         let snapshots = self.memory_service().consistent_snapshot_after(|stores| {
             Self::lock(&self.brains).persist_all(stores, t);
             Self::lock(&self.social).flush(stores);
             stores.pending_rewards = Self::lock(&self.rewards).export_pending();
         });
-        Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
         let Some(dir) = &self.data_dir else {
             return PersistReport::memory_only();
         };

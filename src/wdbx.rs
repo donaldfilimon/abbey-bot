@@ -57,6 +57,14 @@ const CHECKSUM_PREFIX: &str = "# checksum:";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WdbxEncodeError;
 
+impl fmt::Display for WdbxEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("WDBX store contains a value that cannot be encoded")
+    }
+}
+
+impl std::error::Error for WdbxEncodeError {}
+
 /// Why a store could not be parsed, loaded, or saved.
 #[derive(Debug)]
 pub enum WdbxError {
@@ -81,6 +89,9 @@ pub enum WdbxError {
         /// The underlying error.
         source: std::io::Error,
     },
+    /// The in-memory store cannot be represented by the WDBX-v1 JSON wire
+    /// format. Encoding is completed before any temporary file is created.
+    Encode { source: WdbxEncodeError },
 }
 
 impl fmt::Display for WdbxError {
@@ -98,6 +109,7 @@ impl fmt::Display for WdbxError {
             Self::Io { op, path, source } => {
                 write!(f, "WDBX store {op} failed for {path}: {source}")
             }
+            Self::Encode { source } => source.fmt(f),
         }
     }
 }
@@ -106,6 +118,7 @@ impl std::error::Error for WdbxError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
+            Self::Encode { source } => Some(source),
             _ => None,
         }
     }
@@ -289,10 +302,13 @@ impl WdbxStore {
     /// Write the store atomically: render to `<path>.tmp`, then rename over
     /// `path`, so a crash mid-write leaves the previous file intact.
     pub fn save(&self, path: &Path) -> Result<(), WdbxError> {
+        let rendered = self
+            .try_render()
+            .map_err(|source| WdbxError::Encode { source })?;
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
         let tmp = Path::new(&tmp);
-        fs::write(tmp, self.render()).map_err(|source| WdbxError::Io {
+        fs::write(tmp, rendered).map_err(|source| WdbxError::Io {
             op: "write",
             path: tmp.display().to_string(),
             source,
