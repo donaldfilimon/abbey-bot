@@ -246,6 +246,34 @@ fn missing_file_loads_as_empty() {
 }
 
 #[test]
+fn canonical_and_wdbx_file_contracts_remain_compatible() {
+    assert_eq!(STATE_FILE, "abbey-state.json");
+    assert_eq!(WDBX_FILE, "wdbx.seg.0.jsonl");
+
+    let encoded = serde_json::to_value(Stores::default()).expect("default stores serialize");
+    let keys: std::collections::BTreeSet<_> = encoded
+        .as_object()
+        .expect("canonical state is an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "brains",
+            "events",
+            "guilds",
+            "memory",
+            "memory_projection_version",
+            "pending_rewards",
+            "reputations",
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
 fn save_then_load_round_trips_every_section() {
     let dir = temp_dir("roundtrip");
     let mut stores = Stores::default();

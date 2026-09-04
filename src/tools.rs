@@ -103,6 +103,13 @@ pub fn production_tools() -> Vec<ToolSpec> {
     tools
 }
 
+/// Materialize the complete production vocabulary only when tools are
+/// enabled. Callers use the `None` state to avoid offering an empty-but-live
+/// function-calling surface to a model.
+pub(crate) fn production_tools_when_enabled(enabled: bool) -> Option<Vec<ToolSpec>> {
+    enabled.then(production_tools)
+}
+
 /// Assemble packs in stable order: Core, then Inspect. Never sort names.
 pub fn tools_for(packs: &[SkillPack]) -> Vec<ToolSpec> {
     let mut out = Vec::new();
@@ -370,6 +377,7 @@ pub fn truncate(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     #[derive(Default)]
     struct FakeHost {
@@ -570,6 +578,56 @@ mod tests {
             ]
         );
         assert_eq!(abbey_tools().len(), 5);
+    }
+
+    #[test]
+    fn original_five_tool_corpus_remains_byte_compatible() {
+        #[derive(serde::Serialize)]
+        struct ToolContract<'a> {
+            name: &'a str,
+            description: &'a str,
+            parameters: &'a Value,
+        }
+
+        let tools = abbey_tools();
+        let contract: Vec<_> = tools
+            .iter()
+            .map(|tool| ToolContract {
+                name: tool.name,
+                description: tool.description,
+                parameters: &tool.parameters,
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&contract).expect("five-tool corpus serializes");
+        let digest = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            digest,
+            "d770fa1a209ea8f55699b6411a33a43f0f746faf54522962693ce083f598c415"
+        );
+    }
+
+    #[test]
+    fn tools_off_suppresses_the_complete_vocabulary() {
+        assert!(production_tools_when_enabled(false).is_none());
+        assert_eq!(
+            production_tools_when_enabled(true)
+                .expect("tools-on materializes the production corpus")
+                .iter()
+                .map(|tool| tool.name)
+                .collect::<Vec<_>>(),
+            [
+                "remember_fact",
+                "lookup_reputation",
+                "recall",
+                "switch_persona",
+                "recent_messages",
+                "inspect_status",
+                "list_facts",
+            ]
+        );
     }
 
     #[test]
