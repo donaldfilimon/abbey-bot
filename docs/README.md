@@ -10,6 +10,7 @@
 - [`docs/brand.md`](brand.md) — Intelligence Without Limits positioning (Abbey Bot only; never Quesar)
 - [`docs/MLAI-LIVE-ACCEPTANCE.md`](MLAI-LIVE-ACCEPTANCE.md) — Operator evidence checklist for live voice + MLX (not proof a run happened)
 - [`docs/activities.md`](activities.md) — Launch Abbey from the VC rocket; Entry Point `launch`; no bot Go Live; Portal URL mapping
+- [`docs/discord-application-api-roadmap.md`](discord-application-api-roadmap.md) — Phased Discord Application API plan (P0 Portal map → P1 Components V2 → P2 Embedded Activity → P3 user-install/role connections/forum; later monetization; never bot Go Live)
 - [`docs/live-test-protocol.md`](live-test-protocol.md) — Broader live acceptance protocol (Guild A/B, privacy boundary)
 
 ## Specifications
