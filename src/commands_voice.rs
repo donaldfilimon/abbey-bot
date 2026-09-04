@@ -166,7 +166,17 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     // Invalid callers/channels must not cancel or advertise a slow start. At
     // the same time, an authorized stop that crossed either Discord await must
     // prevent this older request from publishing a fresh reservation.
-    let Some(start_generation) = runtime.reserve_start_if_unchanged(start_operation) else {
+    // Decide this join's backend exactly once, in the same critical section
+    // as the start reservation. Everything downstream — the Songbird decode
+    // mode, the consent disclosure, the actor that connects, and the
+    // confirmation reply — reads this snapshot rather than the shared
+    // runtime, so a concurrent `/voice mode` cannot leave participants told
+    // "local, stays on this Mac" while a cloud actor connects; and because
+    // the switch refuses under the same lock while this reservation is
+    // pending, it cannot report a backend this join is not using either.
+    let Some((start_generation, effective_backend)) =
+        runtime.reserve_start_with_backend(start_operation)
+    else {
         ctx.say("This voice start was cancelled while Discord validated the channel; no audio was captured.")
             .await?;
         return Ok(());
@@ -175,13 +185,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         runtime: Arc::clone(&runtime),
         generation: start_generation,
     };
-
-    // Decide this join's backend exactly once. Everything downstream — the
-    // Songbird decode mode, the consent disclosure, the actor that connects,
-    // and the confirmation reply — reads this snapshot rather than the shared
-    // runtime, so a concurrent `/voice mode` cannot leave participants told
-    // "local, stays on this Mac" while a cloud actor connects.
-    let Some(effective_backend) = runtime.effective_backend() else {
+    let Some(effective_backend) = effective_backend else {
         ctx.say("The voice backend selected for this server is not configured; voice stayed off.")
             .await?;
         return Ok(());
@@ -1064,7 +1068,16 @@ pub async fn voice_mode(
         ctx.say(clamp_message(blocker)).await?;
         return Ok(());
     }
-    runtime.set_effective_mode(requested);
+    // The blocker's `start_pending` read is advisory; this write is the
+    // authoritative one, atomic with a join's reservation-plus-snapshot.
+    if !runtime.switch_effective_mode_if_idle(requested) {
+        drop(transition);
+        ctx.say(
+            "Voice is starting right now. Stop it with `/voice leave` before changing the backend.",
+        )
+        .await?;
+        return Ok(());
+    }
     drop(transition);
 
     ctx.say(format!(

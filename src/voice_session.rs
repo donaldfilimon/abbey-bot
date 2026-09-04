@@ -556,6 +556,29 @@ impl VoiceRuntime {
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.reserve_if_unchanged_locked(operation_token)
+    }
+
+    /// `reserve_start_if_unchanged`, plus the backend this start will use,
+    /// captured in the same critical section. `/voice mode` writes the mode
+    /// under the same lock and refuses while a start is pending, so a join
+    /// either reserves first (and the switch is refused) or reserves after
+    /// (and captures the new backend). Without this, a join could reserve
+    /// and snapshot between the switch's check and its write, then activate
+    /// the old backend while status reported the new one.
+    pub fn reserve_start_with_backend(
+        &self,
+        operation_token: u64,
+    ) -> Option<(u64, Option<VoiceBackendConfig>)> {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation = self.reserve_if_unchanged_locked(operation_token)?;
+        Some((generation, self.effective_backend()))
+    }
+
+    fn reserve_if_unchanged_locked(&self, operation_token: u64) -> Option<u64> {
         if self.start_generation.load(Ordering::SeqCst) != operation_token {
             return None;
         }
@@ -564,6 +587,25 @@ impl VoiceRuntime {
             .store(generation, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
         Some(generation)
+    }
+
+    /// Switch the effective mode only while no start is reserved and no media
+    /// epoch is open, checked and written under `activation_gate` so the
+    /// decision is atomic with `reserve_start_with_backend`. Returns whether
+    /// the switch happened. Callers still consult `mode_switch_blocker` first
+    /// for the phase and verification rules and the user-facing sentence.
+    pub fn switch_effective_mode_if_idle(&self, requested: VoiceMode) -> bool {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.pending_start_generation.load(Ordering::SeqCst) != 0
+            || self.media_epoch.load(Ordering::SeqCst) != 0
+        {
+            return false;
+        }
+        self.set_effective_mode(requested);
+        true
     }
 
     /// Cancel a pending start and synchronously close any media gate it may

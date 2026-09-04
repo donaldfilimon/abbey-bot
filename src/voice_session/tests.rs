@@ -343,6 +343,47 @@ async fn a_switch_is_refused_while_a_run_is_armed_on_a_live_runtime() {
     );
 }
 
+#[test]
+fn a_reservation_captures_the_backend_it_will_use_and_pins_the_switch() {
+    // Codex review on #82: a join reserved and snapshotted between the mode
+    // switch's check and its write. Now both sides go through the activation
+    // gate: a pending reservation refuses the switch, and a reservation made
+    // after a switch captures the switched backend.
+    let runtime = runtime();
+    let token = runtime.start_operation_token();
+    let (generation, backend) = runtime
+        .reserve_start_with_backend(token)
+        .expect("fresh token reserves");
+    assert!(runtime.start_is_current(generation));
+    assert!(matches!(backend, Some(VoiceBackendConfig::Disabled)));
+
+    assert!(
+        !runtime.switch_effective_mode_if_idle(VoiceMode::Local),
+        "a pending start pins the mode"
+    );
+    assert_eq!(runtime.effective_mode(), VoiceMode::Disabled);
+
+    runtime.cancel_pending_start();
+    assert!(runtime.switch_effective_mode_if_idle(VoiceMode::Local));
+    assert_eq!(runtime.effective_mode(), VoiceMode::Local);
+
+    // The next reservation sees the switched mode, which this fixture has no
+    // retained backend for: the join fails closed rather than using the old.
+    let token = runtime.start_operation_token();
+    let (_, backend) = runtime
+        .reserve_start_with_backend(token)
+        .expect("fresh token reserves");
+    assert!(backend.is_none());
+}
+
+#[test]
+fn a_stale_operation_token_reserves_nothing_and_captures_nothing() {
+    let runtime = runtime();
+    let token = runtime.start_operation_token();
+    runtime.cancel_pending_start();
+    assert!(runtime.reserve_start_with_backend(token).is_none());
+}
+
 fn inspect_state(inspect: &VoiceInspectRegistry, guild_id: u64) -> VoiceInspectState {
     inspect.state_for(&format!("discord:{guild_id}"))
 }
