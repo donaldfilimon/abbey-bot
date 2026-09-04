@@ -42,7 +42,7 @@ status: in_progress
   revocation, actor failure, leave, and shutdown cannot leave a stale `active` state; DMs and
   other guilds observe `off`. No identity, participant count, epoch, model, counter, timestamp,
   audio, media detail, or transcript is exposed.
-- The existing manually launched process remains untouched and unqualified. Fresh acceptance is
+- The existing manually launched process remains untouched and unqualified (see 2026-09-04 reconciliation: now a launchd service, still unqualified). Fresh acceptance is
   pending for exact pushed source, provider qualification, installed artifact identity, two-guild
   isolation, unanimous current consent, a human-witnessed audible wake/reply, barge-in,
   membership-change pause, renewed consent, written stop, and final leave with no remaining media.
@@ -364,7 +364,7 @@ status: in_progress
   configured-versus-qualified provenance. HTTP and Discord acting tools remain deferred.
 - **Current evidence boundary and delivery.** The source-level coarse voice state is wired to
   central lifecycle transitions and limited to `off`, `presence`, `awaiting-consent`, `active`,
-  or `paused`. The existing manual foreground process remains untouched and unqualified. The
+  or `paused`. The existing manual foreground process remains untouched and unqualified (see 2026-09-04 reconciliation: now a launchd service, still unqualified). The
   isolated strict gate, locked release build, non-divergence review, normal push from canonical
   `main`, and exact-head Ubuntu/macOS/Windows CI remain pending. Provider qualification,
   installation, two-guild live acceptance, managed-service acceptance, and consented voice are

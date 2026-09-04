@@ -282,7 +282,7 @@ provider logs, and historical consent are explicitly not acceptable substitutes.
       explicitly not audit-clean; the malformed-CRL panic remains visible. Any changed/additional
       vulnerability fails closed. Keep `derivative`, `instant`, and `proc-macro-error2` as separate
       informational warnings.
-- [ ] Treat the existing manually launched process as untouched and unqualified. Current source,
+- [ ] Treat the existing manually launched process as untouched and unqualified (see 2026-09-04 reconciliation: now a launchd service, still unqualified). Current source,
       provider/model qualification, installed artifact, foreground Discord, consented voice,
       managed deployment, and real Windows runtime remain separate pending evidence layers.
 
