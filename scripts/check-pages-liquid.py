@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SKIP_DIRS = {".git", "target", "node_modules", ".claude", ".worktrees"}
 
 RAW_OPEN = re.compile(r"\{%-?\s*raw\s*-?%\}")
 RAW_CLOSE = re.compile(r"\{%-?\s*endraw\s*-?%\}")
@@ -64,12 +64,19 @@ def scan_text(text: str) -> list[tuple[int, str]]:
 
 
 def markdown_files(root: pathlib.Path) -> list[pathlib.Path]:
-    files: list[pathlib.Path] = []
-    for path in root.rglob("*.md"):
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
-            continue
-        files.append(path)
-    return sorted(files)
+    """Return Markdown paths present in Git's index, not local scratch files."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    relative_paths = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    return sorted(
+        root / pathlib.Path(path)
+        for path in relative_paths
+        if path and pathlib.Path(path).suffix == ".md"
+    )
 
 
 def main() -> int:

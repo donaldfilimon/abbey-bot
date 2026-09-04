@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -17,6 +19,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules["check_pages_liquid"] = MODULE
 SPEC.loader.exec_module(MODULE)
 scan_text = MODULE.scan_text
+markdown_files = MODULE.markdown_files
 
 
 class ScanTextTests(unittest.TestCase):
@@ -54,6 +57,38 @@ class ScanTextTests(unittest.TestCase):
         # that nothing closes, which Jekyll rejects the same way.
         findings = scan_text("blocks sit inside `{% raw %}`.\n")
         self.assertEqual(findings, [(1, "raw span opened here is never closed")])
+
+
+class MarkdownFilesTests(unittest.TestCase):
+    def test_only_git_tracked_markdown_is_returned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            (root / ".gitignore").write_text("ignored.md\n", encoding="utf-8")
+            (root / "tracked space.md").write_text("# tracked\n", encoding="utf-8")
+            nested = root / "docs" / "tracked.md"
+            nested.parent.mkdir()
+            nested.write_text("# nested\n", encoding="utf-8")
+            (root / "ignored.md").write_text("{{ ignored }}\n", encoding="utf-8")
+            (root / "untracked.md").write_text("{% untracked %}\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "--", ".gitignore", "tracked space.md", "docs/tracked.md"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(
+                [path.relative_to(root) for path in markdown_files(root)],
+                [pathlib.Path("docs/tracked.md"), pathlib.Path("tracked space.md")],
+            )
 
 
 if __name__ == "__main__":

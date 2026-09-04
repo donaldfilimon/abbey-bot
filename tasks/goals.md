@@ -545,8 +545,9 @@ status: in_progress
   member-consent feature) and run `33885035333` is **red on Gate (Windows)** in
   `audible_playback_still_stops_on_speech` (Ubuntu and macOS passed). That is the shared-scheduler
   test defect diagnosed in the voice section; PR #85 restores the gate and its merge is Donald's.
-  The exact-head item is therefore open again until a `main` run at or after #85 is green on all
-  three platforms.
+  That exact-head item closed at `53836c0`: run `33891829308` passed Ubuntu, macOS, and Windows
+  after #85 landed. The merge of this ledger repair will create a newer `main` head whose push
+  gates remain a separate requirement.
   **And again, same mistake, same day:** the Pages build failed at `bb65c81` (#84) and `a4ca221`
   (#85) because the ledger bullet above quoted the Jinja tag and the Liquid raw tag literally, and
   Jekyll parses `tasks/goals.md` too. Fixed by rewriting those tokens as prose and by adding
