@@ -261,12 +261,40 @@ fn finalize_reply(persona: Persona, reply: &str, grounding: &Grounding) -> Strin
 type RoundOutcome =
     Result<(Option<String>, Option<String>, Vec<crate::tools::ToolCall>), llm::LlmError>;
 
+/// Whether prompt preparation may update shared conversation state.
+#[derive(Clone, Copy)]
+pub enum SessionMode {
+    Shared,
+    Ephemeral,
+}
+
 /// What generation is asked to do, independent of delivery and capabilities.
 pub struct Ask<'a> {
+    pub session_mode: SessionMode,
     pub scope: &'a str,
     pub context: &'a PersonaContext,
     pub user_input: &'a str,
     pub now: u64,
+}
+
+impl Ask<'_> {
+    fn prepare(&self, state: &AppState, persona: Persona) -> crate::engine::PreparedTurn {
+        match self.session_mode {
+            SessionMode::Shared => AppState::lock(&state.engine).prepare(
+                self.scope,
+                persona,
+                self.context,
+                self.user_input,
+                self.now,
+            ),
+            SessionMode::Ephemeral => AppState::lock(&state.engine).prepare_ephemeral(
+                self.scope,
+                persona,
+                self.context,
+                self.user_input,
+            ),
+        }
+    }
 }
 
 /// The complete tool-capability boundary for one generation. Disabled turns
@@ -649,12 +677,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     response_style: llm::ResponseStyle,
 ) -> Result<(String, Option<String>, Persona), llm::LlmError> {
     use std::sync::atomic::Ordering;
-    let Ask {
-        scope,
-        context,
-        user_input,
-        now,
-    } = *ask;
+    let scope = ask.scope;
     // Constructing the vocabulary is intentionally capability-gated. This is
     // more than an empty slice at dispatch time: disabled voice turns never
     // allocate or even materialize model-callable tool descriptions.
@@ -668,8 +691,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
-        let prepared =
-            AppState::lock(&state.engine).prepare(scope, persona, context, user_input, now);
+        let prepared = ask.prepare(state, persona);
         let system_prompt = match system_suffix {
             Some(suffix) if !suffix.trim().is_empty() => {
                 format!("{}\n\n{}", prepared.system_prompt, suffix.trim())

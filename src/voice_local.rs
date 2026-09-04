@@ -444,7 +444,10 @@ pub async fn run(mut session: LocalSession) {
                     }
                     TurnOutcome::Ignored { turn } => {
                         tracing::info!(turn, "local voice utterance ignored; wake name required");
-                        if turns.is_empty() && ready_reply.is_none() && pending_commit.is_none() && !input_speaking {
+                        if recognition.is_empty() && recognition_queue.is_empty()
+                            && turns.is_empty() && ready_reply.is_none()
+                            && pending_commit.is_none() && !input_speaking
+                        {
                             session.runtime.set_status(
                                 session.epoch, VoicePhase::Listening,
                                 format!("listening; say {}", session.runtime.config.wake_words.join(", ")),
@@ -721,6 +724,7 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
                 &work.backend,
                 persona,
                 &generation::Ask {
+                    session_mode: crate::generation::SessionMode::Shared,
                     scope: &scope,
                     context: &context,
                     user_input: &transcript,

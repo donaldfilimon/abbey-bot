@@ -344,6 +344,11 @@ async fn answer_question(
                         state,
                         &mut host,
                         &generation::Ask {
+                            session_mode: if commit == Commit::Yes {
+                                generation::SessionMode::Shared
+                            } else {
+                                generation::SessionMode::Ephemeral
+                            },
                             scope: &scope,
                             context: &context,
                             user_input: question,

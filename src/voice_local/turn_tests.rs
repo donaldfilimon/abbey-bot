@@ -25,6 +25,15 @@ impl Fixture {
     }
 
     async fn with_gate(second_transcript: &'static str, gate_stage: &'static str) -> Self {
+        Self::with_transcripts("Abby, say hello.", second_transcript, gate_stage, None).await
+    }
+
+    async fn with_transcripts(
+        first_transcript: &'static str,
+        second_transcript: &'static str,
+        gate_stage: &'static str,
+        transcription_permits: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let (event_tx, events) = mpsc::unbounded_channel();
@@ -63,7 +72,7 @@ impl Fixture {
                 let header = String::from_utf8_lossy(&data[..header_end]);
                 let route = header.split_whitespace().nth(1).unwrap().to_owned();
                 let transcript = if transcriptions == 0 {
-                    "Abby, say hello."
+                    first_transcript
                 } else {
                     second_transcript
                 };
@@ -72,6 +81,7 @@ impl Fixture {
                 }
                 let event_tx = event_tx.clone();
                 let wait = Arc::clone(&wait);
+                let transcription_permits = transcription_permits.clone();
                 requests.spawn(async move {
                     let stage = match route.as_str() {
                         "/v1/audio/transcriptions" => "transcription",
@@ -81,6 +91,9 @@ impl Fixture {
                     };
                     let gate = if stage == gate_stage { wait.lock().await.take() } else { None };
                     let _ = event_tx.send(stage);
+                    if stage == "transcription" && let Some(permits) = transcription_permits {
+                        permits.acquire().await.unwrap().forget();
+                    }
                     if let Some(gate) = gate { let _ = gate.await; }
                     // Fixed synthetic responses only; this listener never
                     // handles production speech or credentials.
@@ -335,5 +348,41 @@ async fn recognition_backlog_fails_closed_instead_of_dropping_withdrawals() {
     fixture.expect_media_closed().await;
     assert_eq!(fixture.runtime.snapshot().await.phase, VoicePhase::Failed);
     assert!(fixture.playback.lock().await.is_none());
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn queued_recognition_keeps_transcribing_status_until_drained() {
+    let permits = Arc::new(tokio::sync::Semaphore::new(0));
+    let mut fixture = Fixture::with_transcripts(
+        "An ordinary aside.",
+        "Another ordinary aside.",
+        "none",
+        Some(Arc::clone(&permits)),
+    )
+    .await;
+    fixture.utterance(1).await;
+    fixture.expect("transcription").await;
+    fixture.utterance(2).await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.input.capacity() != 64 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    permits.add_permits(1);
+    fixture.expect("transcription").await;
+    let snapshot = fixture.runtime.snapshot().await;
+    assert_eq!(snapshot.phase, VoicePhase::Thinking);
+    assert_eq!(snapshot.status, "transcribing locally");
+    permits.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.runtime.snapshot().await.phase != VoicePhase::Listening {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
     fixture.stop().await;
 }

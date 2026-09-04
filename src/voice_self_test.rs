@@ -101,6 +101,7 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
         &backend,
         selected_persona,
         &generation::Ask {
+            session_mode: crate::generation::SessionMode::Shared,
             scope,
             context: &context,
             user_input: &transcript,

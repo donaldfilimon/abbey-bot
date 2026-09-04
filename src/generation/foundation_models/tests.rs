@@ -166,6 +166,7 @@ async fn refusal_is_final_text_and_has_no_side_effect() {
         &fm,
         ToolAccess::Enabled(&mut host),
         &Ask {
+            session_mode: crate::generation::SessionMode::Shared,
             scope: "discord:3",
             context: &context,
             user_input: "remember a secret",
@@ -196,6 +197,7 @@ async fn completed_fm_reply_uses_the_canonical_grounding_hedge() {
         &fm,
         ToolAccess::Disabled(Persona::Abbey),
         &Ask {
+            session_mode: crate::generation::SessionMode::Shared,
             scope: "discord:3",
             context: &context,
             user_input: "when did it ship?",
@@ -243,6 +245,7 @@ async fn max_round_boundary_dispatches_no_extra_tool() {
         &fm,
         ToolAccess::Enabled(&mut host),
         &Ask {
+            session_mode: crate::generation::SessionMode::Shared,
             scope: "discord:3",
             context: &context,
             user_input: "keep storing",
@@ -301,6 +304,7 @@ async fn continuation_failure_never_replays_the_completed_tool() {
         &fm,
         ToolAccess::Enabled(&mut host),
         &Ask {
+            session_mode: crate::generation::SessionMode::Shared,
             scope: "discord:3",
             context: &context,
             user_input: "remember my favorite color",
@@ -341,4 +345,67 @@ async fn continuation_failure_never_replays_the_completed_tool() {
             .tools,
         "only the FM CLI tool route is disabled"
     );
+}
+
+#[tokio::test]
+async fn ephemeral_tool_rounds_preserve_the_shared_persona_even_on_error() {
+    for fail in [false, true] {
+        let state = AppState::in_memory();
+        let context = PersonaContext::empty();
+        AppState::lock(&state.engine).prepare("discord:3", Persona::Abbey, &context, "public", 1);
+        AppState::lock(&state.engine).commit("discord:3", "public", "answer", 1);
+        let last = if fail {
+            Err(llm::LlmError::backend("synthetic failure".into()))
+        } else {
+            Ok(llm::ModelTurn {
+                text: "A private answer.".into(),
+                calls: Vec::new(),
+            })
+        };
+        let fm = FakeFm::with_responses(vec![
+            Ok(llm::ModelTurn {
+                text: String::new(),
+                calls: vec![crate::tools::ToolCall {
+                    id: "switch".into(),
+                    name: "switch_persona".into(),
+                    arguments: serde_json::json!({"persona": "aviva"}),
+                }],
+            }),
+            last,
+        ]);
+        let mut host = crate::runtime::ToolScope {
+            state: &state,
+            network: crate::platform::SocialNetwork::Discord,
+            scoped_guild: "discord:1".into(),
+            scoped_user: "discord:2".into(),
+            scoped_channel: "discord:3".into(),
+            now: 10,
+            persona: Persona::Abbey,
+        };
+        let result = generate_with_fm_cli_and_access(
+            &state,
+            &fm,
+            ToolAccess::Enabled(&mut host),
+            &Ask {
+                session_mode: crate::generation::SessionMode::Ephemeral,
+                scope: "discord:3",
+                context: &context,
+                user_input: "private",
+                now: 10,
+            },
+        )
+        .await;
+        assert_eq!(result.is_err(), fail);
+        assert_eq!(
+            host.persona,
+            Persona::Aviva,
+            "tool changes the private reply persona"
+        );
+        let engine = AppState::lock(&state.engine);
+        assert_eq!(engine.session_persona("discord:3"), Some(Persona::Abbey));
+        assert_eq!(engine.session_len("discord:3"), 2);
+        let seen = fm.seen_turns.lock().unwrap();
+        assert_eq!(seen[0][0], llm::ChatTurn::user("public"));
+        assert_eq!(seen[0][2], llm::ChatTurn::user("private"));
+    }
 }

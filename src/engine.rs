@@ -126,7 +126,23 @@ impl Engine {
             .or_insert_with(|| Session::new(persona, now));
         session.persona = persona;
         session.last_used = now;
-        let mut turns: Vec<ChatTurn> = session.turns.iter().cloned().collect();
+        self.prepare_ephemeral(scope, persona, context, user_input)
+    }
+
+    /// Read shared history for a private request without creating, changing,
+    /// or refreshing a shared session. Its persona applies only to this prompt.
+    pub fn prepare_ephemeral(
+        &self,
+        scope: &str,
+        persona: Persona,
+        context: &PersonaContext,
+        user_input: &str,
+    ) -> PreparedTurn {
+        let mut turns: Vec<ChatTurn> = self
+            .sessions
+            .get(scope)
+            .map(|session| session.turns.iter().cloned().collect())
+            .unwrap_or_default();
         turns.push(ChatTurn::user(user_input));
         let mut grounding = Grounding::from_sources(
             turns
