@@ -535,9 +535,9 @@ status: in_progress
   platforms** (run `33879118089`): #79 built `VoiceConfig` with a struct literal and #76 made two
   of its fields private the same morning, so the test binary no longer compiled. The Pages build
   failed at the same head because the diagnosis spec from #77 quotes Jinja that Jekyll's Liquid
-  parser rejects (`{% set %}`), and this repository has no `_config.yml` or `.nojekyll`. #80
+  parser rejects (a Jinja `set` tag), and this repository has no `_config.yml` or `.nojekyll`. #80
   (`be2915f`) fixed both: the fixture now uses `VoiceConfig::selected_only`, and the two quoted
-  blocks sit inside `{% raw %}`. Two individually green PRs producing a red `main` is the concrete
+  blocks sit inside Liquid raw tags. Two individually green PRs producing a red `main` is the concrete
   argument for requiring the three Gate checks on `main`; that is a repository setting and
   Donald's call. As before, this closes only the exact-head CI item; nothing here qualifies the
   provider, the installed artifact, live connectors, managed deployment, or consented voice.
@@ -547,3 +547,8 @@ status: in_progress
   test defect diagnosed in the voice section; PR #85 restores the gate and its merge is Donald's.
   The exact-head item is therefore open again until a `main` run at or after #85 is green on all
   three platforms.
+  **And again, same mistake, same day:** the Pages build failed at `bb65c81` (#84) and `a4ca221`
+  (#85) because the ledger bullet above quoted the Jinja tag and the Liquid raw tag literally, and
+  Jekyll parses `tasks/goals.md` too. Fixed by rewriting those tokens as prose and by adding
+  `scripts/check-pages-liquid.py` to the gate, which fails on any Liquid-looking token in Markdown
+  outside a raw span, so the gate catches this before Pages does.
