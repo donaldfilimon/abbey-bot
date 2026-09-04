@@ -264,6 +264,10 @@ impl Segmenter {
         Self::default()
     }
 
+    pub fn is_speaking(&self) -> bool {
+        self.active.is_some()
+    }
+
     pub fn push(&mut self, mut frame: VoiceFrame) -> Vec<SegmentEvent> {
         if frame.samples.len() != FRAME_SAMPLES {
             frame.samples.resize(FRAME_SAMPLES, 0);

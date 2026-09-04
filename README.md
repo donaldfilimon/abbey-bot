@@ -56,6 +56,19 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
 | `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. The owner/admin-only local verifier spans join, participant pause/resume, and final leave with content-free in-memory counters; while armed it disables voice conversation commits. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
 
+**To talk with Abbey:** join the configured voice channel, notify everyone
+present, then run `/voice join consent:true` once everyone agrees. Once voice
+is active, say **Abbey**, **Abby**, **Abi**, or **Aviva** before your question;
+you do not need a slash command or a new permission for each reply. The same
+speaker can continue after Abbey starts speaking, and for 45 seconds after her
+reply, without repeating the name. While she is still preparing an answer,
+use her name again to replace that question. New people
+joining require renewed consent and `/voice resume consent:true`. `/voice status`
+shows whether voice is active, awaiting consent, preparing a reply, or speaking.
+Automatic voice-channel presence after a restart is muted and does not activate
+conversation. Ordinary speech does not cancel a reply still being prepared;
+speaking over audible playback stops it immediately.
+
 **The model can call Abbey's own systems.** Whenever the existing tools policy
 is enabled, production offers exactly `[Core, Inspect]` in this stable order:
 `remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
