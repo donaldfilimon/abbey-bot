@@ -444,6 +444,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md",
             "docs/superpowers/specs/2026-09-04-provider-runtime-modernization-design.md",
             "docs/superpowers/specs/2026-09-04-service-observability-design.md",
+            "docs/superpowers/specs/2026-09-04-voice-play-design.md",
             "patches/openmls_rust_crypto-0.5.1/CHANGELOG.md",
             "patches/openmls_rust_crypto-0.5.1/PATCH.md",
             "patches/openmls_rust_crypto-0.5.1/README.md",
