@@ -553,3 +553,13 @@ status: in_progress
   Jekyll parses `tasks/goals.md` too. Fixed by rewriting those tokens as prose and by adding
   `scripts/check-pages-liquid.py` to the gate, which fails on any Liquid-looking token in Markdown
   outside a raw span, so the gate catches this before Pages does.
+- **2026-09-04 (later still) CLOSED at `20e9d83`: `main` is green on both workflows.** Rust run
+  `33894995541` passed Gate (Ubuntu), Gate (macOS), and Gate (Windows); Pages run `33894994514`
+  passed. This is the first fully green `main` since `be2915f`. The Windows job was the one to
+  watch, and it carries #85's private-scheduler fixture, so the shared-scheduler diagnosis held on
+  the runner that had failed twice (`ac909b9`, `bb65c81`); the earlier Rust run at `53836c0`
+  (`33891829308`) had already passed with that fix. The exact-head three-platform CI item closes on
+  these two run ids. Open at the time of writing: #82 (the `/voice mode` idle guard and switch
+  serialization, green on all three platforms at `8da591c`, merge Donald's) and #81 (Donald's). As
+  before, this closes only the exact-head CI item; nothing here qualifies the provider, the
+  installed artifact, live connectors, managed deployment, or consented voice.
