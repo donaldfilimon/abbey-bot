@@ -30,6 +30,9 @@ use crate::voice_session::{
 const VOICE_SYSTEM_SUFFIX: &str = "You are speaking aloud in a consented Discord voice session. Respond in one to three short, natural sentences unless the user explicitly asks for detail. Avoid Markdown, raw URLs, emoji, tables, headings, and unspoken formatting. Pronounce code, symbols, and acronyms clearly. Voice turns are read-only: never claim an external action or durable memory change succeeded.";
 const CONTINUATION_WINDOW: Duration = Duration::from_secs(45);
 const MAX_PENDING_UTTERANCES: usize = 4;
+// Preparation has already warmed the speech models. A stalled live STT call
+// must not hide a later withdrawal behind the general client's 300s timeout.
+const MAX_RECOGNITION_DELAY: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 mod turn_tests;
@@ -52,6 +55,7 @@ pub struct LocalSession {
 #[derive(Default)]
 struct WakeState {
     speaker: Option<u64>,
+    opened: Option<Instant>,
     until: Option<Instant>,
 }
 
@@ -63,6 +67,7 @@ enum TurnOutcome {
     },
     Ready {
         turn: u64,
+        ready_at: Instant,
         scope: String,
         transcript: String,
         spoken_answer: String,
@@ -73,6 +78,9 @@ enum TurnOutcome {
         turn: u64,
     },
     WithdrawConsent {
+        turn: u64,
+    },
+    RecognitionExpired {
         turn: u64,
     },
     Failed {
@@ -172,6 +180,7 @@ pub async fn run(mut session: LocalSession) {
     let mut turns = JoinSet::new();
     let mut next_turn = 0_u64;
     let mut turn_generation = 0_u64;
+    let mut reply_speaker = None;
     let mut input_speaking = false;
     let mut ready_reply = None;
     let mut pending_commit: Option<PendingCommit> = None;
@@ -193,7 +202,7 @@ pub async fn run(mut session: LocalSession) {
             && let Some(work) = recognition_queue.pop_front()
         {
             let _ = session.runtime.with_media_enabled(session.epoch, || {
-                recognition.spawn(recognize_turn(work));
+                recognition.spawn(recognize_before_deadline(work));
             });
         }
         tokio::select! {
@@ -248,7 +257,7 @@ pub async fn run(mut session: LocalSession) {
                             committed,
                             "local Abbey playback completed"
                         );
-                        open_continuation(&wake).await;
+                        extend_continuation(&wake).await;
                         session.runtime
                             .set_status(
                                 session.epoch,
@@ -297,17 +306,25 @@ pub async fn run(mut session: LocalSession) {
                 if !session.runtime.media_enabled(session.epoch) {
                     continue;
                 }
+                let trigger_frame_overlap = frame.overlap;
                 let segment_events = segmenter.push(frame);
                 // Short noises can end without a Completed utterance. Do not
                 // leave a prepared reply waiting forever after such a noise.
                 input_speaking = segmenter.is_speaking();
                 for event in segment_events {
                     match event {
-                        SegmentEvent::SpeechStarted { .. } => {
+                        SegmentEvent::SpeechStarted { speaker_id } => {
                             input_speaking = true;
                             let playback_turn = turn_generation;
                             let playback_stop_requested = stop_playback(&session.playback).await;
                             if playback_stop_requested {
+                                let speaker_relation = match (reply_speaker, speaker_id) {
+                                    (Some(expected), Some(actual)) if expected == actual => "requester",
+                                    (Some(_), Some(_)) => "other participant",
+                                    _ => "unknown",
+                                };
+                                tracing::info!(turn = playback_turn, speaker_relation, trigger_frame_overlap,
+                                    "local voice playback interrupted by speech");
                                 pending_commit = None;
                                 playback_lifecycle.note_barge_stop_requested(playback_turn);
                                 session.runtime.note_barge_in();
@@ -368,6 +385,7 @@ pub async fn run(mut session: LocalSession) {
                             }
                             let work = TurnWork {
                                 turn,
+                                captured_at: Instant::now(),
                                 runtime: Arc::clone(&session.runtime),
                                 client: client.clone(),
                                 state: Arc::clone(&session.state),
@@ -390,8 +408,7 @@ pub async fn run(mut session: LocalSession) {
                 }
             }
             result = async {
-                if !input_speaking && recognition.is_empty() && recognition_queue.is_empty()
-                    && let Some(reply) = ready_reply.take()
+                if !input_speaking && let Some(reply) = ready_reply.take()
                 {
                     return Some(Ok(reply));
                 }
@@ -401,7 +418,7 @@ pub async fn run(mut session: LocalSession) {
                     result = turns.join_next(), if !turns.is_empty() => result,
                 }
             }, if !recognition.is_empty() || !turns.is_empty()
-                || (ready_reply.is_some() && !input_speaking && recognition_queue.is_empty()) => {
+                || (ready_reply.is_some() && !input_speaking) => {
                 let Some(result) = result else { continue; };
                 let outcome = match result {
                     Ok(outcome) => outcome,
@@ -434,6 +451,8 @@ pub async fn run(mut session: LocalSession) {
                         ready_reply = None;
                         pending_commit = None;
                         turn_generation = work.turn;
+                        reply_speaker = work.utterance.speaker_id.filter(|_| safely_attributed);
+                        begin_reply(&wake, reply_speaker).await;
                         tracing::info!(turn = work.turn, "local voice addressed turn accepted");
                         let _ = session.runtime.with_media_enabled(session.epoch, || {
                             turns.spawn(generate_turn(*work, transcript, safely_attributed));
@@ -447,12 +466,23 @@ pub async fn run(mut session: LocalSession) {
                         if recognition.is_empty() && recognition_queue.is_empty()
                             && turns.is_empty() && ready_reply.is_none()
                             && pending_commit.is_none() && !input_speaking
+                            && session.playback.lock().await.is_none()
                         {
                             session.runtime.set_status(
                                 session.epoch, VoicePhase::Listening,
                                 format!("listening; say {}", session.runtime.config.wake_words.join(", ")),
                             ).await;
                         }
+                    }
+                    TurnOutcome::RecognitionExpired { turn } => {
+                        tracing::warn!(turn, "local recognition deadline expired; audio stopped");
+                        session.runtime.actor_failed(
+                            session.epoch,
+                            "local speech recognition exceeded its 10-second deadline; audio stopped. Let the speech service recover, then use /voice resume consent:true.",
+                        ).await;
+                        disconnect_call(&session.call).await;
+                        let _ = stop_playback(&session.playback).await;
+                        break;
                     }
                     TurnOutcome::WithdrawConsent { turn } => {
                         tracing::info!(turn, "local voice consent withdrawal recognized");
@@ -471,15 +501,16 @@ pub async fn run(mut session: LocalSession) {
                         break;
                     }
                     reply @ TurnOutcome::Ready { turn, .. }
-                        if turn == turn_generation && (input_speaking || !recognition.is_empty() || !recognition_queue.is_empty()) =>
+                        if turn == turn_generation && input_speaking =>
                     {
-                        // Let people finish and classify queued speech before
-                        // playback. An aside preserves this prepared answer;
-                        // a new addressed question replaces it above.
+                        // Let current speech finish. Older recognition keeps
+                        // running independently and can replace this answer if
+                        // it identifies an explicit new addressed question.
                         ready_reply = Some(reply);
                     }
                     TurnOutcome::Ready {
                         turn,
+                        ready_at,
                         scope,
                         transcript,
                         spoken_answer,
@@ -513,6 +544,7 @@ pub async fn run(mut session: LocalSession) {
                                     epoch = session.epoch,
                                     turn,
                                     committed_on_completion = persist,
+                                    ready_wait_seconds = ready_at.elapsed().as_secs_f64(),
                                     "local Abbey playback started"
                                 );
                                 session.runtime
@@ -584,6 +616,7 @@ pub async fn run(mut session: LocalSession) {
 
 struct TurnWork {
     turn: u64,
+    captured_at: Instant,
     runtime: Arc<VoiceRuntime>,
     client: MlxAudioClient,
     state: Arc<AppState>,
@@ -597,7 +630,24 @@ struct TurnWork {
     utterance: Utterance,
 }
 
+async fn recognize_before_deadline(work: TurnWork) -> TurnOutcome {
+    let turn = work.turn;
+    let epoch = work.consent_epoch;
+    let runtime = Arc::clone(&work.runtime);
+    let deadline = work.captured_at + MAX_RECOGNITION_DELAY;
+    match tokio::time::timeout_at(deadline, recognize_turn(work)).await {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            // Close capture immediately even if the actor is temporarily
+            // awaiting a playback lock; the actor then retires the call.
+            let _ = runtime.revoke_media(epoch);
+            TurnOutcome::RecognitionExpired { turn }
+        }
+    }
+}
+
 async fn recognize_turn(mut work: TurnWork) -> TurnOutcome {
+    let recognition_started = Instant::now();
     let transcript = match work.client.transcribe(&work.utterance.pcm).await {
         Ok(transcript) => transcript,
         Err(error) => {
@@ -614,6 +664,12 @@ async fn recognize_turn(mut work: TurnWork) -> TurnOutcome {
     work.runtime
         .note_verification_stt_completion(work.consent_epoch);
     let safely_attributed = work.utterance.speaker_id.is_some() && !work.utterance.overlap;
+    tracing::info!(
+        turn = work.turn,
+        recognition_seconds = recognition_started.elapsed().as_secs_f64(),
+        safely_attributed,
+        "local voice recognition finished"
+    );
     let snapshot = work.runtime.snapshot().await;
     let withdrawal_authorized = if safely_attributed {
         if let Some(speaker_id) = work.utterance.speaker_id {
@@ -644,6 +700,7 @@ async fn recognize_turn(mut work: TurnWork) -> TurnOutcome {
         work.wake_word_required,
         &work.wake,
         &work.wake_words,
+        work.captured_at,
     )
     .await
     {
@@ -688,6 +745,7 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
         };
         return TurnOutcome::Ready {
             turn: work.turn,
+            ready_at: Instant::now(),
             scope,
             transcript,
             spoken_answer,
@@ -771,6 +829,7 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
     );
     TurnOutcome::Ready {
         turn: work.turn,
+        ready_at: Instant::now(),
         scope,
         transcript,
         spoken_answer,
@@ -786,36 +845,42 @@ async fn is_addressed(
     required: bool,
     wake: &Mutex<WakeState>,
     wake_words: &[String],
+    captured_at: Instant,
 ) -> bool {
     if !required {
         return true;
     }
-    let now = Instant::now();
     let named = crate::voice::contains_wake_name(transcript, wake_words);
-    let mut wake = wake.lock().await;
-    let continuation = speaker.is_some()
+    let wake = wake.lock().await;
+    let continuation = safely_attributed
+        && speaker.is_some()
         && speaker == wake.speaker
-        && wake.until.is_some_and(|until| until >= now);
-    if named || continuation {
-        if !safely_attributed {
-            wake.speaker = None;
-            wake.until = None;
-            return named;
-        }
-        wake.speaker = speaker;
-        // A follow-up window starts when Abbey actually speaks. Starting it
-        // at recognition makes every same-speaker aside during slow local
-        // inference replace the unanswered question.
-        wake.until = None;
-        true
-    } else {
-        false
-    }
+        && wake.opened.is_some_and(|opened| captured_at >= opened)
+        && wake.until.is_some_and(|until| captured_at <= until);
+    // Recognition is concurrent with playback startup. Only the actor may
+    // advance the answering speaker or open/clear a continuation window.
+    named || continuation
+}
+
+async fn begin_reply(wake: &Mutex<WakeState>, speaker: Option<u64>) {
+    let mut wake = wake.lock().await;
+    wake.speaker = speaker;
+    wake.opened = None;
+    wake.until = None;
 }
 
 async fn open_continuation(wake: &Mutex<WakeState>) {
     let mut wake = wake.lock().await;
     if wake.speaker.is_some() {
+        let now = Instant::now();
+        wake.opened = Some(now);
+        wake.until = Some(now + CONTINUATION_WINDOW);
+    }
+}
+
+async fn extend_continuation(wake: &Mutex<WakeState>) {
+    let mut wake = wake.lock().await;
+    if wake.opened.is_some() {
         wake.until = Some(Instant::now() + CONTINUATION_WINDOW);
     }
 }
@@ -926,7 +991,18 @@ mod tests {
     async fn continuation_is_scoped_to_the_same_speaker() {
         let wake = Mutex::new(WakeState::default());
         let wake_words = default_wake_words();
-        assert!(is_addressed("Abbey hello", Some(1), true, true, &wake, &wake_words).await);
+        assert!(
+            is_addressed(
+                "Abbey hello",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &wake_words,
+                Instant::now()
+            )
+            .await
+        );
         assert!(
             !is_addressed(
                 "an aside while waiting",
@@ -934,10 +1010,12 @@ mod tests {
                 true,
                 true,
                 &wake,
-                &wake_words
+                &wake_words,
+                Instant::now(),
             )
             .await
         );
+        begin_reply(&wake, Some(1)).await;
         open_continuation(&wake).await;
         assert!(
             is_addressed(
@@ -946,13 +1024,47 @@ mod tests {
                 true,
                 true,
                 &wake,
-                &wake_words
+                &wake_words,
+                Instant::now(),
             )
             .await
         );
-        assert!(!is_addressed("private aside", Some(2), true, true, &wake, &wake_words).await);
-        assert!(!is_addressed("unknown voice", None, false, true, &wake, &wake_words).await);
-        assert!(is_addressed("Abbey explicit", Some(2), false, true, &wake, &wake_words).await);
+        assert!(
+            !is_addressed(
+                "private aside",
+                Some(2),
+                true,
+                true,
+                &wake,
+                &wake_words,
+                Instant::now()
+            )
+            .await
+        );
+        assert!(
+            !is_addressed(
+                "unknown voice",
+                None,
+                false,
+                true,
+                &wake,
+                &wake_words,
+                Instant::now()
+            )
+            .await
+        );
+        assert!(
+            is_addressed(
+                "Abbey explicit",
+                Some(2),
+                false,
+                true,
+                &wake,
+                &wake_words,
+                Instant::now()
+            )
+            .await
+        );
         assert!(
             !is_addressed(
                 "unsafe continuation",
@@ -960,7 +1072,135 @@ mod tests {
                 false,
                 true,
                 &wake,
-                &wake_words
+                &wake_words,
+                Instant::now(),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_pre_playback_speech_cannot_become_a_followup() {
+        let wake = Mutex::new(WakeState::default());
+        let words = default_wake_words();
+        assert!(
+            is_addressed(
+                "Abby hello",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
+            )
+            .await
+        );
+        let captured_before_playback = Instant::now() - Duration::from_secs(1);
+        begin_reply(&wake, Some(1)).await;
+        open_continuation(&wake).await;
+        assert!(
+            !is_addressed(
+                "an earlier aside",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &words,
+                captured_before_playback
+            )
+            .await
+        );
+        assert!(
+            is_addressed(
+                "an actual followup",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn old_playback_completion_cannot_open_a_new_questions_followup_window() {
+        let wake = Mutex::new(WakeState::default());
+        let words = default_wake_words();
+        assert!(
+            is_addressed(
+                "Abby hello",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
+            )
+            .await
+        );
+        begin_reply(&wake, Some(1)).await;
+        open_continuation(&wake).await;
+        assert!(
+            is_addressed(
+                "Abby another question",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
+            )
+            .await
+        );
+        begin_reply(&wake, Some(1)).await;
+        extend_continuation(&wake).await;
+        assert!(
+            !is_addressed(
+                "an aside before the new answer",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_recognition_cannot_change_the_playing_replies_window() {
+        let wake = Mutex::new(WakeState::default());
+        let words = default_wake_words();
+        begin_reply(&wake, Some(1)).await;
+        assert!(
+            is_addressed(
+                "Abby next question",
+                Some(2),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
+            )
+            .await
+        );
+        // Simulate old playback acquiring its call lock only after queued STT
+        // completes. Recognition must not hand this opening to the new speaker.
+        open_continuation(&wake).await;
+        assert_eq!(wake.lock().await.speaker, Some(1));
+        begin_reply(&wake, Some(2)).await;
+        assert!(
+            !is_addressed(
+                "an aside before the new reply",
+                Some(2),
+                true,
+                true,
+                &wake,
+                &words,
+                Instant::now()
             )
             .await
         );

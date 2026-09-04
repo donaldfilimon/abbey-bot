@@ -517,7 +517,16 @@ caller. Any new, unknown, or unattested speaker revokes the media epoch before
 that frame can enter the bounded 20 ms input queue, cancels work/playback, and
 disconnects the conversational `Decode` call. Local mode runs Whisper STT, canonical Abbey
 cognition, and Kokoro TTS on loopback; voice turns are read-only and raw audio
-is not persisted. Abbey must retain View Channel, Send Messages, Connect, Speak, Stream, and
+is not persisted. After activation, the default spoken names are Abbey, Abby,
+Aviva, and Abi; no slash command is needed for each reply. Ordinary speech
+preserves an answer being prepared. A ready answer starts when speech is quiet,
+without waiting for older transcription work to finish. A newly recognized
+addressed question can replace that answer, and actual speech still interrupts
+playback. Same-speaker follow-ups are timed from when the speech was captured,
+so an earlier aside cannot become a follow-up merely because transcription ran
+late. If live recognition cannot finish within ten seconds of capture, Abbey
+stops the session so a later withdrawal cannot remain hidden behind stalled
+transcription. Abbey must retain View Channel, Send Messages, Connect, Speak, Stream, and
 Use Embedded Activities and must not be server-muted/deafened/suppressed; startup rechecks those
 conditions around activation, and channel/role/member changes stop the media
 epoch if the call could become receive-only. `/voice leave` tears down both

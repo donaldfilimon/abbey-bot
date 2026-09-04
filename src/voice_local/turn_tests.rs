@@ -386,3 +386,106 @@ async fn queued_recognition_keeps_transcribing_status_until_drained() {
     .unwrap();
     fixture.stop().await;
 }
+
+async fn playing_reply_with_pending_recognition(
+    second_transcript: &'static str,
+) -> (Fixture, Arc<tokio::sync::Semaphore>) {
+    let permits = Arc::new(tokio::sync::Semaphore::new(0));
+    let mut fixture = Fixture::with_transcripts(
+        "Abby, say hello.",
+        second_transcript,
+        "generation",
+        Some(Arc::clone(&permits)),
+    )
+    .await;
+    fixture.utterance(1).await;
+    fixture.expect("transcription").await;
+    permits.add_permits(1);
+    fixture.expect("generation").await;
+    fixture.utterance(1).await;
+    fixture.expect("transcription").await;
+    fixture.release.take().unwrap().send(()).unwrap();
+    fixture.expect("synthesis").await;
+    fixture.expect_playback(true).await;
+    assert_eq!(fixture.runtime.snapshot().await.barge_ins, 0);
+    (fixture, permits)
+}
+
+#[tokio::test]
+async fn prepared_reply_starts_while_older_speech_recognition_is_pending() {
+    let (fixture, permits) = playing_reply_with_pending_recognition("An ordinary aside.").await;
+    permits.add_permits(1);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn queued_explicit_question_replaces_an_already_started_reply() {
+    let (mut fixture, permits) =
+        playing_reply_with_pending_recognition("Abby, answer this instead.").await;
+    permits.add_permits(1);
+    fixture.expect("generation").await;
+    fixture.expect("synthesis").await;
+    fixture.expect_playback(true).await;
+    assert_eq!(fixture.runtime.snapshot().await.barge_ins, 1);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn queued_withdrawal_stops_an_already_started_reply() {
+    let (fixture, permits) = playing_reply_with_pending_recognition("I do not consent.").await;
+    permits.add_permits(1);
+    fixture.expect_media_closed().await;
+    fixture.expect_playback(false).await;
+    assert_eq!(
+        fixture.runtime.snapshot().await.phase,
+        VoicePhase::AwaitingConsent
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn stalled_recognition_fails_closed_with_a_withdrawal_queued() {
+    let mut fixture = Fixture::with_gate("I do not consent.", "transcription").await;
+    fixture.utterance(1).await;
+    fixture.expect("transcription").await;
+    fixture.utterance(2).await;
+    let release = fixture.release.take().unwrap();
+    let late_response = tokio::spawn(async move {
+        // Match the observed 13.3-second ready-output/STT-backlog delay. The
+        // session must fail visibly before this late response can arrive.
+        tokio::time::sleep(Duration::from_millis(13_300)).await;
+        let _ = release.send(());
+    });
+    tokio::time::timeout(Duration::from_secs(13), async {
+        loop {
+            let snapshot = fixture.runtime.snapshot().await;
+            if !fixture
+                .runtime
+                .media_enabled(fixture.runtime.current_epoch())
+                && snapshot.phase == VoicePhase::Failed
+                && fixture.playback.lock().await.is_none()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("stalled recognition left a withdrawal queued behind the 300-second HTTP timeout");
+    let failed = fixture.runtime.snapshot().await;
+    assert_eq!(failed.phase, VoicePhase::Failed);
+    assert!(failed.status.contains("/voice resume consent:true"));
+    assert!(fixture.playback.lock().await.is_none());
+    late_response.await.unwrap();
+    assert!(
+        !fixture
+            .runtime
+            .media_enabled(fixture.runtime.current_epoch())
+    );
+    assert_eq!(fixture.runtime.snapshot().await.phase, VoicePhase::Failed);
+    assert!(
+        fixture.actor.is_finished(),
+        "late STT must not restart the actor"
+    );
+    fixture.stop().await;
+}
