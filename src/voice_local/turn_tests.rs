@@ -387,6 +387,90 @@ async fn queued_recognition_keeps_transcribing_status_until_drained() {
     fixture.stop().await;
 }
 
+async fn overrun_preserves_withdrawal(queued: bool) {
+    let mut fixture = Fixture::with_transcripts(
+        if queued {
+            "An ordinary aside."
+        } else {
+            "I do not consent."
+        },
+        "I do not consent.",
+        "transcription",
+        None,
+    )
+    .await;
+    fixture.utterance(1).await;
+    fixture.expect("transcription").await;
+    if queued {
+        fixture.utterance(2).await;
+    }
+    fixture.frames(2, 2, true).await;
+    fixture.sequence += 1;
+    fixture.frames(2, 1, false).await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.runtime.snapshot().await.aborted_overruns == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    fixture.release.take().unwrap().send(()).unwrap();
+    fixture.expect_media_closed().await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.runtime.snapshot().await.phase != VoicePhase::AwaitingConsent {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        fixture.runtime.snapshot().await.phase,
+        VoicePhase::AwaitingConsent
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn overrun_preserves_inflight_withdrawal_recognition() {
+    overrun_preserves_withdrawal(false).await;
+}
+
+#[tokio::test]
+async fn overrun_preserves_queued_withdrawal_recognition() {
+    overrun_preserves_withdrawal(true).await;
+}
+
+#[tokio::test]
+async fn invalid_stt_response_fails_closed_with_more_speech_queued() {
+    let permits = Arc::new(tokio::sync::Semaphore::new(0));
+    let mut fixture =
+        Fixture::with_transcripts("", "I do not consent.", "none", Some(Arc::clone(&permits)))
+            .await;
+    fixture.utterance(1).await;
+    fixture.expect("transcription").await;
+    fixture.utterance(2).await;
+    permits.add_permits(1);
+    fixture.expect_media_closed().await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.runtime.snapshot().await.phase != VoicePhase::Failed {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fixture.runtime.snapshot().await.phase, VoicePhase::Failed);
+    assert!(
+        fixture
+            .runtime
+            .snapshot()
+            .await
+            .status
+            .contains("speech recognition")
+    );
+    assert!(fixture.playback.lock().await.is_none());
+    fixture.stop().await;
+}
+
 async fn playing_reply_with_pending_recognition(
     second_transcript: &'static str,
 ) -> (Fixture, Arc<tokio::sync::Semaphore>) {
@@ -414,6 +498,40 @@ async fn playing_reply_with_pending_recognition(
 #[tokio::test]
 async fn prepared_reply_starts_while_older_speech_recognition_is_pending() {
     let (fixture, permits) = playing_reply_with_pending_recognition("An ordinary aside.").await;
+    permits.add_permits(1);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn playback_completion_preserves_pending_transcription_status() {
+    let (fixture, permits) = playing_reply_with_pending_recognition("An ordinary aside.").await;
+    fixture
+        ._lifecycle
+        .send(SessionEvent::PlaybackTerminated {
+            turn: 1,
+            termination: PlaybackTermination::Natural,
+        })
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let snapshot = fixture.runtime.snapshot().await;
+            if snapshot.completed_turns == 1
+                && snapshot.phase == VoicePhase::Thinking
+                && snapshot.status == "transcribing locally"
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fixture.runtime.snapshot().await.completed_turns, 1);
+    assert_eq!(fixture.runtime.snapshot().await.phase, VoicePhase::Thinking);
+    assert_eq!(
+        fixture.runtime.snapshot().await.status,
+        "transcribing locally"
+    );
     permits.add_permits(1);
     fixture.stop().await;
 }

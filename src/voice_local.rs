@@ -171,6 +171,42 @@ impl PlaybackLifecycle {
     }
 }
 
+/// Restore the observable activity after a segment or playback transition.
+/// A completed reply or failed generation does not make queued STT idle.
+async fn set_activity_status(
+    session: &LocalSession,
+    recognizing: bool,
+    preparing_reply: bool,
+    idle_detail: impl Into<String>,
+) {
+    if !session.runtime.media_enabled(session.epoch) {
+        return;
+    }
+    let (phase, detail) = if session.playback.lock().await.is_some() {
+        (
+            VoicePhase::Speaking,
+            "speaking locally generated Abbey audio".into(),
+        )
+    } else if preparing_reply {
+        (VoicePhase::Thinking, "preparing local reply".into())
+    } else if recognizing {
+        (VoicePhase::Thinking, "transcribing locally".into())
+    } else {
+        (VoicePhase::Listening, idle_detail.into())
+    };
+    session
+        .runtime
+        .set_status(session.epoch, phase, detail)
+        .await;
+}
+
+async fn fail_session(session: &LocalSession, detail: impl Into<String>) {
+    let _ = session.runtime.revoke_media(session.epoch);
+    session.runtime.actor_failed(session.epoch, detail).await;
+    let _ = stop_playback(&session.playback).await;
+    disconnect_call(&session.call).await;
+}
+
 pub async fn run(mut session: LocalSession) {
     let client = session.client.clone();
     let wake = Arc::new(Mutex::new(WakeState::default()));
@@ -214,13 +250,7 @@ pub async fn run(mut session: LocalSession) {
             }
             changed = session.driver_disconnect.changed() => {
                 if changed.is_err() || *session.driver_disconnect.borrow() {
-                    session.runtime
-                        .actor_failed(
-                            session.epoch,
-                            "Discord voice transport disconnected; audio stopped",
-                        )
-                        .await;
-                    disconnect_call(&session.call).await;
+                    fail_session(&session, "Discord voice transport disconnected; audio stopped").await;
                     break;
                 }
             }
@@ -258,13 +288,12 @@ pub async fn run(mut session: LocalSession) {
                             "local Abbey playback completed"
                         );
                         extend_continuation(&wake).await;
-                        session.runtime
-                            .set_status(
-                                session.epoch,
-                                VoicePhase::Listening,
-                                "local inference ready; listening for Abbey",
-                            )
-                            .await;
+                        set_activity_status(
+                            &session,
+                            !recognition.is_empty() || !recognition_queue.is_empty(),
+                            !turns.is_empty() || ready_reply.is_some(),
+                            "local inference ready; listening for Abbey",
+                        ).await;
                     }
                     PlaybackObservation::ConfirmedBargeInCancellation => {
                         session.runtime.note_verification_barge_in_cancellation();
@@ -290,13 +319,12 @@ pub async fn run(mut session: LocalSession) {
                             ?termination,
                             "local Abbey playback ended without natural completion"
                         );
-                        session.runtime
-                            .set_status(
-                                session.epoch,
-                                VoicePhase::Listening,
-                                "speech playback ended early; listening remains active",
-                            )
-                            .await;
+                        set_activity_status(
+                            &session,
+                            !recognition.is_empty() || !recognition_queue.is_empty(),
+                            !turns.is_empty() || ready_reply.is_some(),
+                            "speech playback ended early; listening remains active",
+                        ).await;
                     }
                     PlaybackObservation::Stale => {}
                 }
@@ -332,57 +360,45 @@ pub async fn run(mut session: LocalSession) {
                             // Stop audible output immediately, but preserve
                             // recognition and an answer still being prepared.
                             // Only an addressed replacement supersedes it.
-                            session
-                                .runtime
-                                .set_status(
-                                    session.epoch,
-                                    if turns.is_empty() && ready_reply.is_none() {
-                                        VoicePhase::Listening
-                                    } else {
-                                        VoicePhase::Thinking
-                                    },
-                                    "speech detected; pending replies are preserved",
-                                )
-                                .await;
+                            set_activity_status(
+                                &session,
+                                !recognition.is_empty() || !recognition_queue.is_empty(),
+                                !turns.is_empty() || ready_reply.is_some(),
+                                "speech detected; pending replies are preserved",
+                            ).await;
                         }
                         SegmentEvent::AbortedOverrun => {
                             input_speaking = false;
-                            next_turn = next_turn.saturating_add(1);
-                            turn_generation = next_turn;
-                            pending_commit = None;
-                            ready_reply = None;
-                            recognition.abort_all();
-                            recognition_queue.clear();
-                            turns.abort_all();
+                            // The segmenter discarded only the damaged current
+                            // utterance. Earlier completed speech may contain a
+                            // withdrawal and must still be recognized in order.
                             session.runtime.note_overrun();
-                            session
-                                .runtime
-                                .set_status(
-                                    session.epoch,
-                                    VoicePhase::Listening,
-                                    "input overrun aborted one utterance safely",
-                                )
-                                .await;
+                            set_activity_status(
+                                &session,
+                                !recognition.is_empty() || !recognition_queue.is_empty(),
+                                !turns.is_empty() || ready_reply.is_some(),
+                                "input overrun aborted one utterance safely",
+                            ).await;
                         }
                         SegmentEvent::Completed(utterance) => {
                             input_speaking = false;
                             if recognition_queue.len() + recognition.len() >= MAX_PENDING_UTTERANCES {
                                 // Never silently drop a possible withdrawal or
                                 // accumulate unbounded raw speech under load.
-                                session.runtime.actor_failed(
-                                    session.epoch,
+                                fail_session(
+                                    &session,
                                     "speech recognition fell behind; audio stopped",
                                 ).await;
-                                disconnect_call(&session.call).await;
                                 break 'session;
                             }
                             next_turn = next_turn.saturating_add(1);
                             let turn = next_turn;
-                            if turns.is_empty() && ready_reply.is_none() && pending_commit.is_none() {
-                                session.runtime.set_status(
-                                    session.epoch, VoicePhase::Thinking, "transcribing locally",
-                                ).await;
-                            }
+                            set_activity_status(
+                                &session,
+                                true,
+                                !turns.is_empty() || ready_reply.is_some(),
+                                "transcribing locally",
+                            ).await;
                             let work = TurnWork {
                                 turn,
                                 captured_at: Instant::now(),
@@ -425,14 +441,14 @@ pub async fn run(mut session: LocalSession) {
                     Err(error) if error.is_cancelled() => continue,
                     Err(error) => {
                         tracing::error!(error = %error, "local voice turn task panicked");
-                        session.runtime
-                            .set_status(
-                                session.epoch,
-                                VoicePhase::Listening,
-                                "one local voice turn failed safely",
-                            )
-                            .await;
-                        continue;
+                        // The joined task may have been classifying a
+                        // withdrawal. An unexpected panic cannot leave capture
+                        // running after that completed speech was lost.
+                        fail_session(
+                            &session,
+                            "local voice task failed unexpectedly; audio stopped. Use /voice resume consent:true after recovery.",
+                        ).await;
+                        break;
                     }
                 };
                 match outcome {
@@ -463,25 +479,19 @@ pub async fn run(mut session: LocalSession) {
                     }
                     TurnOutcome::Ignored { turn } => {
                         tracing::info!(turn, "local voice utterance ignored; wake name required");
-                        if recognition.is_empty() && recognition_queue.is_empty()
-                            && turns.is_empty() && ready_reply.is_none()
-                            && pending_commit.is_none() && !input_speaking
-                            && session.playback.lock().await.is_none()
-                        {
-                            session.runtime.set_status(
-                                session.epoch, VoicePhase::Listening,
-                                format!("listening; say {}", session.runtime.config.wake_words.join(", ")),
-                            ).await;
-                        }
+                        set_activity_status(
+                            &session,
+                            !recognition.is_empty() || !recognition_queue.is_empty(),
+                            !turns.is_empty() || ready_reply.is_some(),
+                            format!("listening; say {}", session.runtime.config.wake_words.join(", ")),
+                        ).await;
                     }
                     TurnOutcome::RecognitionExpired { turn } => {
                         tracing::warn!(turn, "local recognition deadline expired; audio stopped");
-                        session.runtime.actor_failed(
-                            session.epoch,
+                        fail_session(
+                            &session,
                             "local speech recognition exceeded its 10-second deadline; audio stopped. Let the speech service recover, then use /voice resume consent:true.",
                         ).await;
-                        disconnect_call(&session.call).await;
-                        let _ = stop_playback(&session.playback).await;
                         break;
                     }
                     TurnOutcome::WithdrawConsent { turn } => {
@@ -561,45 +571,40 @@ pub async fn run(mut session: LocalSession) {
                             }
                             Err(error) => {
                                 tracing::error!(error = %brief(&error), "local voice playback failed");
-                                session.runtime
-                                    .set_status(
-                                        session.epoch,
-                                        VoicePhase::Listening,
-                                        "speech playback failed; listening remains active",
-                                    )
-                                    .await;
+                                set_activity_status(
+                                    &session,
+                                    !recognition.is_empty() || !recognition_queue.is_empty(),
+                                    !turns.is_empty() || ready_reply.is_some(),
+                                    "speech playback failed; listening remains active",
+                                ).await;
                             }
                         }
                     }
                     TurnOutcome::Failed { turn, stage, error }
                         if turn == turn_generation || stage == "speech recognition" => {
-                        if crate::offline_voice::sidecar_is_unavailable(&error) {
+                        if stage == "speech recognition"
+                            || crate::offline_voice::sidecar_is_unavailable(&error)
+                        {
                             tracing::warn!(
                                 stage,
                                 error = %brief(&error),
-                                "local speech sidecar became unavailable; failing closed"
+                                "local speech processing failed; failing closed"
                             );
-                            session
-                                .runtime
-                                .actor_failed(
-                                    session.epoch,
-                                    format!(
-                                        "local speech sidecar became unavailable during {stage}; audio stopped"
-                                    ),
-                                )
-                                .await;
-                            disconnect_call(&session.call).await;
-                            let _ = stop_playback(&session.playback).await;
+                            // Even a reachable STT service returning malformed
+                            // or empty text has left a possible withdrawal
+                            // unclassified. Do not silently discard it.
+                            fail_session(&session, format!(
+                                "local {stage} failed; audio stopped. Use /voice resume consent:true after recovery."
+                            )).await;
                             break;
                         }
                         tracing::warn!(stage, error = %brief(&error), "local voice turn failed");
-                        if turns.is_empty() && ready_reply.is_none() && pending_commit.is_none() {
-                            session.runtime.set_status(
-                                session.epoch,
-                                VoicePhase::Listening,
-                                format!("{stage} failed locally; listening for the next turn"),
-                            ).await;
-                        }
+                        set_activity_status(
+                            &session,
+                            !recognition.is_empty() || !recognition_queue.is_empty(),
+                            !turns.is_empty() || ready_reply.is_some(),
+                            format!("{stage} failed locally; listening for the next turn"),
+                        ).await;
                     }
                     _ => {}
                 }
