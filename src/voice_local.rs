@@ -710,10 +710,13 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
     } else {
         PersonaContext::empty()
     };
+    let queue_started = Instant::now();
     let generation = match work.state.acquire_generation_for_voice().await {
         Err(error) => Err(error),
         Ok(_slot) => {
-            generation::generate_without_delivery(
+            let queue_seconds = queue_started.elapsed().as_secs_f64();
+            let generation_started = Instant::now();
+            let result = generation::generate_without_delivery(
                 &work.state,
                 &work.backend,
                 persona,
@@ -725,7 +728,14 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
                 },
                 Some(VOICE_SYSTEM_SUFFIX),
             )
-            .await
+            .await;
+            tracing::info!(
+                turn = work.turn,
+                queue_seconds,
+                generation_seconds = generation_started.elapsed().as_secs_f64(),
+                "local voice generation finished"
+            );
+            result
         }
     };
     let (answer, _) = match generation {
@@ -739,6 +749,7 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
         }
     };
     let spoken_answer = crate::offline_voice::spoken_text(&answer);
+    let synthesis_started = Instant::now();
     let audio = match work.client.synthesize(&spoken_answer).await {
         Ok(audio) => audio,
         Err(error) => {
@@ -749,6 +760,11 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
             };
         }
     };
+    tracing::info!(
+        turn = work.turn,
+        synthesis_seconds = synthesis_started.elapsed().as_secs_f64(),
+        "local voice synthesis finished"
+    );
     TurnOutcome::Ready {
         turn: work.turn,
         scope,

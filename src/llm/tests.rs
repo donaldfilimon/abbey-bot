@@ -1,5 +1,102 @@
 use super::*;
 
+#[tokio::test]
+async fn spoken_reply_policy_only_adds_reasoning_control_to_the_qualified_request() {
+    for endpoint in [
+        "http://127.0.0.1:11434",
+        "http://localhost:11434/",
+        "http://[::1]:11434",
+    ] {
+        let backend = Backend::OpenAiCompatible {
+            endpoint: endpoint.into(),
+            model: "gemma4:12b".into(),
+        };
+        let turns = [ChatTurn::user("Abby, hello.")];
+        let default_request =
+            build_chat_request_with_tools(&backend, "Persona and grounding", &turns, &[]);
+        let transport = RecordingTransport::returning(
+            r#"{"choices":[{"message":{"content":"Hello."},"finish_reason":"stop"}]}"#,
+        );
+        let reply = chat_turn_with_style(
+            &transport,
+            &backend,
+            "Persona and grounding",
+            &turns,
+            &[],
+            ResponseStyle::Spoken,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply.text, "Hello.");
+        let mut spoken_request = transport.recorded();
+        assert_eq!(
+            spoken_request
+                .body
+                .as_object_mut()
+                .unwrap()
+                .remove("reasoning_effort"),
+            Some(json!("none"))
+        );
+        assert_eq!(spoken_request, default_request);
+
+        chat_turn(&transport, &backend, "Persona and grounding", &turns, &[])
+            .await
+            .unwrap();
+        assert_eq!(transport.recorded(), default_request);
+    }
+}
+
+#[tokio::test]
+async fn spoken_reply_policy_preserves_other_backends_and_tool_requests() {
+    let local = |endpoint: &str, model: &str| Backend::OpenAiCompatible {
+        endpoint: endpoint.into(),
+        model: model.into(),
+    };
+    let cases = [
+        (local("http://127.0.0.1:11434", "gemma4:12b"), true),
+        (local("http://127.0.0.1:11434", "another-model"), false),
+        (local("http://127.0.0.1:8181", "gemma4:12b"), false),
+        (local("https://example.test:11434", "gemma4:12b"), false),
+        (local("http://127.0.0.1:11434/proxy", "gemma4:12b"), false),
+        (
+            Backend::Anthropic {
+                api_key: "synthetic-key".into(),
+            },
+            false,
+        ),
+    ];
+    for (backend, offer_tools) in cases {
+        let tools = if offer_tools {
+            crate::tools::production_tools()
+        } else {
+            Vec::new()
+        };
+        let turns = [ChatTurn::user("Synthetic question")];
+        let expected =
+            build_chat_request_with_tools(&backend, "Persona and grounding", &turns, &tools);
+        let canned_reply = match &backend {
+            Backend::Anthropic { .. } => {
+                r#"{"content":[{"type":"text","text":"Hello."}],"stop_reason":"end_turn"}"#
+            }
+            Backend::OpenAiCompatible { .. } => {
+                r#"{"choices":[{"message":{"content":"Hello."},"finish_reason":"stop"}]}"#
+            }
+        };
+        let transport = RecordingTransport::returning(canned_reply);
+        chat_turn_with_style(
+            &transport,
+            &backend,
+            "Persona and grounding",
+            &turns,
+            &tools,
+            ResponseStyle::Spoken,
+        )
+        .await
+        .unwrap();
+        assert_eq!(transport.recorded(), expected);
+    }
+}
+
 #[test]
 fn debug_never_prints_the_api_key() {
     // A derived Debug on either type prints the credential in full. These

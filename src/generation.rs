@@ -361,6 +361,7 @@ pub async fn generate_with_tools<O: Outbound + Sync>(
                 ask,
                 delivery,
                 None,
+                llm::ResponseStyle::Default,
             )
             .await
         }
@@ -406,6 +407,7 @@ pub async fn generate_with_tools<O: Outbound + Sync>(
                     ask,
                     delivery,
                     None,
+                    llm::ResponseStyle::Default,
                 )
                 .await
                 {
@@ -480,6 +482,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                 ask,
                 delivery,
                 None,
+                llm::ResponseStyle::Default,
             )
             .await
         }
@@ -538,6 +541,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                     ask,
                     delivery,
                     None,
+                    llm::ResponseStyle::Default,
                 )
                 .await
                 {
@@ -569,6 +573,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                     ask,
                     delivery,
                     None,
+                    llm::ResponseStyle::Default,
                 )
                 .await
                 {
@@ -610,7 +615,9 @@ fn no_backend_error() -> llm::LlmError {
 /// The voice surface uses this seam to require a loopback backend even when a
 /// remote text provider is configured as the process-wide default. The
 /// optional suffix adds presentation constraints without replacing persona
-/// policy.
+/// policy. Its explicit spoken response style skips optional model thinking
+/// only on the measured local Ollama/Gemma deployment; ordinary text and
+/// tool-capable generation retain provider defaults.
 pub async fn generate_without_delivery(
     state: &AppState,
     backend: &llm::Backend,
@@ -625,6 +632,7 @@ pub async fn generate_without_delivery(
         ask,
         None,
         system_suffix,
+        llm::ResponseStyle::Spoken,
     )
     .await?;
     debug_assert!(posted.is_none(), "no-delivery generation cannot post");
@@ -638,6 +646,7 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
     system_suffix: Option<&str>,
+    response_style: llm::ResponseStyle,
 ) -> Result<(String, Option<String>, Persona), llm::LlmError> {
     use std::sync::atomic::Ordering;
     let Ask {
@@ -698,22 +707,29 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
                     Err(e) => Err(e),
                 }
             }
-            _ => llm::chat_turn(&state.llm, backend, &system_prompt, &turns, tools)
-                .await
-                .map(|t| {
-                    let is_final = t.calls.is_empty();
-                    let text = if t.text.trim().is_empty() {
-                        None
-                    } else if is_final {
-                        Some(finalize_reply(persona, &t.text, &grounding))
-                    } else {
-                        // Preserve prior tool-round shaping, but do not append
-                        // a user-visible hedge to assistant prose that will
-                        // only be sent back to the model for continuation.
-                        Some(ask::tidy_reply(persona, &t.text))
-                    };
-                    (text, None, t.calls)
-                }),
+            _ => llm::chat_turn_with_style(
+                &state.llm,
+                backend,
+                &system_prompt,
+                &turns,
+                tools,
+                response_style,
+            )
+            .await
+            .map(|t| {
+                let is_final = t.calls.is_empty();
+                let text = if t.text.trim().is_empty() {
+                    None
+                } else if is_final {
+                    Some(finalize_reply(persona, &t.text, &grounding))
+                } else {
+                    // Preserve prior tool-round shaping, but do not append
+                    // a user-visible hedge to assistant prose that will
+                    // only be sent back to the model for continuation.
+                    Some(ask::tidy_reply(persona, &t.text))
+                };
+                (text, None, t.calls)
+            }),
         };
 
         let (text, posted, calls) = match turn {

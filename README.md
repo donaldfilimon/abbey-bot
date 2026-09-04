@@ -69,6 +69,13 @@ Automatic voice-channel presence after a restart is muted and does not activate
 conversation. Ordinary speech does not cancel a reply still being prepared;
 speaking over audible playback stops it immediately.
 
+Local conversational voice and the offline voice audition request
+`reasoning_effort: "none"` for the measured `gemma4:12b` deployment at an HTTP
+loopback root URL on port `11434`. This reduces optional thinking before a
+spoken answer while retaining the full persona/context prompt. Other models,
+endpoints, text conversations, and tool requests keep their existing defaults.
+Content-free voice logs separate generation queue, generation, and synthesis time.
+
 **The model can call Abbey's own systems.** Whenever the existing tools policy
 is enabled, production offers exactly `[Core, Inspect]` in this stable order:
 `remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
