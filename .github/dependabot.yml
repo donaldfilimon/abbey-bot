@@ -1,6 +1,7 @@
 # Safe Dependabot for abbey-bot.
 # Ignore serenity/poise majors until coordinated crates.io pair.
 # Ignore lone rustls-webpki bumps (serenity 0.12 edge).
+# Ignore symphonia majors until songbird adopts 0.6.
 # See docs/MLAI-LIVE-ACCEPTANCE.md residual Task 7.
 version: 2
 updates:
@@ -21,6 +22,9 @@ updates:
         update-types:
           - version-update:semver-major
       - dependency-name: rustls-webpki
+      - dependency-name: symphonia
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
