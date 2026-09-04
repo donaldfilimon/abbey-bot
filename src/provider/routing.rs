@@ -207,14 +207,7 @@ impl CircuitState {
             Self::Closed => {
                 // First failure; the next failure in the window will open.
             }
-            Self::Open {
-                open_duration,
-                ..
-            }
-            | Self::HalfOpen {
-                open_duration,
-                ..
-            } => {
+            Self::Open { open_duration, .. } | Self::HalfOpen { open_duration, .. } => {
                 let now = Instant::now();
                 let next = extend_open_duration(*open_duration);
                 *self = Self::Open {
@@ -362,18 +355,15 @@ impl AdaptiveRouter {
 
     /// Release the sticky pin.
     pub fn unpin(&self) {
-        self.sticky
-            .lock()
-            .expect("sticky state poisoned")
-            .unpin();
+        self.sticky.lock().expect("sticky state poisoned").unpin();
     }
 
     /// Record a successful turn outcome.
     pub fn record(&self, id: &ProviderId, outcome: TurnOutcome) {
         let mut state = self.state.lock().expect("routing state poisoned");
-        let provider_state = state.entry(id.clone()).or_insert_with(|| {
-            ProviderRoutingState::new(id.clone())
-        });
+        let provider_state = state
+            .entry(id.clone())
+            .or_insert_with(|| ProviderRoutingState::new(id.clone()));
         match outcome {
             TurnOutcome::Success { latency_ms } => {
                 provider_state.record_success(latency_ms);

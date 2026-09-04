@@ -6,7 +6,7 @@
 
 use super::domain::{ProviderId, TurnFuture};
 use super::{ProviderCapabilities, TurnAdapter};
-use crate::llm::{self, Backend, ChatTurn, LlmError, ModelTurn, HttpTransport};
+use crate::llm::{self, Backend, ChatTurn, HttpTransport, LlmError, ModelTurn};
 use crate::tools::ToolSpec;
 
 /// Adapter for an OpenAI-compatible local server (Ollama, MLX-Audio, etc.).
@@ -36,11 +36,7 @@ impl LocalServerAdapter {
         model: String,
         transport: HttpTransport,
     ) -> Self {
-        Self::new(
-            id,
-            Backend::OpenAiCompatible { endpoint, model },
-            transport,
-        )
+        Self::new(id, Backend::OpenAiCompatible { endpoint, model }, transport)
     }
 }
 
@@ -103,11 +99,7 @@ impl TurnAdapter for FmCliAdapter {
         tools: &'a [ToolSpec],
         call_id: &'a str,
     ) -> TurnFuture<'a> {
-        Box::pin(async move {
-            self.fm
-                .cli_turn(system_prompt, turns, tools, call_id)
-                .await
-        })
+        Box::pin(async move { self.fm.cli_turn(system_prompt, turns, tools, call_id).await })
     }
 }
 

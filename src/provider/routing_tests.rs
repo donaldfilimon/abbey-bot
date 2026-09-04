@@ -1,9 +1,13 @@
+use super::super::TurnFuture;
 use super::*;
 use crate::llm;
 use crate::tools;
-use super::super::TurnFuture;
 
-fn test_descriptor(id: &str, caps: ProviderCapabilities, class: ProviderClass) -> ProviderDescriptor {
+fn test_descriptor(
+    id: &str,
+    caps: ProviderCapabilities,
+    class: ProviderClass,
+) -> ProviderDescriptor {
     ProviderDescriptor {
         id: ProviderId::parse(id).unwrap(),
         class,
@@ -76,10 +80,7 @@ fn extend_open_duration_doubles() {
         extend_open_duration(Duration::from_secs(10 * 60)),
         MAX_OPEN_DURATION
     );
-    assert_eq!(
-        extend_open_duration(MAX_OPEN_DURATION),
-        MAX_OPEN_DURATION
-    );
+    assert_eq!(extend_open_duration(MAX_OPEN_DURATION), MAX_OPEN_DURATION);
 }
 
 #[test]
