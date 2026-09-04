@@ -1,8 +1,10 @@
 //! Explicit OpenAI Realtime backup for Discord voice.
 //!
-//! This path is never selected by key presence. It runs only under
-//! `ABBEY_VOICE_MODE=openai`, caps WebSocket/audio memory, owns cancellation,
-//! and truncates provider history to the audio actually heard after barge-in.
+//! This path is never selected by key presence. It runs only when the join
+//! that spawned it snapshotted the OpenAI backend (`ABBEY_VOICE_MODE=openai`
+//! at startup, or a later `/voice mode openai`), caps WebSocket/audio memory,
+//! owns cancellation, and truncates provider history to the audio actually
+//! heard after barge-in.
 
 mod protocol;
 
@@ -23,6 +25,7 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::offline_voice::FrameSequence;
 use crate::vad::{ComposedVad, Vad, VadCtx};
+use crate::voice::OpenAiVoiceConfig;
 use crate::voice_session::{
     PlaybackTermination, SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime,
     register_playback_termination,
@@ -36,6 +39,10 @@ const MAX_WS_MESSAGE_BYTES: usize = 512 * 1024;
 
 pub struct OpenAiSession {
     pub runtime: Arc<VoiceRuntime>,
+    /// The backend the join snapshotted and announced. The actor must never
+    /// re-read it from the runtime: the startup selection may be a different
+    /// mode, and the consent notice already named this one.
+    pub config: OpenAiVoiceConfig,
     pub call: Arc<Mutex<songbird::Call>>,
     pub epoch: u64,
     pub input: mpsc::Receiver<crate::offline_voice::VoiceFrame>,
@@ -75,12 +82,7 @@ pub async fn run(mut session: OpenAiSession) {
 }
 
 async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
-    let config = session
-        .runtime
-        .config
-        .openai()
-        .ok_or_else(|| "OpenAI voice actor started under a different mode".to_string())?
-        .clone();
+    let config = session.config.clone();
     let mut request = config
         .websocket_url()
         .into_client_request()

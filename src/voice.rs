@@ -729,6 +729,35 @@ mod tests {
     }
 
     #[test]
+    fn a_switched_join_hands_the_actor_the_retained_backend() {
+        // The OpenAI actor takes its backend from the join snapshot, never
+        // from `runtime.config.openai()`: after `/voice mode openai` from a
+        // local startup that accessor is still `None`, and an actor that
+        // consulted it would fail right after the consent notice promised
+        // cloud audio. This pins the two reads apart.
+        let mut values = destination();
+        values.openai_key = Some("retained-not-selected".into());
+        let result = VoiceConfig::from_values(values);
+        if !cfg!(target_os = "macos") {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+            return;
+        }
+        let runtime = crate::voice_session::VoiceRuntime::new(result.unwrap().unwrap());
+        runtime.set_effective_mode(VoiceMode::OpenAi);
+        assert!(
+            runtime.config.openai().is_none(),
+            "the startup selection stays local; retention is not selection"
+        );
+        assert!(
+            matches!(
+                runtime.effective_backend(),
+                Some(VoiceBackendConfig::OpenAi(_))
+            ),
+            "the join snapshot must carry the retained OpenAI backend"
+        );
+    }
+
+    #[test]
     fn local_voice_is_rejected_outside_macos() {
         let mut values = destination();
         values.mode = Some("local".into());

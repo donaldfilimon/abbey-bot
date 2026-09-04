@@ -497,11 +497,12 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
             };
             tokio::spawn(crate::voice_local::run(session))
         }
-        (VoiceBackendConfig::OpenAi(_), None) => {
+        (VoiceBackendConfig::OpenAi(config), None) => {
             let (ready_tx, ready_rx) = oneshot::channel();
             cloud_ready = Some(ready_rx);
             let session = OpenAiSession {
                 runtime: Arc::clone(&runtime),
+                config: config.clone(),
                 call: Arc::clone(&call),
                 epoch,
                 input,
@@ -882,21 +883,24 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         None => "voice manager unavailable".into(),
     };
     let effective_mode = runtime.effective_mode();
-    let speech_models = match &runtime.config.backend {
-        VoiceBackendConfig::Local(config) => format!(
+    // Status describes the backend a join would connect now, not the startup
+    // selection; otherwise "Mode: OpenAI" could sit above local speech models.
+    let effective_backend = runtime.effective_backend();
+    let speech_models = match &effective_backend {
+        Some(VoiceBackendConfig::Local(config)) => format!(
             "STT: `{}`\nTTS: `{}` · voice: `{}`",
             config.stt_model, config.tts_model, config.voice
         ),
-        VoiceBackendConfig::OpenAi(config) => {
+        Some(VoiceBackendConfig::OpenAi(config)) => {
             format!(
                 "Realtime model: `{}` · voice: `{}`",
                 config.model, config.voice
             )
         }
-        VoiceBackendConfig::Disabled => "Speech models: none".into(),
+        Some(VoiceBackendConfig::Disabled) | None => "Speech models: none".into(),
     };
-    let sidecar = match runtime.config.local() {
-        Some(config) => match MlxAudioClient::new(config.clone()) {
+    let sidecar = match &effective_backend {
+        Some(VoiceBackendConfig::Local(config)) => match MlxAudioClient::new(config.clone()) {
             Ok(client) => match tokio::time::timeout(SIDECAR_STATUS_TIMEOUT, client.health()).await
             {
                 Ok(Ok(())) => format!(
@@ -911,7 +915,7 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
             },
             Err(error) => format!("Local speech sidecar: {}", public_error(&error)),
         },
-        None => "Local speech sidecar: not used in this mode".into(),
+        _ => "Local speech sidecar: not used in this mode".into(),
     };
     let loopback_llm = if effective_mode == VoiceMode::Local {
         match select_local_backend(&ctx.data().state) {
