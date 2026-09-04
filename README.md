@@ -1,12 +1,12 @@
 # Abbey Bot
 
-> **Intelligence Without Limits** — Abbey’s Discord operational layer (Rust).  
+> **Intelligence Without Limits** — Abbey's Discord operational layer (Rust).  
 > Persona routing, memory/WDBX, reputation, and consent-gated voice tooling.  
 > Adjacent to the Swift `AbbeyBot` product; shared contracts, not shared runtime.
 
 **Intelligence Without Limits.**
 
-Abbey is your Discord companion for routing, memory, and calm ops help — with personas that say what they know and what they don’t.
+Abbey is your Discord companion for routing, memory, and calm ops help — with personas that say what they know and what they don't.
 
 Persona routing · Durable memory · Ops with guardrails. Invite Abbey · `/persona ask` · `/help`.
 
@@ -19,6 +19,21 @@ dependency, or shared runtime. The archived `~/dev/archive/swift-discord` tree i
 a home-grown Swift Discord library, not either bot. The Rust and Swift products
 share no application code; cross-language agreement is established only through
 the independently vendored Abbey contract corpus and each consumer's own gate.
+
+## Current status (2026-09-03)
+
+| Layer | Status | Evidence |
+|-------|--------|----------|
+| Source gate (`./check.sh`) | **PASS** | 772 tests, clippy clean, locked release build |
+| Cross-platform CI (Ubuntu/macOS/Windows) | **PASS** (pre-stabilization baseline) | Actions run `33218303755` at `9716f00` |
+| Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
+| Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
+| Live Discord (2-guild isolation) | **PENDING** | Requires exact-head CI green + operator sandbox guilds |
+| Consented voice (8/8 lifecycle) | **PENDING** | Requires fresh unanimous consent + human-witnessed audible reply |
+| Managed service | **PENDING** | Requires full protocol repeat through installed service |
+| Windows runtime | **PENDING** | CI proves contracts only; no live Windows acceptance |
+
+**Do not treat a green source gate as proof of deployment, provider qualification, live behavior, or managed-service acceptance.** Each layer requires its own explicit evidence.
 
 ## Commands
 
