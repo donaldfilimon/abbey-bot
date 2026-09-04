@@ -242,7 +242,10 @@ impl VoiceConfig {
             channel_id,
             backend,
             wake_word_required,
-            wake_words: DEFAULT_WAKE_WORDS.iter().map(|w| (*w).to_string()).collect(),
+            wake_words: DEFAULT_WAKE_WORDS
+                .iter()
+                .map(|w| (*w).to_string())
+                .collect(),
             retained_local: None,
             retained_openai: None,
         }
@@ -633,6 +636,96 @@ mod tests {
         } else {
             assert!(result.unwrap_err().contains("supported only on macOS"));
         }
+    }
+
+    #[test]
+    fn a_retained_backend_is_available_without_being_selected() {
+        // The whole point of retention: `/voice mode` can validate a switch to
+        // OpenAI, while `mode()`/`openai()` still say the process is running
+        // local. If these two ever agree, a present key has silently selected
+        // cloud audio, which this module's own doc forbids.
+        let mut values = destination();
+        values.openai_key = Some("retained-not-selected".into());
+        let result = VoiceConfig::from_values(values);
+        if !cfg!(target_os = "macos") {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+            return;
+        }
+        let config = result.unwrap().unwrap();
+        assert_eq!(config.mode(), VoiceMode::Local);
+        assert!(config.openai().is_none(), "retention must not be selection");
+        assert!(
+            config.available_openai().is_some(),
+            "a complete OpenAI environment should be switchable to"
+        );
+        assert!(config.backend_for(VoiceMode::OpenAi).is_some());
+    }
+
+    #[test]
+    fn a_mode_with_no_environment_is_not_switchable_to() {
+        // Without OPENAI_API_KEY there is nothing to switch to, and
+        // `/voice mode openai` must say so rather than half-starting.
+        let result = VoiceConfig::from_values(destination());
+        if !cfg!(target_os = "macos") {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+            return;
+        }
+        let config = result.unwrap().unwrap();
+        assert!(config.available_openai().is_none());
+        assert!(config.backend_for(VoiceMode::OpenAi).is_none());
+        // Disabled is always reachable: it takes no configuration to stop.
+        assert!(config.backend_for(VoiceMode::Disabled).is_some());
+    }
+
+    #[test]
+    fn selecting_openai_still_fails_closed_without_a_key() {
+        // Retention must not soften the startup contract for the *selected*
+        // mode: asking for openai with no key is still a startup error.
+        let mut values = destination();
+        values.mode = Some("openai".into());
+        let error = VoiceConfig::from_values(values).unwrap_err();
+        assert!(error.contains("OPENAI_API_KEY"), "{error}");
+    }
+
+    #[test]
+    fn a_snapshot_backend_always_agrees_with_its_own_mode() {
+        // `start_voice` trusts `backend.mode()` to describe the backend it is
+        // about to connect. If those could disagree, the public consent notice
+        // could name a different backend than the actor that connects.
+        let config = VoiceConfig::selected_only(1, 2, VoiceBackendConfig::Disabled, true);
+        assert_eq!(
+            config.backend_for(VoiceMode::Disabled).map(|b| b.mode()),
+            Some(VoiceMode::Disabled)
+        );
+    }
+
+    #[test]
+    fn a_directly_built_config_retains_nothing() {
+        let config = VoiceConfig::selected_only(1, 2, VoiceBackendConfig::Disabled, true);
+        assert_eq!(config.mode(), VoiceMode::Disabled);
+        assert!(config.available_local().is_none());
+        assert!(config.available_openai().is_none());
+        assert!(config.backend_for(VoiceMode::Local).is_none());
+    }
+
+    #[test]
+    fn the_command_parser_accepts_every_environment_alias() {
+        // `/voice mode` reuses this parser precisely so the two surfaces cannot
+        // drift; a second parser in the command shell rejected off/offline.
+        for (input, expected) in [
+            ("disabled", VoiceMode::Disabled),
+            ("off", VoiceMode::Disabled),
+            ("local", VoiceMode::Local),
+            ("offline", VoiceMode::Local),
+            ("openai", VoiceMode::OpenAi),
+        ] {
+            assert_eq!(
+                VoiceMode::parse(Some(input.into())).unwrap(),
+                expected,
+                "{input}"
+            );
+        }
+        assert!(VoiceMode::parse(Some("nonsense".into())).is_err());
     }
 
     #[test]

@@ -1005,7 +1005,8 @@ pub async fn voice_mode(
     };
 
     if requested == current {
-        ctx.say(format!("Already in `{}`.", current.label())).await?;
+        ctx.say(format!("Already in `{}`.", current.label()))
+            .await?;
         return Ok(());
     }
     if runtime.config.backend_for(requested).is_none() {
