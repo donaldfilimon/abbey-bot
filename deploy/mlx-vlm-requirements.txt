@@ -369,7 +369,7 @@ idna==3.19 \
 jinja2==3.1.6 \
     --hash=sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d \
     --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
-    # via -r deploy/mlx-vlm-requirements.in
+    # via -r mlx-vlm-requirements.in
 llguidance==1.8.0 \
     --hash=sha256:020b4ec2254a20555e69095c7d488907f17d7e65ab5a840b267530f2cb369f70 \
     --hash=sha256:06aa5dc26e87de2d152ffb3f0131ec531620963b677f0d73ab05f49adc8c4133 \
@@ -580,15 +580,10 @@ mlx-audio==0.5.0 \
     --hash=sha256:90f4619186708a2cd4df9824d2ef3d2e427707264414fb604a3ca9dc499cc820 \
     --hash=sha256:d5aba4b99c006acd735408189d127eaf6ed53be0cad789e2eb51aa57f4f6bf13
     # via mlx-vlm
-mlx-metal==0.32.1 \
-    --hash=sha256:3fbf7d3de783680e771818189bc734877c9b129ae91312338b5ede420cde44c9 \
-    --hash=sha256:a02d5c672f5592b29a8aeb3c793919f83eeb32ad38e0c814c09fe6e632a147d3 \
-    --hash=sha256:b23ebfeb70b34d64083beea22d3de7e0e680665306618524a2229d19bcfc98c1
-    # via mlx
-mlx-vlm==0.6.15 \
-    --hash=sha256:26914c41b92762ef262c4409b9ad91fa1e3968a085581c9a63b4dbcae987b743 \
-    --hash=sha256:ebd8dd939dcfa1f3a811c225d5c3ce3dffefb4a99d300fbe5fb638b5e45b6e61
-    # via -r deploy/mlx-vlm-requirements.in
+mlx-vlm==0.6.17 \
+    --hash=sha256:5e4ff5426af093b3cf41b4e5e33c272db82fa33000cb3c36a1aab9e218ad7ee7 \
+    --hash=sha256:d24723244ef89b2a6140bec45e38c078689ea89450edfc0e348ad149f5af3b1c
+    # via -r mlx-vlm-requirements.in
 numpy==2.4.6 \
     --hash=sha256:001fbb8e08d942dd57599e781f2472269ee7f2755fae407b4f67b2f0b17da3f1 \
     --hash=sha256:0280e0356c0829a18d9de1cb7eee50ec22ca639878d7240307ca0943d73cd2c4 \
@@ -1320,12 +1315,10 @@ typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
     # via
-    #   anyio
     #   fastapi
     #   huggingface-hub
     #   pydantic
     #   pydantic-core
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.4 \
     --hash=sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47 \
