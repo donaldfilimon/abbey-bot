@@ -1,8 +1,10 @@
 //! Explicit OpenAI Realtime backup for Discord voice.
 //!
-//! This path is never selected by key presence. It runs only under
-//! `ABBEY_VOICE_MODE=openai`, caps WebSocket/audio memory, owns cancellation,
-//! and truncates provider history to the audio actually heard after barge-in.
+//! This path is never selected by key presence. It runs only when the join
+//! that spawned it snapshotted the OpenAI backend (`ABBEY_VOICE_MODE=openai`
+//! at startup, or a later `/voice mode openai`), caps WebSocket/audio memory,
+//! owns cancellation, and truncates provider history to the audio actually
+//! heard after barge-in.
 
 mod protocol;
 
@@ -23,6 +25,7 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::offline_voice::FrameSequence;
 use crate::vad::{ComposedVad, Vad, VadCtx};
+use crate::voice::OpenAiVoiceConfig;
 use crate::voice_session::{
     PlaybackTermination, SessionEvent, SharedPlayback, VoicePhase, VoiceRuntime,
     register_playback_termination,
@@ -36,6 +39,10 @@ const MAX_WS_MESSAGE_BYTES: usize = 512 * 1024;
 
 pub struct OpenAiSession {
     pub runtime: Arc<VoiceRuntime>,
+    /// The backend the join snapshotted and announced. The actor must never
+    /// re-read it from the runtime: the startup selection may be a different
+    /// mode, and the consent notice already named this one.
+    pub config: OpenAiVoiceConfig,
     pub call: Arc<Mutex<songbird::Call>>,
     pub epoch: u64,
     pub input: mpsc::Receiver<crate::offline_voice::VoiceFrame>,
@@ -75,12 +82,7 @@ pub async fn run(mut session: OpenAiSession) {
 }
 
 async fn run_inner(session: &mut OpenAiSession) -> Result<(), String> {
-    let config = session
-        .runtime
-        .config
-        .openai()
-        .ok_or_else(|| "OpenAI voice actor started under a different mode".to_string())?
-        .clone();
+    let config = session.config.clone();
     let mut request = config
         .websocket_url()
         .into_client_request()
@@ -547,13 +549,12 @@ mod tests {
 
     #[tokio::test]
     async fn withdrawal_between_socket_readiness_and_enqueue_drops_audio() {
-        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig {
-            guild_id: 1,
-            channel_id: 2,
-            backend: crate::voice::VoiceBackendConfig::Disabled,
-            wake_word_required: true,
-            wake_words: crate::voice::VoiceConfig::default_wake_words(),
-        }));
+        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Disabled,
+            true,
+        )));
         let generation = runtime.reserve_start();
         let epoch = runtime.begin(std::collections::HashSet::new()).await;
         assert!(runtime.activate(epoch, generation, "active").await);
@@ -579,13 +580,12 @@ mod tests {
 
     #[tokio::test]
     async fn input_sequence_gap_counts_overrun_and_fails_closed() {
-        let runtime = VoiceRuntime::new(crate::voice::VoiceConfig {
-            guild_id: 1,
-            channel_id: 2,
-            backend: crate::voice::VoiceBackendConfig::Disabled,
-            wake_word_required: true,
-            wake_words: crate::voice::VoiceConfig::default_wake_words(),
-        });
+        let runtime = VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Disabled,
+            true,
+        ));
         let mut sequence = FrameSequence::default();
         enforce_input_sequence(&mut sequence, &runtime, 10).unwrap();
         let error = enforce_input_sequence(&mut sequence, &runtime, 12).unwrap_err();

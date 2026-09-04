@@ -79,6 +79,22 @@ status: in_progress
   acceptance in this section is blocked one layer earlier than stated:
   `docs/live-test-protocol.md:35-41` requires green exact-SHA three-platform CI before stage 0,
   and that CI is currently **red**, not merely unrun (see the Complete Abbey section).
+- **2026-09-04 evidence toward this goal, not closure: `/voice mode` is switchable at runtime in
+  draft PR #76.** Before it, `VoiceConfig::from_values` retained only the selected backend, so
+  after startup the process held no credentials for any other mode; the command early-returned on
+  an equal mode, `local()`/`openai()` were `None` for every other one, and only `/voice mode
+  disabled` reached a write that nothing read. Switching was unrepresentable, not unimplemented.
+  #76 retains complete-but-unselected backends inert behind `available_*` accessors (a present key
+  still never selects cloud audio; `destination_defaults_to_local_even_when_a_cloud_key_exists`
+  passes unchanged), keeps the effective mode in an `AtomicU8` outside the documented lock order,
+  and makes `start_voice` take one backend snapshot that it threads through the Songbird decode
+  mode, the public consent notice, the actor it spawns, and the reply, so a switch mid-join cannot
+  make the notice describe a different backend than the one that connects. Review caught that the
+  OpenAI actor still re-read the startup selection; `ca03d65` gives `OpenAiSession` the snapshot.
+  Gate at `ca03d65`: 798 passed / 0 failed / 2 ignored, clippy clean. Not live-verified, and #76's
+  three-platform matrix was still pending when this was written. Recorded follow-ups: autojoin
+  leaves the runtime `PresenceOnly`, which the `Disconnected`-only guard rejects, and
+  `activate_inner` does not re-check the mode between arming and activation.
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
@@ -467,3 +483,29 @@ status: in_progress
   `.claude/worktrees/wdbx`, not `~/dev/active/wdbx`. The repository-local writer pin stays active
   so the run remains valid, but a worktree gate must never be cited as external WDBX fixture
   evidence.
+- **2026-09-04 CLOSED: exact-head three-platform CI is green.** #72 (`e0825b9`) restored the gate,
+  #73 (`f4a338b`) and #74 (`cd37eb9`) followed, and `main`'s head `cd37eb9` completed run
+  `33850790233` with Gate (Ubuntu), Gate (macOS), and Gate (Windows) all passing. As predicted by
+  the workflow's `cancel-in-progress` concurrency group, `f4a338b`'s own run (`33850515754`) was
+  cancelled by the next merge; the evidence is the run at the *final* head, which is the one that
+  matters. This closes the "exact-head three-platform CI" item in this goal and unblocks stage 0 of
+  `docs/live-test-protocol.md`. It does not qualify the provider, the installed artifact, live
+  connectors, managed deployment, or consented voice — those remain separate pending layers.
+- **2026-09-04 root cause for the recorded tool-result continuation FAIL, in draft PR #77**
+  (`docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md`). Diagnosis only:
+  no sidecar was started and no 12B checkpoint was loaded. Verified against the pinned snapshot's
+  own `chat_template.jinja`, two defects compose. (1) The template's thought-suppressor (the
+  pre-closed empty `<|channel>thought` block at line 362) is gated on `prev_message_type` not being
+  `tool_response`, but the reset at line 218 sits inside the `role != 'tool'` guard at 217, so a
+  tool message never clears it and the suppressor is skipped: the model opens its own thought
+  channel. That is why the plain `MLX_READY` probe passes and only continuation fails. (2) The
+  server's thought-splitter is a one-shot latch, so every block after the first is emitted as
+  content with markers intact. Ruled out with reasons: a client `stop` sequence is silently ignored
+  (`extra="allow"`), `enable_thinking`/thinking-budget cannot act while thinking is off, and
+  Rust-side marker stripping alone still burns the budget and returns `length`. The spec ranks the
+  candidate fixes and records two gaps: the smoke's JSON fixture is not representative of Abbey's
+  prose tool results, and `configure-mlx-primary.py` gates on a manifest's self-declared `tools:
+  pass` rather than the exact-marker assertion. One open question stands: whether the recorded
+  "generation-prompt experiments also failed" already covered the prefill-after-tool-response
+  candidate. `tasks/todo.md:108` still closes only on a live `deploy/smoke-mlx-vlm.py` run passing
+  `TOOL_CONTINUATION_READY`; not on the spec, and not on a template patch with a green unit test.

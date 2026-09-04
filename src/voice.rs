@@ -25,7 +25,10 @@ pub enum VoiceMode {
 }
 
 impl VoiceMode {
-    fn parse(value: Option<String>) -> Result<Self, String> {
+    /// Parse an operator-supplied mode name. Public so `/voice mode` accepts
+    /// exactly the aliases `ABBEY_VOICE_MODE` accepts — a second, narrower
+    /// parser in the command shell silently rejected `off` and `offline`.
+    pub fn parse(value: Option<String>) -> Result<Self, String> {
         match nonblank(value)
             .unwrap_or_else(|| "local".into())
             .to_ascii_lowercase()
@@ -91,9 +94,30 @@ pub enum VoiceBackendConfig {
     OpenAi(OpenAiVoiceConfig),
 }
 
+impl VoiceBackendConfig {
+    /// The mode this backend *is*. A snapshot carries its own mode so a join
+    /// never has to ask shared state what it is doing halfway through.
+    #[must_use]
+    pub const fn mode(&self) -> VoiceMode {
+        match self {
+            Self::Disabled => VoiceMode::Disabled,
+            Self::Local(_) => VoiceMode::Local,
+            Self::OpenAi(_) => VoiceMode::OpenAi,
+        }
+    }
+}
+
 /// One explicitly allowed Discord destination and one explicitly selected
 /// speech backend. Partial destinations and incomplete selected backends are
 /// startup errors.
+///
+/// A backend whose environment happens to be complete but which was *not*
+/// selected is retained here **inert**, reachable only through
+/// [`VoiceConfig::available_local`] / [`VoiceConfig::available_openai`] so
+/// `/voice mode` can validate a switch against something real. Retention is not
+/// selection: [`VoiceConfig::mode`], [`VoiceConfig::local`] and
+/// [`VoiceConfig::openai`] keep meaning *selected at startup*, so a present key
+/// still never chooses cloud audio.
 #[derive(Clone, Debug)]
 pub struct VoiceConfig {
     pub guild_id: u64,
@@ -101,6 +125,10 @@ pub struct VoiceConfig {
     pub backend: VoiceBackendConfig,
     pub wake_word_required: bool,
     pub wake_words: Vec<String>,
+    /// Complete-but-unselected local backend, if its environment allowed one.
+    retained_local: Option<OfflineVoiceConfig>,
+    /// Complete-but-unselected OpenAI backend, if its environment allowed one.
+    retained_openai: Option<OpenAiVoiceConfig>,
 }
 
 #[derive(Default)]
@@ -144,10 +172,10 @@ impl VoiceConfig {
     }
 
     fn from_values(values: VoiceEnv) -> Result<Option<Self>, String> {
-        let guild = nonblank(values.guild);
-        let channel = nonblank(values.channel);
+        let guild = nonblank(values.guild.clone());
+        let channel = nonblank(values.channel.clone());
         if guild.is_none() && channel.is_none() {
-            if nonblank(values.mode).is_some_and(|mode| {
+            if nonblank(values.mode.clone()).is_some_and(|mode| {
                 !matches!(mode.to_ascii_lowercase().as_str(), "off" | "disabled")
             }) {
                 return Err(
@@ -159,52 +187,29 @@ impl VoiceConfig {
         }
         let guild_id = snowflake(guild, "ABBEY_VOICE_GUILD_ID")?;
         let channel_id = snowflake(channel, "ABBEY_VOICE_CHANNEL_ID")?;
-        let mode = VoiceMode::parse(values.mode)?;
+        let mode = VoiceMode::parse(values.mode.clone())?;
+
+        // The selected mode still fails closed: an incomplete or unusable
+        // backend for `mode` is a startup error, exactly as before.
         let backend = match mode {
             VoiceMode::Disabled => VoiceBackendConfig::Disabled,
-            VoiceMode::Local => {
-                validate_local_voice_platform()?;
-                VoiceBackendConfig::Local(OfflineVoiceConfig::from_values(
-                    values.local_endpoint,
-                    values.local_stt_model,
-                    values.local_tts_model,
-                    values.local_tts_voice,
-                    values.local_language,
-                )?)
-            }
-            VoiceMode::OpenAi => {
-                let api_key = nonblank(values.openai_key)
-                    .ok_or_else(|| "ABBEY_VOICE_MODE=openai requires OPENAI_API_KEY".to_string())?;
-                let endpoint = nonblank(values.openai_endpoint)
-                    .unwrap_or_else(|| DEFAULT_OPENAI_ENDPOINT.to_string());
-                validate_openai_endpoint(&endpoint)?;
-                let model = safe_name(
-                    nonblank(values.openai_model),
-                    DEFAULT_OPENAI_MODEL,
-                    "ABBEY_VOICE_REALTIME_MODEL",
-                )?;
-                let voice = safe_name(
-                    nonblank(values.openai_voice),
-                    DEFAULT_OPENAI_VOICE,
-                    "ABBEY_VOICE_NAME",
-                )?;
-                let base_instructions =
-                    nonblank(values.instructions).unwrap_or_else(default_instructions);
-                let instructions = format!("{base_instructions}\n\n{OPENAI_CONTROL_SAFETY_SUFFIX}");
-                if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-                    return Err(format!(
-                        "ABBEY_VOICE_INSTRUCTIONS must be at most {MAX_INSTRUCTIONS_CHARS} characters"
-                    ));
-                }
-                VoiceBackendConfig::OpenAi(OpenAiVoiceConfig {
-                    api_key,
-                    endpoint,
-                    model,
-                    voice,
-                    instructions,
-                })
-            }
+            VoiceMode::Local => VoiceBackendConfig::Local(build_local(&values)?),
+            VoiceMode::OpenAi => VoiceBackendConfig::OpenAi(build_openai(&values)?),
         };
+
+        // Unselected backends are retained only when their environment is
+        // already complete, and any failure is swallowed: an unusable backend
+        // you did not ask for must never break startup, and retaining one must
+        // never select it.
+        let retained_local = match mode {
+            VoiceMode::Local => None,
+            _ => build_local(&values).ok(),
+        };
+        let retained_openai = match mode {
+            VoiceMode::OpenAi => None,
+            _ => build_openai(&values).ok(),
+        };
+
         Ok(Some(Self {
             guild_id,
             channel_id,
@@ -214,10 +219,73 @@ impl VoiceConfig {
                 true,
                 "ABBEY_VOICE_WAKE_WORD_REQUIRED",
             )?,
-            wake_words: parse_wake_words(values.wake_words),
+            wake_words: parse_wake_words(values.wake_words.clone()),
+            retained_local,
+            retained_openai,
         }))
     }
 
+    /// A config with one explicitly selected backend and nothing retained, so
+    /// `/voice mode` can switch only to `disabled`. This is the shape the
+    /// process had before unselected backends were retained, and it is what
+    /// callers that build a config directly (rather than from the environment)
+    /// should use.
+    #[must_use]
+    pub fn selected_only(
+        guild_id: u64,
+        channel_id: u64,
+        backend: VoiceBackendConfig,
+        wake_word_required: bool,
+    ) -> Self {
+        Self {
+            guild_id,
+            channel_id,
+            backend,
+            wake_word_required,
+            wake_words: DEFAULT_WAKE_WORDS
+                .iter()
+                .map(|w| (*w).to_string())
+                .collect(),
+            retained_local: None,
+            retained_openai: None,
+        }
+    }
+
+    /// A local backend usable right now — the selected one, or a retained
+    /// complete-but-inert one. `/voice mode` validates against this; nothing
+    /// else should, because being *available* is not being *selected*.
+    #[must_use]
+    pub fn available_local(&self) -> Option<&OfflineVoiceConfig> {
+        self.local().or(self.retained_local.as_ref())
+    }
+
+    /// An OpenAI backend usable right now — selected or retained-but-inert.
+    /// See [`VoiceConfig::available_local`]; a present key still never selects
+    /// cloud audio on its own.
+    #[must_use]
+    pub fn available_openai(&self) -> Option<&OpenAiVoiceConfig> {
+        self.openai().or(self.retained_openai.as_ref())
+    }
+
+    /// The backend for `mode`, if one is usable. Returns an owned value so a
+    /// caller can snapshot it once and stop re-reading shared state mid-join.
+    #[must_use]
+    pub fn backend_for(&self, mode: VoiceMode) -> Option<VoiceBackendConfig> {
+        match mode {
+            VoiceMode::Disabled => Some(VoiceBackendConfig::Disabled),
+            VoiceMode::Local => self
+                .available_local()
+                .cloned()
+                .map(VoiceBackendConfig::Local),
+            VoiceMode::OpenAi => self
+                .available_openai()
+                .cloned()
+                .map(VoiceBackendConfig::OpenAi),
+        }
+    }
+
+    /// The mode selected at startup. Runtime switching lives on
+    /// `VoiceRuntime::effective_mode`; this stays the startup answer.
     #[must_use]
     pub const fn mode(&self) -> VoiceMode {
         match self.backend {
@@ -402,6 +470,55 @@ fn parse_wake_words(value: Option<String>) -> Vec<String> {
     if words.is_empty() { default } else { words }
 }
 
+/// Build a local backend from env values. Shared by the selected path (where a
+/// failure is a startup error) and the retained path (where it is swallowed),
+/// so a retained backend is validated exactly as strictly as a selected one.
+fn build_local(values: &VoiceEnv) -> Result<OfflineVoiceConfig, String> {
+    validate_local_voice_platform()?;
+    OfflineVoiceConfig::from_values(
+        values.local_endpoint.clone(),
+        values.local_stt_model.clone(),
+        values.local_tts_model.clone(),
+        values.local_tts_voice.clone(),
+        values.local_language.clone(),
+    )
+}
+
+/// Build an OpenAI backend from env values. See [`build_local`] for why this is
+/// shared rather than inlined per path.
+fn build_openai(values: &VoiceEnv) -> Result<OpenAiVoiceConfig, String> {
+    let api_key = nonblank(values.openai_key.clone())
+        .ok_or_else(|| "ABBEY_VOICE_MODE=openai requires OPENAI_API_KEY".to_string())?;
+    let endpoint = nonblank(values.openai_endpoint.clone())
+        .unwrap_or_else(|| DEFAULT_OPENAI_ENDPOINT.to_string());
+    validate_openai_endpoint(&endpoint)?;
+    let model = safe_name(
+        nonblank(values.openai_model.clone()),
+        DEFAULT_OPENAI_MODEL,
+        "ABBEY_VOICE_REALTIME_MODEL",
+    )?;
+    let voice = safe_name(
+        nonblank(values.openai_voice.clone()),
+        DEFAULT_OPENAI_VOICE,
+        "ABBEY_VOICE_NAME",
+    )?;
+    let base_instructions =
+        nonblank(values.instructions.clone()).unwrap_or_else(default_instructions);
+    let instructions = format!("{base_instructions}\n\n{OPENAI_CONTROL_SAFETY_SUFFIX}");
+    if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
+        return Err(format!(
+            "ABBEY_VOICE_INSTRUCTIONS must be at most {MAX_INSTRUCTIONS_CHARS} characters"
+        ));
+    }
+    Ok(OpenAiVoiceConfig {
+        api_key,
+        endpoint,
+        model,
+        voice,
+        instructions,
+    })
+}
+
 fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String, String> {
     let value = value.unwrap_or_else(|| default.to_string());
     if !value.is_empty()
@@ -519,6 +636,125 @@ mod tests {
         } else {
             assert!(result.unwrap_err().contains("supported only on macOS"));
         }
+    }
+
+    #[test]
+    fn a_retained_backend_is_available_without_being_selected() {
+        // The whole point of retention: `/voice mode` can validate a switch to
+        // OpenAI, while `mode()`/`openai()` still say the process is running
+        // local. If these two ever agree, a present key has silently selected
+        // cloud audio, which this module's own doc forbids.
+        let mut values = destination();
+        values.openai_key = Some("retained-not-selected".into());
+        let result = VoiceConfig::from_values(values);
+        if !cfg!(target_os = "macos") {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+            return;
+        }
+        let config = result.unwrap().unwrap();
+        assert_eq!(config.mode(), VoiceMode::Local);
+        assert!(config.openai().is_none(), "retention must not be selection");
+        assert!(
+            config.available_openai().is_some(),
+            "a complete OpenAI environment should be switchable to"
+        );
+        assert!(config.backend_for(VoiceMode::OpenAi).is_some());
+    }
+
+    #[test]
+    fn a_mode_with_no_environment_is_not_switchable_to() {
+        // Without OPENAI_API_KEY there is nothing to switch to, and
+        // `/voice mode openai` must say so rather than half-starting.
+        let result = VoiceConfig::from_values(destination());
+        if !cfg!(target_os = "macos") {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+            return;
+        }
+        let config = result.unwrap().unwrap();
+        assert!(config.available_openai().is_none());
+        assert!(config.backend_for(VoiceMode::OpenAi).is_none());
+        // Disabled is always reachable: it takes no configuration to stop.
+        assert!(config.backend_for(VoiceMode::Disabled).is_some());
+    }
+
+    #[test]
+    fn selecting_openai_still_fails_closed_without_a_key() {
+        // Retention must not soften the startup contract for the *selected*
+        // mode: asking for openai with no key is still a startup error.
+        let mut values = destination();
+        values.mode = Some("openai".into());
+        let error = VoiceConfig::from_values(values).unwrap_err();
+        assert!(error.contains("OPENAI_API_KEY"), "{error}");
+    }
+
+    #[test]
+    fn a_snapshot_backend_always_agrees_with_its_own_mode() {
+        // `start_voice` trusts `backend.mode()` to describe the backend it is
+        // about to connect. If those could disagree, the public consent notice
+        // could name a different backend than the actor that connects.
+        let config = VoiceConfig::selected_only(1, 2, VoiceBackendConfig::Disabled, true);
+        assert_eq!(
+            config.backend_for(VoiceMode::Disabled).map(|b| b.mode()),
+            Some(VoiceMode::Disabled)
+        );
+    }
+
+    #[test]
+    fn a_directly_built_config_retains_nothing() {
+        let config = VoiceConfig::selected_only(1, 2, VoiceBackendConfig::Disabled, true);
+        assert_eq!(config.mode(), VoiceMode::Disabled);
+        assert!(config.available_local().is_none());
+        assert!(config.available_openai().is_none());
+        assert!(config.backend_for(VoiceMode::Local).is_none());
+    }
+
+    #[test]
+    fn the_command_parser_accepts_every_environment_alias() {
+        // `/voice mode` reuses this parser precisely so the two surfaces cannot
+        // drift; a second parser in the command shell rejected off/offline.
+        for (input, expected) in [
+            ("disabled", VoiceMode::Disabled),
+            ("off", VoiceMode::Disabled),
+            ("local", VoiceMode::Local),
+            ("offline", VoiceMode::Local),
+            ("openai", VoiceMode::OpenAi),
+        ] {
+            assert_eq!(
+                VoiceMode::parse(Some(input.into())).unwrap(),
+                expected,
+                "{input}"
+            );
+        }
+        assert!(VoiceMode::parse(Some("nonsense".into())).is_err());
+    }
+
+    #[test]
+    fn a_switched_join_hands_the_actor_the_retained_backend() {
+        // The OpenAI actor takes its backend from the join snapshot, never
+        // from `runtime.config.openai()`: after `/voice mode openai` from a
+        // local startup that accessor is still `None`, and an actor that
+        // consulted it would fail right after the consent notice promised
+        // cloud audio. This pins the two reads apart.
+        let mut values = destination();
+        values.openai_key = Some("retained-not-selected".into());
+        let result = VoiceConfig::from_values(values);
+        if !cfg!(target_os = "macos") {
+            assert!(result.unwrap_err().contains("supported only on macOS"));
+            return;
+        }
+        let runtime = crate::voice_session::VoiceRuntime::new(result.unwrap().unwrap());
+        runtime.set_effective_mode(VoiceMode::OpenAi);
+        assert!(
+            runtime.config.openai().is_none(),
+            "the startup selection stays local; retention is not selection"
+        );
+        assert!(
+            matches!(
+                runtime.effective_backend(),
+                Some(VoiceBackendConfig::OpenAi(_))
+            ),
+            "the join snapshot must carry the retained OpenAI backend"
+        );
     }
 
     #[test]

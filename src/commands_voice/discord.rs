@@ -10,7 +10,6 @@ use tokio::sync::Mutex;
 
 use crate::Context;
 use crate::voice::VoiceMode;
-use crate::voice_session::VoiceRuntime;
 
 pub(super) fn select_local_backend(
     state: &crate::runtime::AppState,
@@ -322,13 +321,13 @@ pub(super) fn can_stop_voice(
         || interaction_permissions.is_some_and(|permissions| permissions.manage_guild())
 }
 
-pub(super) fn consent_notice(
-    runtime: &VoiceRuntime,
-    channel_id: ChannelId,
-    resumed: bool,
-) -> String {
+/// The public disclosure participants see. Takes the mode explicitly rather
+/// than reading the runtime: this text is a promise about where audio goes, so
+/// it must describe the same backend the caller is about to connect, not
+/// whatever the runtime says by the time this renders.
+pub(super) fn consent_notice(mode: VoiceMode, channel_id: ChannelId, resumed: bool) -> String {
     let action = if resumed { "resuming" } else { "starting" };
-    match runtime.config.mode() {
+    match mode {
         VoiceMode::Local => format!(
             "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start. A clearly attributed spoken withdrawal is honored locally; `/voice leave` or writing `stop listening` in this voice chat is the authoritative stop. A new participant pauses and disconnects the session until renewed consent."
         ),

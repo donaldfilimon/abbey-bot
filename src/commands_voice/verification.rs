@@ -75,7 +75,7 @@ pub async fn voice_verify_start(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
-    if runtime.config.mode() != VoiceMode::Local {
+    if runtime.effective_mode() != VoiceMode::Local {
         ctx.say("Privacy-safe live verification is available only for local voice mode; disabled mode has no media and the direct cloud backup does not expose local STT completion.")
             .await?;
         return Ok(());

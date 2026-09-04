@@ -38,28 +38,80 @@ fn only_active_conversation_phases_process_audio() {
 }
 
 fn runtime() -> VoiceRuntime {
-    VoiceRuntime::new(VoiceConfig {
-        guild_id: 1,
-        channel_id: 2,
-        backend: VoiceBackendConfig::Disabled,
-        wake_word_required: true,
-        wake_words: VoiceConfig::default_wake_words(),
-    })
+    VoiceRuntime::new(VoiceConfig::selected_only(
+        1,
+        2,
+        VoiceBackendConfig::Disabled,
+        true,
+    ))
 }
 
 fn runtime_with_inspect(guild_id: u64) -> (VoiceRuntime, Arc<VoiceInspectRegistry>) {
     let inspect = Arc::new(VoiceInspectRegistry::default());
     let runtime = VoiceRuntime::new_with_inspect(
-        VoiceConfig {
-            guild_id,
-            channel_id: 2,
-            backend: VoiceBackendConfig::Disabled,
-            wake_word_required: true,
-            wake_words: VoiceConfig::default_wake_words(),
-        },
+        VoiceConfig::selected_only(guild_id, 2, VoiceBackendConfig::Disabled, true),
         Arc::clone(&inspect),
     );
     (runtime, inspect)
+}
+
+#[test]
+fn the_effective_mode_starts_as_the_startup_selection() {
+    let runtime = runtime();
+    assert_eq!(runtime.effective_mode(), runtime.config.mode());
+}
+
+#[test]
+fn switching_the_effective_mode_round_trips_through_the_atomic() {
+    // The mode lives in an atomic rather than a lock so it can never join the
+    // documented `inner -> activation_gate -> discord_sessions` order. That
+    // only holds if the byte encoding round-trips exactly.
+    let runtime = runtime();
+    for mode in [VoiceMode::Local, VoiceMode::OpenAi, VoiceMode::Disabled] {
+        runtime.set_effective_mode(mode);
+        assert_eq!(runtime.effective_mode(), mode, "{mode:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_join_snapshot_is_unaffected_by_a_later_mode_change() {
+    // This is the consent-integrity property in miniature. `start_voice`
+    // snapshots the backend once and threads it through the Songbird decode
+    // mode, the public consent notice, the actor it spawns, and the reply. A
+    // switch after that snapshot must not retroactively change what those
+    // describe, or participants could be told "local, stays on this Mac" while
+    // a cloud actor connects.
+    //
+    // It does not exercise `start_voice` itself, which needs a live Discord
+    // context; it pins the ownership property the snapshot relies on.
+    let runtime = runtime();
+    let snapshot = runtime
+        .effective_backend()
+        .expect("the startup backend is always available");
+    let snapshot_mode = snapshot.mode();
+
+    runtime.set_effective_mode(VoiceMode::Local);
+
+    assert_eq!(
+        snapshot.mode(),
+        snapshot_mode,
+        "an owned snapshot must not follow later switches"
+    );
+    assert_ne!(
+        runtime.effective_mode(),
+        snapshot_mode,
+        "the runtime itself did move, so the snapshot is what protects the join"
+    );
+}
+
+#[test]
+fn a_mode_with_no_retained_backend_has_nothing_to_snapshot() {
+    // `/voice mode` refuses to select an unconfigured backend; if it ever let
+    // one through, this is where the join would fail closed instead of
+    // connecting something unintended.
+    let runtime = runtime();
+    runtime.set_effective_mode(VoiceMode::OpenAi);
+    assert!(runtime.effective_backend().is_none());
 }
 
 fn inspect_state(inspect: &VoiceInspectRegistry, guild_id: u64) -> VoiceInspectState {
