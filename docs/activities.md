@@ -94,3 +94,4 @@ for each host; Discord CSP blocks unmapped origins.
 - Voice permission gate: `src/commands_voice/discord.rs`
 - Entry Point preserve: `src/main.rs` → `register_globally_keeping_entry_point`
 - Live acceptance: `docs/MLAI-LIVE-ACCEPTANCE.md`
+- Application API roadmap: [`docs/discord-application-api-roadmap.md`](discord-application-api-roadmap.md)
