@@ -1028,17 +1028,13 @@ pub async fn voice_mode(
     // snapshot finish under the old backend while this reports the new one.
     let transition = runtime.transition.lock().await;
     let snapshot = runtime.snapshot().await;
-    if snapshot.phase != crate::voice_session::VoicePhase::Disconnected || snapshot.start_pending {
+    if let Some(blocker) = crate::voice_session::mode_switch_blocker(
+        &snapshot,
+        runtime.verification_active(),
+        requested,
+    ) {
         drop(transition);
-        ctx.say(format!(
-            "Voice is {} right now. Stop it with `/voice leave` before changing the backend.",
-            if snapshot.start_pending {
-                "starting"
-            } else {
-                snapshot.phase.label()
-            },
-        ))
-        .await?;
+        ctx.say(clamp_message(blocker)).await?;
         return Ok(());
     }
     runtime.set_effective_mode(requested);

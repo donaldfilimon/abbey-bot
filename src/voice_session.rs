@@ -55,6 +55,16 @@ impl VoicePhase {
         }
     }
 
+    /// No media epoch can be open and no join is in flight: `Disconnected`,
+    /// the muted/self-deafened autojoin presence (which never decodes,
+    /// whatever the backend), and `Failed` (media closed by `fail_safe`).
+    /// `AwaitingConsent` is excluded on purpose: a paused session still owns
+    /// the consent it was granted under, and a resume must honour it.
+    #[must_use]
+    pub const fn accepts_backend_change(self) -> bool {
+        matches!(self, Self::Disconnected | Self::PresenceOnly | Self::Failed)
+    }
+
     #[must_use]
     pub const fn processes_audio(self) -> bool {
         matches!(self, Self::Listening | Self::Thinking | Self::Speaking)
@@ -221,6 +231,39 @@ pub enum DiscordSessionEvent {
     Current { epoch: u64, media_was_enabled: bool },
     Retired,
     Unknown { epoch: u64, media_was_enabled: bool },
+}
+
+/// Why a `/voice mode` switch to `requested` must be refused right now, as
+/// the sentence to post, or `None` when it may proceed. Pure: the caller
+/// holds `transition` so the snapshot cannot go stale between check and
+/// write. An armed verification run pins the backend to local because the
+/// run is only defined for local inference; `/voice leave` completes it even
+/// from idle.
+#[must_use]
+pub fn mode_switch_blocker(
+    snapshot: &VoiceSnapshot,
+    verification_armed: bool,
+    requested: VoiceMode,
+) -> Option<String> {
+    if snapshot.start_pending {
+        return Some(
+            "Voice is starting right now. Stop it with `/voice leave` before changing the backend."
+                .to_string(),
+        );
+    }
+    if !snapshot.phase.accepts_backend_change() {
+        return Some(format!(
+            "Voice is {} right now. Stop it with `/voice leave` before changing the backend.",
+            snapshot.phase.label()
+        ));
+    }
+    if verification_armed && requested != VoiceMode::Local {
+        return Some(
+            "A live voice verification run is armed, and it observes local inference only. Finish it with `/voice leave` before switching away from local."
+                .to_string(),
+        );
+    }
+    None
 }
 
 #[derive(Debug, Clone)]

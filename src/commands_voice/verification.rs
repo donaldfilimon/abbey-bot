@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serenity::all::Permissions;
 
 use crate::voice::VoiceMode;
-use crate::voice_session::{VoicePhase, VoiceRuntime};
+use crate::voice_session::VoiceRuntime;
 use crate::{Context, Error};
 
 /// Arm or read a content-free live acceptance run.
@@ -75,23 +75,28 @@ pub async fn voice_verify_start(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
+    // Hold `transition` from the mode check through the arm, as `/voice mode`
+    // holds it from its check through its write. Without it the two admin
+    // commands can interleave: this reads local and arms while a switch that
+    // already saw "no run armed" moves the backend away, leaving a local-only
+    // run armed under OpenAI.
+    let transition = runtime.transition.lock().await;
     if runtime.effective_mode() != VoiceMode::Local {
+        drop(transition);
         ctx.say("Privacy-safe live verification is available only for local voice mode; disabled mode has no media and the direct cloud backup does not expose local STT completion.")
             .await?;
         return Ok(());
     }
     let snapshot = runtime.snapshot().await;
-    if snapshot.start_pending
-        || !matches!(
-            snapshot.phase,
-            VoicePhase::Disconnected | VoicePhase::PresenceOnly | VoicePhase::Failed
-        )
-    {
+    if snapshot.start_pending || !snapshot.phase.accepts_backend_change() {
+        drop(transition);
         ctx.say("Start verification before the consented join. Leave the current conversational session first so the run can observe the complete join, participant-change resume, and final leave sequence.")
             .await?;
         return Ok(());
     }
-    match runtime.begin_verification() {
+    let armed = runtime.begin_verification();
+    drop(transition);
+    match armed {
         Ok(run) => {
             ctx.say(format!(
                 "Armed redacted live voice verification run {} in process memory. It records only fixed counters, disables conversation commits, and does not start capture. Collect unanimous current consent, then use the normal manager `/voice join consent:true` flow.",
