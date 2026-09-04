@@ -427,3 +427,11 @@ status: in_progress
   `.claude/worktrees/wdbx`, not `~/dev/active/wdbx`. The repository-local writer pin stays active
   so the run remains valid, but a worktree gate must never be cited as external WDBX fixture
   evidence.
+- **2026-09-04 CLOSED: exact-head three-platform CI is green.** #72 (`e0825b9`) restored the gate,
+  #73 (`f4a338b`) and #74 (`cd37eb9`) followed, and `main`'s head `cd37eb9` completed run
+  `33850790233` with Gate (Ubuntu), Gate (macOS), and Gate (Windows) all passing. As predicted by
+  the workflow's `cancel-in-progress` concurrency group, `f4a338b`'s own run (`33850515754`) was
+  cancelled by the next merge; the evidence is the run at the *final* head, which is the one that
+  matters. This closes the "exact-head three-platform CI" item in this goal and unblocks stage 0 of
+  `docs/live-test-protocol.md`. It does not qualify the provider, the installed artifact, live
+  connectors, managed deployment, or consented voice — those remain separate pending layers.
