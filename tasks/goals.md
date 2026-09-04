@@ -553,3 +553,11 @@ status: in_progress
   Jekyll parses `tasks/goals.md` too. Fixed by rewriting those tokens as prose and by adding
   `scripts/check-pages-liquid.py` to the gate, which fails on any Liquid-looking token in Markdown
   outside a raw span, so the gate catches this before Pages does.
+  The exact merged repair head `20e9d83` then closed both upstream layers: Pages run
+  `33894994514` succeeded, and Rust run `33894995541` passed Ubuntu, macOS, and Windows. A
+  follow-up selector audit found that the first preventive gate modeled only `.md` and scanned
+  indexed metadata that Jekyll does not render. The follow-up now pins the observed Pages v232
+  source set, covers all five case-insensitive Jekyll Markdown suffixes, mirrors default entry and
+  optional-front-matter/readme-index behavior, and fails closed when configuration, front-matter
+  routing, symlinks, or Jekyll magic directories invalidate that model. Its merge will again create
+  a newer head whose hosted gates must be evaluated separately.
