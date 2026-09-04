@@ -38,25 +38,18 @@ fn only_active_conversation_phases_process_audio() {
 }
 
 fn runtime() -> VoiceRuntime {
-    VoiceRuntime::new(VoiceConfig {
-        guild_id: 1,
-        channel_id: 2,
-        backend: VoiceBackendConfig::Disabled,
-        wake_word_required: true,
-        wake_words: VoiceConfig::default_wake_words(),
-    })
+    VoiceRuntime::new(VoiceConfig::selected_only(
+        1,
+        2,
+        VoiceBackendConfig::Disabled,
+        true,
+    ))
 }
 
 fn runtime_with_inspect(guild_id: u64) -> (VoiceRuntime, Arc<VoiceInspectRegistry>) {
     let inspect = Arc::new(VoiceInspectRegistry::default());
     let runtime = VoiceRuntime::new_with_inspect(
-        VoiceConfig {
-            guild_id,
-            channel_id: 2,
-            backend: VoiceBackendConfig::Disabled,
-            wake_word_required: true,
-            wake_words: VoiceConfig::default_wake_words(),
-        },
+        VoiceConfig::selected_only(guild_id, 2, VoiceBackendConfig::Disabled, true),
         Arc::clone(&inspect),
     );
     (runtime, inspect)

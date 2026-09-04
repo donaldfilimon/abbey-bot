@@ -11,6 +11,7 @@ use std::time::Duration;
 use serenity::all::{ChannelId, ChannelType, GuildId};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
+use crate::gateway::shared::clamp_message;
 use crate::offline_voice::MlxAudioClient;
 use crate::voice::{VoiceBackendConfig, VoiceMode};
 use crate::voice_local::LocalSession;
@@ -59,7 +60,8 @@ impl Drop for StartAttempt {
         "voice_resume",
         "voice_leave",
         "voice_status",
-        "voice_verify"
+        "voice_verify",
+        "voice_mode"
     )
 )]
 pub async fn voice(_ctx: Context<'_>) -> Result<(), Error> {
@@ -170,7 +172,19 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         generation: start_generation,
     };
 
-    let local_runtime = match runtime.config.mode() {
+    // Decide this join's backend exactly once. Everything downstream — the
+    // Songbird decode mode, the consent disclosure, the actor that connects,
+    // and the confirmation reply — reads this snapshot rather than the shared
+    // runtime, so a concurrent `/voice mode` cannot leave participants told
+    // "local, stays on this Mac" while a cloud actor connects.
+    let Some(effective_backend) = runtime.effective_backend() else {
+        ctx.say("The voice backend selected for this server is not configured; voice stayed off.")
+            .await?;
+        return Ok(());
+    };
+    let effective_mode = effective_backend.mode();
+
+    let local_runtime = match effective_mode {
         VoiceMode::Local => {
             // Fail closed on the loopback LLM *before* the 10-minute sidecar
             // prepare. A missing ABBEY_BOT_LLM_ENDPOINT must not look like a
@@ -182,10 +196,11 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
                     return Ok(());
                 }
             };
-            let Some(config) = runtime.config.local().cloned() else {
+            let VoiceBackendConfig::Local(config) = &effective_backend else {
                 ctx.say("Local speech configuration is incomplete.").await?;
                 return Ok(());
             };
+            let config = config.clone();
             let client = match MlxAudioClient::new(config) {
                 Ok(client) => client,
                 Err(error) => {
@@ -301,7 +316,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     // started. Construct conversational calls in Decode mode from the outset,
     // while setting self-mute and self-deafen before the gateway join so no
     // participant audio is delivered before consent and the public notice.
-    manager.set_config(initial_songbird_config(runtime.config.mode()));
+    manager.set_config(initial_songbird_config(effective_mode));
     let prepared_call = manager.get_or_insert(guild_id);
     if let Err(error) = set_muted_self_deafened(&prepared_call).await {
         let _ = manager.remove(guild_id).await;
@@ -387,7 +402,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         return Ok(());
     }
 
-    if runtime.config.mode() == VoiceMode::Disabled {
+    if effective_mode == VoiceMode::Disabled {
         runtime
             .set_presence_with_discord_session(
                 joined_session_id,
@@ -406,7 +421,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     // makes VoiceTick return without inspecting participant samples. Only
     // SSRC mapping and transport-liveness metadata are tracked before this
     // required public disclosure succeeds.
-    let notice = consent_notice(&runtime, channel_id, resumed);
+    let notice = consent_notice(effective_mode, channel_id, resumed);
     if let Err(error) = channel_id.say(ctx.http(), notice).await {
         let _ = manager.remove(guild_id).await;
         runtime
@@ -464,7 +479,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     let playback: SharedPlayback = Arc::new(Mutex::new(None));
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let mut cloud_ready = None;
-    let task = match (&runtime.config.backend, local_runtime) {
+    let task = match (&effective_backend, local_runtime) {
         (VoiceBackendConfig::Local(_), Some((client, backend))) => {
             let session = LocalSession {
                 runtime: Arc::clone(&runtime),
@@ -702,7 +717,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
         .activate_verified(
             epoch,
             start_generation,
-            match runtime.config.mode() {
+            match effective_mode {
                 VoiceMode::Local => "local inference ready; listening for Abbey",
                 VoiceMode::OpenAi => "direct OpenAI backup ready; buffered output; listening",
                 VoiceMode::Disabled => unreachable!(),
@@ -729,7 +744,7 @@ async fn start_voice(ctx: Context<'_>, consent: bool, resumed: bool) -> Result<(
     ctx.say(format!(
         "{} <#{channel_id}> with {}. The public consent notice is posted; `/voice status` shows health and `/voice leave` stops processing.",
         if resumed { "Resumed" } else { "Joined" },
-        runtime.config.mode().label(),
+        effective_mode.label(),
     ))
     .await?;
     Ok(())
@@ -866,6 +881,7 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         },
         None => "voice manager unavailable".into(),
     };
+    let effective_mode = runtime.effective_mode();
     let speech_models = match &runtime.config.backend {
         VoiceBackendConfig::Local(config) => format!(
             "STT: `{}`\nTTS: `{}` · voice: `{}`",
@@ -897,7 +913,7 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         },
         None => "Local speech sidecar: not used in this mode".into(),
     };
-    let loopback_llm = if runtime.config.mode() == VoiceMode::Local {
+    let loopback_llm = if effective_mode == VoiceMode::Local {
         match select_local_backend(&ctx.data().state) {
             Ok(_) => "Loopback LLM: configured".into(),
             Err(error) => format!("Loopback LLM: missing — {error}"),
@@ -907,7 +923,7 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
     };
     ctx.say(format!(
         "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{}\n{}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
-        runtime.config.mode().label(),
+        effective_mode.label(),
         snapshot.phase.label(),
         if snapshot.media_enabled { "open" } else { "closed" },
         if snapshot.start_pending { "yes" } else { "no" },
@@ -925,4 +941,120 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
     ))
     .await?;
     Ok(())
+}
+
+/// Show or change the voice backend in force. Requires MANAGE_GUILD.
+///
+/// A backend can be selected only if its environment was complete at startup —
+/// retained backends are inert until chosen here, and a provider key alone
+/// still never selects cloud audio. Switching is refused while a call is
+/// running or starting, because the public consent notice names the backend and
+/// must not be overtaken by a change made mid-join.
+#[poise::command(
+    slash_command,
+    guild_only,
+    ephemeral,
+    default_member_permissions = "MANAGE_GUILD",
+    required_permissions = "MANAGE_GUILD",
+    rename = "mode"
+)]
+pub async fn voice_mode(
+    ctx: Context<'_>,
+    #[description = "disabled, local, or openai. Omit to show the current mode."] mode: Option<
+        String,
+    >,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let Some(runtime) = ctx.data().voice.as_ref().cloned() else {
+        ctx.say("Abbey voice is not configured. Set both destination IDs and ABBEY_VOICE_MODE, then restart Abbey.")
+            .await?;
+        return Ok(());
+    };
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("This command only works inside a server.").await?;
+        return Ok(());
+    };
+    if guild_id.get() != runtime.config.guild_id {
+        ctx.say("Abbey voice is locked to a different server by deployment configuration.")
+            .await?;
+        return Ok(());
+    }
+
+    let current = runtime.effective_mode();
+    let Some(requested) = mode else {
+        ctx.say(clamp_message(format!(
+            "Mode in force: `{}`\nSelected at startup: `{}`\nSelectable now: {}",
+            current.label(),
+            runtime.config.mode().label(),
+            selectable_modes(&runtime),
+        )))
+        .await?;
+        return Ok(());
+    };
+
+    // Reuse the environment parser so `/voice mode` accepts exactly what
+    // ABBEY_VOICE_MODE accepts; a second, narrower parser here silently
+    // rejected `off` and `offline`.
+    let requested = match VoiceMode::parse(Some(requested)) {
+        Ok(mode) => mode,
+        Err(_) => {
+            ctx.say("Mode must be `disabled`, `local`, or `openai`.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if requested == current {
+        ctx.say(format!("Already in `{}`.", current.label())).await?;
+        return Ok(());
+    }
+    if runtime.config.backend_for(requested).is_none() {
+        ctx.say(clamp_message(format!(
+            "`{}` was not configured at startup, so Abbey holds no settings for it. Set its environment variables and restart. Selectable now: {}",
+            requested.label(),
+            selectable_modes(&runtime),
+        )))
+        .await?;
+        return Ok(());
+    }
+
+    // Hold the transition lock across the check and the write. Reading a
+    // snapshot without it would let a join that is already past its own mode
+    // snapshot finish under the old backend while this reports the new one.
+    let transition = runtime.transition.lock().await;
+    let snapshot = runtime.snapshot().await;
+    if snapshot.phase != crate::voice_session::VoicePhase::Disconnected || snapshot.start_pending {
+        drop(transition);
+        ctx.say(format!(
+            "Voice is {} right now. Stop it with `/voice leave` before changing the backend.",
+            if snapshot.start_pending {
+                "starting"
+            } else {
+                snapshot.phase.label()
+            },
+        ))
+        .await?;
+        return Ok(());
+    }
+    runtime.set_effective_mode(requested);
+    drop(transition);
+
+    ctx.say(format!(
+        "Voice backend is now `{}`. It takes effect on the next `/voice join`.",
+        requested.label(),
+    ))
+    .await?;
+    Ok(())
+}
+
+/// The modes `/voice mode` would accept right now, for error and status text.
+fn selectable_modes(runtime: &VoiceRuntime) -> String {
+    let mut names = vec!["`disabled`"];
+    if runtime.config.available_local().is_some() {
+        names.push("`local`");
+    }
+    if runtime.config.available_openai().is_some() {
+        names.push("`openai`");
+    }
+    names.join(", ")
 }

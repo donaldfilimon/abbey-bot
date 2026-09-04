@@ -547,13 +547,12 @@ mod tests {
 
     #[tokio::test]
     async fn withdrawal_between_socket_readiness_and_enqueue_drops_audio() {
-        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig {
-            guild_id: 1,
-            channel_id: 2,
-            backend: crate::voice::VoiceBackendConfig::Disabled,
-            wake_word_required: true,
-            wake_words: crate::voice::VoiceConfig::default_wake_words(),
-        }));
+        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Disabled,
+            true,
+        )));
         let generation = runtime.reserve_start();
         let epoch = runtime.begin(std::collections::HashSet::new()).await;
         assert!(runtime.activate(epoch, generation, "active").await);
@@ -579,13 +578,12 @@ mod tests {
 
     #[tokio::test]
     async fn input_sequence_gap_counts_overrun_and_fails_closed() {
-        let runtime = VoiceRuntime::new(crate::voice::VoiceConfig {
-            guild_id: 1,
-            channel_id: 2,
-            backend: crate::voice::VoiceBackendConfig::Disabled,
-            wake_word_required: true,
-            wake_words: crate::voice::VoiceConfig::default_wake_words(),
-        });
+        let runtime = VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Disabled,
+            true,
+        ));
         let mut sequence = FrameSequence::default();
         enforce_input_sequence(&mut sequence, &runtime, 10).unwrap();
         let error = enforce_input_sequence(&mut sequence, &runtime, 12).unwrap_err();

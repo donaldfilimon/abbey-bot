@@ -6,7 +6,7 @@
 //! playback handle at a time.
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
 use crate::inspect::{VoiceInspectRegistry, VoiceInspectState};
-use crate::voice::VoiceConfig;
+use crate::voice::{VoiceBackendConfig, VoiceConfig, VoiceMode};
 
 mod control;
 mod playback;
@@ -240,6 +240,12 @@ pub struct VoiceSnapshot {
 
 pub struct VoiceRuntime {
     pub config: VoiceConfig,
+    /// The mode in force right now, which `/voice mode` may change while the
+    /// call is disconnected. Deliberately an atomic rather than a lock: every
+    /// read is a copy-out, so this can never participate in the
+    /// `inner -> activation_gate -> discord_sessions` order documented below,
+    /// and no actor can await while "holding" it.
+    selected_mode: AtomicU8,
     pub transition: Mutex<()>,
     current_epoch: AtomicU64,
     media_epoch: AtomicU64,
@@ -258,6 +264,28 @@ pub struct VoiceRuntime {
     verification: SyncMutex<VerificationState>,
     inspect: Option<VoiceInspectBinding>,
     inner: Mutex<RuntimeState>,
+}
+
+/// `VoiceMode` as a stable byte, so the mode in force can live in an atomic
+/// instead of a lock. The mapping is private and only ever round-tripped
+/// through the two functions below.
+const fn mode_code(mode: VoiceMode) -> u8 {
+    match mode {
+        VoiceMode::Disabled => 0,
+        VoiceMode::Local => 1,
+        VoiceMode::OpenAi => 2,
+    }
+}
+
+/// Inverse of [`mode_code`]. Only [`mode_code`] ever writes the byte, so an
+/// unknown value is impossible; it degrades to `Disabled` rather than panicking
+/// because failing closed is the right answer for a voice gate.
+const fn mode_from_code(code: u8) -> VoiceMode {
+    match code {
+        1 => VoiceMode::Local,
+        2 => VoiceMode::OpenAi,
+        _ => VoiceMode::Disabled,
+    }
 }
 
 impl VoiceRuntime {
@@ -280,7 +308,9 @@ impl VoiceRuntime {
 
     fn build(config: VoiceConfig, inspect: Option<VoiceInspectBinding>) -> Self {
         let (start_changes, _) = watch::channel(0);
+        let selected_mode = AtomicU8::new(mode_code(config.mode()));
         Self {
+            selected_mode,
             config,
             transition: Mutex::new(()),
             current_epoch: AtomicU64::new(0),
@@ -305,6 +335,34 @@ impl VoiceRuntime {
                 control: None,
             }),
         }
+    }
+
+    /// The mode in force now — the startup selection unless `/voice mode`
+    /// changed it. Prefer [`VoiceRuntime::effective_backend`] when starting a
+    /// call: a join must decide once and carry that decision, never re-read.
+    #[must_use]
+    pub fn effective_mode(&self) -> VoiceMode {
+        mode_from_code(self.selected_mode.load(Ordering::SeqCst))
+    }
+
+    /// Snapshot the mode *and* its backend together, so everything one join
+    /// does — the Songbird decode mode, the consent disclosure, the actor that
+    /// connects, and the reply — describes the same backend. Re-reading
+    /// [`VoiceRuntime::effective_mode`] at each of those points would allow a
+    /// concurrent switch to tell participants "local, stays on this Mac" while
+    /// the cloud actor connects.
+    ///
+    /// `None` means the mode in force has no usable backend, which
+    /// `/voice mode` refuses to create.
+    #[must_use]
+    pub fn effective_backend(&self) -> Option<VoiceBackendConfig> {
+        self.config.backend_for(self.effective_mode())
+    }
+
+    /// Change the mode in force. Callers must hold `transition` and must have
+    /// established that no call is running or pending.
+    pub fn set_effective_mode(&self, mode: VoiceMode) {
+        self.selected_mode.store(mode_code(mode), Ordering::SeqCst);
     }
 
     fn publish_inspect(&self, state: VoiceInspectState) {
