@@ -41,7 +41,7 @@ Located in `docs/superpowers/plans/` (5 plans):
 
 ## Specs
 
-Located in `docs/superpowers/specs/` (7 specs):
+Located in `docs/superpowers/specs/` (8 specs):
 
 - `2026-08-19-guild-learning-loop-design.md` — design for guild-scoped learning loop
 - `2026-08-19-reply-quality-speed-design.md` — streaming, tidy_reply, semaphore, Anthropic fallback
@@ -50,6 +50,7 @@ Located in `docs/superpowers/specs/` (7 specs):
 - `2026-08-21-test-module-extraction-design.md` — pure module extraction strategy
 - `2026-09-02-provider-routing-design.md` — ProviderCapabilities, FM gating, self-test, loopback-only
 - `2026-09-02-embedded-skills-design.md` — skill-loop MCP, cross-CLI sync, runtime-native adapters
+- `2026-09-04-mlx-vlm-tool-continuation-diagnosis.md` — root cause of the tool-result continuation failure blocking the `:8282` sidecar
 - `2026-08-19-tools-design.md` (also listed above) — model-initiated tools, both wire shapes
 
 Additional reference specs in `docs/spec/` (9 specs):
