@@ -29,6 +29,7 @@ backlog; implement in order unless a phase is explicitly deferred.
 | Entry Point `launch` preserved on global register | Live | `src/main.rs` |
 | Activity shell (`ready()` handshake only) | Live on Pages | `activity/` → `https://donaldfilimon.github.io/abbey-bot/activity/` |
 | Stream (`1<<9`) + Use Embedded Activities (`1<<39`) overwrite gap-fill; `/voice` fail-closed on missing bits | Live | `src/commands_voice/discord.rs`, `docs/activities.md` |
+| `/pending list` classic Confirm/Dismiss buttons + collector | Live (code) | `src/commands_brain.rs` (P1; Components V2 blocked on crates) |
 
 Shipped means code + docs exist and Gate can pass. Live rocket iframe still
 needs Donald’s Portal URL mapping (P0). Live spoken turns still need a human
@@ -44,8 +45,8 @@ Relative to Discord Application + Interactions surface. Source: live checkout + 
 |---|---|---|
 | Chat-input `/` commands | **Done** | Full set in `src/main.rs` (persona, voice, admin, memory, vision, …) |
 | Context menus (USER / MESSAGE) | **Missing** | No `context_menu` in `src/` |
-| Buttons / selects / modals | **Missing** | No MESSAGE_COMPONENT / MODAL_SUBMIT handlers |
-| Components V2 layouts | **Missing** | P1 |
+| Buttons / selects / modals | **Partial** | `/pending list` Confirm/Dismiss Action Rows (classic); slash confirm/dismiss remain |
+| Components V2 layouts | **Blocked (crates)** | serenity 0.12.5 / poise 0.6.2 expose classic Action Rows only — no Container/Section/IS_COMPONENTS_V2 builders |
 | Interaction HTTP endpoint | **N/A (by design)** | Gateway + poise defer/follow-up only |
 | Entry Point `launch` preserve | **Done** | `register_globally_keeping_entry_point` |
 | Activity `ready()` shell | **Done** | Pages `/activity/`; Portal map still P0 |
@@ -91,9 +92,32 @@ Improve interaction surfaces that already ride the bot token (no OAuth secret).
 - Keep signature verification and fail-closed permission checks; no new
   privileged intents without an explicit ops decision.
 
+### Acceptance note (2026-09-03)
+
+- **Components V2 crate blocker:** pinned `serenity 0.12.5` + `poise 0.6.2`
+  (Dependabot ignores majors until a coordinated pair lands) only ship classic
+  Action Row builders (`CreateButton` / `CreateSelectMenu` / modals). There is
+  no `IS_COMPONENTS_V2` / Container / Section API in these crates yet — do not
+  bump majors casually.
+- **Shipped path:** `/pending list` defers ephemeral, then attaches Confirm /
+  Dismiss buttons (one Action Row per proposal, max 5). Clicks are scoped to
+  the invoker via `ComponentInteractionCollector` (requires serenity
+  `collector` feature), re-check memory authorization, and
+  `UpdateMessage` so the 3s interaction ack is never missed. Slash
+  `/pending confirm|dismiss` + autocomplete remain for overflow / power users.
+- **Defer policy:** long ops (LLM, voice join/leave/status, memory mutate,
+  admin mutate) call `defer` / `defer_ephemeral` before awaits; instant
+  validation failures may `say` without defer. Component button handlers
+  acknowledge via `UpdateMessage` (or ephemeral `Message` on auth failure).
+- **Not in this slice:** `/voice` consent button (keep explicit
+  `consent:true` slash gate + public notice), `/admin show` selects, modals,
+  context menus — follow-ups once Components V2 lands or classic UX still wins.
+
 **Done when:** at least one high-traffic command path uses Components V2 (or
 documents why serenity/poise cannot yet), and interaction timeout / ephemeral
 policy is consistent in code + a short acceptance note.
+
+**Status:** met via classic components + crate-blocker note (this section).
 
 ---
 

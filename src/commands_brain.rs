@@ -8,7 +8,12 @@
 //! Member memory is self-service; explicit cross-member access is checked
 //! against the invoker's current Discord permissions at command runtime.
 
-use serenity::all::{Attachment, CreateAttachment, Permissions, User, UserId};
+use std::time::Duration;
+
+use serenity::all::{
+    Attachment, ButtonStyle, CreateActionRow, CreateAttachment, CreateButton,
+    CreateInteractionResponse, CreateInteractionResponseMessage, Permissions, User, UserId,
+};
 
 use crate::ask;
 use crate::brain::telemetry::BrainView;
@@ -203,6 +208,212 @@ async fn autocomplete_pending(ctx: Context<'_>, partial: &str) -> Vec<String> {
         .collect()
 }
 
+/// Discord allows at most five action rows; each pending entry gets one Confirm/Dismiss row.
+const PENDING_BUTTON_ROWS: usize = 5;
+const PENDING_COMPONENT_TIMEOUT_SECS: u64 = 5 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingButtonAction {
+    Confirm,
+    Dismiss,
+}
+
+fn pending_button_custom_id(
+    ctx_id: u64,
+    action: PendingButtonAction,
+    subject_id: u64,
+    idx: usize,
+) -> String {
+    let tag = match action {
+        PendingButtonAction::Confirm => "c",
+        PendingButtonAction::Dismiss => "d",
+    };
+    format!("{ctx_id}:p:{tag}:{subject_id}:{idx}")
+}
+
+fn parse_pending_button_custom_id(
+    custom_id: &str,
+    ctx_id: u64,
+) -> Option<(PendingButtonAction, u64, usize)> {
+    let prefix = format!("{ctx_id}:p:");
+    let rest = custom_id.strip_prefix(&prefix)?;
+    let mut parts = rest.split(':');
+    let action = match parts.next()? {
+        "c" => PendingButtonAction::Confirm,
+        "d" => PendingButtonAction::Dismiss,
+        _ => return None,
+    };
+    let subject_id = parts.next()?.parse().ok()?;
+    let idx = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((action, subject_id, idx))
+}
+
+fn format_pending_list_body(subject_id: u64, pending: &[memory::PendingSupersession]) -> String {
+    let mut reply = format!("Proposed for <@{subject_id}> — nothing has been removed:\n");
+    for (i, entry) in pending.iter().enumerate() {
+        reply.push_str(&format!(
+            "{}. {} → {}\n",
+            i + 1,
+            entry.old_fact,
+            entry.new_fact
+        ));
+    }
+    if pending.len() > PENDING_BUTTON_ROWS {
+        reply.push_str(&format!(
+            "Buttons cover the first {PENDING_BUTTON_ROWS}; use `/pending confirm` or `/pending dismiss` with autocomplete for the rest.\n"
+        ));
+    } else {
+        reply.push_str(
+            "Tap Confirm to remove the old fact, or Dismiss to keep both. Slash autocomplete still works.\n",
+        );
+    }
+    reply
+}
+
+fn pending_action_rows(
+    ctx_id: u64,
+    subject_id: u64,
+    pending: &[memory::PendingSupersession],
+) -> Vec<CreateActionRow> {
+    pending
+        .iter()
+        .take(PENDING_BUTTON_ROWS)
+        .enumerate()
+        .map(|(idx, _entry)| {
+            CreateActionRow::Buttons(vec![
+                CreateButton::new(pending_button_custom_id(
+                    ctx_id,
+                    PendingButtonAction::Confirm,
+                    subject_id,
+                    idx,
+                ))
+                .style(ButtonStyle::Success)
+                .label(format!("Confirm {}", idx + 1)),
+                CreateButton::new(pending_button_custom_id(
+                    ctx_id,
+                    PendingButtonAction::Dismiss,
+                    subject_id,
+                    idx,
+                ))
+                .style(ButtonStyle::Secondary)
+                .label(format!("Dismiss {}", idx + 1)),
+            ])
+        })
+        .collect()
+}
+
+fn format_confirm_outcome(outcome: runtime::SupersessionOutcome) -> String {
+    match outcome {
+        runtime::SupersessionOutcome::Confirmed(removed) => format!("Removed: {removed}"),
+        runtime::SupersessionOutcome::AlreadyGone(old) => format!(
+            "That fact was already gone, so nothing was removed. Cleared the proposal for: {old}"
+        ),
+        runtime::SupersessionOutcome::PremiseGone { old_fact, new_fact } => format!(
+            "Refused, and nothing was removed. That proposal said {new_fact} replaces \
+             {old_fact}, but {new_fact} is no longer on record, so confirming would have \
+             left you holding neither. Cleared the stale proposal."
+        ),
+        runtime::SupersessionOutcome::NotPending => "No proposal names that fact.".to_string(),
+    }
+}
+
+async fn run_pending_component_session(
+    ctx: Context<'_>,
+    subject: &User,
+    guild_key: String,
+    user_key: String,
+) -> Result<(), Error> {
+    let ctx_id = ctx.id();
+    let author_id = ctx.author().id;
+    let subject_id = subject.id.get();
+    let serenity_ctx = ctx.serenity_context().clone();
+
+    let id_prefix = format!("{ctx_id}:p:");
+    while let Some(press) = {
+        let id_prefix = id_prefix.clone();
+        serenity::collector::ComponentInteractionCollector::new(&serenity_ctx)
+            .author_id(author_id)
+            .filter(move |press| press.data.custom_id.starts_with(&id_prefix))
+            .timeout(Duration::from_secs(PENDING_COMPONENT_TIMEOUT_SECS))
+    }
+    .await
+    {
+        let Some((action, button_subject, idx)) =
+            parse_pending_button_custom_id(&press.data.custom_id, ctx_id)
+        else {
+            continue;
+        };
+        if button_subject != subject_id {
+            continue;
+        }
+        if !memory_subject_authorized(ctx, subject).await {
+            press
+                .create_response(
+                    &serenity_ctx,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .ephemeral(true)
+                            .content(CROSS_USER_MEMORY_DENIED),
+                    ),
+                )
+                .await?;
+            return Ok(());
+        }
+
+        let memory = ctx.data().state.memory_service();
+        let pending = memory.pending_supersessions(&guild_key, &user_key);
+        let status = match pending.get(idx) {
+            Some(entry) => {
+                let old_fact = entry.old_fact.clone();
+                match action {
+                    PendingButtonAction::Confirm => format_confirm_outcome(
+                        memory.confirm_supersession(&guild_key, &user_key, &old_fact),
+                    ),
+                    PendingButtonAction::Dismiss => {
+                        if memory.dismiss_supersession(&guild_key, &user_key, &old_fact) {
+                            "Dismissed. Both facts are kept.".to_string()
+                        } else {
+                            "No proposal names that fact.".to_string()
+                        }
+                    }
+                }
+            }
+            None => "That button is stale — refreshing the list.".to_string(),
+        };
+        let remaining = memory.pending_supersessions(&guild_key, &user_key);
+        let body = if remaining.is_empty() {
+            format!("{status}\n\nNothing left proposed.")
+        } else {
+            format!(
+                "{status}\n\n{}",
+                format_pending_list_body(subject_id, &remaining)
+            )
+        };
+        let rows = if remaining.is_empty() {
+            Vec::new()
+        } else {
+            pending_action_rows(ctx_id, subject_id, &remaining)
+        };
+        press
+            .create_response(
+                &serenity_ctx,
+                CreateInteractionResponse::UpdateMessage(
+                    CreateInteractionResponseMessage::new()
+                        .content(clamp_message(body))
+                        .components(rows),
+                ),
+            )
+            .await?;
+        if remaining.is_empty() {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 /// Review or resolve supersessions the model proposed but never applied.
 ///
 /// Human-only by construction: there is no model-callable tool that confirms a
@@ -218,12 +429,16 @@ pub async fn pending(_ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Show supersessions proposed for a member, with nothing removed yet.
+///
+/// High-traffic path for P1 components UX: classic Action Row Confirm/Dismiss
+/// buttons (serenity 0.12 / poise 0.6 have no Components V2 builders yet).
 #[poise::command(slash_command, ephemeral, rename = "list")]
 pub async fn pending_list(
     ctx: Context<'_>,
     #[description = "Who to review (default: you; moderators may choose another member)"]
     user: Option<User>,
 ) -> Result<(), Error> {
+    // Acknowledge within Discord's 3s window before any store/render work.
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
@@ -242,15 +457,18 @@ pub async fn pending_list(
             .await?;
         return Ok(());
     }
-    let mut reply = format!(
-        "Proposed for <@{}> — nothing has been removed:\n",
-        subject.id.get()
-    );
-    for entry in &pending {
-        reply.push_str(&format!("• {} → {}\n", entry.old_fact, entry.new_fact));
-    }
-    reply.push_str("Use /pending confirm to remove an old fact, or /pending dismiss to keep both.");
-    ctx.say(clamp_message(reply)).await?;
+    let subject_id = subject.id.get();
+    let ctx_id = ctx.id();
+    let body = format_pending_list_body(subject_id, &pending);
+    let rows = pending_action_rows(ctx_id, subject_id, &pending);
+    ctx.send(
+        poise::CreateReply::default()
+            .content(clamp_message(body))
+            .components(rows)
+            .ephemeral(true),
+    )
+    .await?;
+    run_pending_component_session(ctx, subject, g, u).await?;
     Ok(())
 }
 
@@ -272,23 +490,12 @@ pub async fn pending_confirm(
         return Ok(());
     }
     let u = scoped_user(subject);
-    let reply = match ctx
-        .data()
-        .state
-        .memory_service()
-        .confirm_supersession(&g, &u, &old_fact)
-    {
-        runtime::SupersessionOutcome::Confirmed(removed) => format!("Removed: {removed}"),
-        runtime::SupersessionOutcome::AlreadyGone(old) => format!(
-            "That fact was already gone, so nothing was removed. Cleared the proposal for: {old}"
-        ),
-        runtime::SupersessionOutcome::PremiseGone { old_fact, new_fact } => format!(
-            "Refused, and nothing was removed. That proposal said {new_fact} replaces \
-             {old_fact}, but {new_fact} is no longer on record, so confirming would have \
-             left you holding neither. Cleared the stale proposal."
-        ),
-        runtime::SupersessionOutcome::NotPending => "No proposal names that fact.".to_string(),
-    };
+    let reply = format_confirm_outcome(
+        ctx.data()
+            .state
+            .memory_service()
+            .confirm_supersession(&g, &u, &old_fact),
+    );
     ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
@@ -926,5 +1133,43 @@ mod tests {
             memory::validated_fact(&"🦀".repeat(memory::MAX_FACT_CHARS + 1)),
             Err("Keep one remembered fact to 300 characters or fewer.")
         );
+    }
+}
+
+#[cfg(test)]
+mod pending_components_tests {
+    use super::{
+        PendingButtonAction, format_pending_list_body, parse_pending_button_custom_id,
+        pending_action_rows, pending_button_custom_id,
+    };
+    use crate::memory::PendingSupersession;
+
+    #[test]
+    fn custom_id_round_trips() {
+        let id = pending_button_custom_id(42, PendingButtonAction::Confirm, 99, 3);
+        assert_eq!(id, "42:p:c:99:3");
+        assert_eq!(
+            parse_pending_button_custom_id(&id, 42),
+            Some((PendingButtonAction::Confirm, 99, 3))
+        );
+        assert!(parse_pending_button_custom_id(&id, 7).is_none());
+        assert!(parse_pending_button_custom_id("42:p:x:99:3", 42).is_none());
+        assert!(parse_pending_button_custom_id("42:p:c:99:3:extra", 42).is_none());
+    }
+
+    #[test]
+    fn action_rows_cap_at_five() {
+        let pending: Vec<_> = (0..7)
+            .map(|i| PendingSupersession {
+                old_fact: format!("old-{i}"),
+                new_fact: format!("new-{i}"),
+                at: i as u64,
+            })
+            .collect();
+        let rows = pending_action_rows(1, 2, &pending);
+        assert_eq!(rows.len(), 5);
+        let body = format_pending_list_body(2, &pending);
+        assert!(body.contains("Buttons cover the first 5"));
+        assert!(body.contains("1. old-0 → new-0"));
     }
 }
