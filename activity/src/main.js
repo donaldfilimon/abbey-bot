@@ -5,11 +5,13 @@
  * PREFIX). Keep both in sync for P2 behavior:
  *  - ready()
  *  - pre-auth channel/guild from SDK URL context
+ *  - getInstanceConnectedParticipants + ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE
+ *    after ready (no OAuth scopes required)
  *  - authorize + server token exchange + authenticate when endpoint is live
- *  - getChannel, participants subscribe, truthful setActivity
+ *  - getChannel + truthful setActivity after authenticate
  *
- * Rebuild later with esbuild/vite into ../app.js when you want the official
- * SDK package in production. Never put DISCORD_CLIENT_SECRET in client code.
+ * Rebuild with a bundler into ../app.js when you want the official SDK package
+ * in production. Never put DISCORD_CLIENT_SECRET in client code.
  */
 import { DiscordSDK } from '@discord/embedded-app-sdk';
 
@@ -44,10 +46,6 @@ function setMode(mode) {
   }
 }
 
-const discordSdk = new DiscordSDK(CLIENT_ID);
-const params = new URLSearchParams(window.location.search);
-const forceOauth = params.get('oauth') === '1';
-
 function formatChannel(channelId, name) {
   if (!channelId) return 'Not in an embedded Activity frame';
   if (name) return `${name} (${channelId})`;
@@ -55,24 +53,24 @@ function formatChannel(channelId, name) {
   return known ? `${known} (${channelId})` : channelId;
 }
 
-function formatGuild(guildId) {
-  if (!guildId) return discordSdk.channelId ? 'DM / group DM (no guild)' : '—';
+function formatGuild(guildId, channelId) {
+  if (!guildId) return channelId ? 'DM / group DM (no guild)' : '\u2014';
   const known = KNOWN_GUILDS[guildId];
   return known ? `${known} (${guildId})` : guildId;
 }
 
-function renderPreAuth() {
-  setText(els.channel, formatChannel(discordSdk.channelId, null));
-  setText(els.guild, formatGuild(discordSdk.guildId));
-  setText(
-    els.participants,
-    'Subscribe after OAuth token exchange (see docs/activities.md § P2)',
-  );
-  setText(els.auth, 'READY — pre-auth context');
-  setMode(discordSdk.channelId ? 'idle' : 'waiting');
+function renderParticipants(participants) {
+  const list = participants || [];
+  const n = list.length;
+  if (!n) {
+    setText(els.participants, '0 participants');
+    return;
+  }
+  const names = list.map((p) => p.global_name || p.username || p.id || 'member');
+  setText(els.participants, `${n} \u2014 ${names.join(', ')}`);
 }
 
-async function tokenEndpointReady() {
+async function tokenEndpointReady(forceOauth) {
   if (forceOauth) return TOKEN_PATHS[0];
   for (const path of TOKEN_PATHS) {
     try {
@@ -103,8 +101,29 @@ async function exchangeCode(code, tokenPath) {
   return body.access_token;
 }
 
-async function setupAuthenticated(tokenPath) {
-  setText(els.auth, 'Attempting authorize…');
+async function syncParticipants(discordSdk) {
+  try {
+    const { participants } =
+      await discordSdk.commands.getInstanceConnectedParticipants();
+    renderParticipants(participants);
+  } catch (err) {
+    setText(
+      els.participants,
+      `Participants unavailable (${err?.message || 'rpc'})`,
+    );
+  }
+  try {
+    await discordSdk.subscribe(
+      'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE',
+      ({ participants }) => renderParticipants(participants),
+    );
+  } catch {
+    /* optional */
+  }
+}
+
+async function setupAuthenticated(discordSdk, tokenPath) {
+  setText(els.auth, 'Attempting authorize\u2026');
   const { code } = await discordSdk.commands.authorize({
     client_id: CLIENT_ID,
     response_type: 'code',
@@ -118,7 +137,7 @@ async function setupAuthenticated(tokenPath) {
     ],
   });
 
-  setText(els.auth, 'Exchanging code (server-side secret)…');
+  setText(els.auth, 'Exchanging code (server-side secret)\u2026');
   const access_token = await exchangeCode(code, tokenPath);
   const auth = await discordSdk.commands.authenticate({ access_token });
   setText(
@@ -140,47 +159,20 @@ async function setupAuthenticated(tokenPath) {
     }
   }
   setText(els.channel, formatChannel(discordSdk.channelId, channelName));
-  setText(els.guild, formatGuild(discordSdk.guildId));
+  setText(els.guild, formatGuild(discordSdk.guildId, discordSdk.channelId));
 
-  const updateParticipants = (participants) => {
-    if (!participants?.length) {
-      setText(els.participants, 'No other participants yet');
-      return;
-    }
-    setText(
-      els.participants,
-      participants
-        .map((p) => p.global_name || p.username || p.id)
-        .join(', '),
-    );
-  };
-
-  try {
-    const { participants } =
-      await discordSdk.commands.getInstanceConnectedParticipants();
-    updateParticipants(participants);
-  } catch {
-    setText(els.participants, 'Participants unavailable');
-  }
-
-  try {
-    await discordSdk.subscribe(
-      'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE',
-      ({ participants }) => updateParticipants(participants),
-    );
-  } catch {
-    /* optional */
-  }
-
-  // Truthful mode only — never invent a bot Go Live / stream.
   const mode = discordSdk.channelId ? 'idle' : 'waiting';
   setMode(mode);
+  // Truthful mode only — never invent a bot Go Live / stream.
   try {
     await discordSdk.commands.setActivity({
       activity: {
         type: 0,
-        details: 'Abbey · Intelligence Without Limits',
-        state: mode === 'waiting' ? 'Waiting' : 'Idle in voice Activity',
+        details: 'Abbey \u00b7 Intelligence Without Limits',
+        state:
+          mode === 'waiting'
+            ? 'Waiting for voice context'
+            : 'Idle in voice Activity',
       },
     });
   } catch {
@@ -192,34 +184,51 @@ async function main() {
   if (window.parent === window) {
     setText(
       els.status,
-      'Abbey — open from the Discord rocket in a voice channel (plain browser tabs have no Embedded App parent).',
+      'Abbey \u2014 open from the Discord rocket in a voice channel (plain browser tabs have no Embedded App parent).',
     );
     setText(els.auth, 'No Discord parent');
     setMode('waiting');
     return;
   }
 
+  const params = new URLSearchParams(window.location.search);
+  const forceOauth = params.get('oauth') === '1';
+
+  let discordSdk;
+  try {
+    discordSdk = new DiscordSDK(CLIENT_ID);
+  } catch (err) {
+    setText(
+      els.status,
+      'Abbey \u2014 open from the Discord rocket (SDK needs frame_id / instance_id / platform).',
+    );
+    setText(els.auth, err?.message || 'SDK init failed');
+    setMode('waiting');
+    return;
+  }
+
   await discordSdk.ready();
   setText(els.status, 'Abbey is ready in this voice Activity.');
-  renderPreAuth();
+  setText(els.channel, formatChannel(discordSdk.channelId, null));
+  setText(els.guild, formatGuild(discordSdk.guildId, discordSdk.channelId));
+  setMode(discordSdk.channelId ? 'idle' : 'waiting');
+  setText(els.auth, 'READY \u2014 pre-auth context');
 
-  const tokenPath = await tokenEndpointReady();
+  await syncParticipants(discordSdk);
+
+  const tokenPath = await tokenEndpointReady(forceOauth);
   if (!tokenPath) {
     setText(
       els.hint,
-      'Pre-auth channel/guild context is live. Map a token exchange host and open with ?oauth=1 (or serve /api/token/health) to enable authorize, participants, and setActivity. Secret stays in operator env — see activity/server/token-exchange.example.mjs.',
+      'Channel/guild + participant count are live without OAuth. Map a token exchange host and open with ?oauth=1 (or serve /api/token/health) to enable authorize, getChannel name, and setActivity. Secret stays in operator env \u2014 see activity/server/token-exchange.example.mjs.',
     );
     return;
   }
 
   try {
-    await setupAuthenticated(tokenPath);
+    await setupAuthenticated(discordSdk, tokenPath);
   } catch (err) {
-    renderPreAuth();
-    setText(
-      els.auth,
-      'Pre-auth context only — OAuth/token exchange failed',
-    );
+    setText(els.auth, 'Pre-auth context only \u2014 OAuth/token exchange failed');
     setText(
       els.hint,
       `Token path ${tokenPath} was reachable but auth failed: ${

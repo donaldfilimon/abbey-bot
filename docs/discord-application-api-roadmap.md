@@ -27,7 +27,7 @@ backlog; implement in order unless a phase is explicitly deferred.
 | Poise slash commands (chat input) | Live | `src/commands_*`, `src/main.rs` |
 | Voice consent gate (`/voice join consent:true`), wake names | Live | `src/commands_voice/` |
 | Entry Point `launch` preserved on global register | Live | `src/main.rs` |
-| Activity shell (`ready()` handshake only) | Live on Pages | `activity/` → `https://donaldfilimon.github.io/abbey-bot/activity/` |
+| Activity client (`ready()` + channel/guild UI + participants) | Live on Pages after merge | `activity/` → `https://donaldfilimon.github.io/abbey-bot/activity/` |
 | Stream (`1<<9`) + Use Embedded Activities (`1<<39`) overwrite gap-fill; `/voice` fail-closed on missing bits | Live | `src/commands_voice/discord.rs`, `docs/activities.md` |
 | `/pending list` classic Confirm/Dismiss buttons + collector | Live (code) | `src/commands_brain.rs` (P1; Components V2 blocked on crates) |
 
@@ -50,7 +50,7 @@ Relative to Discord Application + Interactions surface. Source: live checkout + 
 | Interaction HTTP endpoint | **N/A (by design)** | Gateway + poise defer/follow-up only |
 | Entry Point `launch` preserve | **Done** | `register_globally_keeping_entry_point` |
 | Activity `ready()` shell | **Done** | Pages `/activity/`; Portal map still P0 |
-| Activity authorize / channel / participants / setActivity | **Partial (P2 slice)** | Pre-auth channel/guild UI + OAuth scaffolding; full auth waits on secret host |
+| Activity authorize / channel / participants / setActivity | **Partial (P2 slice)** | Pre-auth channel/guild + participants (no OAuth); authorize/setActivity wait on secret host |
 | Stream + Use Embedded Activities gate | **Done** | Fail-closed on `/voice` |
 | Privileged intents (PRESENCES, members) | **Partial** | `non_privileged` + `GUILD_VOICE_STATES`; optional `MESSAGE_CONTENT` |
 | Webhook create API | **Guide only** | `/webhook` docs, no create-webhook call |
@@ -143,33 +143,38 @@ Suggested order:
 5. Optional: same-origin API routes under the mapped PREFIX if the iframe needs
    backend; extra hosts require additional Portal PREFIX mappings (CSP).
 
-### Acceptance note (2026-09-04) — smallest useful slice
+### Acceptance note (2026-09-04) — P2 progress
 
-GitHub Pages cannot hold `DISCORD_CLIENT_SECRET`, so full token exchange is
-**architected + stubbed**, not hosted in this PR:
+GitHub Pages cannot hold `DISCORD_CLIENT_SECRET`, so token exchange is
+**architected + stubbed**, not hosted in this PR. Rocket iframe still needs
+Donald’s Portal URL map (P0).
 
-- **Working UI:** `activity/index.html` + `activity/app.js` show status, truthful
-  mode (`idle` / `waiting`), channel + guild from iframe query params (with
-  known Office Hours / MLAI Community labels), and clear auth / participants
-  placeholders. Brand is Abbey / IWL only.
+- **Working UI (no OAuth):** `activity/index.html` + `activity/app.js` after
+  `ready()` show status, truthful mode (`idle` / `waiting`), channel + guild
+  from iframe query params (Office Hours / MLAI Community labels), and
+  **participant count** via `GET_ACTIVITY_INSTANCE_CONNECTED_PARTICIPANTS` +
+  `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE` (SDK: no scopes). Brand Abbey / IWL only.
+  Never Go Live.
 - **OAuth hooks:** client probes `GET /api/token/health` (or `?oauth=1`) before
-  `authorize` → `POST …/api/token` → `authenticate`. No modal spam when the
-  secret host is absent.
+  `authorize` → `POST …/api/token` → `authenticate`. Scopes:
+  `identify`, `guilds`, `applications.commands`, `rpc.activities.write`.
+  No modal spam when the secret host is absent.
+- **After auth:** `getChannel` for live channel name; `setActivity` with idle /
+  waiting copy (not stream).
 - **Server design:** `activity/server/token-exchange.example.mjs` exchanges the
-  code with Discord using env-only `DISCORD_CLIENT_SECRET`. Operator must map
-  a PREFIX or same-origin host before rocket users get names / participants /
-  `setActivity`.
-- **SDK source:** `activity/src/main.js` mirrors the same flow for a future
-  bundled rebuild.
-- **Still required for P2 “done when”:** live secret endpoint + Portal mapping
-  so authenticated channel name, participants subscribe, and truthful
-  `setActivity` run inside Discord (not only the pre-auth UI).
+  code with Discord using env-only `DISCORD_CLIENT_SECRET`. Operator maps a
+  PREFIX or same-origin host for `/.proxy/api/token`.
+- **SDK source:** `activity/src/main.js` mirrors the same flow for an optional
+  bundled rebuild (`package.json` `build` script). Pages ships `app.js` as-is.
+- **Still open for P2 “done when”:** live secret endpoint + Portal mapping so
+  authenticated channel name + truthful `setActivity` run inside Discord.
 
 **Done when:** launching Abbey from the rocket shows authenticated channel +
 participant context and a truthful `setActivity` state; secrets remain out of git.
 
-**Status:** partial — pre-auth UI + authorize/token architecture landed; full
-auth blocked on operator-hosted secret endpoint (not Pages).
+**Status:** partial — pre-auth UI + participants subscribe + authorize/token
+architecture landed; full auth / `setActivity` blocked on operator-hosted
+secret endpoint (not Pages).
 
 ---
 

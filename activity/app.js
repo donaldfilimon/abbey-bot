@@ -5,19 +5,20 @@
  * (@discord/embedded-app-sdk). This file ships without a bundler so the
  * Activity iframe needs no extra CDN / PREFIX mapping.
  *
- * P2 slice:
+ * P2:
  *  - ready() handshake (opcode 0)
- *  - channel + guild context from Discord-injected query params (pre-auth)
+ *  - channel + guild from Discord-injected query params (pre-auth)
+ *  - GET_ACTIVITY_INSTANCE_CONNECTED_PARTICIPANTS +
+ *    ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE after ready (no OAuth scopes)
  *  - truthful local mode: idle | waiting (never invents Go Live)
- *  - optional authorize → token exchange → authenticate when a server-side
+ *  - optional authorize -> token exchange -> authenticate when a server-side
  *    exchange is mapped (health check or ?oauth=1). See docs/activities.md.
- *  - participants + setActivity after successful authenticate
+ *  - getChannel + setActivity after successful authenticate
  *
  * No Client Secret here. Application ID is public.
  */
 (function () {
   var CLIENT_ID = '1147940171099152464';
-  /** Public guild channel labels we already document — display only. */
   var KNOWN_CHANNELS = {
     '1495755277859815595': 'Office Hours',
   };
@@ -81,7 +82,7 @@
   }
 
   function formatGuild() {
-    if (!guildId) return channelId ? 'DM / group DM (no guild)' : '—';
+    if (!guildId) return channelId ? 'DM / group DM (no guild)' : '\u2014';
     var known = KNOWN_GUILDS[guildId];
     return known ? known + ' (' + guildId + ')' : guildId;
   }
@@ -92,21 +93,15 @@
   }
 
   function renderParticipants() {
-    if (!state.authenticated) {
-      setText(
-        els.participants,
-        'Subscribe after OAuth token exchange (see docs/activities.md § P2)'
-      );
-      return;
-    }
-    if (!state.participants.length) {
-      setText(els.participants, 'No other participants yet');
+    var n = state.participants ? state.participants.length : 0;
+    if (!n) {
+      setText(els.participants, '0 participants');
       return;
     }
     var names = state.participants.map(function (p) {
       return p.global_name || p.username || p.id || 'member';
     });
-    setText(els.participants, names.join(', '));
+    setText(els.participants, n + ' \u2014 ' + names.join(', '));
   }
 
   function nextNonce() {
@@ -114,7 +109,7 @@
     return 'abbey-' + state.nonce;
   }
 
-  function sendCommand(cmd, args) {
+  function sendCommand(cmd, args, evt) {
     return new Promise(function (resolve, reject) {
       if (!source) {
         reject(new Error('No Discord parent frame'));
@@ -122,10 +117,9 @@
       }
       var nonce = nextNonce();
       state.pending[nonce] = { resolve: resolve, reject: reject };
-      source.postMessage(
-        [1, { cmd: cmd, args: args || {}, nonce: nonce }],
-        '*'
-      );
+      var frame = { cmd: cmd, args: args || {}, nonce: nonce };
+      if (evt) frame.evt = evt;
+      source.postMessage([1, frame], '*');
       setTimeout(function () {
         if (state.pending[nonce]) {
           delete state.pending[nonce];
@@ -155,7 +149,10 @@
       onReady();
       return;
     }
-    if (payload.evt === 'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE' && payload.data) {
+    if (
+      payload.evt === 'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE' &&
+      payload.data
+    ) {
       state.participants = payload.data.participants || [];
       renderParticipants();
     }
@@ -207,8 +204,52 @@
     return body.access_token;
   }
 
+  async function syncParticipants() {
+    try {
+      var part = await sendCommand(
+        'GET_ACTIVITY_INSTANCE_CONNECTED_PARTICIPANTS',
+        {}
+      );
+      state.participants = (part && part.participants) || [];
+      renderParticipants();
+    } catch (err) {
+      setText(
+        els.participants,
+        'Participants unavailable (' +
+          ((err && err.message) || 'rpc') +
+          ')'
+      );
+    }
+    try {
+      await sendCommand(
+        'SUBSCRIBE',
+        {},
+        'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE'
+      );
+    } catch (_) {
+      /* optional */
+    }
+  }
+
+  async function applySetActivity() {
+    try {
+      await sendCommand('SET_ACTIVITY', {
+        activity: {
+          type: 0,
+          details: 'Abbey \u00b7 Intelligence Without Limits',
+          state:
+            state.mode === 'waiting'
+              ? 'Waiting for voice context'
+              : 'Idle in voice Activity',
+        },
+      });
+    } catch (_) {
+      /* needs rpc.activities.write after authorize */
+    }
+  }
+
   async function tryAuthorizeFlow(tokenPath) {
-    setText(els.auth, 'Attempting authorize…');
+    setText(els.auth, 'Attempting authorize\u2026');
     try {
       var authz = await sendCommand('AUTHORIZE', {
         client_id: CLIENT_ID,
@@ -225,7 +266,7 @@
       var code = authz && authz.code;
       if (!code) throw new Error('authorize returned no code');
 
-      setText(els.auth, 'Exchanging code (server-side secret)…');
+      setText(els.auth, 'Exchanging code (server-side secret)\u2026');
       var accessToken = await tryTokenExchange(code, tokenPath);
 
       var auth = await sendCommand('AUTHENTICATE', {
@@ -240,70 +281,35 @@
             : '')
       );
 
-      await enrichAfterAuth();
+      if (channelId && guildId) {
+        try {
+          var channel = await sendCommand('GET_CHANNEL', {
+            channel_id: channelId,
+          });
+          if (channel && channel.name) {
+            state.channelName = channel.name;
+            renderContext();
+          }
+        } catch (_) {
+          /* keep pre-auth label */
+        }
+      }
+
+      await applySetActivity();
+      setText(els.status, 'Abbey is ready in this voice Activity.');
     } catch (err) {
       state.authenticated = false;
       setText(
         els.auth,
-        'Pre-auth context only — OAuth/token exchange failed'
+        'Pre-auth context only \u2014 OAuth/token exchange failed'
       );
       setText(
         els.hint,
         'Token path was selected but auth failed: ' +
           ((err && err.message) || String(err)) +
-          '. Channel/guild IDs still come from the Activity iframe.'
+          '. Channel/guild IDs and participant count still come from the Activity iframe (no OAuth required for those).'
       );
-      renderParticipants();
-      setMode(channelId ? 'idle' : 'waiting');
     }
-  }
-
-  async function enrichAfterAuth() {
-    if (channelId && guildId) {
-      try {
-        var channel = await sendCommand('GET_CHANNEL', {
-          channel_id: channelId,
-        });
-        if (channel && channel.name) {
-          state.channelName = channel.name;
-          renderContext();
-        }
-      } catch (_) {
-        /* keep pre-auth label */
-      }
-    }
-
-    try {
-      var part = await sendCommand('GET_INSTANCE_CONNECTED_PARTICIPANTS', {});
-      state.participants = (part && part.participants) || [];
-      renderParticipants();
-    } catch (_) {
-      renderParticipants();
-    }
-
-    try {
-      await sendCommand('SUBSCRIBE', {
-        evt: 'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE',
-      });
-    } catch (_) {
-      /* optional */
-    }
-
-    try {
-      await sendCommand('SET_ACTIVITY', {
-        activity: {
-          type: 0,
-          details: 'Abbey · Intelligence Without Limits',
-          state:
-            state.mode === 'waiting' ? 'Waiting' : 'Idle in voice Activity',
-        },
-      });
-    } catch (_) {
-      /* rpc.activities.write may be missing until re-consent */
-    }
-
-    setMode('idle');
-    setText(els.status, 'Abbey is ready in this voice Activity.');
   }
 
   async function onReady() {
@@ -312,30 +318,31 @@
     setText(els.status, 'Abbey is ready in this voice Activity.');
     renderContext();
     setMode(channelId ? 'idle' : 'waiting');
-    setText(els.auth, 'READY — pre-auth context');
-    renderParticipants();
+    setText(els.auth, 'READY \u2014 pre-auth context');
+
+    // Participants require no OAuth scopes (Embedded App SDK docs).
+    await syncParticipants();
 
     var tokenPath = await tokenEndpointReady();
     if (!tokenPath) {
       setText(
         els.hint,
-        'Pre-auth channel/guild context is live. Map a token exchange host and open with ?oauth=1 (or serve /api/token/health) to enable authorize, participants, and setActivity. Secret stays in operator env — see activity/server/token-exchange.example.mjs.'
+        'Channel/guild + participant count are live without OAuth. Map a token exchange host and open with ?oauth=1 (or serve /api/token/health) to enable authorize, getChannel name, and setActivity. Secret stays in operator env \u2014 see activity/server/token-exchange.example.mjs.'
       );
       return;
     }
     await tryAuthorizeFlow(tokenPath);
   }
 
-  // --- boot ---
   renderContext();
   setMode('waiting');
-  setText(els.auth, 'Connecting…');
-  renderParticipants();
+  setText(els.auth, 'Connecting\u2026');
+  setText(els.participants, '\u2014');
 
   if (!source) {
     setText(
       els.status,
-      'Abbey — open from the Discord rocket in a voice channel (plain browser tabs have no Embedded App parent).'
+      'Abbey \u2014 open from the Discord rocket in a voice channel (plain browser tabs have no Embedded App parent).'
     );
     setText(els.auth, 'No Discord parent');
     setMode('waiting');
