@@ -12,7 +12,11 @@
 - [x] gateway.rs — serenity EventHandler: message → pipeline (intent/state/DQN/cooldown/reply), reactions → rewards, delete → penalty, guild create/delete
 - [x] commands: `/remember` `/forget` `/recall` self-only by default with moderator cross-user override and 300-character new-fact cap; `/reputation` `/summarize` `/admin` `/stats` `/see` `/ocr`
 - [x] main.rs wiring: Data state, ABBEY_DATA_DIR persistence, scheduler tasks (learn 30s / flush 60s / persist 300s / reward sweep 30s), intents (non-privileged + opt-in MESSAGE_CONTENT)
-- [x] Telegram long-poll adapter (live), Slack Socket Mode adapter (live)
+- [ ] Telegram long-poll adapter (live), Slack Socket Mode adapter (live)
+      2026-09-04: unchecked. The adapters exist in source, but this box read as live
+      acceptance, contradicting this file's own later entries, `tasks/goals.md`, and
+      `docs/MLAI-LIVE-ACCEPTANCE.md` ("Telegram / Slack tokens | missing | missing").
+      Blocked on credentials, not on code.
 - [x] README + CLAUDE.md/AGENTS.md updates, .env.example, gate green via ./check.sh
 
 ## Open (after this pass)
@@ -108,8 +112,14 @@ a green source gate is not semantic, deployment, or live evidence.
 - [ ] Point the deployed Abbey service at the MLX-VLM endpoint and exact served model id; do not
       co-load Ollama Gemma 12B in normal Mac operation (keep it a manual fallback only)
 - [ ] Re-prove the tool boundary end to end on the 12B backend: only `remember_fact`,
-      `lookup_reputation`, `recall`, `switch_persona`, `recent_messages`, each still passing the
-      allowlist, schema validation, round limit, and user/guild scoping
+      `lookup_reputation`, `recall`, `switch_persona`, `recent_messages`, `inspect_status`,
+      `list_facts` — each still passing the allowlist, schema validation, round limit, and
+      user/guild scoping.
+      2026-09-04: corrected from five tools to seven. Production has exposed the seven-tool
+      surface in stable order since 2026-09-02 (`src/tools.rs:99-187`); this item still said
+      five, contradicting `tasks/todo.md:173-180`, `README.md:59-68`, and
+      `docs/live-test-protocol.md:100-102`. `abbey_tools()` remains the five-tool
+      byte-compatible corpus and is a different thing.
 - [x] Re-prove voice stays read-only at the source boundary: local voice calls
       `generate_without_delivery` with no `ToolHost`, disabled tool access rejects an injected
       `remember_fact` call without mutation, and operational voice answers render fixed runtime
