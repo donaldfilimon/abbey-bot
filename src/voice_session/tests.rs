@@ -168,6 +168,29 @@ async fn absent_attested_withdrawal_closes_the_epoch_but_stale_stop_does_not() {
     assert!(withdrawn.saved.await.unwrap().is_err());
 }
 
+#[tokio::test]
+async fn unattested_outsider_withdrawal_does_not_stop_other_participants_call() {
+    let mut runtime = runtime();
+    runtime.set_effective_mode(VoiceMode::Local);
+    runtime.consent = Arc::new(
+        crate::voice_consent_store::ConsentStore::acknowledged_fixture(
+            1,
+            &[10, 20],
+            VoiceMode::Local,
+        ),
+    );
+    let start = runtime.reserve_start();
+    let epoch = runtime.begin(HashSet::from([10])).await;
+    assert!(runtime.activate(epoch, start, "active").await);
+
+    let withdrawn = runtime.change_consent(20, 2, crate::voice_consent::Choice::Withdraw, 2, false);
+
+    assert_eq!(withdrawn.epoch_to_stop, None);
+    assert!(runtime.media_enabled(epoch));
+    assert!(!runtime.consent.agrees(20, VoiceMode::Local));
+    assert!(withdrawn.saved.await.unwrap().is_err());
+}
+
 #[test]
 fn the_effective_mode_starts_as_the_startup_selection() {
     let runtime = runtime();

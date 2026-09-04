@@ -29,6 +29,8 @@ Invoke-Checked -Executable "python" -Arguments @(
 )
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-mlx-primary.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-publish-provider-qualification.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-smoke-mlx-vlm-tool-deltas.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-patch-mlx-vlm-tool-encoding.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-privacy.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-abbey-contracts.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-abbey-contracts.py")

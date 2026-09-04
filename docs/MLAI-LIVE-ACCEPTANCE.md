@@ -136,7 +136,7 @@ Voice destination vs MLAI: **guild ID matches**. Channel is the single 19-digit 
 
 Required lifecycle (todo + `docs/live-test-protocol.md` §4):  
 **join `consent:true` → wake → barge-in → membership-close → resume → leave**  
-plus owner/admin `/voice verify start` / `report` with `observed: 8/8`, written `stop listening`, and a human audible witness. Source tests and historical consent are **not** substitutes.
+plus owner/admin `/voice verify start` / `report` with `observed: 8/8`, an Abbey mention with written `stop listening`, and a human audible witness. Source tests and historical consent are **not** substitutes.
 
 ### Preconditions (MLX-Audio sidecar is up; human 8/8 and in-VC consent still failing)
 
@@ -163,7 +163,7 @@ Run these **in MLAI Community** (`1275617641620443146`) while Donald is **in the
 | 6 | Human | Membership-close: a person joins or leaves the VC (new/unattested participant) | Locked VC |
 | 7 | Humans in VC | Fresh notice + unanimous consent for the **new** set | Locked VC |
 | 8 | Manager, **in VC** | `/voice resume consent:true` | New consent epoch; do not reuse the old one |
-| 9 | Human in VC chat | Written `stop listening` (authoritative in local mode) | Locked VC text |
+| 9 | Human in VC chat | Mention Abbey and write `stop listening` (authoritative in local mode) | Locked VC text |
 | 10 | Manager or present member | `/voice leave` | Same guild |
 | 11 | Owner/admin | `/voice verify report` | Same guild. Pass only if `observed: 8/8` **and** a human attests audible wake/reply + current unanimous consent |
 
@@ -182,7 +182,7 @@ Record only human pass/fail, coarse Inspect states, and verify counters. Do **no
 | Barge-in | Playback **audibly** stops mid-utterance; barge-in counter increments | Playback finishes; counter unchanged; error reported as barge |
 | Membership-close | New/unknown/unattested participant immediately closes capture, playback, STT; conversational `Decode` disconnects; Inspect `paused`; no frame from the new person is processed | Session continues; new speaker transcribed |
 | Resume | New notice + fresh consent + `/voice resume consent:true` starts a **new** epoch | Resume without re-consent; old epoch reused |
-| Written stop | `stop listening` yields authoritative inactive status (local mode) | Spoken backup prose treated as authority |
+| Written stop | Mentioning Abbey and writing `stop listening` yields authoritative inactive status (local mode) | Spoken backup prose treated as authority |
 | Leave | `/voice leave`: no voice presence, no UDP, no later MLX-Audio speech requests | Ghost presence / socket remains |
 | Verify | `/voice verify report` = `observed: 8/8` **plus** human audible + consent attestation | Counters only, or verifier used as proof of consent |
 | Other guild / DM Inspect | Voice state `off` | Leak of `active`/`paused` |
@@ -199,7 +199,7 @@ Inspect legal values only: `off`, `presence`, `awaiting-consent`, `active`, `pau
 - Whisper STT → canonical read-only Abbey reply → Kokoro TTS on loopback.
 - Truncate playback on barge-in and bump the aggregate counter.
 - Close the epoch on membership / unattested SSRC, disconnect `Decode`, stop STT/TTS, require resume.
-- Treat written `stop listening` / first-person consent withdrawal as authority (local mode).
+- Treat an Abbey mention with written `stop listening` / first-person consent withdrawal as authority (local mode).
 - Tear down on `/voice leave`.
 - Keep content-free `/voice verify` counters in process memory (cleared on restart). **While armed, conversation commits are disabled** — the verifier is not a spoken-quality test.
 
@@ -211,7 +211,7 @@ Inspect legal values only: `off`, `presence`, `awaiting-consent`, `active`, `pau
 - Speak the wake name and the barge-in utterance.
 - Cause the membership change (join/leave).
 - Witness that playback was actually heard and that barge-in actually cut it.
-- Write `stop listening`.
+- Mention Abbey and write `stop listening`.
 - Confirm `/voice verify report` against what they heard. The 8/8 counter is not proof of consent or audibility.
 
 **Do not automate:** consent, audible witness, membership-change as a fake event, or using MLX access logs as live-voice evidence.

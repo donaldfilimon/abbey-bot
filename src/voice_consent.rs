@@ -52,7 +52,7 @@ pub fn notice(mode: VoiceMode, channel: u64) -> String {
         }
     };
     format!(
-        "**Abbey voice — your choice in this server**\n{processing}\n\nChoose **Agree** only if you want this processing in <#{channel}>. Your own agreement is remembered across visits and restarts for this processing mode and notice version; membership, silence and output mute are not agreement. Voice starts only when everyone present has agreed and a manager uses `/voice join consent:true` or `/voice resume consent:true`. New arrivals pause the call.\n\n**Stop / withdraw** clears your saved agreement for both modes. If you are in the call, it stops audio processing and disconnects Abbey. You can also type `stop listening` in this voice channel. `/voice leave` stops the current call without deleting your saved choice. Use `/voice consent` anytime to review or change your choice. Saying a wake name starts a question only while voice is active.\n\nNotice version {POLICY_VERSION}."
+        "**Abbey voice — your choice in this server**\n{processing}\n\nChoose **Agree** only if you want this processing in <#{channel}>. Your own agreement is remembered across visits and restarts for this processing mode and notice version; membership, silence and output mute are not agreement. Voice starts only when everyone present has agreed and a manager uses `/voice join consent:true` or `/voice resume consent:true`. New arrivals pause the call.\n\n**Stop / withdraw** clears your saved agreement for both modes. If you are in the call, it stops audio processing and disconnects Abbey. You can also mention Abbey and type `stop listening` in this voice channel. `/voice leave` stops the current call without deleting your saved choice. Use `/voice consent` anytime to review or change your choice. Saying a wake name starts a question only while voice is active.\n\nNotice version {POLICY_VERSION}."
     )
 }
 
@@ -194,6 +194,7 @@ mod tests {
             assert!(text.chars().count() + 160 < 2000);
             assert!(text.contains("Notice version 1."));
             assert!(text.contains("Stop / withdraw"));
+            assert!(text.contains("mention Abbey and type `stop listening`"));
         }
     }
 }
