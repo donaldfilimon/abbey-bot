@@ -124,13 +124,12 @@ impl Fixture {
             None,
         )
         .unwrap();
-        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig {
-            guild_id: 1,
-            channel_id: 2,
-            backend: crate::voice::VoiceBackendConfig::Local(config.clone()),
-            wake_word_required: true,
-            wake_words: crate::voice::VoiceConfig::default_wake_words(),
-        }));
+        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Local(config.clone()),
+            true,
+        )));
         let start = runtime.reserve_start();
         let epoch = runtime.begin(HashSet::from([1, 2])).await;
         assert!(runtime.activate(epoch, start, "test session active").await);
