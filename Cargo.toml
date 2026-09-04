@@ -30,7 +30,7 @@ songbird = { version = "0.6.0", default-features = false, features = ["driver", 
 # Songbird's RawAdapter registers its raw container but leaves Symphonia codec
 # features to the application. PCM is required to decode the f32 stream used by
 # consented live-voice output.
-symphonia = { version = "0.5.5", default-features = false, features = ["pcm"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["pcm"] }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 memchr = "2.8"
 # Validate every accepted attachment under bounded decoder limits before handing

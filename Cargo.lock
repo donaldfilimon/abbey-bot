@@ -18,7 +18,7 @@ dependencies = [
  "serenity",
  "sha2 0.11.0",
  "songbird",
- "symphonia",
+ "symphonia 0.6.1",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tracing",
@@ -3014,6 +3014,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
+
+[[package]]
 name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3724,8 +3730,8 @@ dependencies = [
  "socket2 0.5.10",
  "stream_lib",
  "streamcatcher",
- "symphonia",
- "symphonia-core",
+ "symphonia 0.5.5",
+ "symphonia-core 0.5.5",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tokio-util",
@@ -3855,19 +3861,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5773a4c030a19d9bfaa090f49746ff35c75dfddfa700df7a5939d5e076a57039"
 dependencies = [
  "lazy_static",
+ "symphonia-core 0.5.5",
+ "symphonia-metadata 0.5.5",
+]
+
+[[package]]
+name = "symphonia"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7edef6a96b696d4e0cab5ee9ebb7ca155ed95f30a6b45bbb8b97d2727f02424"
+dependencies = [
+ "lazy_static",
  "symphonia-codec-pcm",
- "symphonia-core",
- "symphonia-metadata",
+ "symphonia-core 0.6.1",
+ "symphonia-metadata 0.6.1",
 ]
 
 [[package]]
 name = "symphonia-codec-pcm"
-version = "0.5.5"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e89d716c01541ad3ebe7c91ce4c8d38a7cf266a3f7b2f090b108fb0cb031d95"
+checksum = "e04ba75686acbe43542fdd374571195f0530c0b7785ca25cc6840e9c6c4b6eea"
 dependencies = [
  "log",
- "symphonia-core",
+ "symphonia-core 0.6.1",
 ]
 
 [[package]]
@@ -3884,6 +3901,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphonia-core"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01c412864d599d4750d0c3d684d7e093ec05e5309681ef5252cc1096a437f6e0"
+dependencies = [
+ "bitflags 2.13.1",
+ "bytemuck",
+ "lazy_static",
+ "log",
+ "num-complex",
+ "smallvec",
+]
+
+[[package]]
 name = "symphonia-metadata"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3892,7 +3923,20 @@ dependencies = [
  "encoding_rs",
  "lazy_static",
  "log",
- "symphonia-core",
+ "symphonia-core 0.5.5",
+]
+
+[[package]]
+name = "symphonia-metadata"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83713a97705d77bdef7cdbc0768fd6e5a54e4cd7e48d60a806ae85639e2c87c6"
+dependencies = [
+ "lazy_static",
+ "log",
+ "regex-lite",
+ "smallvec",
+ "symphonia-core 0.6.1",
 ]
 
 [[package]]
