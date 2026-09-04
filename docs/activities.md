@@ -66,6 +66,44 @@ Discord does **not** load that URL directly. The Activity iframe is
 `https://1147940171099152464.discordsays.com/` and only reaches the page after
 a Developer Portal URL mapping.
 
+### P2 — Real Embedded Activity (client + token architecture)
+
+Shipped in `activity/` toward roadmap P2 (not full OAuth until a secret host exists):
+
+1. **Pre-auth context** — after `ready()`, the UI shows voice **channel** and
+   **guild** from Discord-injected query params (`channel_id`, `guild_id`).
+   Known MLAI labels (Office Hours / MLAI Community) are display-only.
+2. **Truthful mode** — local UI mode is `idle` or `waiting` only. Never claims
+   Go Live / screenshare.
+3. **authorize() scaffolding** — client probes `GET /api/token/health` →
+   `{ ok: true }` (or Activity URL `?oauth=1`) before calling `authorize` +
+   server code exchange + `authenticate`. Without that host, it stays on
+   pre-auth context and does **not** pop OAuth.
+4. **After auth** (when exchange is mapped) — `getChannel` name, participants
+   list + `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE`, and `setActivity` with idle /
+   waiting copy under Abbey / IWL branding.
+5. **Server secret** — `DISCORD_CLIENT_SECRET` stays in operator env. Example
+   route: `activity/server/token-exchange.example.mjs` (not on Pages).
+
+**Operator env (when you host the exchange):**
+
+| Var | Where | Notes |
+|---|---|---|
+| `DISCORD_CLIENT_ID` | exchange host | Defaults to public app id `1147940171099152464` |
+| `DISCORD_CLIENT_SECRET` | exchange host only | Portal → OAuth2; **never** git / Pages / chat logs |
+| Redirect URI | Portal OAuth2 | Required by Discord; SDK returns users to the Activity |
+
+**Hosting options for the exchange (pick one):**
+
+- Same-origin: serve `activity/` static **and** `POST /api/token` from one host,
+  then point Portal TARGET at that host, **or**
+- Split: keep Pages for static; add a Portal PREFIX mapping so
+  `/.proxy/api/token` reaches the secret host (Discord CSP blocks unmapped
+  origins).
+
+Preferred SDK rebuild source: `activity/src/main.js`. Pages continues to ship
+`activity/app.js` without a bundler.
+
 ## Remaining Developer Portal clicks (Donald)
 
 Bot tokens cannot set URL mappings. Donald must click these:
@@ -81,8 +119,8 @@ Bot tokens cannot set URL mappings. Donald must click these:
    that are unchecked.
 5. Confirm **Entry Point** `launch` is still present. Do not delete it.
 6. Do **not** create or paste a Client Secret into git. `ready()` does not
-   need one. If you later add `authorize()`, put the secret only in operator
-   env, never in the repo.
+   need one. For P2 `authorize()`, put the secret only in operator env on the
+   token-exchange host (see § P2 above), never in the repo.
 7. Join Office Hours → rocket → Abbey. First load after mapping can take a
    minute while Pages + the proxy cache.
 
