@@ -30,6 +30,7 @@ the useful half is fixable.
 In the pinned snapshot's `chat_template.jinja` (revision
 `73bcf09092aa277861d5a191b989b666f7f32e8f`):
 
+{% raw %}
 ```jinja
 358  {%- if add_generation_prompt -%}
 359      {%- if ns.prev_message_type != 'tool_response' and ns.prev_message_type != 'tool_call' -%}
@@ -40,6 +41,7 @@ In the pinned snapshot's `chat_template.jinja` (revision
 364      {%- endif -%}
 365  {%- endif -%}
 ```
+{% endraw %}
 
 Line 362 is a **pre-filled, already-closed empty thought block**. It is what
 stops the model opening a thought channel of its own, and it is why the plain
@@ -47,11 +49,13 @@ stops the model opening a thought channel of its own, and it is why the plain
 
 It is never emitted on the continuation turn. The reason is a guard placement:
 
+{% raw %}
 ```jinja
 216  {%- for message in loop_messages -%}
 217      {%- if message['role'] != 'tool' -%}
 218      {%- set ns.prev_message_type = None -%}
 ```
+{% endraw %}
 
 The reset on line 218 sits **inside** the `role != 'tool'` guard on line 217, so
 a `tool` message never clears `ns.prev_message_type`. It stays `'tool_response'`
