@@ -43,6 +43,7 @@ fn runtime() -> VoiceRuntime {
         channel_id: 2,
         backend: VoiceBackendConfig::Disabled,
         wake_word_required: true,
+        wake_words: VoiceConfig::default_wake_words(),
     })
 }
 
@@ -54,6 +55,7 @@ fn runtime_with_inspect(guild_id: u64) -> (VoiceRuntime, Arc<VoiceInspectRegistr
             channel_id: 2,
             backend: VoiceBackendConfig::Disabled,
             wake_word_required: true,
+            wake_words: VoiceConfig::default_wake_words(),
         },
         Arc::clone(&inspect),
     );

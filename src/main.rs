@@ -296,6 +296,8 @@ async fn main() -> Result<(), Error> {
             commands: vec![
                 commands::persona(),
                 commands::whois(),
+                commands::profile_context_menu(),
+                commands::ask_context_menu(),
                 commands::perms(),
                 commands::modcall(),
                 commands::server(),

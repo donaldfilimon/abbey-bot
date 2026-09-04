@@ -552,6 +552,7 @@ mod tests {
             channel_id: 2,
             backend: crate::voice::VoiceBackendConfig::Disabled,
             wake_word_required: true,
+            wake_words: crate::voice::VoiceConfig::default_wake_words(),
         }));
         let generation = runtime.reserve_start();
         let epoch = runtime.begin(std::collections::HashSet::new()).await;
@@ -583,6 +584,7 @@ mod tests {
             channel_id: 2,
             backend: crate::voice::VoiceBackendConfig::Disabled,
             wake_word_required: true,
+            wake_words: crate::voice::VoiceConfig::default_wake_words(),
         });
         let mut sequence = FrameSequence::default();
         enforce_input_sequence(&mut sequence, &runtime, 10).unwrap();

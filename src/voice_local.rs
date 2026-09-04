@@ -333,6 +333,7 @@ pub async fn run(mut session: LocalSession) {
                                 channel_id: session.runtime.config.channel_id,
                                 consent_epoch: session.epoch,
                                 wake_word_required: session.runtime.config.wake_word_required,
+                                wake_words: session.runtime.config.wake_words.clone(),
                                 wake: Arc::clone(&wake),
                                 utterance,
                             };
@@ -497,6 +498,7 @@ struct TurnWork {
     channel_id: u64,
     consent_epoch: u64,
     wake_word_required: bool,
+    wake_words: Vec<String>,
     wake: Arc<Mutex<WakeState>>,
     utterance: Utterance,
 }
@@ -544,6 +546,7 @@ async fn process_turn(work: TurnWork) -> TurnOutcome {
         safely_attributed,
         work.wake_word_required,
         &work.wake,
+        &work.wake_words,
     )
     .await
     {
@@ -660,12 +663,13 @@ async fn is_addressed(
     safely_attributed: bool,
     required: bool,
     wake: &Mutex<WakeState>,
+    wake_words: &[String],
 ) -> bool {
     if !required {
         return true;
     }
     let now = Instant::now();
-    let named = contains_wake_name(transcript);
+    let named = crate::voice::contains_wake_name(transcript, wake_words);
     let mut wake = wake.lock().await;
     let continuation = speaker.is_some()
         && speaker == wake.speaker
@@ -680,16 +684,6 @@ async fn is_addressed(
     } else {
         false
     }
-}
-
-fn contains_wake_name(text: &str) -> bool {
-    text.split(|character: char| !character.is_ascii_alphabetic())
-        .any(|word| {
-            matches!(
-                word.to_ascii_lowercase().as_str(),
-                "abbey" | "abby" | "aviva" | "abi"
-            )
-        })
 }
 
 fn voice_scope(
@@ -774,6 +768,10 @@ fn brief(error: &str) -> String {
 mod tests {
     use super::*;
 
+    fn default_wake_words() -> Vec<String> {
+        crate::voice::VoiceConfig::default_wake_words()
+    }
+
     fn snapshot(phase: VoicePhase) -> crate::voice_session::VoiceSnapshot {
         crate::voice_session::VoiceSnapshot {
             epoch: 9,
@@ -790,24 +788,36 @@ mod tests {
         }
     }
 
-    #[test]
-    fn wake_names_are_token_bounded_and_case_insensitive() {
-        assert!(contains_wake_name("Abbey, can you help?"));
-        assert!(contains_wake_name("Abby, can you help?"));
-        assert!(contains_wake_name("AVIVA be direct"));
-        assert!(contains_wake_name("abi: orchestrate"));
-        assert!(!contains_wake_name("an abbeylike building"));
-    }
-
     #[tokio::test]
     async fn continuation_is_scoped_to_the_same_speaker() {
         let wake = Mutex::new(WakeState::default());
-        assert!(is_addressed("Abbey hello", Some(1), true, true, &wake).await);
-        assert!(is_addressed("and one more thing", Some(1), true, true, &wake).await);
-        assert!(!is_addressed("private aside", Some(2), true, true, &wake).await);
-        assert!(!is_addressed("unknown voice", None, false, true, &wake).await);
-        assert!(is_addressed("Abbey explicit", Some(2), false, true, &wake).await);
-        assert!(!is_addressed("unsafe continuation", Some(2), false, true, &wake).await);
+        let wake_words = default_wake_words();
+        assert!(is_addressed("Abbey hello", Some(1), true, true, &wake, &wake_words).await);
+        assert!(
+            is_addressed(
+                "and one more thing",
+                Some(1),
+                true,
+                true,
+                &wake,
+                &wake_words
+            )
+            .await
+        );
+        assert!(!is_addressed("private aside", Some(2), true, true, &wake, &wake_words).await);
+        assert!(!is_addressed("unknown voice", None, false, true, &wake, &wake_words).await);
+        assert!(is_addressed("Abbey explicit", Some(2), false, true, &wake, &wake_words).await);
+        assert!(
+            !is_addressed(
+                "unsafe continuation",
+                Some(2),
+                false,
+                true,
+                &wake,
+                &wake_words
+            )
+            .await
+        );
     }
 
     #[test]
