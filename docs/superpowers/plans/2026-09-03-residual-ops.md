@@ -2,7 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (or subagent-driven-development) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status (2026-09-03 ~17:50 ET):** Unblocked code path closed. Abbey live on `main` @ `98a498a` (#47–#55), binary SHA `69f20f8f…` (installed ~17:37 ET, PID 7970, connected as Abbey). MLX-Audio `:8181` 200; Ollama `:11434` reasoner; `:8282` unpublished (Task 6). CLAUDE.md/AGENTS.md live-ops mirrors landed (#55). WWW #44 closed as superseded (design-sync already on `apps/web`). Dependabot `rustls-webpki` still open: serenity `next` clears webpki but breaks `poise 0.6.2` (`client` feature); wait for coordinated crates.io bump. Task 3 Discord structure OK (no mass grant). Task 4 quesar still Hostinger parking (`byte/pixel.dns-parking.com`) until LB IP + Cloudflare.
+**Status (2026-09-03 ~21:50 ET):** Unblocked code path closed through #62. Abbey live on `main` @ `15c0f15`, binary SHA `931f0186…` (PID **26416**, connected as Abbey; do not kickstart). Activity client on GitHub Pages; **Portal URL map still Donald**. MLX-Audio `:8181` 200; Ollama `:11434` reasoner; `:8282` unpublished (Task 6). Dependabot enabled with safe ignores — `rustls-webpki` alerts still open until serenity+poise crates.io bump (serenity `next` breaks poise 0.6.2). Task 3 Discord structure OK (no mass grant). Task 4 quesar still Hostinger parking (`byte`/`pixel.dns-parking.com`) until confirmed GCP `project_id` + LB IP + Cloudflare (no tofu apply / NS change without Donald).
+
 
 **Goal:** Close remaining unblocked Abbey/MLAI work after IWL, personality, Discord gap-fill, and MLX-Audio came up; leave human-gated DNS and live voice as explicit Donald steps.
 
@@ -155,6 +156,13 @@ gh pr create --title "docs: residual ops plan 2026-09-03" --body "Tracks unblock
 
 ---
 
+
+### Task 7a: Safe Dependabot config (landed)
+
+**Files:** `.github/dependabot.yml`
+
+- [x] **Step 1:** Enable weekly cargo + Actions + deploy pip.
+- [x] **Step 2:** Ignore serenity/poise majors and lone `rustls-webpki` bumps (breaks poise 0.6.2).
 
 ### Task 7: Dependabot rustls-webpki (blocked on serenity+poise)
 

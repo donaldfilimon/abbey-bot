@@ -1,0 +1,43 @@
+# Safe Dependabot for abbey-bot.
+# Ignore serenity/poise majors until coordinated crates.io pair.
+# Ignore lone rustls-webpki bumps (serenity 0.12 edge).
+# See docs/MLAI-LIVE-ACCEPTANCE.md residual Task 7.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - rust
+    ignore:
+      - dependency-name: serenity
+        update-types:
+          - version-update:semver-major
+      - dependency-name: poise
+        update-types:
+          - version-update:semver-major
+      - dependency-name: rustls-webpki
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: pip
+    directory: /deploy
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
