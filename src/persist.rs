@@ -5,19 +5,20 @@
 //! is a single process with a data directory, and every store the pure modules
 //! need — guild config, per-guild brain snapshots, reputation, memory — is
 //! small enough to hold in memory and write whole. `Stores` is that memory,
-//! implementing the three store traits the registries speak, and
-//! [`Stores::save`] / [`Stores::load`] are the only I/O. Semantic memory lives
-//! beside it in the WDBX segment ([`crate::wdbx::Recall`]), which has its own
-//! format and its own save path.
+//! implementing the three store traits the registries speak. [`Stores::load`]
+//! owns canonical loading; [`PersistenceSink`] owns canonical and projection
+//! publication. Semantic memory lives beside it in the WDBX segment
+//! ([`crate::wdbx::Recall`]) with its independent wire format.
 //!
 //! Writes are atomic (temp file + rename) so a crash mid-persist leaves the
 //! previous document intact rather than a truncated one.
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs;
-use std::io;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,400 @@ pub const WDBX_FILE: &str = "wdbx.seg.0.jsonl";
 /// explanation aid, not a ledger of record; bounding it keeps the document
 /// from growing without limit on a busy guild.
 pub const MAX_EVENTS: usize = 10_000;
+
+/// Content-free persistence failure categories safe for commands and
+/// operational logs. Arbitrary paths, state, identifiers, and OS errors never
+/// enter this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistErrorCategory {
+    UnsafeFileType,
+    CreateDirectory,
+    SnapshotEncode,
+    CreateTemporary,
+    WriteTemporary,
+    SyncTemporary,
+    PublishRename,
+    SyncDirectory,
+    ProjectionEncode,
+}
+
+impl PersistErrorCategory {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnsafeFileType => "unsafe-file-type",
+            Self::CreateDirectory => "create-directory",
+            Self::SnapshotEncode => "snapshot-encode",
+            Self::CreateTemporary => "create-temporary",
+            Self::WriteTemporary => "write-temporary",
+            Self::SyncTemporary => "sync-temporary",
+            Self::PublishRename => "publish-rename",
+            Self::SyncDirectory => "sync-directory",
+            Self::ProjectionEncode => "projection-encode",
+        }
+    }
+}
+
+/// Result for one durable authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistComponentOutcome {
+    NotConfigured,
+    Committed,
+    SkippedCanonicalFailure,
+    Failed(PersistErrorCategory),
+}
+
+impl PersistComponentOutcome {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotConfigured => "not-configured",
+            Self::Committed => "committed",
+            Self::SkippedCanonicalFailure => "skipped-canonical-failure",
+            Self::Failed(_) => "failed",
+        }
+    }
+
+    #[must_use]
+    pub const fn error_category(self) -> Option<PersistErrorCategory> {
+        match self {
+            Self::Failed(category) => Some(category),
+            _ => None,
+        }
+    }
+}
+
+/// Process-level persistence truth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistOverall {
+    MemoryOnly,
+    Complete,
+    Partial,
+    Failed,
+}
+
+impl PersistOverall {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MemoryOnly => "memory-only",
+            Self::Complete => "complete",
+            Self::Partial => "partial",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// One complete persistence attempt, with canonical state and its rebuildable
+/// WDBX projection reported independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistReport {
+    pub overall: PersistOverall,
+    pub canonical_state: PersistComponentOutcome,
+    pub wdbx_projection: PersistComponentOutcome,
+}
+
+impl PersistReport {
+    #[must_use]
+    pub const fn memory_only() -> Self {
+        Self {
+            overall: PersistOverall::MemoryOnly,
+            canonical_state: PersistComponentOutcome::NotConfigured,
+            wdbx_projection: PersistComponentOutcome::NotConfigured,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_components(
+        canonical_state: PersistComponentOutcome,
+        wdbx_projection: PersistComponentOutcome,
+    ) -> Self {
+        let overall = match (canonical_state, wdbx_projection) {
+            (PersistComponentOutcome::NotConfigured, PersistComponentOutcome::NotConfigured) => {
+                PersistOverall::MemoryOnly
+            }
+            (PersistComponentOutcome::Committed, PersistComponentOutcome::Committed) => {
+                PersistOverall::Complete
+            }
+            (PersistComponentOutcome::Committed, PersistComponentOutcome::Failed(_)) => {
+                PersistOverall::Partial
+            }
+            _ => PersistOverall::Failed,
+        };
+        Self {
+            overall,
+            canonical_state,
+            wdbx_projection,
+        }
+    }
+}
+
+#[must_use]
+pub fn render_component_outcome(outcome: PersistComponentOutcome) -> String {
+    match outcome {
+        PersistComponentOutcome::NotConfigured => "not configured".to_string(),
+        PersistComponentOutcome::Committed => "committed".to_string(),
+        PersistComponentOutcome::SkippedCanonicalFailure => {
+            "skipped after canonical failure".to_string()
+        }
+        PersistComponentOutcome::Failed(category) => {
+            format!("failed ({})", category.as_str())
+        }
+    }
+}
+
+/// Emit one content-free persistence result. `trigger` is supplied only by
+/// fixed process call sites (`scheduled` and `shutdown`).
+pub fn log_report(trigger: &'static str, report: &PersistReport) {
+    let canonical_error = report
+        .canonical_state
+        .error_category()
+        .map_or("none", PersistErrorCategory::as_str);
+    let projection_error = report
+        .wdbx_projection
+        .error_category()
+        .map_or("none", PersistErrorCategory::as_str);
+    match report.overall {
+        PersistOverall::MemoryOnly | PersistOverall::Complete => tracing::info!(
+            trigger,
+            overall = report.overall.as_str(),
+            canonical = report.canonical_state.as_str(),
+            canonical_error,
+            wdbx = report.wdbx_projection.as_str(),
+            wdbx_error = projection_error,
+            "persistence attempt completed"
+        ),
+        PersistOverall::Partial => tracing::warn!(
+            trigger,
+            overall = report.overall.as_str(),
+            canonical = report.canonical_state.as_str(),
+            canonical_error,
+            wdbx = report.wdbx_projection.as_str(),
+            wdbx_error = projection_error,
+            "persistence attempt completed"
+        ),
+        PersistOverall::Failed => tracing::error!(
+            trigger,
+            overall = report.overall.as_str(),
+            canonical = report.canonical_state.as_str(),
+            canonical_error,
+            wdbx = report.wdbx_projection.as_str(),
+            wdbx_error = projection_error,
+            "persistence attempt completed"
+        ),
+    }
+}
+
+/// Injectable durable-output boundary. Tests can select exact component
+/// failures without reading or mutating a real state directory.
+pub trait PersistenceSink: Send + Sync {
+    fn publish(
+        &self,
+        directory: &Path,
+        destination: &Path,
+        bytes: &[u8],
+    ) -> Result<(), PersistErrorCategory>;
+}
+
+#[derive(Debug, Default)]
+pub struct FsPersistenceSink;
+
+impl PersistenceSink for FsPersistenceSink {
+    fn publish(
+        &self,
+        directory: &Path,
+        destination: &Path,
+        bytes: &[u8],
+    ) -> Result<(), PersistErrorCategory> {
+        publish_bytes(&FsAtomicFileSink, directory, destination, bytes)
+    }
+}
+
+pub fn persist_canonical(
+    sink: &dyn PersistenceSink,
+    directory: &Path,
+    stores: &Stores,
+) -> Result<(), PersistErrorCategory> {
+    let bytes = serde_json::to_vec(stores).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    serde_json::from_slice::<Stores>(&bytes).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    sink.publish(directory, &Stores::state_path(directory), &bytes)
+}
+
+pub fn persist_projection(
+    sink: &dyn PersistenceSink,
+    directory: &Path,
+    recall: &crate::wdbx::Recall,
+) -> Result<(), PersistErrorCategory> {
+    let bytes = recall
+        .store()
+        .try_render()
+        .map_err(|_| PersistErrorCategory::ProjectionEncode)?
+        .into_bytes();
+    sink.publish(directory, &Stores::wdbx_path(directory), &bytes)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersistPathKind {
+    Missing,
+    Directory,
+    RegularFile,
+    Unsafe,
+}
+
+trait PersistenceTemporaryFile: Write + Send {
+    fn sync_all(&mut self) -> io::Result<()>;
+}
+
+impl PersistenceTemporaryFile for File {
+    fn sync_all(&mut self) -> io::Result<()> {
+        File::sync_all(self)
+    }
+}
+
+trait AtomicFileSink: Send + Sync {
+    fn path_kind(&self, path: &Path) -> io::Result<PersistPathKind>;
+    fn create_dir_all(&self, path: &Path) -> io::Result<()>;
+    fn create_temporary(&self, path: &Path) -> io::Result<Box<dyn PersistenceTemporaryFile>>;
+    fn publish_rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+    fn sync_directory(&self, path: &Path) -> io::Result<()>;
+    fn remove_temporary(&self, path: &Path);
+}
+
+#[derive(Debug)]
+struct FsAtomicFileSink;
+
+impl AtomicFileSink for FsAtomicFileSink {
+    fn path_kind(&self, path: &Path) -> io::Result<PersistPathKind> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                let file_type = metadata.file_type();
+                Ok(if file_type.is_symlink() {
+                    PersistPathKind::Unsafe
+                } else if file_type.is_dir() {
+                    PersistPathKind::Directory
+                } else if file_type.is_file() {
+                    PersistPathKind::RegularFile
+                } else {
+                    PersistPathKind::Unsafe
+                })
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PersistPathKind::Missing),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        fs::create_dir_all(path)
+    }
+
+    fn create_temporary(&self, path: &Path) -> io::Result<Box<dyn PersistenceTemporaryFile>> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options
+            .open(path)
+            .map(|file| Box::new(file) as Box<dyn PersistenceTemporaryFile>)
+    }
+
+    fn publish_rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        fs::rename(from, to)
+    }
+
+    fn sync_directory(&self, path: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            File::open(path)?.sync_all()
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Ok(())
+        }
+    }
+
+    fn remove_temporary(&self, path: &Path) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const TEMPORARY_ATTEMPTS: u64 = 32;
+
+fn publish_bytes(
+    sink: &dyn AtomicFileSink,
+    directory: &Path,
+    destination: &Path,
+    bytes: &[u8],
+) -> Result<(), PersistErrorCategory> {
+    match sink.path_kind(directory) {
+        Ok(PersistPathKind::Missing) => {
+            sink.create_dir_all(directory)
+                .map_err(|_| PersistErrorCategory::CreateDirectory)?;
+            if !matches!(sink.path_kind(directory), Ok(PersistPathKind::Directory)) {
+                return Err(PersistErrorCategory::UnsafeFileType);
+            }
+        }
+        Ok(PersistPathKind::Directory) => {}
+        Ok(_) | Err(_) => return Err(PersistErrorCategory::UnsafeFileType),
+    }
+
+    match sink.path_kind(destination) {
+        Ok(PersistPathKind::Missing | PersistPathKind::RegularFile) => {}
+        Ok(_) | Err(_) => return Err(PersistErrorCategory::UnsafeFileType),
+    }
+
+    let file_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(PersistErrorCategory::UnsafeFileType)?;
+    let mut opened = None;
+    for _ in 0..TEMPORARY_ATTEMPTS {
+        let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = directory.join(format!(
+            ".{file_name}.tmp-{}-{sequence}",
+            std::process::id()
+        ));
+        match sink.path_kind(&temporary) {
+            Ok(PersistPathKind::Missing) => match sink.create_temporary(&temporary) {
+                Ok(file) => {
+                    opened = Some((temporary, file));
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(_) => return Err(PersistErrorCategory::CreateTemporary),
+            },
+            Ok(PersistPathKind::RegularFile) => continue,
+            Ok(_) | Err(_) => return Err(PersistErrorCategory::UnsafeFileType),
+        }
+    }
+    let (temporary, mut file) = opened.ok_or(PersistErrorCategory::CreateTemporary)?;
+
+    let before_publish = (|| {
+        file.write_all(bytes)
+            .map_err(|_| PersistErrorCategory::WriteTemporary)?;
+        file.flush()
+            .map_err(|_| PersistErrorCategory::SyncTemporary)?;
+        file.sync_all()
+            .map_err(|_| PersistErrorCategory::SyncTemporary)?;
+        drop(file);
+        match sink.path_kind(destination) {
+            Ok(PersistPathKind::Missing | PersistPathKind::RegularFile) => {}
+            Ok(_) | Err(_) => return Err(PersistErrorCategory::UnsafeFileType),
+        }
+        sink.publish_rename(&temporary, destination)
+            .map_err(|_| PersistErrorCategory::PublishRename)
+    })();
+    if let Err(category) = before_publish {
+        sink.remove_temporary(&temporary);
+        return Err(category);
+    }
+    sink.sync_directory(directory)
+        .map_err(|_| PersistErrorCategory::SyncDirectory)
+}
 
 /// One persisted brain row (`brain_states` in the spec).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,26 +542,11 @@ impl Stores {
 
     /// Write the document atomically into `dir`, creating the directory.
     pub fn save(&self, dir: &Path) -> Result<(), PersistError> {
-        fs::create_dir_all(dir).map_err(|source| PersistError::Io {
-            op: "create",
-            path: dir.to_path_buf(),
-            source,
-        })?;
         let path = Self::state_path(dir);
-        let tmp = path.with_extension("json.tmp");
-        let text = serde_json::to_string(self).map_err(|source| PersistError::Decode {
-            path: path.clone(),
-            source,
-        })?;
-        fs::write(&tmp, text).map_err(|source| PersistError::Io {
-            op: "write",
-            path: tmp.clone(),
-            source,
-        })?;
-        fs::rename(&tmp, &path).map_err(|source| PersistError::Io {
-            op: "rename",
+        persist_canonical(&FsPersistenceSink, dir, self).map_err(|category| PersistError::Io {
+            op: "persist",
             path,
-            source,
+            source: io::Error::other(category.as_str()),
         })
     }
 }
@@ -234,9 +614,240 @@ impl ReputationStore for Stores {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::persona::Persona;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FaultPoint {
+        CreateDirectory,
+        CreateTemporary,
+        WriteTemporary,
+        SyncTemporary,
+        PublishRename,
+        SyncDirectory,
+    }
+
+    #[derive(Default)]
+    struct MemorySinkState {
+        directories: std::collections::BTreeSet<PathBuf>,
+        files: BTreeMap<PathBuf, Vec<u8>>,
+        unsafe_paths: std::collections::BTreeSet<PathBuf>,
+        operations: Vec<&'static str>,
+    }
+
+    #[derive(Clone, Default)]
+    struct MemorySink {
+        state: Arc<Mutex<MemorySinkState>>,
+        fault: Option<FaultPoint>,
+    }
+
+    impl MemorySink {
+        fn failing(fault: FaultPoint) -> Self {
+            Self {
+                fault: Some(fault),
+                ..Self::default()
+            }
+        }
+
+        fn put_directory(&self, path: &Path) {
+            self.state
+                .lock()
+                .unwrap()
+                .directories
+                .insert(path.to_path_buf());
+        }
+
+        fn put_file(&self, path: &Path, bytes: &[u8]) {
+            self.state
+                .lock()
+                .unwrap()
+                .files
+                .insert(path.to_path_buf(), bytes.to_vec());
+        }
+
+        fn put_unsafe(&self, path: &Path) {
+            self.state
+                .lock()
+                .unwrap()
+                .unsafe_paths
+                .insert(path.to_path_buf());
+        }
+
+        fn bytes(&self, path: &Path) -> Option<Vec<u8>> {
+            self.state.lock().unwrap().files.get(path).cloned()
+        }
+    }
+
+    struct MemoryTemporary {
+        path: PathBuf,
+        state: Arc<Mutex<MemorySinkState>>,
+        fault: Option<FaultPoint>,
+    }
+
+    impl io::Write for MemoryTemporary {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.fault == Some(FaultPoint::WriteTemporary) {
+                return Err(io::Error::other("injected write failure"));
+            }
+            self.state
+                .lock()
+                .unwrap()
+                .files
+                .get_mut(&self.path)
+                .expect("temporary exists")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl PersistenceTemporaryFile for MemoryTemporary {
+        fn sync_all(&mut self) -> io::Result<()> {
+            if self.fault == Some(FaultPoint::SyncTemporary) {
+                return Err(io::Error::other("injected file sync failure"));
+            }
+            Ok(())
+        }
+    }
+
+    impl AtomicFileSink for MemorySink {
+        fn path_kind(&self, path: &Path) -> io::Result<PersistPathKind> {
+            let state = self.state.lock().unwrap();
+            Ok(if state.unsafe_paths.contains(path) {
+                PersistPathKind::Unsafe
+            } else if state.directories.contains(path) {
+                PersistPathKind::Directory
+            } else if state.files.contains_key(path) {
+                PersistPathKind::RegularFile
+            } else {
+                PersistPathKind::Missing
+            })
+        }
+
+        fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+            if self.fault == Some(FaultPoint::CreateDirectory) {
+                return Err(io::Error::other("injected directory creation failure"));
+            }
+            let mut state = self.state.lock().unwrap();
+            state.operations.push("create_directory");
+            state.directories.insert(path.to_path_buf());
+            Ok(())
+        }
+
+        fn create_temporary(&self, path: &Path) -> io::Result<Box<dyn PersistenceTemporaryFile>> {
+            if self.fault == Some(FaultPoint::CreateTemporary) {
+                return Err(io::Error::other("injected temporary creation failure"));
+            }
+            let mut state = self.state.lock().unwrap();
+            state.operations.push("create_temporary");
+            if state.files.contains_key(path) {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "collision"));
+            }
+            state.files.insert(path.to_path_buf(), Vec::new());
+            drop(state);
+            Ok(Box::new(MemoryTemporary {
+                path: path.to_path_buf(),
+                state: Arc::clone(&self.state),
+                fault: self.fault,
+            }))
+        }
+
+        fn publish_rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            if self.fault == Some(FaultPoint::PublishRename) {
+                return Err(io::Error::other("injected rename failure"));
+            }
+            let mut state = self.state.lock().unwrap();
+            state.operations.push("publish_rename");
+            let bytes = state.files.remove(from).expect("temporary exists");
+            state.files.insert(to.to_path_buf(), bytes);
+            Ok(())
+        }
+
+        fn sync_directory(&self, _path: &Path) -> io::Result<()> {
+            if self.fault == Some(FaultPoint::SyncDirectory) {
+                return Err(io::Error::other("injected directory sync failure"));
+            }
+            self.state.lock().unwrap().operations.push("sync_directory");
+            Ok(())
+        }
+
+        fn remove_temporary(&self, path: &Path) {
+            self.state.lock().unwrap().files.remove(path);
+        }
+    }
+
+    impl PersistenceSink for MemorySink {
+        fn publish(
+            &self,
+            directory: &Path,
+            destination: &Path,
+            bytes: &[u8],
+        ) -> Result<(), PersistErrorCategory> {
+            publish_bytes(self, directory, destination, bytes)
+        }
+    }
+
+    #[derive(Clone)]
+    pub(crate) struct RuntimeRecordingSink {
+        attempts: Arc<Mutex<Vec<&'static str>>>,
+        canonical_failure: Option<PersistErrorCategory>,
+        projection_failure: Option<PersistErrorCategory>,
+    }
+
+    impl RuntimeRecordingSink {
+        pub(crate) fn success() -> Self {
+            Self {
+                attempts: Arc::default(),
+                canonical_failure: None,
+                projection_failure: None,
+            }
+        }
+
+        pub(crate) fn fail_canonical(category: PersistErrorCategory) -> Self {
+            Self {
+                attempts: Arc::default(),
+                canonical_failure: Some(category),
+                projection_failure: None,
+            }
+        }
+
+        pub(crate) fn fail_projection(category: PersistErrorCategory) -> Self {
+            Self {
+                attempts: Arc::default(),
+                canonical_failure: None,
+                projection_failure: Some(category),
+            }
+        }
+
+        pub(crate) fn attempts(&self) -> Vec<&'static str> {
+            self.attempts.lock().unwrap().clone()
+        }
+    }
+
+    impl PersistenceSink for RuntimeRecordingSink {
+        fn publish(
+            &self,
+            _directory: &Path,
+            destination: &Path,
+            _bytes: &[u8],
+        ) -> Result<(), PersistErrorCategory> {
+            if destination
+                .file_name()
+                .is_some_and(|name| name == STATE_FILE)
+            {
+                self.attempts.lock().unwrap().push("canonical");
+                self.canonical_failure.map_or(Ok(()), Err)
+            } else {
+                self.attempts.lock().unwrap().push("wdbx");
+                self.projection_failure.map_or(Ok(()), Err)
+            }
+        }
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("abbey-persist-{tag}-{}", std::process::id()));
@@ -349,5 +960,151 @@ mod tests {
             Err(PersistError::Decode { .. })
         ));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn persist_report_truth_table_is_exact() {
+        assert_eq!(
+            PersistReport::memory_only().overall,
+            PersistOverall::MemoryOnly
+        );
+        assert_eq!(
+            PersistReport::from_components(
+                PersistComponentOutcome::Committed,
+                PersistComponentOutcome::Committed,
+            )
+            .overall,
+            PersistOverall::Complete
+        );
+        assert_eq!(
+            PersistReport::from_components(
+                PersistComponentOutcome::Committed,
+                PersistComponentOutcome::Failed(PersistErrorCategory::SyncDirectory),
+            )
+            .overall,
+            PersistOverall::Partial
+        );
+        assert_eq!(
+            PersistReport::from_components(
+                PersistComponentOutcome::Failed(PersistErrorCategory::WriteTemporary),
+                PersistComponentOutcome::SkippedCanonicalFailure,
+            )
+            .overall,
+            PersistOverall::Failed
+        );
+    }
+
+    #[test]
+    fn prepublication_failures_preserve_the_old_destination() {
+        let dir = Path::new("/injected/state");
+        let destination = dir.join(STATE_FILE);
+        let cases = [
+            (
+                FaultPoint::CreateTemporary,
+                PersistErrorCategory::CreateTemporary,
+            ),
+            (
+                FaultPoint::WriteTemporary,
+                PersistErrorCategory::WriteTemporary,
+            ),
+            (
+                FaultPoint::SyncTemporary,
+                PersistErrorCategory::SyncTemporary,
+            ),
+            (
+                FaultPoint::PublishRename,
+                PersistErrorCategory::PublishRename,
+            ),
+        ];
+        for (fault, expected) in cases {
+            let sink = MemorySink::failing(fault);
+            sink.put_directory(dir);
+            sink.put_file(&destination, b"old-state");
+            assert_eq!(
+                sink.publish(dir, &destination, b"new-state"),
+                Err(expected),
+                "wrong category for {fault:?}"
+            );
+            assert_eq!(
+                sink.bytes(&destination).as_deref(),
+                Some(b"old-state".as_slice())
+            );
+        }
+    }
+
+    #[test]
+    fn unsafe_destination_is_rejected_without_replacement() {
+        let dir = Path::new("/injected/state");
+        let destination = dir.join(STATE_FILE);
+        let sink = MemorySink::default();
+        sink.put_directory(dir);
+        sink.put_unsafe(&destination);
+        assert_eq!(
+            sink.publish(dir, &destination, b"new-state"),
+            Err(PersistErrorCategory::UnsafeFileType)
+        );
+        assert!(
+            sink.state
+                .lock()
+                .unwrap()
+                .unsafe_paths
+                .contains(&destination)
+        );
+    }
+
+    #[test]
+    fn directory_creation_failure_is_categorized() {
+        let dir = Path::new("/injected/state");
+        let destination = dir.join(STATE_FILE);
+        let sink = MemorySink::failing(FaultPoint::CreateDirectory);
+        assert_eq!(
+            sink.publish(dir, &destination, b"new-state"),
+            Err(PersistErrorCategory::CreateDirectory)
+        );
+        assert!(sink.bytes(&destination).is_none());
+    }
+
+    #[test]
+    fn directory_sync_failure_is_postpublication_and_reports_failure() {
+        let dir = Path::new("/injected/state");
+        let destination = dir.join(STATE_FILE);
+        let sink = MemorySink::failing(FaultPoint::SyncDirectory);
+        sink.put_directory(dir);
+        sink.put_file(&destination, b"old-state");
+        assert_eq!(
+            sink.publish(dir, &destination, b"new-state"),
+            Err(PersistErrorCategory::SyncDirectory)
+        );
+        assert_eq!(
+            sink.bytes(&destination).as_deref(),
+            Some(b"new-state".as_slice())
+        );
+    }
+
+    #[test]
+    fn non_finite_projection_is_categorized_before_any_output() {
+        let mut store = crate::wdbx::WdbxStore::new();
+        store.insert_vector(vec![f32::NAN]);
+        let recall = crate::wdbx::Recall::from_store(store);
+        assert_eq!(
+            persist_projection(&FsPersistenceSink, Path::new("/never-touched"), &recall),
+            Err(PersistErrorCategory::ProjectionEncode)
+        );
+    }
+
+    #[test]
+    fn non_roundtrippable_snapshot_is_categorized_before_any_output() {
+        let mut stores = Stores::default();
+        stores.reputations.insert(
+            "g\u{1f}u".to_string(),
+            ReputationRow {
+                value: f64::NAN,
+                interaction_count: 1,
+            },
+        );
+        assert_eq!(
+            persist_canonical(&FsPersistenceSink, Path::new("/never-touched"), &stores),
+            Err(PersistErrorCategory::SnapshotEncode)
+        );
     }
 }

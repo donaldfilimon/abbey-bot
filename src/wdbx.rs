@@ -51,6 +51,12 @@ pub const HEADER: &str = "# ABI-WDBX v1";
 /// Prefix of abi's optional checksum trailer, which this module drops on parse.
 const CHECKSUM_PREFIX: &str = "# checksum:";
 
+/// The in-memory projection contained a value the JSON wire format cannot
+/// represent. Deliberately content-free so callers cannot leak state through
+/// diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WdbxEncodeError;
+
 /// Why a store could not be parsed, loaded, or saved.
 #[derive(Debug)]
 pub enum WdbxError {
@@ -233,16 +239,25 @@ impl WdbxStore {
     /// every preserved unknown line in its original order. Ends with a newline.
     #[must_use]
     pub fn render(&self) -> String {
+        self.try_render().unwrap_or_default()
+    }
+
+    /// Render the exact WDBX-v1 wire form, reporting records that JSON cannot
+    /// represent instead of silently publishing a partial projection.
+    pub fn try_render(&self) -> Result<String, WdbxEncodeError> {
         let mut out = String::with_capacity(64 + self.vectors.len() * 320 + self.kv.len() * 96);
         out.push_str(HEADER);
         out.push('\n');
         for (id, values) in &self.vectors {
+            if values.iter().any(|value| !value.is_finite()) {
+                return Err(WdbxEncodeError);
+            }
             let line = VectorLine {
                 r#type: "vector",
                 id: *id,
                 values,
             };
-            out.push_str(&serde_json::to_string(&line).unwrap_or_default());
+            out.push_str(&serde_json::to_string(&line).map_err(|_| WdbxEncodeError)?);
             out.push('\n');
         }
         for (key, value) in &self.kv {
@@ -251,14 +266,14 @@ impl WdbxStore {
                 key,
                 value,
             };
-            out.push_str(&serde_json::to_string(&line).unwrap_or_default());
+            out.push_str(&serde_json::to_string(&line).map_err(|_| WdbxEncodeError)?);
             out.push('\n');
         }
         for line in &self.unknown {
             out.push_str(line);
             out.push('\n');
         }
-        out
+        Ok(out)
     }
 
     /// Read and parse a store file.
