@@ -24,7 +24,7 @@ backlog; implement in order unless a phase is explicitly deferred.
 | Area | Status | Where |
 |---|---|---|
 | Gateway + intents, listening presence | Live | `src/main.rs` |
-| Poise slash / context commands | Live | `src/commands_*` |
+| Poise slash commands (chat input) | Live | `src/commands_*`, `src/main.rs` |
 | Voice consent gate (`/voice join consent:true`), wake names | Live | `src/commands_voice/` |
 | Entry Point `launch` preserved on global register | Live | `src/main.rs` |
 | Activity shell (`ready()` handshake only) | Live on Pages | `activity/` → `https://donaldfilimon.github.io/abbey-bot/activity/` |
@@ -33,6 +33,28 @@ backlog; implement in order unless a phase is explicitly deferred.
 Shipped means code + docs exist and Gate can pass. Live rocket iframe still
 needs Donald’s Portal URL mapping (P0). Live spoken turns still need a human
 in Office Hours with consent (see `MLAI-LIVE-ACCEPTANCE.md`).
+
+---
+
+## Current gap inventory (2026-09-04)
+
+Relative to Discord Application + Interactions surface. Source: live checkout + docs.
+
+| Surface | Status | Notes |
+|---|---|---|
+| Chat-input `/` commands | **Done** | Full set in `src/main.rs` (persona, voice, admin, memory, vision, …) |
+| Context menus (USER / MESSAGE) | **Missing** | No `context_menu` in `src/` |
+| Buttons / selects / modals | **Missing** | No MESSAGE_COMPONENT / MODAL_SUBMIT handlers |
+| Components V2 layouts | **Missing** | P1 |
+| Interaction HTTP endpoint | **N/A (by design)** | Gateway + poise defer/follow-up only |
+| Entry Point `launch` preserve | **Done** | `register_globally_keeping_entry_point` |
+| Activity `ready()` shell | **Done** | Pages `/activity/`; Portal map still P0 |
+| Activity authorize / channel / participants / setActivity | **Missing** | P2 |
+| Stream + Use Embedded Activities gate | **Done** | Fail-closed on `/voice` |
+| Privileged intents (PRESENCES, members) | **Partial** | `non_privileged` + `GUILD_VOICE_STATES`; optional `MESSAGE_CONTENT` |
+| Webhook create API | **Guide only** | `/webhook` docs, no create-webhook call |
+| Polls / Stage / SKUs | **Out / deferred** | See Later + Out of scope |
+| Bot Go Live | **Never** | No Discord API |
 
 ---
 
