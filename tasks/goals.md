@@ -56,11 +56,13 @@ status: in_progress
   service was not started, stopped, or reloaded. The PID differs from the 26416 recorded in
   `docs/MLAI-LIVE-ACCEPTANCE.md`, so the agent has restarted since 2026-09-03 ~21:50 ET. The
   qualification claim is unaffected - it remains unqualified - but it is no longer a manual
-  foreground process. Note this also contradicts the machine-level `~/CLAUDE.md` line asserting
-  the launchd deployment is torn down and that nothing of it runs. (2) The pending live
+  foreground process. The machine-level `~/CLAUDE.md` already records this correctly (it
+  marks the deployment LIVE as of 2026-09-03 23:45 at the same PID, and files the 2026-08-21
+  teardown as superseded provenance); only this repository's ledger was stale. (2) The pending live
   acceptance in this section is blocked one layer earlier than stated:
   `docs/live-test-protocol.md:35-41` requires green exact-SHA three-platform CI before stage 0,
   and that CI is currently **red**, not merely unrun (see the Complete Abbey section).
+
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
 - Captured 2026-08-19 from the approved Rust specification program; specs copied to
@@ -100,6 +102,7 @@ status: in_progress
   `Outcome::OverBudget` is defined at `src/pipeline.rs:75`, returned at `src/pipeline.rs:169` and
   `:178`, and covered by `src/pipeline/tests.rs:624`. The gap is live observation only, not
   implementation.
+
 ## Reply quality & speed (sub-project 1 of "improve all")
 status: done
 - Spec `docs/superpowers/specs/2026-08-19-reply-quality-speed-design.md`; the dated `docs/benchmarks/2026-08-19-local-models.md` ranked gpt-oss:20b first, gemma4:e4b second, and measured gemma4:12b at 32–94 seconds with heavy reasoning. The latest operator choice supersedes that recommendation and the interim e4b choice: `gemma4:12b` is now the operational default/deployment intent, while every benchmark result remains historical evidence. Landed: tidy_reply shape/length contract; one generation slot per local backend + honest busy line; streaming local replies with post-early/edit-in-place (`stream_reply`, `Outbound::edit` on Discord/Telegram/Slack); one-shot Anthropic→local fallback. Gate 317 tests.
@@ -179,6 +182,7 @@ status: in_progress
   `deploy/test-smoke-mlx-vlm-tool-deltas.py`, and `deploy/test-patch-mlx-vlm-tool-encoding.py`;
   `check.ps1` runs none of the three. Its header documents only the POSIX/plist omission, so a
   green Windows gate covers less than a green POSIX gate. Recorded, not changed.
+
 ## Self-learning hardening (continuation of "improve all")
 status: done
 - 2026-08-19: replay buffer (last 1,000 experiences) and pending rewards persist across restarts; rolling channel summaries for opted-in guilds/DMs every 30 messages (scheduler, 10 min), grounding replies. Gate 331 tests. Live observation of a refreshed summary needs 30 new messages in an invited channel — not yet seen.
