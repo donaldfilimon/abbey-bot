@@ -39,9 +39,9 @@
 
 **Interfaces:** Produces the binding specifications consumed by every later task.
 
-- [x] Record the approved Discord catalog/help, member memory, image menus, voice split, typed voice mode, and classic admin-dashboard behavior.
-- [x] Record the explicit normalized provider scoring, circuit state machine, conversation-local pinning, effect-aware fallback, and legacy compatibility behavior.
-- [x] Record `PersistReport`, supervisor, structured event, readiness file, bounded JSONL retention, and fake-launchd acceptance behavior.
+- [x] Record the approved Discord catalog/help, composable runtime eligibility, member memory, image menus, voice split, typed voice mode, and classic admin-dashboard behavior.
+- [x] Record the centralized normalized-score producer, explicit scoring, complete circuit/Retry-After transitions, conversation-local pinning, enumerated effect-aware fallback, and legacy compatibility behavior.
+- [x] Record `PersistReport`, supervisor, structured event, exact readiness wire protocol, bounded bootstrap diagnostics/JSONL retention, and fake-launchd acceptance behavior.
 - [x] Verify the three specs repeat every Global Constraint without contradicting README.md or AGENTS.md.
 - [x] Commit only the four planning/specification files.
 
@@ -79,11 +79,11 @@
 
 **Files:** Create a pure command-catalog/help module; modify command registration, component routing, README catalog region, and tests.
 
-**Interfaces:** Produces `CommandKey`, `CommandKind`, `InteractionContext`, `Access`, `Capability`, `HelpSection`, `CommandSpec`, `registered_commands()`, and the versioned help component protocol.
+**Interfaces:** Produces `CommandKey`, `CommandKind`, `InteractionContext`, composable `AccessRule`/`ConditionRule`, `RegistrationPolicy`, `EligibilityRule`, `Capability`, `HelpSection`, `CommandSpec`, `registered_commands()`, and the versioned help component protocol.
 
-- [ ] Add the complete catalog for every existing and planned leaf command/context menu.
-- [ ] Add recursive Poise/catalog parity and README generated-region parity tests.
-- [ ] Implement ephemeral `/help [section]` with context, permission, and capability filtering.
+- [ ] Add the complete catalog for every existing and planned leaf command/context menu with named typed access/condition rules and separate registration defaults.
+- [ ] Add recursive Poise/catalog/runtime-rule parity and README generated-region parity tests.
+- [ ] Implement ephemeral `/help [section]` with the shared composable context, subject, permission, caller-presence, selected-mode, input, and capability evaluator.
 - [ ] Implement central component dispatch for `abbey:help:v1:<owner>:<expiry>:<section>` with 15-minute expiry and strict 100-character IDs.
 - [ ] Ensure component acknowledgement precedes permissions/network work and full IDs are never logged.
 - [ ] Test DM/member/moderator/webhook-manager/server-manager/admin matrices, unavailable capabilities, hidden voice channels, Discord limits, clamping, and Entry Point retention.
@@ -122,16 +122,16 @@
 
 **Files:** Modify provider domain/routing/catalog modules and focused tests only; do not wire production yet.
 
-**Interfaces:** Produces `NormalizedScore`, `ProviderScoreProfile`, `ProviderFailureKind`, `CircuitPhase`, `CircuitSnapshot`, `RouteDecision`, and `RouteUnavailableReason`.
+**Interfaces:** Produces `NormalizedScore`, `RequestClass`, `ScoreProducerPolicy`, `ProviderScoreProfile`, `ProviderFailureKind`, `RetryAfter`, `CircuitPhase`, `CircuitSnapshot`, `RouteDecision`, and `RouteUnavailableReason`.
 
-- [ ] Add failing tests for explicit `[0,1]` scores, exact 40/30/25/5 weighting, `n/20` qualification/live blending, configured-order tie breaks, and invalid numbers.
+- [ ] Add failing shared fixtures for request-class partition, qualification baselines, latency/locality/reliability/quality conversion, legacy-manifest projection, explicit `[0,1]` scores, exact 40/30/25/5 weighting, component-local `n/20` blending, configured-order tie breaks, and invalid numbers.
 - [ ] Remove implicit capability-density, provider-class, and raw-latency normalization from the router.
-- [ ] Implement injected-time failure windows: third transient failure in five minutes opens 60 seconds; half-open failure escalates to five then 15 minutes, capped; exactly one probe may reserve half-open.
+- [ ] Implement the complete injected-time phase/outcome/Retry-After table: third transient failure in five minutes opens 60 seconds; valid Retry-After may open early or extend but never shorten/cross 15 minutes; half-open failure escalates to five then 15 minutes; exactly one probe may reserve half-open.
 - [ ] Block auth/identity/schema/sandbox/configuration/protocol drift until requalification.
 - [ ] Exclude cancellation, invalid request, and busy outcomes from circuit/EWMA changes.
-- [ ] Reject Retry-After outside one second through 15 minutes.
+- [ ] Reject Retry-After outside one second through 15 minutes and incompatible outcome/header combinations as protocol drift.
 - [ ] Exclude open/blocked candidates, including sole and previously pinned candidates.
-- [ ] Remove router-global sticky state.
+- [ ] Remove router-global sticky state and pin exact pre-effect fallback eligibility, including terminal cancellation and invalid request.
 - [ ] Run all provider domain/routing/catalog tests and commit the reviewed pure-router slice.
 
 ### Task 8: Single Production Provider Runtime
@@ -169,17 +169,18 @@
 
 **Files:** Add observability/readiness/log writer modules; migrate interaction ledger and launchd plist; extend privacy tests.
 
-**Interfaces:** Produces `RunIdentity`, closed `EventCode`/component/outcome/error enums, privacy-safe `OperationalEvent`, `ReadinessPublisher`, and rotating managed JSONL writer.
+**Interfaces:** Produces `RunIdentity`, closed `EventCode`/component/outcome/error enums, privacy-safe `OperationalEvent`, exact version-1 `ReadinessPublisher`, bounded bootstrap status, and rotating managed JSONL writer.
 
 - [ ] Replace durable raw command errors and Discord IDs with command, success, categorized error, millisecond duration, and timestamp; deserialize legacy rows, discard legacy private fields, and require canonical privacy rewrite before managed ready.
 - [ ] Use monotonic millisecond timing for owned intervals and Discord timestamp milliseconds for total interaction latency.
-- [ ] Generate a cryptographic per-run nonce and hash the running executable; never trust env-supplied identity.
-- [ ] Publish owner-only atomic readiness at the fixed managed path with PID, nonce, SHA, phase, Discord/scheduler state, coarse connector states, and last persistence category only.
+- [ ] Generate a 256-bit OS-random lowercase-hex per-run nonce and hash the running executable; never trust env-supplied identity.
+- [ ] Publish owner-only atomic readiness at the fixed managed path using the exact shared version-1 key/type/enum schema, freshness predicate, PID range, and unknown-field rejection.
 - [ ] Publish ready only after state rewrite, scheduler start, Discord ready, registration, and presence; publish draining and remove only the same PID/nonce file.
+- [ ] Select managed mode only with `--managed-service`; add the independent fixed bootstrap status/exit-78 failure channel before managed JSONL initialization.
 - [ ] Add managed JSONL rotation: 8 MiB active file, five archives, 16 KiB event cap, directory 0700, files 0600, pre-write rotation, no symlinks/unexpected types.
 - [ ] Preserve foreground human-readable stderr and leave the legacy `abbey-bot.log` untouched.
 - [ ] Expand privacy gates to reject IDs, raw errors, paths, URLs, endpoints, models, prompts, transcripts, payloads, and media in structured events.
-- [ ] Test legacy migration, accurate short latency, canary exclusion, readiness ownership/type/freshness/identity, rotation/concurrency/modes, and initialization-before-credential access.
+- [ ] Test legacy migration, accurate short latency, canary exclusion, shared Rust/Python readiness fixtures, exact freshness/future skew/PID liveness, bootstrap failure visibility, rotation/concurrency/modes, and initialization-before-credential access.
 - [ ] Commit the reviewed observability/readiness slice.
 
 ### Task 11: Offline launchd Transaction Verification
@@ -188,11 +189,11 @@
 
 **Interfaces:** Produces `deploy/check-service-readiness.py` and `deploy/test-install-launchd.py`.
 
-- [ ] Make install success require fresh matching PID, run nonce, installed SHA, ready phase, scheduler running, Discord ready, and five additional stable seconds within a 30-second readiness budget.
+- [ ] Make install success require exact `--managed-service` plist arguments, live launchd PID, exact-schema/fresh matching nonce and installed SHA, ready phase, scheduler running, Discord ready, and five additional stable seconds within a 30-second readiness budget.
 - [ ] Require the same contract after rollback; stable PID alone never proves recovery.
-- [ ] Preserve existing uninstall behavior: stop exact service, remove plist/readiness, leave binary/data/env/rollback/logs.
+- [ ] Preserve existing uninstall retention: stop exact service, remove plist and same-identity readiness/bootstrap status, leave binary/data/env/rollback/logs.
 - [ ] Build a temp-HOME harness with fake cargo/launchctl/plutil/sleep and descendant-path assertions; never touch the real launchd domain or service.
-- [ ] Cover fresh install, update, no/stale/wrong readiness, PID changes, bootstrap/rollback failures, locks, unsafe types, invalid env/hash, interrupts, uninstall, modes, and secret-canary output.
+- [ ] Cover fresh install, update, all readiness schema/freshness/PID failures, every bounded bootstrap/log-init failure channel, PID changes, bootstrap/rollback failures, locks, unsafe types, invalid env/hash, interrupts, uninstall, modes, and secret-canary output.
 - [ ] Wire POSIX behavior tests into `check.sh`; Windows syntax/privacy-checks helpers but explicitly skips launchd execution.
 - [ ] Commit the reviewed installer-verification slice.
 

@@ -198,24 +198,29 @@ second signal.
 ## Run Identity and Startup Order
 
 `RunIdentity` contains the process PID, a cryptographically random per-process
-nonce, and the SHA-256 of the executable currently running. The nonce comes
-from the operating system cryptographic RNG. The executable is resolved and
-hashed directly. Environment-supplied PIDs, nonces, hashes, executable paths,
-or identity files are never trusted.
+nonce, and the SHA-256 of the executable currently running. The nonce is 256
+bits (32 bytes) read in full from the operating system cryptographic RNG and
+encoded as exactly 64 lowercase hexadecimal ASCII characters. Short reads,
+fallback PRNGs, UUIDs, and environment-provided entropy fail closed. The
+executable is resolved and hashed directly; its digest is also exactly 64
+lowercase hexadecimal characters. Environment-supplied PIDs, nonces, hashes,
+executable paths, or identity files are never trusted.
 
 Managed observability initializes and validates its private directories before
 Abbey reads `DISCORD_TOKEN`, connector tokens, provider credentials, or
 production data. The startup order is:
 
 1. parse the non-secret startup mode and explicit token-free self-test exits;
-2. construct `RunIdentity` and initialize managed logging/readiness safety;
-3. read and sanitize state, including legacy interaction rows;
-4. perform the required canonical privacy rewrite in managed mode;
-5. read/authenticate credentials and construct application/provider state;
-6. start the supervised scheduler/connectors;
-7. connect Discord, receive Ready, preserve/register commands, and apply
+2. construct `RunIdentity`, validate the private share parent, and publish the
+   managed bootstrap status;
+3. validate readiness targets and initialize managed logging safety;
+4. read and sanitize state, including legacy interaction rows;
+5. perform the required canonical privacy rewrite in managed mode;
+6. read/authenticate credentials and construct application/provider state;
+7. start the supervised scheduler/connectors;
+8. connect Discord, receive Ready, preserve/register commands, and apply
    presence;
-8. publish managed `ready` only after every required checkpoint succeeded.
+9. publish managed `ready` only after every required checkpoint succeeded.
 
 Token-free provider/voice self-test modes preserve their current behavior and
 do not open production state or publish managed ready.
@@ -274,9 +279,13 @@ Process PID, run nonce, and executable hash occur only in the private readiness
 identity where required; operational events do not duplicate them.
 
 Foreground mode preserves the existing human-readable tracing/stderr
-experience. Managed mode, selected by a fixed non-secret launchd startup
-argument, uses the structured writer. It does not reinterpret arbitrary user
-environment as run identity.
+experience. Managed mode is selected only by the exact standalone startup
+argument `--managed-service`; the launchd plist's `ProgramArguments` is the
+installed binary path followed by that argument. No environment variable or
+argument value selects managed paths or identity. Combining
+`--managed-service` with a provider/voice self-test or supplying it more than
+once is a startup usage error. Managed mode uses the structured writer and does
+not reinterpret arbitrary user environment as run identity.
 
 ## Managed Readiness Contract
 
@@ -292,18 +301,31 @@ owner-only mode-0600 regular file published by unique same-directory temporary
 file, file sync, atomic rename, and directory sync. Symlinks and unexpected
 types fail closed.
 
-The version-1 document contains only:
+The version-1 wire schema has exactly these required keys and JSON types:
 
-- schema version;
-- PID, run nonce, and running executable SHA-256;
-- phase: `starting`, `ready`, or `draining`;
-- publication timestamp in Unix milliseconds;
-- Discord state: `connecting`, `ready`, or `stopped`;
-- scheduler state: `starting`, `running`, or `stopped`;
-- Telegram and Slack coarse states: `disabled`, `starting`, `connected`,
-  `degraded`, or `stopped`;
-- last persistence overall category: `not_attempted`, `memory_only`,
-  `complete`, `partial`, or `failed`.
+| Key | JSON type | Allowed value |
+|---|---|---|
+| `schema_version` | integer | exactly `1` |
+| `pid` | integer | `1..=2147483647` |
+| `run_nonce` | string | exactly 64 lowercase hexadecimal characters encoding 256 random bits |
+| `executable_sha256` | string | exactly 64 lowercase hexadecimal SHA-256 characters |
+| `phase` | string enum | `starting`, `ready`, or `draining` |
+| `published_at_unix_ms` | integer | `0..=9223372036854775807` |
+| `discord` | string enum | `connecting`, `ready`, or `stopped` |
+| `scheduler` | string enum | `starting`, `running`, or `stopped` |
+| `telegram` | string enum | `disabled`, `starting`, `connected`, `degraded`, or `stopped` |
+| `slack` | string enum | `disabled`, `starting`, `connected`, `degraded`, or `stopped` |
+| `last_persistence` | string enum | `not_attempted`, `memory_only`, `complete`, `partial`, or `failed` |
+
+All keys are required, `null` is never accepted, and unknown or duplicate keys
+fail closed in both Rust and Python. Booleans, floats, numeric strings, leading
+plus signs, uppercase/mixed-case hex, and out-of-range integers are rejected.
+The publisher writes one compact UTF-8 JSON object plus `\n`, in the key order
+shown above. This is the canonical version-1 ready fixture:
+
+```json
+{"schema_version":1,"pid":4242,"run_nonce":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","executable_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","phase":"ready","published_at_unix_ms":1788537600123,"discord":"ready","scheduler":"running","telegram":"disabled","slack":"degraded","last_persistence":"complete"}
+```
 
 It contains no Discord IDs, provider identity/configuration, model, endpoint,
 path, secret, prompt, transcript, error string, message, media, counter, or
@@ -317,10 +339,71 @@ outages may be `degraded` without preventing ready because they are optional
 bounded retry services. Unexpected supervised task exit removes eligibility
 for ready and triggers draining.
 
+While `starting`, `ready`, or `draining`, the owner refreshes the document at
+least once every ten seconds even when no state changes. Each publication takes
+one wall-clock Unix-millisecond sample and rejects a clock value outside the
+schema range. For transaction time `start_ms`, checker sample `now_ms`, and
+publication `published_ms`, freshness is exactly:
+
+```text
+age_ok = if published_ms > now_ms {
+    published_ms - now_ms <= 2_000
+} else {
+    now_ms - published_ms <= 30_000
+}
+fresh = published_ms >= start_ms && age_ok
+```
+
+Both branch subtractions use checked integer arithmetic. Thus the checker
+allows at most two seconds of future wall-clock skew and no more than 30
+seconds of age. The five-second stability phase resamples and reapplies this
+predicate; it does not freeze the first wall-clock value.
+
 On shutdown the process publishes `draining` before cancellation. It removes a
 readiness file only after re-reading it and proving both PID and nonce equal the
 current `RunIdentity`; it never removes a successor's file. A crash may leave a
 stale file, which the checker rejects by process/identity/freshness checks.
+
+Rust publisher and Python checker tests load the same canonical JSON fixture
+and the same invalid corpus covering every missing/unknown/duplicate key,
+wrong type, enum spelling, integer bound, hex form, freshness boundary, and
+future-skew boundary. Neither side owns a hand-copied schema table.
+
+## Managed Bootstrap Failure Channel
+
+Managed startup has a bounded diagnostic channel independent of the JSONL log
+directory and writer. Before validating `$HOME/Library/Logs`, it atomically
+publishes an owner-only mode-0600 document at:
+
+```text
+$HOME/.local/share/abbey-bot/bootstrap-status.json
+```
+
+After `RunIdentity` exists and the mode-0700 readiness parent is validated, it
+owns this file. The closed version-1 schema is exactly `schema_version` integer
+`1`, the same `pid`, `run_nonce`, and `executable_sha256` forms as readiness,
+`phase` string `starting` or `failed`, and `code` string `none`,
+`readiness_file`, `log_directory`, `log_file`, or `log_writer`. All fields are
+required, unknown/duplicate fields fail closed, canonical encoding is one
+compact line, and the complete file is capped at 512 bytes. It contains no raw
+error, path, URL, environment value, or arbitrary string.
+
+The process first publishes `starting/none`. If readiness-target or JSONL
+initialization fails, it best-effort replaces the same-identity bootstrap
+document with the fixed failure code and exits with reserved status `78`. A
+log-directory validation failure therefore remains observable without
+constructing the primary JSONL writer. If run identity/readiness-parent safety
+fails before publication, or if the bootstrap document itself cannot be safely
+created, exit status `78` remains the fixed secret-free launchd-domain signal.
+No raw diagnostic is printed in managed mode.
+
+After the first valid `ready` publication, the process removes the bootstrap
+document only after proving its PID and nonce still match; a successor's file
+is never removed. The installer records only whether status 78 was observed
+and the matching fixed code, never file contents or paths. Fake-launchd tests
+cover every code, unsafe bootstrap parent/file types, atomic replacement,
+same-identity removal, successor preservation, missing-primary-log-directory,
+and the exit-78 fallback.
 
 ## Bounded Managed JSONL
 
@@ -360,14 +443,23 @@ observability channel.
 ## Offline launchd Transaction Verification
 
 `deploy/check-service-readiness.py` validates one candidate or rollback process.
-It accepts only explicit expected transaction start time, installed binary
-SHA-256, launchd-reported PID, and the fixed readiness path. Within a 30-second
-total readiness budget it requires a private regular document whose:
+Its CLI accepts only `--transaction-start-ms`, `--expected-sha256`, and
+`--launchd-pid`; HOME supplies the isolated owner root and the readiness path
+is fixed rather than accepted as an argument. The installer parses the positive
+decimal PID from the exact service record returned by `launchctl print`, passes
+that value, and the checker requires `os.kill(pid, 0)` to succeed on every poll.
+`ESRCH` is failure; because the process is in the current user's launchd domain,
+`EPERM` is also failure rather than existence evidence. The fake harness injects
+the process-existence primitive without signaling a real process.
+
+Within a 30-second total monotonic readiness budget the checker samples its own
+wall clock for the exact freshness predicate above and requires a private
+regular document whose:
 
 - publication is fresh for the current transaction;
 - PID equals launchd's current PID and that PID remains present;
-- nonce is nonempty, valid, and differs from any pre-transaction readiness
-  identity;
+- nonce is valid 64-character lowercase hex and differs from any
+  pre-transaction readiness identity;
 - executable SHA equals the installed binary SHA;
 - phase is `ready`;
 - scheduler is `running`;
@@ -378,6 +470,11 @@ same PID, nonce, SHA, ready phase, scheduler, and Discord state. Connector state
 last persistence category, and publication timestamp may update without
 invalidating identity. Stable PID alone, a stale file, a matching hash under a
 different PID/nonce, or a transient ready file never proves success.
+
+The installed plist is also inspected before bootstrap: its
+`ProgramArguments` must be exactly the installed binary path followed by
+`--managed-service`, with no duplicate mode argument or environment-selected
+substitute.
 
 The installer uses the checker after a fresh install/update and after automatic
 rollback. A rollback is successful only when the restored binary's matching
@@ -394,12 +491,14 @@ repository/build fixture.
 The offline matrix covers:
 
 - fresh install and update success;
-- missing, stale, malformed, symlinked, wrong-owner/mode, wrong-PID,
-  wrong-nonce, wrong-SHA, non-ready, scheduler-stopped, and Discord-not-ready
-  documents;
+- missing, stale, future-skewed, malformed, missing/unknown/duplicate-key,
+  symlinked, wrong-owner/mode, wrong-PID, dead-PID, wrong-nonce, wrong-SHA,
+  non-ready, scheduler-stopped, and Discord-not-ready documents;
 - PID or nonce changes during the five-second stability window;
-- bootstrap failure, candidate readiness failure, rollback bootstrap failure,
-  rollback readiness failure, and retained recovery state;
+- every fixed bootstrap failure code, exit 78 without a writable bootstrap
+  document, primary log-directory/file failure, candidate readiness failure,
+  rollback bootstrap failure, rollback readiness failure, and retained recovery
+  state;
 - install-lock contention/ownership and unsafe file types for every published
   target;
 - invalid owner environment and binary/hash mismatch without printing values;
@@ -408,10 +507,10 @@ The offline matrix covers:
 - secret-canary exclusion from stdout/stderr, fake logs, readiness, and JSONL.
 
 Uninstall preserves today's data-retention contract: stop the exact service,
-remove only its plist and same-identity readiness file, and leave installed
-binary, data, owner environment, rollback material, structured logs, and legacy
-log in place. Unexpected types fail closed rather than being recursively
-removed.
+remove only its plist, same-identity readiness file, and same-identity bootstrap
+status, and leave installed binary, data, owner environment, rollback material,
+structured logs, and legacy log in place. Unexpected types fail closed rather
+than being recursively removed.
 
 The POSIX offline behavior suite runs from `check.sh`. Windows runs syntax,
 schema, and privacy checks for the Python helpers and explicitly reports
@@ -432,9 +531,11 @@ Focused source tests cover:
   sub-second total latency, monotonic interval timing, secret/private canary
   exclusion, and initialization before credential access;
 - readiness ownership, mode, type, atomicity, freshness, identity, phase
-  gating, successor-safe removal, and stale-crash behavior;
+  gating, exact shared schema fixture, nonce entropy/encoding, PID liveness,
+  managed argument, successor-safe removal, and stale-crash behavior;
 - JSONL limits, pre-write rotation, archive retention, concurrent writers,
-  permissions, unsafe types, and invariant failure;
+  permissions, unsafe types, invariant failure, and the independent bounded
+  bootstrap failure channel;
 - the complete fake-launchd matrix above with descendant-path assertions.
 
 These gates prove source and offline transaction behavior only. They do not

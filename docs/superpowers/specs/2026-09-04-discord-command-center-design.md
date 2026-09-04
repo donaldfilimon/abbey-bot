@@ -46,23 +46,47 @@ The pure command module owns these types:
   menu. It is not the display name and is safe to use in content-free metrics.
 - `CommandKind`: `Slash`, `UserContext`, or `MessageContext`.
 - `InteractionContext`: a set drawn from `Guild` and `BotDm`.
-- `Access`: `Everyone`, `SelfOrMemoryModerator`, `ModerateMembers`,
-  `ManageWebhooks`, `ManageServer`, or `OwnerOrAdministrator`.
-- `Capability`: zero or more of `Generation`, `Vision`, `VoiceConfigured`,
-  `VoiceLocal`, or `VoiceOpenAi`.
+- `DiscordPermission`: only permission bits Abbey tests: `ManageMessages`,
+  `ModerateMembers`, `ManageWebhooks`, `ManageServer`, or `Administrator`.
+- `AccessRule`: composable `Allow`, `Permission(DiscordPermission)`,
+  `CallerPresentInVoice`, `SelfSubject`, `ApplicationOwner`, `All(rules)`, or
+  `Any(rules)`. Empty `All`/`Any` values are invalid catalog data.
+- `Capability`: `Generation`, `Vision`, `VoiceConfigured`, `VoiceLocal`, or
+  `VoiceOpenAi`.
+- `InputPredicate`: `FollowUpAbsent` or `ActionTargetResolved`.
+- `ConditionRule`: composable `Always`, `Available(Capability)`,
+  `Input(InputPredicate)`, `SelectedVoiceModeReady`,
+  `HierarchyAllowsAction`, `All(rules)`, or `Any(rules)`. As with access,
+  empty composites are invalid.
+- `RegistrationPolicy`: Discord contexts plus the optional static
+  `default_member_permissions` bit. This is registration metadata, not runtime
+  authorization.
+- `EligibilityRule`: one `AccessRule` and one `ConditionRule`, both of which
+  must pass at invocation time.
 - `HelpSection`: `Start`, `Conversation`, `Memory`, `Images`, `Moderation`,
   `Server`, `Voice`, or `Administration`.
-- `CommandSpec`: key, kind, qualified Discord name, contexts, access,
-  capabilities, section, short description, and whether the response is
-  private.
+- `CommandSpec`: key, kind, qualified Discord name, registration policy,
+  runtime eligibility, section, short description, and whether the response
+  is private.
 - `registered_commands()`: the complete ordered slice of Abbey-owned leaf
   command and context-menu specifications.
 
 The catalog is static application policy. It contains no Serenity or Poise
 types, reads no environment or clock, performs no permission lookup, and does
 not include provider names, endpoints, Discord IDs, or live state. Runtime code
-supplies a small plain input describing the current context, effective
-permissions, and available capability categories when filtering help.
+supplies a plain `EligibilityInput` containing context, effective permissions,
+whether actor equals subject, application-owner status, caller voice presence,
+selected typed voice mode, available capability categories, optional-input
+presence, and the already-resolved hierarchy result. One pure recursive
+evaluator is used by command guards and help filtering; adapters may not
+re-derive a named rule.
+
+`RegistrationPolicy.default_member_permissions` is deliberately narrower than
+runtime eligibility. It is `ModerateMembers`, `ManageWebhooks`, or
+`ManageServer` only where every legal caller must have that permission. It is
+unset for self-or-moderator and caller-present-or-manager rules so Discord does
+not hide valid self/member paths. Administrator remains an effective-permission
+input at runtime, not a second registration default.
 
 Parent slash-command groups are structural and are checked recursively, but
 the catalog enumerates leaves because leaves are what a person can invoke.
@@ -78,54 +102,82 @@ optional member parameter is self by default; `memory moderator` means the
 current caller is the subject or currently has Manage Messages, Manage Server,
 or Administrator.
 
-| Section | Surface | Context | Access | Capability | Response |
+Every nontrivial row refers to these immutable typed rule constants:
+
+| ID | Exact typed rule |
+|---|---|
+| `A0` | `AccessRule::Allow` |
+| `A1` | `Any(SelfSubject, Permission(ManageMessages), Permission(ManageServer), Permission(Administrator))` |
+| `A2` | `Permission(ModerateMembers)` |
+| `A3` | `Permission(ManageWebhooks)` |
+| `A4` | `Permission(ManageServer)` |
+| `A5` | `All(Permission(ManageServer), CallerPresentInVoice)` |
+| `A6` | `Any(CallerPresentInVoice, Permission(ManageServer))` |
+| `A7` | `Any(ApplicationOwner, Permission(Administrator))` |
+| `C0` | `ConditionRule::Always` |
+| `C1` | `Available(Generation)` |
+| `C2` | `Available(Vision)` |
+| `C3` | `All(Available(Vision), Any(Input(FollowUpAbsent), Available(Generation)))` |
+| `C4` | `Available(VoiceConfigured)` |
+| `C5` | `All(Available(VoiceConfigured), SelectedVoiceModeReady)` |
+| `C6` | `All(Available(VoiceConfigured), Available(VoiceLocal))` |
+| `C7` | `HierarchyAllowsAction` |
+
+`SelectedVoiceModeReady` is exact: Off is false, Local requires `VoiceLocal`,
+and OpenAI requires `VoiceOpenAi`; every case also requires `VoiceConfigured`
+through `C5`. `HierarchyAllowsAction` is evaluated only after the target and
+roles are fetched and retains the existing owner/administrator/strict-role
+rules. `C3` requires no generation capability when the optional follow-up is
+absent and requires it when present.
+
+| Section | Surface | Context | Access rule | Condition rule | Response |
 |---|---|---|---|---|---|
-| Start | `/help [section]` | guild, bot DM | everyone | none | private |
-| Conversation | `/persona route` | guild, bot DM | everyone | none | existing visibility |
-| Conversation | `/persona ask` | guild, bot DM | everyone | generation | existing visibility |
-| Server | `/whois <user>` | guild | everyone | none | existing visibility |
-| Server | `Abbey: profile` USER menu | guild | everyone | none | private |
-| Conversation | `Ask Abbey` MESSAGE menu | guild, bot DM | everyone | generation | private |
-| Server | `/perms <channel> <user>` | guild | everyone | none | existing visibility |
-| Moderation | `/modcall <user> <severity> [warnings] [timeouts]` | guild | Moderate Members plus existing hierarchy checks | none | private |
-| Server | `/server <kind>` | guild, bot DM | everyone | none | private |
-| Server | `/webhook <channel>` | guild | Manage Webhooks | none | private |
-| Memory | `/remember <fact> [user] [replaces]` | guild, bot DM | self or memory moderator | none | private |
-| Memory | `/forget <fact> [user]` | guild, bot DM | self or memory moderator | none | private |
-| Memory | `/pending list [user]` | guild, bot DM | self or memory moderator | none | private |
-| Memory | `/pending confirm <old_fact> [user]` | guild, bot DM | self or memory moderator | none | private |
-| Memory | `/pending dismiss <old_fact> [user]` | guild, bot DM | self or memory moderator | none | private |
-| Memory | `/recall [user]` | guild, bot DM | self or memory moderator | none | private |
-| Memory | `/reputation [user]` | guild; bot DM for self only | self or memory moderator | none | private |
-| Memory | `Abbey: memory` USER menu | guild | self or memory moderator | none | private |
-| Conversation | `/summarize [count] [as]` | guild, bot DM | everyone | generation | existing visibility |
-| Images | `/see <image> [question]` | guild, bot DM | everyone | vision; generation only for follow-up | existing visibility |
-| Images | `/ocr <image>` | guild, bot DM | everyone | vision | existing visibility |
-| Images | `Abbey: describe image` MESSAGE menu | guild, bot DM | everyone | vision | private |
-| Images | `Abbey: read image text` MESSAGE menu | guild, bot DM | everyone | vision | private |
-| Start | `/stats` | guild, bot DM | everyone | none | private |
-| Administration | `/admin show` | guild | Manage Server | none | private |
-| Administration | `/admin persona` | guild | Manage Server | none | private |
-| Administration | `/admin learning` | guild | Manage Server | none | private |
-| Administration | `/admin vision` | guild | Manage Server | none | private |
-| Administration | `/admin cooldown` | guild | Manage Server | none | private |
-| Administration | `/admin act` | guild | Manage Server | none | private |
-| Administration | `/admin budget` | guild | Manage Server | none | private |
-| Administration | `/admin brain` | guild | Manage Server | none | private |
-| Administration | `/admin flush` | guild | Manage Server | none | private |
-| Administration | `/admin export` | guild | Manage Server | none | private |
-| Administration | `/admin reset` | guild | Manage Server | none | private |
-| Administration | `/admin dashboard` | guild | Manage Server | none | private |
-| Voice | `/voice consent` | configured guild | everyone | voice configured | private |
-| Voice | `/voice notice` | configured guild | Manage Server | voice configured | private |
-| Voice | `/voice join consent:true` | configured guild | Manage Server and caller present | selected voice mode | private |
-| Voice | `/voice resume consent:true` | configured guild | Manage Server and caller present | selected voice mode | private |
-| Voice | `/voice leave` | configured guild | caller present or Manage Server | voice configured | private |
-| Voice | `/voice status` | configured guild | everyone | voice configured | private |
-| Voice | `/voice diagnostics` | configured guild | Manage Server | voice configured | private |
-| Voice | `/voice mode [choice]` | configured guild | Manage Server | voice configured | private |
-| Voice | `/voice verify start` | configured guild | owner or Administrator | local voice | private |
-| Voice | `/voice verify report` | configured guild | owner or Administrator | local voice | private |
+| Start | `/help [section]` | guild, bot DM | `A0` | `C0` | private |
+| Conversation | `/persona route` | guild, bot DM | `A0` | `C0` | existing visibility |
+| Conversation | `/persona ask` | guild, bot DM | `A0` | `C1` | existing visibility |
+| Server | `/whois <user>` | guild | `A0` | `C0` | existing visibility |
+| Server | `Abbey: profile` USER menu | guild | `A0` | `C0` | private |
+| Conversation | `Ask Abbey` MESSAGE menu | guild, bot DM | `A0` | `C1` | private |
+| Server | `/perms <channel> <user>` | guild | `A0` | `C0` | existing visibility |
+| Moderation | `/modcall <user> <severity> [warnings] [timeouts]` | guild | `A2` | `C7` | private |
+| Server | `/server <kind>` | guild, bot DM | `A0` | `C0` | private |
+| Server | `/webhook <channel>` | guild | `A3` | `C0` | private |
+| Memory | `/remember <fact> [user] [replaces]` | guild, bot DM | `A1` | `C0` | private |
+| Memory | `/forget <fact> [user]` | guild, bot DM | `A1` | `C0` | private |
+| Memory | `/pending list [user]` | guild, bot DM | `A1` | `C0` | private |
+| Memory | `/pending confirm <old_fact> [user]` | guild, bot DM | `A1` | `C0` | private |
+| Memory | `/pending dismiss <old_fact> [user]` | guild, bot DM | `A1` | `C0` | private |
+| Memory | `/recall [user]` | guild, bot DM | `A1` | `C0` | private |
+| Memory | `/reputation [user]` | guild; bot DM for self only | `A1` | `C0` | private |
+| Memory | `Abbey: memory` USER menu | guild | `A1` | `C0` | private |
+| Conversation | `/summarize [count] [as]` | guild, bot DM | `A0` | `C1` | existing visibility |
+| Images | `/see <image> [question]` | guild, bot DM | `A0` | `C3` | existing visibility |
+| Images | `/ocr <image>` | guild, bot DM | `A0` | `C2` | existing visibility |
+| Images | `Abbey: describe image` MESSAGE menu | guild, bot DM | `A0` | `C2` | private |
+| Images | `Abbey: read image text` MESSAGE menu | guild, bot DM | `A0` | `C2` | private |
+| Start | `/stats` | guild, bot DM | `A0` | `C0` | private |
+| Administration | `/admin show` | guild | `A4` | `C0` | private |
+| Administration | `/admin persona` | guild | `A4` | `C0` | private |
+| Administration | `/admin learning` | guild | `A4` | `C0` | private |
+| Administration | `/admin vision` | guild | `A4` | `C0` | private |
+| Administration | `/admin cooldown` | guild | `A4` | `C0` | private |
+| Administration | `/admin act` | guild | `A4` | `C0` | private |
+| Administration | `/admin budget` | guild | `A4` | `C0` | private |
+| Administration | `/admin brain` | guild | `A4` | `C0` | private |
+| Administration | `/admin flush` | guild | `A4` | `C0` | private |
+| Administration | `/admin export` | guild | `A4` | `C0` | private |
+| Administration | `/admin reset` | guild | `A4` | `C0` | private |
+| Administration | `/admin dashboard` | guild | `A4` | `C0` | private |
+| Voice | `/voice consent` | guild | `A0` | `C4` | private |
+| Voice | `/voice notice` | guild | `A4` | `C4` | private |
+| Voice | `/voice join consent:true` | guild | `A5` | `C5` | private |
+| Voice | `/voice resume consent:true` | guild | `A5` | `C5` | private |
+| Voice | `/voice leave` | guild | `A6` | `C4` | private |
+| Voice | `/voice status` | guild | `A0` | `C4` | private |
+| Voice | `/voice diagnostics` | guild | `A4` | `C4` | private |
+| Voice | `/voice mode [choice]` | guild | `A4` | `C4` | private |
+| Voice | `/voice verify start` | guild | `A7` | `C6` | private |
+| Voice | `/voice verify report` | guild | `A7` | `C6` | private |
 
 The implementation must reconcile any current Poise/README context drift to
 this table without silently removing an existing command. In particular,
@@ -135,10 +187,21 @@ cross-member access adopts the existing memory authorization rule.
 ## Catalog and Registration Parity
 
 Tests recursively flatten every Poise command and compare it with
-`registered_commands()` by qualified name, command kind, allowed contexts,
-default access, and ephemerality. The test fails for duplicate leaves, missing
-catalog entries, catalog-only entries, duplicate Discord names, or a parent
-whose child metadata weakens the catalog.
+`registered_commands()` by qualified name, command kind, registration
+contexts, static default permission, typed access rule ID, typed condition rule
+ID, and ephemerality. The test fails for duplicate leaves, missing catalog
+entries, catalog-only entries, unknown/cyclic/empty policy expressions,
+duplicate Discord names, or a parent whose child metadata weakens the catalog.
+Table fixtures exercise every named rule against its truth table, including
+self versus moderator, caller presence OR manager, caller presence AND manager,
+Off/Local/OpenAI selection, and `/see` with and without a follow-up.
+
+Runtime guard parity tests invoke every non-`A0` or non-`C0` command adapter and
+prove it delegates to the catalog evaluator. Help uses the same evaluator in
+`Discoverability` mode: current context, permission, subject, presence, and
+capability facts are mandatory, while an invocation-only target predicate such
+as `HierarchyAllowsAction` is treated as potentially satisfiable until a target
+is supplied. Invocation mode fails closed if any required fact is unresolved.
 
 A delimited generated region in `README.md` is rendered from the catalog and is
 compared byte-for-byte in the gate. Handwritten voice, consent, provider, and
