@@ -265,7 +265,9 @@ impl Segmenter {
     }
 
     pub fn is_speaking(&self) -> bool {
-        self.active.is_some()
+        // A first voiced frame must defer prepared playback too, before the
+        // second frame confirms SpeechStarted and would interrupt that reply.
+        self.active.is_some() || self.candidate_frames > 0
     }
 
     pub fn push(&mut self, mut frame: VoiceFrame) -> Vec<SegmentEvent> {
@@ -815,6 +817,28 @@ pub fn spoken_text(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_speech_candidate_blocks_playback_until_cleared() {
+        let mut segmenter = Segmenter::new();
+        assert!(!segmenter.is_speaking());
+        assert!(segmenter.push(frame(1, Some(9), 2_000)).is_empty());
+        assert!(segmenter.is_speaking());
+        assert!(segmenter.push(VoiceFrame::silence(2)).is_empty());
+        assert!(!segmenter.is_speaking());
+
+        assert!(segmenter.push(frame(3, Some(9), 2_000)).is_empty());
+        assert!(segmenter.is_speaking());
+        assert!(matches!(
+            segmenter.push(frame(4, Some(9), 2_000)).as_slice(),
+            [SegmentEvent::SpeechStarted { .. }]
+        ));
+        assert!(segmenter.is_speaking());
+        for sequence in 5..30 {
+            assert!(segmenter.push(VoiceFrame::silence(sequence)).is_empty());
+        }
+        assert!(!segmenter.is_speaking());
+    }
 
     fn frame(sequence: u64, speaker: Option<u64>, value: i16) -> VoiceFrame {
         VoiceFrame {

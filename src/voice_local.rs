@@ -446,7 +446,8 @@ pub async fn run(mut session: LocalSession) {
                         tracing::info!(turn, "local voice utterance ignored; wake name required");
                         if turns.is_empty() && ready_reply.is_none() && pending_commit.is_none() && !input_speaking {
                             session.runtime.set_status(
-                                session.epoch, VoicePhase::Listening, "listening; say Abbey, Abby, Abi, or Aviva",
+                                session.epoch, VoicePhase::Listening,
+                                format!("listening; say {}", session.runtime.config.wake_words.join(", ")),
                             ).await;
                         }
                     }
