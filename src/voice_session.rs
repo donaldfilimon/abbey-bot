@@ -21,7 +21,7 @@ mod control;
 mod playback;
 mod verification;
 
-pub use control::{authoritative_text_reply, requests_consent_withdrawal};
+pub use control::{authoritative_text_reply, requests_consent_withdrawal, withdrawal_requested};
 pub use playback::{PlaybackTermination, register_playback_termination};
 pub use verification::VerificationActivation;
 use verification::VerificationState;
@@ -174,6 +174,7 @@ struct RuntimeState {
     status: String,
     consent_epoch: u64,
     participants: HashSet<u64>,
+    processing_mode: VoiceMode,
     control: Option<SessionControl>,
 }
 
@@ -283,6 +284,7 @@ pub struct VoiceSnapshot {
 
 pub struct VoiceRuntime {
     pub config: VoiceConfig,
+    pub consent: Arc<crate::voice_consent_store::ConsentStore>,
     /// The mode in force right now, which `/voice mode` may change while the
     /// call is disconnected. Deliberately an atomic rather than a lock: every
     /// read is a copy-out, so this can never participate in the
@@ -309,6 +311,11 @@ pub struct VoiceRuntime {
     inner: Mutex<RuntimeState>,
 }
 
+pub struct ConsentChange {
+    pub epoch_to_stop: Option<u64>,
+    pub saved: tokio::task::JoinHandle<Result<bool, &'static str>>,
+}
+
 /// `VoiceMode` as a stable byte, so the mode in force can live in an atomic
 /// instead of a lock. The mapping is private and only ever round-tripped
 /// through the two functions below.
@@ -332,27 +339,41 @@ const fn mode_from_code(code: u8) -> VoiceMode {
 }
 
 impl VoiceRuntime {
+    #[cfg(test)]
     #[must_use]
     pub fn new(config: VoiceConfig) -> Self {
-        Self::build(config, None)
+        let consent = Arc::new(crate::voice_consent_store::ConsentStore::load(
+            None,
+            config.guild_id,
+        ));
+        Self::build(config, None, consent)
     }
 
     #[must_use]
-    pub fn new_with_inspect(config: VoiceConfig, registry: Arc<VoiceInspectRegistry>) -> Self {
+    pub fn new_with_inspect(
+        config: VoiceConfig,
+        registry: Arc<VoiceInspectRegistry>,
+        consent: Arc<crate::voice_consent_store::ConsentStore>,
+    ) -> Self {
         let guild_id = config.guild_id.to_string();
         let inspect = VoiceInspectBinding {
             registry,
             scoped_guild_id: crate::guild::scoped_guild_id("discord", Some(&guild_id)),
         };
-        let runtime = Self::build(config, Some(inspect));
+        let runtime = Self::build(config, Some(inspect), consent);
         runtime.publish_inspect(VoiceInspectState::Off);
         runtime
     }
 
-    fn build(config: VoiceConfig, inspect: Option<VoiceInspectBinding>) -> Self {
+    fn build(
+        config: VoiceConfig,
+        inspect: Option<VoiceInspectBinding>,
+        consent: Arc<crate::voice_consent_store::ConsentStore>,
+    ) -> Self {
         let (start_changes, _) = watch::channel(0);
         let selected_mode = AtomicU8::new(mode_code(config.mode()));
         Self {
+            consent,
             selected_mode,
             config,
             transition: Mutex::new(()),
@@ -375,6 +396,7 @@ impl VoiceRuntime {
                 status: "configured; disconnected".into(),
                 consent_epoch: 0,
                 participants: HashSet::new(),
+                processing_mode: VoiceMode::Disabled,
                 control: None,
             }),
         }
@@ -558,6 +580,47 @@ impl VoiceRuntime {
         self.media_epoch.store(0, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
         self.mark_inspect_media_revoked();
+    }
+
+    /// Atomically deny a member's saved choice against final activation. Present
+    /// or epoch-attested members can stop the call; other absent members can
+    /// still withdraw their own agreement. The result carries exact-epoch
+    /// teardown authority across later cache updates.
+    pub fn change_consent(
+        &self,
+        user: u64,
+        event: u64,
+        choice: crate::voice_consent::Choice,
+        now: u64,
+        stop_call: bool,
+    ) -> ConsentChange {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let change = self.consent.change(user, event, choice, now);
+        let epoch = self.current_epoch.load(Ordering::SeqCst);
+        let attested = {
+            let sessions = self
+                .discord_sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            sessions.attested_epoch == epoch && sessions.attested.contains(&user)
+        };
+        // Departures do not discard this epoch's immutable attested set. A
+        // withdrawal while away must prevent reusing that authority on rejoin.
+        let stop_call = choice.withdraws() && change.current && (stop_call || attested);
+        if stop_call {
+            let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            self.pending_start_generation.store(0, Ordering::SeqCst);
+            self.media_epoch.store(0, Ordering::SeqCst);
+            self.start_changes.send_replace(generation);
+            self.mark_inspect_media_revoked();
+        }
+        ConsentChange {
+            epoch_to_stop: stop_call.then_some(epoch),
+            saved: change.saved,
+        }
     }
 
     /// Clear a completed/failed start reservation without invalidating a newer
@@ -753,6 +816,7 @@ impl VoiceRuntime {
         inner.status = "joining Discord voice safely".into();
         inner.consent_epoch = inner.consent_epoch.saturating_add(1);
         inner.participants = participants;
+        inner.processing_mode = self.effective_mode();
         self.current_epoch.store(epoch, Ordering::SeqCst);
         self.publish_inspect_phase(VoicePhase::Connecting, false);
         epoch
@@ -798,6 +862,10 @@ impl VoiceRuntime {
             || inner.phase != VoicePhase::Connecting
             || !self.is_current(epoch)
             || !self.start_is_current(start_generation)
+            || !self
+                .consent
+                .coverage(&inner.participants, inner.processing_mode)
+                .is_ok_and(|missing| missing.is_empty())
         {
             return false;
         }

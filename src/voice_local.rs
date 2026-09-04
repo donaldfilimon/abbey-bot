@@ -79,6 +79,7 @@ enum TurnOutcome {
     },
     WithdrawConsent {
         turn: u64,
+        user: u64,
     },
     RecognitionExpired {
         turn: u64,
@@ -494,9 +495,10 @@ pub async fn run(mut session: LocalSession) {
                         ).await;
                         break;
                     }
-                    TurnOutcome::WithdrawConsent { turn } => {
+                    TurnOutcome::WithdrawConsent { turn, user } => {
                         tracing::info!(turn, "local voice consent withdrawal recognized");
                         let _ = session.runtime.revoke_media(session.epoch);
+                        let saved = session.runtime.change_consent(user, crate::voice_consent::withdrawal_watermark(crate::runtime::now_millis()), crate::voice_consent::Choice::WithdrawSpoken, crate::runtime::now(), true);
                         session.runtime
                             .actor_awaiting_consent(
                                 session.epoch,
@@ -508,6 +510,9 @@ pub async fn run(mut session: LocalSession) {
                         // external transport fault. Stop Decode immediately.
                         disconnect_call(&session.call).await;
                         let _ = stop_playback(&session.playback).await;
+                        if !matches!(saved.saved.await, Ok(Ok(true))) {
+                            tracing::error!("spoken voice withdrawal could not be confirmed durable; operator must inspect consent storage before restart");
+                        }
                         break;
                     }
                     reply @ TurnOutcome::Ready { turn, .. }
@@ -696,7 +701,13 @@ async fn recognize_turn(mut work: TurnWork) -> TurnOutcome {
         safely_attributed,
         withdrawal_authorized,
     ) {
-        return TurnOutcome::WithdrawConsent { turn: work.turn };
+        return TurnOutcome::WithdrawConsent {
+            turn: work.turn,
+            user: work
+                .utterance
+                .speaker_id
+                .expect("withdrawal requires attributed speaker"),
+        };
     }
     if !is_addressed(
         &transcript,
