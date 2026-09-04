@@ -296,7 +296,7 @@ impl VoiceRuntime {
             "Abbey live voice verification (redacted)\nRun {}: {} · mode: {} · observed: {}/8\nAuthorization: {} (manager {}/{} · in-channel caller {}/{} · attested-human counts {})\nConsent epochs: {} · changed: {}\nMedia: decoded receive {} · local STT {} · synthesized playback end {} · barge-in cancellation {}\nParticipant change: pause/resume {} · final leave {}\nRetention: counters only; no audio, user or message IDs, transcripts, responses, or message content are retained by this run, and conversation commits stay disabled while it is armed.\nManual witness still required: every current human explicitly consented and a human heard the reply. This live report is separate from local/source test evidence.",
             run.run,
             run.status.label(),
-            self.config.mode().label(),
+            self.effective_mode().label(),
             run.observed_checks(),
             observed(authorization),
             run.manager_authorized_activations,
