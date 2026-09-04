@@ -22,12 +22,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
+mod adapters;
 mod catalog;
 mod config;
 mod discovery;
 mod domain;
 mod manifest;
 mod qualification;
+mod routing;
+pub use adapters::{FmCliAdapter, LocalServerAdapter};
 pub use catalog::{CatalogPolicy, ProviderCatalog};
 pub use config::{ProviderConfig, ProviderConfigError, ProviderCredential, ProviderSettings};
 pub use discovery::{
@@ -49,6 +52,7 @@ pub use qualification::{
     VerifiedFmCapabilities, fm_identity, fm_manifest_identity, primary_identity, unix_now,
     verify_fm_manifest,
 };
+pub use routing::{AdaptiveRouter, RoutingSnapshot, TurnOutcome};
 
 const DEFAULT_FM_CLI: &str = "/usr/bin/fm";
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
