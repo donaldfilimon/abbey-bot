@@ -77,8 +77,9 @@ member, local/OpenAI processing mode and disclosure version, and persists across
 visits and bot restarts. A host's `consent:true`, membership, silence or output
 mute never creates another member's agreement. **Stop / withdraw** removes your
 agreement for both modes and, when you are in the call, immediately closes the
-media gate and tears down the conversational connection. Typing `stop listening`
-in the configured voice chat does the same, including while already paused.
+media gate and tears down the conversational connection. Mentioning Abbey and
+typing `stop listening` in the configured voice chat does the same, including
+while already paused.
 Clearly attributed spoken withdrawal works in local mode. `/voice leave` stops
 only the current call; it does not delete saved choices.
 
@@ -404,7 +405,7 @@ runs fully offline.
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_PROVIDER` / `_ENDPOINT` / `_MODEL` / `_KEY` | `remote` (default) selects one verified OpenAI-compatible endpoint, `fm` selects only a manifest-qualified FM CLI, and `off` disables vision. Abbey never retries an image through another provider. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. A 2026-08-19 Ollama/e4b screenshot result is historical only; it does not qualify the current MLX-VLM target or an installed FM CLI. |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or mention Abbey and write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -561,8 +562,9 @@ further limited to the owner or an administrator. It keeps one ephemeral,
 redacted acceptance run across consent epochs and suppresses voice transcript
 commits while armed; a process restart clears it. In explicit `openai` backup
 mode, Realtime is a degraded direct provider path: spoken stop detection is not authoritative, so
-any participant must use `/voice leave` or write `stop listening` in the
-configured voice chat for a deterministic stop. Discord Go Live video is not
+any participant must use `/voice leave` or mention Abbey and write
+`stop listening` in the configured voice chat for a deterministic stop.
+Discord Go Live video is not
 ingested; stream vision needs a separate consented screenshot source and
 retention policy.
 

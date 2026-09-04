@@ -309,6 +309,13 @@ mod tests {
     }
 
     #[test]
+    fn mentioned_written_stop_reaches_the_core_withdrawal_classifier() {
+        let translated = strip_bot_mention("<@123> stop listening", 123);
+
+        assert!(crate::voice_session::withdrawal_requested(&translated));
+    }
+
+    #[test]
     fn shared_clamp_still_used_for_discord() {
         let long = "é".repeat(2500);
         let clamped = shared::clamp(&long, shared::DISCORD_MESSAGE_CAP);
