@@ -54,7 +54,7 @@ Spoken turns still need `/voice join consent:true` and a wake word.
 
 ## Activity web client (this repo)
 
-Static page: `activity/` (shows **Abbey**, calls Embedded App SDK `ready()`).
+Static page: `activity/` (shows **Abbey**, `ready()`, channel/guild UI, participant count).
 No OAuth client secret is invented or committed. Application ID
 `1147940171099152464` is public.
 
@@ -75,15 +75,24 @@ Shipped in `activity/` toward roadmap P2 (not full OAuth until a secret host exi
    Known MLAI labels (Office Hours / MLAI Community) are display-only.
 2. **Truthful mode** — local UI mode is `idle` or `waiting` only. Never claims
    Go Live / screenshare.
-3. **authorize() scaffolding** — client probes `GET /api/token/health` →
+3. **Participants (no OAuth)** — after `ready()`, the client calls
+   `GET_ACTIVITY_INSTANCE_CONNECTED_PARTICIPANTS` /
+   `getInstanceConnectedParticipants` and subscribes to
+   `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE`. Discord documents **no scopes** for
+   these. The UI shows participant **count** (+ names when present).
+4. **authorize() scaffolding** — client probes `GET /api/token/health` →
    `{ ok: true }` (or Activity URL `?oauth=1`) before calling `authorize` +
    server code exchange + `authenticate`. Without that host, it stays on
    pre-auth context and does **not** pop OAuth.
-4. **After auth** (when exchange is mapped) — `getChannel` name, participants
-   list + `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE`, and `setActivity` with idle /
-   waiting copy under Abbey / IWL branding.
-5. **Server secret** — `DISCORD_CLIENT_SECRET` stays in operator env. Example
+5. **After auth** (when exchange is mapped) — `getChannel` for the live voice
+   channel **name** (needs `guilds`), and `setActivity` with truthful idle /
+   waiting copy under Abbey / IWL branding (needs `rpc.activities.write`).
+   Never invents Go Live.
+6. **Server secret** — `DISCORD_CLIENT_SECRET` stays in operator env. Example
    route: `activity/server/token-exchange.example.mjs` (not on Pages).
+
+**OAuth scopes requested when the exchange host is live:**
+`identify`, `guilds`, `applications.commands`, `rpc.activities.write`.
 
 **Operator env (when you host the exchange):**
 
