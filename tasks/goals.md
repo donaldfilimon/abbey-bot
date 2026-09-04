@@ -105,9 +105,15 @@ status: in_progress
   interleave into a run armed under OpenAI. `activate_inner` was left untouched by analysis (both
   the switch and the join hold `transition` through activation). #82 is green on all three
   platforms at `21fa7cd` with 828 passed / 0 failed / 2 ignored; merge is Donald's. Still not
-  live-verified. Observed once, not resolved: `audible_playback_still_stops_on_speech` (from #79)
-  hit its 3 s timeout in one of five runs, only inside the parallel `voice` run; possibly a lost
-  wakeup rather than slowness.
+  live-verified. The timeout in `audible_playback_still_stops_on_speech` (from #79) is diagnosed,
+  not a lost wakeup: the turn-test module failed about one parallel run in two (5 of 10 at
+  `be2915f`, 3 of 6 at `ac909b9`), never serially (5 of 5) and never alone (2 of 2). Probes showed
+  a freshly played track's `stop()` returning `Err(Finished)` about 100 µs after the handle was
+  stored, with no `End` event, so the speech-triggered stop correctly counted no barge-in and the
+  assertion waited for a count that could not come. The only condition observed is many standalone
+  drivers created and dropped concurrently on songbird's process-global default scheduler; the
+  scheduler-internal mechanism is not pinned. PR #85 gives each fixture a private `Scheduler`
+  (8 of 8 parallel runs clean, full suite 835 passed). Test-only; the actor is unchanged.
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
@@ -535,3 +541,9 @@ status: in_progress
   argument for requiring the three Gate checks on `main`; that is a repository setting and
   Donald's call. As before, this closes only the exact-head CI item; nothing here qualifies the
   provider, the installed artifact, live connectors, managed deployment, or consented voice.
+  **Superseded before this line merged:** `main` then moved to `ac909b9` (#83, Donald's
+  member-consent feature) and run `33885035333` is **red on Gate (Windows)** in
+  `audible_playback_still_stops_on_speech` (Ubuntu and macOS passed). That is the shared-scheduler
+  test defect diagnosed in the voice section; PR #85 restores the gate and its merge is Donald's.
+  The exact-head item is therefore open again until a `main` run at or after #85 is green on all
+  three platforms.
