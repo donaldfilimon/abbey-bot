@@ -15,7 +15,7 @@
 
 ## Specifications
 
-- [`docs/spec/`](spec/) — Reference specifications (8 files):
+- [`docs/spec/`](spec/) — Reference specifications (10 files):
   - `appleintelligence.md` — ABIEngine, LanguageModel protocol, Dynamic Profiles, Tool conformances
   - `brain.md` — NeuralNetwork, DQNAgent, ReplayBuffer, StateEncoder, RewardCollector, SocialBrain
   - `adaptivelearning.md` — 18-dim state encoder, deterministic sentiment, delayed rewards, AbbeyScheduler

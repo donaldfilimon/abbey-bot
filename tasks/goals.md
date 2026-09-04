@@ -42,12 +42,26 @@ status: in_progress
   revocation, actor failure, leave, and shutdown cannot leave a stale `active` state; DMs and
   other guilds observe `off`. No identity, participant count, epoch, model, counter, timestamp,
   audio, media detail, or transcript is exposed.
-- The existing manually launched process remains untouched and unqualified. Fresh acceptance is
+- The existing manually launched process remains untouched and unqualified (see 2026-09-04 reconciliation: now a launchd service, still unqualified). Fresh acceptance is
   pending for exact pushed source, provider qualification, installed artifact identity, two-guild
   isolation, unanimous current consent, a human-witnessed audible wake/reply, barge-in,
   membership-change pause, renewed consent, written stop, and final leave with no remaining media.
 - Stream/video ingestion remains outside this voice goal; only explicitly supplied still images
   are part of the documented vision surface.
+
+- **2026-09-04 reconciliation.** Two corrections, both verified rather than inferred. (1) The
+  line above describing "the existing manually launched process" is stale: `launchctl list` on
+  this Mac shows `com.donaldfilimon.abbey-bot` running as a **launchd** service at PID 66700
+  (alongside `com.donaldfilimon.abbey-mlx-audio` at PID 21413). This was observed read-only; the
+  service was not started, stopped, or reloaded. The PID differs from the 26416 recorded in
+  `docs/MLAI-LIVE-ACCEPTANCE.md`, so the agent has restarted since 2026-09-03 ~21:50 ET. The
+  qualification claim is unaffected - it remains unqualified - but it is no longer a manual
+  foreground process. The machine-level `~/CLAUDE.md` already records this correctly (it
+  marks the deployment LIVE as of 2026-09-03 23:45 at the same PID, and files the 2026-08-21
+  teardown as superseded provenance); only this repository's ledger was stale. (2) The pending live
+  acceptance in this section is blocked one layer earlier than stated:
+  `docs/live-test-protocol.md:35-41` requires green exact-SHA three-platform CI before stage 0,
+  and that CI is currently **red**, not merely unrun (see the Complete Abbey section).
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
@@ -82,6 +96,12 @@ status: in_progress
   and persisted enablement in the sandbox role. The 2026-08-20 checkpoint records a successful
   aggregate brain-state read. An actual `OverBudget` refusal remains pending external acceptance;
   no Discord identifier, participant identity, prompt, reply, or raw session text is retained.
+
+- **2026-09-04 source re-verification.** The `OverBudget` refusal remains correctly recorded as
+  pending external acceptance; nothing here is stale. Source wiring re-confirmed at this commit:
+  `Outcome::OverBudget` is defined at `src/pipeline.rs:75`, returned at `src/pipeline.rs:169` and
+  `:178`, and covered by `src/pipeline/tests.rs:624`. The gap is live observation only, not
+  implementation.
 
 ## Reply quality & speed (sub-project 1 of "improve all")
 status: done
@@ -128,6 +148,40 @@ status: in_progress
 - Direct compatible majors moved to `sha2` 0.11, `base64` 0.23, and `tokio-tungstenite` 0.30.
   Reqwest remains on 0.12 for Serenity feature compatibility, and Symphonia remains on 0.5 for
   Songbird playback/error type compatibility.
+
+- **2026-09-04 gate evidence: the accepted TLS debt is unchanged and the re-review trigger has
+  NOT fired.** Verified by running the repository's own gate rather than re-reading the bullet
+  above. `scripts/check-rustsec-debt.py` exits 0 with "accepted temporary debt matches: 4
+  vulnerabilities remain; audit is NOT clean" and reports the 3 informational unmaintained
+  warnings separately (`derivative` 2.2.0, `instant` 0.1.13, `proc-macro-error2` 2.0.1), exactly
+  as recorded. `scripts/check-linux-tls-tree.py` reports "linux TLS dependency tree: OK
+  (Rustls/WebPKI; native TLS and OpenSSL absent)". `cargo audit --json` returns exactly the four
+  accepted records, all against `rustls-webpki` 0.102.8. The cause is still upstream and there is
+  no action available: `serenity` is pinned 0.12.5 (`Cargo.toml:19`) and **0.12.5 is still the
+  latest published release**, so no newer Serenity exists to move off the vulnerable Rustls. The
+  lock resolves both stacks side by side - vulnerable via Serenity (`rustls` 0.22.4,
+  `rustls-webpki` 0.102.8, `tokio-tungstenite` 0.21.0) and current for direct dependencies
+  (`rustls` 0.23.43, `rustls-webpki` 0.103.15, `tokio-tungstenite` 0.30.0). GitHub's Dependabot
+  surface independently reports 4 vulnerabilities on the default branch, consistent with the
+  accepted set. No bump was attempted.
+- **2026-09-04: `main` has no branch protection, which is the mechanism behind the cancelled-run
+  history.** `GET repos/donaldfilimon/abbey-bot/branches/main/protection` returns 404 "Branch not
+  protected", so there are no required status checks. The Rust matrix does run on pull requests,
+  but cannot block a merge. Observed consequence: PRs #68-#71 merged between 04:00Z and 04:03Z
+  and each merge cancelled the previous `main` run (`33835401266`, `33835225139`, `33834312740`
+  all `cancelled`), so a formatting break landed and stayed hidden until run `33835423344` was
+  the first allowed to finish. Recorded as an observation only; enabling protection is Donald's
+  decision and was deliberately not changed.
+- **2026-09-04 correction to a contradicting checklist entry.** `tasks/todo.md` carried a
+  **checked** box for Telegram/Slack marked "(live)", which contradicts this section, the same
+  file's own later entries, and `docs/MLAI-LIVE-ACCEPTANCE.md` ("Telegram / Slack tokens |
+  missing | missing"). The box has been unchecked in this pass. Live connector acceptance
+  remains blocked on credentials.
+- **2026-09-04: `check.ps1` is not full parity with `check.sh`, and only part of the gap is
+  documented.** `check.sh` runs `deploy/test-check-launchd-env.py`,
+  `deploy/test-smoke-mlx-vlm-tool-deltas.py`, and `deploy/test-patch-mlx-vlm-tool-encoding.py`;
+  `check.ps1` runs none of the three. Its header documents only the POSIX/plist omission, so a
+  green Windows gate covers less than a green POSIX gate. Recorded, not changed.
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
@@ -314,7 +368,7 @@ status: in_progress
   configured-versus-qualified provenance. HTTP and Discord acting tools remain deferred.
 - **Current evidence boundary and delivery.** The source-level coarse voice state is wired to
   central lifecycle transitions and limited to `off`, `presence`, `awaiting-consent`, `active`,
-  or `paused`. The existing manual foreground process remains untouched and unqualified. The
+  or `paused`. The existing manual foreground process remains untouched and unqualified (see 2026-09-04 reconciliation: now a launchd service, still unqualified). The
   isolated strict gate, locked release build, non-divergence review, normal push from canonical
   `main`, and exact-head Ubuntu/macOS/Windows CI remain pending. Provider qualification,
   installation, two-guild live acceptance, managed-service acceptance, and consented voice are
@@ -324,3 +378,52 @@ status: in_progress
   seven tools and bounded policy/provider behavior, prove no cross-guild leakage or unsolicited
   Guild B behavior, swap the Guild A/B roles, repeat the isolation-sensitive subset, and restore
   both guilds' initial settings. No concrete Discord identifier belongs in this ledger.
+- **2026-09-04 reconciliation. Three claims in this goal are STALE and are corrected here; three
+  have CHANGED.** Verified against source and live command output, not assumed. Earlier bullets
+  are left intact above; this entry supersedes them where they conflict.
+  - **STALE:** "The FM provider, capability layer, and `--provider-self-test` are unimplemented."
+    All three exist - `src/main.rs:72` declares `mod provider_self_test;`, dispatch is at
+    `src/main.rs:621-634`, and the full `src/provider/` module is present. The 2026-08-21 entry
+    already reconciled this, but the original bullet was never annotated, so a reader hitting it
+    first is misled.
+  - **STALE:** "Cross-platform CI (`macos`/`ubuntu`/`windows`) and the PowerShell gate are not yet
+    added." Both exist. `.github/workflows/rust.yml` runs `ubuntu-24.04` and `macos-15` through
+    `./check.sh` and `windows-2025` through `./check.ps1`; `check.ps1` is 52 lines and is
+    genuinely invoked. Runner labels have not drifted from the values recorded on 2026-08-21.
+  - **STALE:** "`cargo audit` stays deliberately non-green: the `rustls-webpki` **and
+    DAVE/OpenMLS/libcrux** advisories remain documented." Only the four `rustls-webpki` records
+    remain. The `[patch.crates-io]` entry for `openmls_rust_crypto` (`Cargo.toml:44-49`) removed
+    the HPKE/libcrux advisory path, so naming those alongside the accepted set overstates current
+    debt.
+  - **CHANGED:** "MLX-VLM semantic smoke ... has **not** been executed here." It has been executed
+    and partly failed, which is a stronger and more useful result than "unrun". Per
+    `docs/MLAI-LIVE-ACCEPTANCE.md` (2026-09-03 ~17:15 ET), `probe_status` was forced and
+    `MLX_READY` streamed; tool-result continuation loops `<|channel>thought` into content until
+    `finish_reason=length`, so that item is a recorded **FAIL**, and `:8282` stays unpublished
+    with the installer failing closed. The vision fixture, OCR fixture, and offline-restart items
+    remain genuinely unknown - no result was found either way.
+  - **CHANGED:** "The existing manual foreground process remains untouched and unqualified." It is
+    a launchd service, confirmed read-only via `launchctl list`: `com.donaldfilimon.abbey-bot` at
+    PID 66700. Still unqualified; no longer manual. See the voice section for the full note.
+  - **CHANGED:** "Fresh exact-head three-platform CI is pending." It is **red**, not merely unrun.
+    At `057e6b1` (PR #71, adaptive routing wave, +754 lines across `src/provider/`), run
+    `33835423344` failed on Gate (Ubuntu), Gate (macOS), and Gate (Windows), all at step 1,
+    `cargo fmt --all -- --check`, on `src/provider/adapters.rs`, `src/provider/routing.rs`, and
+    `src/provider/routing_tests.rs`. A formatting-only fix is in draft PR #72; the full gate at
+    that tree is green end to end - fmt, deploy/privacy validation (81 contract artifacts, 3
+    plists), clippy `--all-targets --locked -D warnings`, **786 passed / 0 failed / 2 ignored**,
+    locked release build, `== ok ==`, exit 0. Formatting was the only defect in `057e6b1`. **This
+    item closes only when `main` itself is green at its exact head after #72 merges; a green PR
+    run does not close it.**
+  - **Still correct, unchanged:** the seven-tool production surface and its stable order
+    (`src/tools.rs:99-187`, consumed by `src/generation.rs:657` and
+    `src/generation/foundation_models.rs:101`, with `abbey_tools()` still the five-tool
+    byte-compatible corpus); the coarse voice Inspect vocabulary (`src/inspect.rs:14-32`, exactly
+    five variants, `render_voice` at `:227-229` emitting only the label); and "installed artifact
+    identity pending" - the deployed binary is `15c0f15`, behind both `ec2901a` and `057e6b1`.
+- **2026-09-04 evidence-boundary note: a gate run from a git worktree is one layer thinner than a
+  canonical-checkout run.** `scripts/check-wdbx-conformance.py` reports SKIP under
+  `.claude/worktrees/<name>/` because the sibling resolves as `<worktree>/../wdbx`, i.e.
+  `.claude/worktrees/wdbx`, not `~/dev/active/wdbx`. The repository-local writer pin stays active
+  so the run remains valid, but a worktree gate must never be cited as external WDBX fixture
+  evidence.

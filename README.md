@@ -24,8 +24,8 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 | Layer | Status | Evidence |
 |-------|--------|----------|
-| Source gate (`./check.sh`) | **PASS** | 772 tests, clippy clean, locked release build |
-| Cross-platform CI (Ubuntu/macOS/Windows) | **PASS** (pre-stabilization baseline) | Actions run `33218303755` at `9716f00` |
+| Source gate (`./check.sh`) | **PASS** | 786 tests, clippy clean, locked release build (measured 2026-09-04 at `057e6b1` with the #72 fmt fix applied) |
+| Cross-platform CI (Ubuntu/macOS/Windows) | **FAIL** at head | Run `33835423344` at `057e6b1` failed on all three at `cargo fmt --check`. Fix in PR #72, which is green on all three. The older `33218303755` at `9716f00` is a pre-stabilization baseline, not current status. |
 | Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
 | Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
 | Live Discord (2-guild isolation) | **PENDING** | Requires exact-head CI green + operator sandbox guilds |
