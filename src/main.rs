@@ -43,6 +43,9 @@
 //! over REST instead, which is why [`profile::summarize`] states that
 //! presence is unavailable rather than guessing at it.
 
+mod audio_tap;
+mod music;
+mod player_control;
 mod ask;
 mod brain;
 mod command_catalog;
