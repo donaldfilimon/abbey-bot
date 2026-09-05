@@ -317,8 +317,7 @@ pub(super) fn can_stop_voice(
     present_in_configured_channel: bool,
     interaction_permissions: Option<Permissions>,
 ) -> bool {
-    present_in_configured_channel
-        || interaction_permissions.is_some_and(|permissions| permissions.manage_guild())
+    crate::commands_help::leave_allowed(present_in_configured_channel, interaction_permissions)
 }
 
 /// The public disclosure participants see. Takes the mode explicitly rather

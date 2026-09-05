@@ -26,7 +26,13 @@ fn can_access_voice_verification(
     is_owner: bool,
     interaction_permissions: Option<Permissions>,
 ) -> bool {
-    is_owner || interaction_permissions.is_some_and(|permissions| permissions.administrator())
+    let mut input = crate::command_catalog::EligibilityInput::new(
+        crate::command_catalog::InteractionContext::Guild,
+    );
+    input.application_owner = is_owner;
+    input.permissions =
+        crate::commands_help::permissions_input(interaction_permissions.unwrap_or_default());
+    crate::command_catalog::access_allows(crate::command_catalog::AccessId::A7.rule(), &input)
 }
 
 async fn voice_verification_runtime(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, &'static str> {
@@ -42,16 +48,14 @@ async fn voice_verification_runtime(ctx: Context<'_>) -> Result<Arc<VoiceRuntime
     if guild_id.get() != runtime.config.guild_id {
         return Err("Abbey voice is locked to a different server by deployment configuration.");
     }
-    let is_owner = ctx
-        .guild()
-        .is_some_and(|guild| guild.owner_id == ctx.author().id);
+    let is_owner = ctx.framework().options().owners.contains(&ctx.author().id);
     let interaction_permissions = ctx
         .author_member()
         .await
         .and_then(|member| member.permissions);
     if !can_access_voice_verification(is_owner, interaction_permissions) {
         return Err(
-            "Only the server owner or an administrator can control or read live voice verification.",
+            "Only the application owner or an administrator can control or read live voice verification.",
         );
     }
     Ok(runtime)

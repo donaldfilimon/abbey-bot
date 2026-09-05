@@ -409,3 +409,70 @@ async fn ephemeral_tool_rounds_preserve_the_shared_persona_even_on_error() {
         assert_eq!(seen[0][2], llm::ChatTurn::user("private"));
     }
 }
+
+#[tokio::test]
+async fn text_only_fm_remains_eligible_without_offering_rejected_tools() {
+    let mut state = AppState::in_memory();
+    let configured = crate::provider::FoundationModels::new_qualified(
+        FmConfig {
+            mode: FmMode::System,
+            endpoint: None,
+            cli: "/not-executed/fm".into(),
+            fallback: true,
+            timeout_secs: 1,
+        },
+        None,
+        true,
+        crate::provider::VerifiedFmCapabilities {
+            server: None,
+            cli: ProviderCapabilities::text_with_tools(),
+        },
+    );
+    configured
+        .router
+        .disable_tools(ProviderRoute::FoundationModelsCli);
+    std::sync::Arc::get_mut(&mut state)
+        .unwrap()
+        .foundation_models = Some(configured);
+    assert!(crate::generation::fm_cli_text_available(
+        state.foundation_models.as_ref()
+    ));
+    let fm = FakeFm::with_responses(vec![Ok(llm::ModelTurn {
+        text: "A plain private answer.".into(),
+        calls: Vec::new(),
+    })]);
+    fm.router.disable_tools(ProviderRoute::FoundationModelsCli);
+    let mut host = crate::runtime::ToolScope {
+        state: &state,
+        network: crate::platform::SocialNetwork::Discord,
+        scoped_guild: "discord:1".into(),
+        scoped_user: "discord:2".into(),
+        scoped_channel: "discord:3".into(),
+        now: 10,
+        persona: Persona::Abbey,
+    };
+    let context = PersonaContext::empty();
+    let reply = generate_with_fm_cli_and_access(
+        &state,
+        &fm,
+        ToolAccess::Enabled(&mut host),
+        &Ask {
+            session_mode: crate::generation::SessionMode::Ephemeral,
+            scope: "discord:3",
+            context: &context,
+            user_input: "hello",
+            now: 10,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(reply.0, "A plain private answer.");
+    assert_eq!(*fm.offered_counts.lock().unwrap(), [0]);
+    assert_eq!(AppState::lock(&state.engine).session_len("discord:3"), 0);
+    assert!(
+        AppState::lock(&state.stores)
+            .memory
+            .facts("discord:1", "discord:2")
+            .is_empty()
+    );
+}

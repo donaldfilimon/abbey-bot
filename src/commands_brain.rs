@@ -78,17 +78,17 @@ fn can_access_memory_subject(
     subject: UserId,
     permissions: Option<Permissions>,
 ) -> bool {
-    actor == subject
-        || permissions.is_some_and(|permissions| {
-            permissions.manage_messages()
-                || permissions.manage_guild()
-                || permissions.administrator()
-        })
+    let mut input = crate::command_catalog::EligibilityInput::new(
+        crate::command_catalog::InteractionContext::Guild,
+    );
+    input.self_subject = Some(actor == subject);
+    input.permissions = crate::commands_help::permissions_input(permissions.unwrap_or_default());
+    crate::command_catalog::access_allows(crate::command_catalog::AccessId::A1.rule(), &input)
 }
 
 async fn memory_subject_authorized(ctx: Context<'_>, subject: &User) -> bool {
     if subject.id == ctx.author().id {
-        return true;
+        return can_access_memory_subject(ctx.author().id, subject.id, None);
     }
     let permissions = ctx
         .author_member()
@@ -571,25 +571,29 @@ pub async fn recall(
     Ok(())
 }
 
-/// A member's reputation score in this server.
-#[poise::command(slash_command, guild_only)]
+/// Your standing privately, or another member when authorized.
+#[poise::command(slash_command, ephemeral)]
 pub async fn reputation(
     ctx: Context<'_>,
     #[description = "Who to look up (default: you)"] user: Option<User>,
 ) -> Result<(), Error> {
-    ctx.defer().await?;
+    ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
+    if !memory_subject_authorized(ctx, subject).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
+    }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
     let rep = {
         let stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).reputation(&u, &g, &*stores)
     };
-    ctx.say(format!(
+    ctx.say(clamp_message(format!(
         "<@{}> — reputation {rep:.2} (0 = poor, 1 = excellent)",
         subject.id.get()
-    ))
+    )))
     .await?;
     Ok(())
 }
@@ -599,7 +603,7 @@ pub async fn reputation(
 // ---------------------------------------------------------------------------
 
 /// Summarize the recent messages Abbey has seen in this channel.
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command)]
 pub async fn summarize(
     ctx: Context<'_>,
     #[description = "How many recent messages (10–200, default 50)"]
@@ -622,28 +626,28 @@ pub async fn summarize(
         return Ok(());
     }
     let persona = r#as.map_or(crate::persona::Persona::Abbey, Into::into);
-    let Some(backend) = &state.backend else {
+    let Some(backend_label) = state.generation_label() else {
         ctx.say(clamp_message(ask::degraded_reply(persona))).await?;
         return Ok(());
     };
     let (system, user) = engine::summarize_prompt(persona, &transcript, count);
     let outcome = match state.acquire_generation().await {
         Err(error) => Err(error),
-        Ok(_slot) => llm::ask_backend(&state.llm, backend, &system, &user).await,
+        Ok(_slot) => state.chat(&system, &[llm::ChatTurn::user(user)]).await,
     };
     let reply = match outcome {
-        Ok(summary) => {
+        Ok((summary, provider_label)) => {
             let summary = ask::tidy_reply(persona, &summary);
             AppState::lock(&state.stores)
                 .memory
                 .channel_mut(&ch)
                 .summary
                 .clone_from(&summary);
-            ask::render_answer(persona, backend.label(), &summary)
+            ask::render_answer(persona, provider_label, &summary)
         }
         Err(e) => {
-            tracing::warn!(error = %e, backend = backend.label(), "summary generation failed");
-            ask::render_failure(persona, backend.label(), &e)
+            tracing::warn!(error = %e, backend = backend_label, "summary generation failed");
+            ask::render_failure(persona, backend_label, &e)
         }
     };
     ctx.say(clamp_message(reply)).await?;
@@ -697,23 +701,24 @@ pub async fn see(
         }
     };
     let persona = crate::persona::Persona::Abbey;
-    let reply = match (question, &state.backend) {
-        (Some(q), Some(backend)) => {
+    let reply = match (question, state.generation_label()) {
+        (Some(q), Some(backend_label)) => {
             let folded = vision::fold_descriptions(&q, &[(image.filename.clone(), description)]);
             let outcome = match state.acquire_generation().await {
                 Err(error) => Err(error),
                 Ok(_slot) => {
-                    llm::ask_backend(&state.llm, backend, &ask::system_prompt(persona), &folded)
+                    state
+                        .chat(&ask::system_prompt(persona), &[llm::ChatTurn::user(folded)])
                         .await
                 }
             };
             match outcome {
-                Ok(a) => {
-                    ask::render_answer(persona, backend.label(), &ask::tidy_reply(persona, &a))
+                Ok((a, provider_label)) => {
+                    ask::render_answer(persona, provider_label, &ask::tidy_reply(persona, &a))
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, backend = backend.label(), "vision follow-up generation failed");
-                    ask::render_failure(persona, backend.label(), &e)
+                    tracing::warn!(error = %e, backend = backend_label, "vision follow-up generation failed");
+                    ask::render_failure(persona, backend_label, &e)
                 }
             }
         }

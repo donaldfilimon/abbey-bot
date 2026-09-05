@@ -1,6 +1,6 @@
 # Voice play: abbey-bot mirrors local music into Discord voice
 
-Status: **DRAFT, design not yet approved.** Four requirements are settled by Donald (2026-09-04). One decision is open: approach **A** (sidecar) or **B** (in-crate CoreAudio tap). No implementation exists and none may start until that decision is made (brainstorming hard gate).
+Status: **Approach A sidecar selected for source implementation by Donald (2026-09-04).** The explicit request to implement the Discord-excluded macOS audio-tap sidecar resolves the A/B decision below. This slice covers the sidecar, its offline tests, and deployment artifacts only. Player controls, Rust streaming integration, music mixing, and `/voice play` registration remain follow-up work. Installation, Screen Recording permission, actual audio capture, and live Discord/launchd acceptance are not authorized by this source task.
 
 ## Context
 
@@ -18,7 +18,7 @@ Donald's instruction "use local apps like Spotify and Music for now" removes the
 ## Derived requirements (not optional)
 
 - **Discord must be excluded from the capture.** Whole-system capture while Abbey is in the same call re-broadcasts every participant back to them on a delay: a feedback loop. This rules out any capture method that cannot filter by application.
-- **Consent semantics.** `voice_session/control.rs` models consent around *input* (listening / recording / transcribing me; phases Listening, Thinking, Speaking). Music is output-only and captures nobody, so playback sits outside the consent epoch; the epoch stays open only because requirement 3 keeps listening on.
+- **Consent semantics.** `voice_session/control.rs` models consent around Discord *input* (listening / recording / transcribing me; phases Listening, Thinking, Speaking). Music playback is a separate output path, so it must not create or extend anyone's Discord listening agreement. Capturing the host application mix can still include other applications' private audio; excluding Discord does not make all host audio non-personal. The existing listening epoch stays open only under its unchanged consent rules.
 - **Fail closed**, matching the existing sidecar posture (`offline_voice::sidecar_is_unavailable`): if the capture source dies, music stops and the bot reports it; it never transmits silence or stale buffers.
 - **No `unsafe` in the Rust crate** unless approach B is chosen explicitly; the crate has zero `unsafe` blocks today.
 - **Pure core, thin shell** (AGENTS.md): no serenity/poise imports in decision code.
@@ -31,9 +31,9 @@ Donald's instruction "use local apps like Spotify and Music for now" removes the
 
 **C. BlackHole + Multi-Output Device. Rejected.** macOS has no native per-application output routing, so Discord's own output lands in the loopback and the feedback loop is unavoidable without paid Loopback. Also requires an admin-password driver install.
 
-## Open decision
+## Selected approach
 
-**A or B.** Everything below assumes A; if B is chosen, replace the sidecar section with an in-crate `AudioTap` module and add an explicit `unsafe` policy to AGENTS.md.
+**A, the Swift sidecar.** The full architecture below describes the eventual `/voice play` feature. Only the sidecar slice is selected for this implementation; the Rust crate remains free of audio-tap FFI and `unsafe`.
 
 ## Architecture (approach A)
 
@@ -70,7 +70,7 @@ Testing:
 
 ## Sequencing constraint
 
-Another session holds dirty voice files (`commands_voice.rs`, `voice.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_self_test.rs`, `voice_session/tests.rs`, `main.rs`) and open PR #75. Implementation branches after that lands. Deploy requires restarting `com.donaldfilimon.abbey-bot`, which is Donald's call.
+The original draft recorded concurrent dirty voice files and PR #75. That is historical coordination context, not current checkout state. The sidecar implementation began from clean canonical source at `3c13589`; existing linked worktrees remain untouched. Sidecar work does not require changing the bot's voice lifecycle. Deploying the eventual bot integration requires restarting `com.donaldfilimon.abbey-bot`, which remains a separate operator action.
 
 ## Out of scope
 

@@ -18,6 +18,7 @@ use crate::inspect::{VoiceInspectRegistry, VoiceInspectState};
 use crate::voice::{VoiceBackendConfig, VoiceConfig, VoiceMode};
 
 mod control;
+mod music;
 mod playback;
 mod verification;
 
@@ -73,6 +74,7 @@ impl VoicePhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
+    MusicTerminated { reason: PlaybackTermination },
     PlaybackTerminated {
         turn: u64,
         termination: PlaybackTermination,
@@ -283,6 +285,7 @@ pub struct VoiceSnapshot {
 }
 
 pub struct VoiceRuntime {
+    pub music: music::MusicController,
     pub config: VoiceConfig,
     pub consent: Arc<crate::voice_consent_store::ConsentStore>,
     /// The mode in force right now, which `/voice mode` may change while the
@@ -373,6 +376,7 @@ impl VoiceRuntime {
         let (start_changes, _) = watch::channel(0);
         let selected_mode = AtomicU8::new(mode_code(config.mode()));
         Self {
+            music: music::MusicController::default(),
             consent,
             selected_mode,
             config,
@@ -449,6 +453,7 @@ impl VoiceRuntime {
     }
 
     fn publish_inspect_phase(&self, phase: VoicePhase, media_enabled: bool) {
+        self.music.phase(phase);
         let state = match phase {
             VoicePhase::Disconnected => VoiceInspectState::Off,
             VoicePhase::PresenceOnly => VoiceInspectState::Presence,
@@ -1090,6 +1095,7 @@ impl VoiceRuntime {
     }
 
     pub async fn disconnect(&self, status: impl Into<String>) {
+        self.music.stop("voice disconnected", PlaybackTermination::Stopped);
         self.stop_to(VoicePhase::Disconnected, status).await;
     }
 
@@ -1101,6 +1107,7 @@ impl VoiceRuntime {
     }
 
     pub async fn fail_safe(&self, status: impl Into<String>) {
+        self.music.stop("voice failed", PlaybackTermination::Errored);
         self.stop_to(VoicePhase::Failed, status).await;
     }
 
