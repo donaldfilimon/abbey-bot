@@ -846,6 +846,15 @@ controls only the music track, which drops to 25% of that level while Abbey
 speaks. `/voice status` includes private music state. All music controls are
 private, manager-gated and require channel presence.
 
+Set `ABBEY_MUSIC_COMMAND_CHANNEL_ID` to a nonzero text channel ID to require
+`play`, `pause`, `resume-music`, `stop-music`, and `volume` in that exact channel
+within `ABBEY_VOICE_GUILD_ID`. Invocations elsewhere receive a private channel
+redirect before any player operation; rerun the command in the linked channel.
+Replies and playback follow-ups remain private to the invoking member there.
+Blank or unset preserves the existing behavior. Both voice destination IDs are
+required. This does not move voice audio, ordinary chat, DMs, listening consent
+commands, `/voice leave`, or `/voice status`.
+
 The existing `/voice resume consent:true` remains the listening-consent command.
 Music never writes consent receipts or opens the Discord input gate. When
 listening consent is withdrawn, the Decode call is destroyed first; music may

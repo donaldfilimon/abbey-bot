@@ -1,6 +1,26 @@
 //! Pure music policy. Music never grants or renews Discord input consent.
 use crate::voice_session::VoicePhase;
 
+/// Validate the invocation location before any player or guild REST operation.
+pub fn command_channel_gate(
+    configured_guild: u64,
+    configured_channel: Option<u64>,
+    guild: Option<u64>,
+    channel: u64,
+) -> Result<(), String> {
+    if guild != Some(configured_guild) {
+        return Err("Music is available only in Abbey's configured voice server.".into());
+    }
+    if let Some(destination) = configured_channel
+        && channel != destination
+    {
+        return Err(format!(
+            "Use music commands in <#{destination}>. Music was not changed."
+        ));
+    }
+    Ok(())
+}
+
 pub fn gate(
     configured_guild: bool,
     manager: bool,
@@ -30,6 +50,25 @@ pub fn volume(level: u8, phase: VoicePhase) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn music_commands_require_the_configured_guild_and_optional_exact_channel() {
+        assert!(command_channel_gate(1, Some(2), Some(1), 2).is_ok());
+        assert_eq!(
+            command_channel_gate(1, Some(2), Some(1), 3).unwrap_err(),
+            "Use music commands in <#2>. Music was not changed."
+        );
+        for channel in [2, 3] {
+            for guild in [None, Some(4)] {
+                let error = command_channel_gate(1, Some(2), guild, channel).unwrap_err();
+                assert!(
+                    !error.contains("<#"),
+                    "do not disclose another guild's destination"
+                );
+                assert!(command_channel_gate(1, None, guild, channel).is_err());
+            }
+            assert!(command_channel_gate(1, None, Some(1), channel).is_ok());
+        }
+    }
     #[test]
     fn every_music_gate_is_required() {
         for bits in 0..16 {

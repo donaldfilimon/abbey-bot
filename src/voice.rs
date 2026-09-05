@@ -122,6 +122,7 @@ impl VoiceBackendConfig {
 pub struct VoiceConfig {
     pub guild_id: u64,
     pub channel_id: u64,
+    pub music_command_channel_id: Option<u64>,
     pub backend: VoiceBackendConfig,
     pub wake_word_required: bool,
     pub wake_words: Vec<String>,
@@ -135,6 +136,7 @@ pub struct VoiceConfig {
 struct VoiceEnv {
     guild: Option<String>,
     channel: Option<String>,
+    music_command_channel: Option<String>,
     mode: Option<String>,
     openai_key: Option<String>,
     openai_endpoint: Option<String>,
@@ -155,6 +157,7 @@ impl VoiceConfig {
         Self::from_values(VoiceEnv {
             guild: std::env::var("ABBEY_VOICE_GUILD_ID").ok(),
             channel: std::env::var("ABBEY_VOICE_CHANNEL_ID").ok(),
+            music_command_channel: std::env::var("ABBEY_MUSIC_COMMAND_CHANNEL_ID").ok(),
             mode: std::env::var("ABBEY_VOICE_MODE").ok(),
             openai_key: std::env::var("OPENAI_API_KEY").ok(),
             openai_endpoint: std::env::var("ABBEY_VOICE_REALTIME_ENDPOINT").ok(),
@@ -172,9 +175,15 @@ impl VoiceConfig {
     }
 
     fn from_values(values: VoiceEnv) -> Result<Option<Self>, String> {
+        let music_command_channel_id = nonblank(values.music_command_channel.clone())
+            .map(|value| snowflake(Some(value), "ABBEY_MUSIC_COMMAND_CHANNEL_ID"))
+            .transpose()?;
         let guild = nonblank(values.guild.clone());
         let channel = nonblank(values.channel.clone());
         if guild.is_none() && channel.is_none() {
+            if music_command_channel_id.is_some() {
+                return Err("ABBEY_MUSIC_COMMAND_CHANNEL_ID requires ABBEY_VOICE_GUILD_ID and ABBEY_VOICE_CHANNEL_ID".into());
+            }
             if nonblank(values.mode.clone()).is_some_and(|mode| {
                 !matches!(mode.to_ascii_lowercase().as_str(), "off" | "disabled")
             }) {
@@ -213,6 +222,7 @@ impl VoiceConfig {
         Ok(Some(Self {
             guild_id,
             channel_id,
+            music_command_channel_id,
             backend,
             wake_word_required: parse_bool(
                 values.wake_word_required,
@@ -240,6 +250,7 @@ impl VoiceConfig {
         Self {
             guild_id,
             channel_id,
+            music_command_channel_id: None,
             backend,
             wake_word_required,
             wake_words: DEFAULT_WAKE_WORDS
@@ -588,6 +599,47 @@ fn default_instructions() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn music_command_channel_config_is_optional_nonzero_and_requires_voice_scope() {
+        for value in [None, Some(""), Some("  ")] {
+            let mut values = destination();
+            values.music_command_channel = value.map(str::to_owned);
+            assert_eq!(
+                VoiceConfig::from_values(values)
+                    .unwrap()
+                    .unwrap()
+                    .music_command_channel_id,
+                None
+            );
+        }
+        let mut values = destination();
+        values.music_command_channel = Some("1545633393402843236".into());
+        assert_eq!(
+            VoiceConfig::from_values(values)
+                .unwrap()
+                .unwrap()
+                .music_command_channel_id,
+            Some(1545633393402843236)
+        );
+        for value in ["0", "bad", "18446744073709551616"] {
+            let mut values = destination();
+            values.music_command_channel = Some(value.into());
+            assert!(
+                VoiceConfig::from_values(values)
+                    .unwrap_err()
+                    .contains("ABBEY_MUSIC_COMMAND_CHANNEL_ID")
+            );
+        }
+        assert!(
+            VoiceConfig::from_values(VoiceEnv {
+                music_command_channel: Some("2".into()),
+                ..VoiceEnv::default()
+            })
+            .unwrap_err()
+            .contains("requires ABBEY_VOICE_GUILD_ID")
+        );
+    }
 
     fn destination() -> VoiceEnv {
         VoiceEnv {

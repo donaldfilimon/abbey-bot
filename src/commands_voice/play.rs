@@ -31,6 +31,12 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
         .as_ref()
         .ok_or("Abbey voice is not configured.")?
         .clone();
+    crate::music::command_channel_gate(
+        runtime.config.guild_id,
+        runtime.config.music_command_channel_id,
+        ctx.guild_id().map(|guild| guild.get()),
+        ctx.channel_id().get(),
+    )?;
     let guild = ctx.guild_id().ok_or("This command requires a server.")?;
     let member = guild.member(ctx.http(), ctx.author().id).await?;
     let partial = guild.to_partial_guild(ctx.http()).await?;
@@ -218,6 +224,7 @@ pub async fn voice_volume(
 async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Error> {
     ctx.send(
         poise::CreateReply::default()
+            .ephemeral(true)
             .content(clamp_message(result.unwrap_or_else(|e| e.to_string())))
             .allowed_mentions(crate::gateway::no_mentions()),
     )
