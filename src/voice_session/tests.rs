@@ -250,6 +250,140 @@ fn a_mode_with_no_retained_backend_has_nothing_to_snapshot() {
     assert!(runtime.effective_backend().is_none());
 }
 
+fn idle_snapshot(phase: VoicePhase) -> VoiceSnapshot {
+    VoiceSnapshot {
+        epoch: 0,
+        phase,
+        media_enabled: false,
+        start_pending: false,
+        status: String::new(),
+        consent_epoch: 0,
+        participant_count: 0,
+        dropped_input: 0,
+        aborted_overruns: 0,
+        barge_ins: 0,
+        completed_turns: 0,
+    }
+}
+
+#[test]
+fn a_backend_change_is_accepted_only_where_no_media_can_be_open() {
+    // The same set gates `/voice verify start`, so the two surfaces cannot
+    // drift: a phase that may arm a run may also change the backend.
+    for phase in [
+        VoicePhase::Disconnected,
+        VoicePhase::PresenceOnly,
+        VoicePhase::Failed,
+    ] {
+        assert!(phase.accepts_backend_change(), "{phase:?}");
+        assert!(
+            mode_switch_blocker(&idle_snapshot(phase), false, VoiceMode::OpenAi).is_none(),
+            "{phase:?}"
+        );
+    }
+    for phase in [
+        VoicePhase::Connecting,
+        VoicePhase::Listening,
+        VoicePhase::Thinking,
+        VoicePhase::Speaking,
+        VoicePhase::AwaitingConsent,
+    ] {
+        assert!(!phase.accepts_backend_change(), "{phase:?}");
+        let blocker = mode_switch_blocker(&idle_snapshot(phase), false, VoiceMode::OpenAi)
+            .expect("an open or paused session must refuse a switch");
+        assert!(blocker.contains(phase.label()), "{blocker}");
+        assert!(blocker.contains("/voice leave"), "{blocker}");
+    }
+}
+
+#[test]
+fn a_pending_start_blocks_a_switch_even_from_an_idle_phase() {
+    // The local prepare has a long window in which the phase is still
+    // Disconnected; a phase-only check would be a TOCTOU there.
+    let mut snapshot = idle_snapshot(VoicePhase::Disconnected);
+    snapshot.start_pending = true;
+    let blocker = mode_switch_blocker(&snapshot, false, VoiceMode::OpenAi).expect("refused");
+    assert!(blocker.contains("starting"), "{blocker}");
+}
+
+#[test]
+fn an_armed_verification_run_pins_the_backend_to_local() {
+    // Arm-then-switch was the one window left after #76: the run is only
+    // defined for local inference, so a later join under OpenAI would record
+    // a cloud activation as local evidence. Refuse at the switch instead.
+    let snapshot = idle_snapshot(VoicePhase::Disconnected);
+    let blocker = mode_switch_blocker(&snapshot, true, VoiceMode::OpenAi).expect("refused");
+    assert!(blocker.contains("verification run is armed"), "{blocker}");
+    assert!(blocker.contains("/voice leave"), "{blocker}");
+    assert!(
+        mode_switch_blocker(&snapshot, true, VoiceMode::Disabled).is_some(),
+        "disabled is also a move away from local"
+    );
+    assert!(
+        mode_switch_blocker(&snapshot, true, VoiceMode::Local).is_none(),
+        "returning to local cannot invalidate a local-only run"
+    );
+}
+
+#[tokio::test]
+async fn a_switch_is_refused_while_a_run_is_armed_on_a_live_runtime() {
+    let runtime = runtime();
+    let _ = runtime.begin_verification().expect("idle runtime arms");
+    assert!(runtime.verification_active());
+    let snapshot = runtime.snapshot().await;
+    assert!(
+        mode_switch_blocker(&snapshot, runtime.verification_active(), VoiceMode::OpenAi).is_some()
+    );
+    // Completing the run through the idle-leave path releases the pin.
+    let token = runtime.verification_run_token().expect("armed");
+    assert!(runtime.note_verification_final_leave(token));
+    assert!(!runtime.verification_active());
+    assert!(
+        mode_switch_blocker(&snapshot, runtime.verification_active(), VoiceMode::OpenAi).is_none()
+    );
+}
+
+#[test]
+fn a_reservation_captures_the_backend_it_will_use_and_pins_the_switch() {
+    // Codex review on #82: a join reserved and snapshotted between the mode
+    // switch's check and its write. Now both sides go through the activation
+    // gate: a pending reservation refuses the switch, and a reservation made
+    // after a switch captures the switched backend.
+    let runtime = runtime();
+    let token = runtime.start_operation_token();
+    let (generation, backend) = runtime
+        .reserve_start_with_backend(token)
+        .expect("fresh token reserves");
+    assert!(runtime.start_is_current(generation));
+    assert!(matches!(backend, Some(VoiceBackendConfig::Disabled)));
+
+    assert!(
+        !runtime.switch_effective_mode_if_idle(VoiceMode::Local),
+        "a pending start pins the mode"
+    );
+    assert_eq!(runtime.effective_mode(), VoiceMode::Disabled);
+
+    runtime.cancel_pending_start();
+    assert!(runtime.switch_effective_mode_if_idle(VoiceMode::Local));
+    assert_eq!(runtime.effective_mode(), VoiceMode::Local);
+
+    // The next reservation sees the switched mode, which this fixture has no
+    // retained backend for: the join fails closed rather than using the old.
+    let token = runtime.start_operation_token();
+    let (_, backend) = runtime
+        .reserve_start_with_backend(token)
+        .expect("fresh token reserves");
+    assert!(backend.is_none());
+}
+
+#[test]
+fn a_stale_operation_token_reserves_nothing_and_captures_nothing() {
+    let runtime = runtime();
+    let token = runtime.start_operation_token();
+    runtime.cancel_pending_start();
+    assert!(runtime.reserve_start_with_backend(token).is_none());
+}
+
 fn inspect_state(inspect: &VoiceInspectRegistry, guild_id: u64) -> VoiceInspectState {
     inspect.state_for(&format!("discord:{guild_id}"))
 }
