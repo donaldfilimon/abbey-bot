@@ -22,7 +22,7 @@ cargo run               # run the bot; needs DISCORD_TOKEN (or DISCORD_BOT_TOKEN
 ./target/release/abbey-bot --provider-self-test fm --json
 ./target/release/abbey-bot --provider-self-test all --json
 ./target/release/abbey-bot --voice-self-test out.wav             # token-free local TTS → STT loop; refuses to overwrite
-python3 scripts/check-abbey-contracts.py --root .                # every scripts/*.py gate check runs standalone
+python3 scripts/check-abbey-contracts.py                         # every scripts/*.py gate check runs standalone; --root defaults to contracts/abbey
 deploy/install-launchd.sh [--uninstall]                          # Discord bot service; MLX installers listed below
 ```
 
@@ -71,8 +71,11 @@ at most every 2 s, `StreamEnd::{Text,Calls}` is the tool-loop seam),
 segment under `ABBEY_DATA_DIR`, temp-file + rename writes; WDBX keys are
 `mem:{scoped_guild_id}:{vector_id}` with a scoped-user filter on read, which is
 the privacy boundary), `provider/` + `provider.rs` + `provider_self_test.rs`
-(route catalog, discovery, qualification behind `--provider-self-test` and the
-`ABBEY_PROVIDER_*` env family), `contracts/` (`#[cfg(test)]`-only guard over the
+(`--provider-self-test` runs the legacy primary/FM probes only; the generic
+route catalog and discovery in `provider/` and the `ABBEY_PROVIDER_*` env
+family they parse are exercised by their own unit tests and are not yet wired
+into the CLI or the running bot, so setting those variables changes nothing
+at runtime), `contracts/` (`#[cfg(test)]`-only guard over the
 pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
 `recall.rs`, `vad.rs`, `offline_voice.rs`.
 
@@ -125,8 +128,8 @@ reaction events; it does *not* carry message content, presence, or the member li
 `ABBEY_MESSAGE_CONTENT=1` must be enabled in the Dev Portal *and* set here — both,
 or the gateway silently sends nothing.
 
-**Unsolicited speech is gated five times before the policy is consulted**
-(`pipeline::guards`, in order): own traffic is ignored first, then the content
+**An ordinary unsolicited message is gated five times before the policy is
+consulted** (`pipeline::guards`, in order): own traffic is ignored first, then the content
 guard (passes if there is text, an attachment, or the message is forced), then
 `ABBEY_QUIET=1` (operator, wins over everything) → the guild's `/admin act on`
 (opt-in, default off) → `/admin learning off`. After the policy picks reply/react,
@@ -136,7 +139,10 @@ default 6/h, ceiling 60) and then the per-channel cooldown (default 20 s, ceilin
 backend check so a missing backend costs no budget. `OverBudget` and `CooledDown`
 record **no** experience; a `Stay` decision does record a silence experience.
 Replies stay open for a 150 s settlement window with a −0.2 baseline
-(`brain/reward.rs`), so engagement has to earn the reward back.
+(`brain/reward.rs`), so engagement has to earn the reward back. Generated
+welcomes (`RouteDecision::Welcome`) are the exception: that branch runs only
+`check_unsolicited` (quiet and act-off) and returns without `guards`, the
+learning gate, the policy, or the rate limits.
 
 **DMs are one-person guilds.** `SocialEvent::scoped_guild_id` returns
 `"{network}:dm:{user}"` when there is no guild. A shared `"discord:dm"` would let
