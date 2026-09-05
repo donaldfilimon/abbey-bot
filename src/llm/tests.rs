@@ -469,6 +469,18 @@ fn anthropic_wins_when_both_backends_are_configured() {
     )
     .expect("a backend is selected");
     assert!(matches!(backend, Backend::Anthropic { .. }));
+
+    let backend = Backend::from_values(
+        Some("  ".into()),
+        Some("http://127.0.0.1:8080".into()),
+        Some("local-model".into()),
+    )
+    .expect("blank Anthropic key falls through to local");
+    assert!(matches!(
+        backend,
+        Backend::OpenAiCompatible { endpoint, model }
+            if endpoint == "http://127.0.0.1:8080" && model == "local-model"
+    ));
 }
 
 #[tokio::test]

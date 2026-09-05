@@ -24,7 +24,7 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 | Layer | Status | Evidence |
 |-------|--------|----------|
-| Source gate (`./check.sh`) | **PASS** | 787 tests, clippy clean, locked release build (measured 2026-09-04 03:51 on `e0825b9` plus the context-menu / wake-word branch) |
+| Source gate (`./check.sh`) | **PASS** | 904 Rust tests passed, 2 live tests ignored; clippy and locked release build passed; 27 named Swift tests and Swift release build passed; 25 fake audio-tap installer tests and strict sibling WDBX parity passed. See [catalog/audio-tap source evidence](docs/superpowers/plans/2026-09-04-catalog-audio-tap-evidence.md). |
 | Cross-platform CI (Ubuntu/macOS/Windows) | **Repaired, unverified at new head** | Run `33835423344` at `057e6b1` failed on all three at `cargo fmt --check`; PR #72 fixed it and merged as `e0825b9`. That fix was green on all three *on the PR branch* — no post-merge `main` run has been read here, so this is a repair, not a fresh pass. The older `33218303755` at `9716f00` is a pre-stabilization baseline, not current status. |
 | Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
 | Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
@@ -37,37 +37,90 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `/persona route <request> [as]` | Shows which persona takes a request and why. `as` is a dropdown that forces one. |
-| `/persona ask <question>` | Routes the question to a persona and answers it via the configured generation backend (see "Configured backends"). With none configured, it says so. Questions are capped at 2,000 characters and each user gets one accepted invocation per 30 seconds. |
-| `/whois <user>` | Profile read: identity, standing, roles, join date. |
-| `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. Threads are redirected to their parent, which owns the overwrites they inherit. |
-| `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out — both the permission bit and role hierarchy (owner-target, admin-timeout, top-role comparison). |
-| `/server <kind>` | Emits a role hierarchy, channel structure, and numbered setup steps. |
-| `/webhook <channel>` | Incoming-webhook setup guide: steps, curl, and a safe-by-default payload. Threads get a curl carrying their actual `?thread_id=`; forums (and media channels) get post semantics — `thread_name` or `?thread_id=`. |
-| `/remember <fact> [user]` | Store a durable fact (ephemeral) in plain memory and WDBX. Facts are whitespace-normalized, non-empty, and capped at 300 Unicode characters. The subject defaults to you; choosing another member requires Manage Messages, Manage Guild, or Administrator. |
-| `/forget <fact> [user]` | Remove a stored fact from plain memory and WDBX. The subject defaults to you and autocomplete is scoped to your own facts; choosing another member requires Manage Messages, Manage Guild, or Administrator. |
-| `/recall [user]` | What Abbey remembers about you, plus your standing. Looking up another member requires Manage Messages, Manage Guild, or Administrator. |
-| `/reputation [user]` | A member's reputation score (0–1) in this server. |
-| `/summarize [count] [as]` | Summarize the recent messages Abbey has seen in the channel via the backend; stores the summary as the channel's context. |
-| `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint. JPEG, PNG, WebP, and GIF are fully decoded locally under 8192×8192-pixel and 96 MiB allocation ceilings before transport; GIF's first rendered frame is normalized to PNG. |
-| `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
-| `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
-| `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | Discord voice locked to one env-configured guild/channel. Join/resume require Manage Server, the caller to be present, an explicit everyone-present consent attestation, and a public disclosure before the software media gate opens. A new, unidentified, or unattested participant closes the media epoch and disconnects the conversational `Decode` call; renewed consent starts a fresh call. Leave is available to someone present or a manager. The owner/admin-only local verifier spans join, participant pause/resume, and final leave with content-free in-memory counters; while armed it disables voice conversation commits. `ABBEY_VOICE_AUTOJOIN=1` is restart-resilient muted/self-deafened no-audio presence regardless of the selected conversational backend. |
+<!-- BEGIN GENERATED COMMAND CATALOG -->
+| Command | Context | Response | What it does |
+|---|---|---|---|
+| `/help` | guild, bot DM | private | Browse commands available to you privately. |
+| `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
+| `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
+| `/whois` | guild | public | Read a member's profile and roles. |
+| `Abbey: profile` | guild | private | Read the selected member's profile privately. |
+| `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
+| `/perms` | guild | public | Explain a member's channel permissions. |
+| `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
+| `/server` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
+| `/remember` | guild, bot DM | private | Store a fact about yourself; moderators may choose a member. |
+| `/forget` | guild, bot DM | private | Remove a stored fact about yourself or an authorized member. |
+| `/pending list` | guild, bot DM | private | Review proposed fact replacements. |
+| `/pending confirm` | guild, bot DM | private | Apply an explicitly chosen fact replacement. |
+| `/pending dismiss` | guild, bot DM | private | Dismiss a proposed replacement and keep both facts. |
+| `/recall` | guild, bot DM | private | Read your facts and standing, or an authorized member's. |
+| `/reputation` | guild, bot DM | private | Read your standing privately; moderators may choose a member. |
+| `/summarize` | guild, bot DM | public | Summarize the recent conversation through the backend. |
+| `/see` | guild, bot DM | public | Describe an image; an optional question also needs generation. |
+| `/ocr` | guild, bot DM | public | Read the text in an image. |
+| `/stats` | guild, bot DM | private | Read command usage and learning statistics. |
+| `/admin show` | guild | private | Read this server's settings. |
+| `/admin persona` | guild | private | Set the server's default persona. |
+| `/admin learning` | guild | private | Control learning for this server. |
+| `/admin vision` | guild | private | Control image understanding for this server. |
+| `/admin cooldown` | guild | private | Set the unsolicited reply cooldown. |
+| `/admin act` | guild | private | Opt this server into unsolicited replies or turn them off. |
+| `/admin budget` | guild | private | Set the hourly unsolicited reply budget. |
+| `/admin brain` | guild | private | Inspect the learning policy and exploration setting. |
+| `/admin flush` | guild | private | Persist current state and report each result. |
+| `/admin export` | guild | private | Export the server's brain snapshot privately. |
+| `/admin reset` | guild | private | Clear only this channel's transcript. |
+| `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
+| `/voice notice` | guild | private | Publish the member voice consent controls. |
+| `/voice join` | guild | private | Start voice after every participant's saved agreement. |
+| `/voice resume` | guild | private | Resume voice after current participant consent checks. |
+| `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |
+| `/voice status` | guild | private | Read private operator voice diagnostics (member view planned). |
+| `/voice mode` | guild | private | Read or select a fully configured voice mode. |
+| `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |
+| `/voice verify report` | guild | private | Read the private local voice acceptance report. |
 
-**To talk with Abbey:** join the configured voice channel, notify everyone
-present, then run `/voice join consent:true` once everyone agrees. Once voice
+Planned (not registered or shown as usable in help): `Abbey: memory`, `Abbey: describe image`, `Abbey: read image text`, `admin dashboard`, `voice diagnostics`. Member-safe `/voice status` and typed voice-mode choices also remain Task 6 work; the current status is private and manager-only.
+<!-- END GENERATED COMMAND CATALOG -->
+
+**To talk with Abbey:** open `/voice consent` or the voice channel's pinned
+notice and choose **Agree** for the displayed processing mode. Each member
+makes their own choice once; a manager then runs `/voice join consent:true`
+when everyone in the configured channel has a saved agreement. Once voice
 is active, say **Abbey**, **Abby**, **Abi**, or **Aviva** before your question;
 you do not need a slash command or a new permission for each reply. The same
 speaker can continue after Abbey starts speaking, and for 45 seconds after her
 reply, without repeating the name. While she is still preparing an answer,
 use her name again to replace that question. New people
-joining require renewed consent and `/voice resume consent:true`. `/voice status`
+joining pause the call; uncovered members agree, then a manager uses
+`/voice resume consent:true`. Already-saved choices still count. `/voice status`
 shows whether voice is active, awaiting consent, preparing a reply, or speaking.
 Automatic voice-channel presence after a restart is muted and does not activate
 conversation. Ordinary speech does not cancel a reply still being prepared;
 speaking over audible playback stops it immediately.
+
+**Your choice is remembered and reversible.** Agreement is scoped to the server,
+member, local/OpenAI processing mode and disclosure version, and persists across
+visits and bot restarts. A host's `consent:true`, membership, silence or output
+mute never creates another member's agreement. **Stop / withdraw** removes your
+agreement for both modes and, when you are in the call, immediately closes the
+media gate and tears down the conversational connection. Mentioning Abbey and
+typing `stop listening` in the configured voice chat does the same, including
+while already paused.
+Clearly attributed spoken withdrawal works in local mode. `/voice leave` stops
+only the current call; it does not delete saved choices.
+
+Saved choices require a writable `ABBEY_DATA_DIR`. The separate owner-only
+`voice-consent.json` contains member IDs, policy versions, acknowledgment times
+and Discord interaction IDs, never audio or transcripts. Writes are serialized
+and atomic; successful agreement is acknowledged only after persistence. An
+interrupted write leaves `voice-consent.pending`, which blocks receipt loading.
+If storage fails, new activation stays blocked and the operator must investigate
+before restarting; never clear the marker to revive older agreements. Recovery
+requires retiring the affected consent files and collecting fresh member choices.
+The ordinary memory flush does not overwrite this consent file.
 
 Local conversational voice and the offline voice audition request
 `reasoning_effort: "none"` for the measured `gemma4:12b` deployment at an HTTP
@@ -222,6 +275,23 @@ only when a current, owner-only qualification manifest matches the Abbey
 binary, `fm` executable, OS build, mode, and fixture version. It is not the
 Gemma default.
 
+## macOS audio-tap sidecar
+
+The [audio-tap package](tools/abbey-audio-tap/README.md) supplies a native
+ScreenCaptureKit audio source for the planned `/voice play` feature. It streams
+48 kHz stereo PCM over `127.0.0.1:8182` and excludes identified Discord clients,
+browsers, terminal hosts, Abbey, and unidentified sources. Its `/health` endpoint
+does not start capture or request permission. The package documents the exact
+stream protocol, eligible-application restrictions, and separate operator
+permission setup.
+
+This source slice includes the Swift executable and a transactional launchd
+installer with tests using a temporary home and fake service commands. Rust
+streaming, player controls, mixer ducking, and `/voice play` registration remain
+separate work. Source tests do not establish live capture, installation, or
+audible Discord acceptance. `./check.sh` runs synthetic audio tests and a Swift
+release build on macOS; Windows and Linux explicitly skip the macOS SDK layer.
+
 ## Configured backends
 
 `/persona ask` answers come from an external or local model, never from the
@@ -375,13 +445,13 @@ runs fully offline.
 
 | Env var | What it enables |
 |---|---|
-| `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory) + `wdbx.seg.0.jsonl` (the WDBX v1 segment holding semantic memory). Unset = in-memory, lost on restart. |
+| `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory), `wdbx.seg.0.jsonl` (semantic memory), and the independent `voice-consent.json` (member voice choices). Unset = in-memory learning and memory; conversational voice cannot activate without durable choices. |
 | `ABBEY_BOT_LLM_TOOLS` | `off` disables the complete seven-tool Core-plus-Inspect vocabulary; default on. There is no separate Inspect switch. A tool-contract rejection degrades only that provider's tool route. |
 | `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` / `_CAPABILITY_MANIFEST` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. Enabling fallback also requires a matching owner-only qualification manifest. `system` is on-device; `pcc` is an explicit cloud selection and is not qualified by this repository's system-mode evidence. |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_PROVIDER` / `_ENDPOINT` / `_MODEL` / `_KEY` | `remote` (default) selects one verified OpenAI-compatible endpoint, `fm` selects only a manifest-qualified FM CLI, and `off` disables vision. Abbey never retries an image through another provider. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. A 2026-08-19 Ollama/e4b screenshot result is historical only; it does not qualify the current MLX-VLM target or an installed FM CLI. |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. `ABBEY_VOICE_MODE` is the startup selection; every other mode whose variables are complete is retained inert, and `/voice mode` switches among them at runtime without a restart. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or mention Abbey and write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -511,9 +581,10 @@ Discord DAVE/MLS transport. A conversational call is constructed in decode
 mode from the outset because Songbird cannot promote a running
 `DecodeMode::Pass` UDP receiver to `Decode`; Discord mute/self-deafen plus a
 separate epoch-bound software media gate keep frames inaccessible until the
-public disclosure and final participant check pass. `/voice join consent:true`
+public disclosure, saved member choices and final participant check pass. `/voice join consent:true`
 and `/voice resume consent:true` require Manage Server and an in-channel
-caller. Any new, unknown, or unattested speaker revokes the media epoch before
+caller. Each member's receipt must cover the current disclosure version and the
+exact local/OpenAI processing mode chosen for that call. Any new, unknown, or unattested speaker revokes the media epoch before
 that frame can enter the bounded 20 ms input queue, cancels work/playback, and
 disconnects the conversational `Decode` call. Local mode runs Whisper STT, canonical Abbey
 cognition, and Kokoro TTS on loopback; voice turns are read-only and raw audio
@@ -537,8 +608,9 @@ further limited to the owner or an administrator. It keeps one ephemeral,
 redacted acceptance run across consent epochs and suppresses voice transcript
 commits while armed; a process restart clears it. In explicit `openai` backup
 mode, Realtime is a degraded direct provider path: spoken stop detection is not authoritative, so
-any participant must use `/voice leave` or write `stop listening` in the
-configured voice chat for a deterministic stop. Discord Go Live video is not
+any participant must use `/voice leave` or mention Abbey and write
+`stop listening` in the configured voice chat for a deterministic stop.
+Discord Go Live video is not
 ingested; stream vision needs a separate consented screenshot source and
 retention policy.
 
@@ -702,6 +774,23 @@ unverified as running artifacts. A locked release build proves only the built
 binary it produced, not an installation or service.
 
 ## Gate
+
+### Supplemental coding skills
+
+[Apollo GraphQL's Rust best practices](https://github.com/apollographql/skills/tree/main/skills/rust-best-practices)
+is a reviewed supplemental reference for ownership, error handling, testing,
+and code review, discovered through `npx skills find rust`. Use relevant chapters
+alongside this repository's agent guidance; the gate below and its lint policy
+take precedence over generic skill commands or lint-suppression advice.
+
+Agent `SKILL.md` packages guide the coding assistant. Abbey's runtime does not
+load them: its seven tools are compiled Core/Inspect groups in `src/tools.rs`.
+Installing a coding skill does not grant Abbey browsing, shell, or server-editing
+capabilities. `/server` emits a blueprint; apply and verify server settings in
+Discord. Its read-only channel instructions cover messages and threads, and
+named channel-access roles must also be assigned to staff who need them.
+
+### Required checks
 
 ```sh
 ./check.sh

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serenity::all::Permissions;
 
 use crate::voice::VoiceMode;
-use crate::voice_session::{VoicePhase, VoiceRuntime};
+use crate::voice_session::VoiceRuntime;
 use crate::{Context, Error};
 
 /// Arm or read a content-free live acceptance run.
@@ -26,7 +26,13 @@ fn can_access_voice_verification(
     is_owner: bool,
     interaction_permissions: Option<Permissions>,
 ) -> bool {
-    is_owner || interaction_permissions.is_some_and(|permissions| permissions.administrator())
+    let mut input = crate::command_catalog::EligibilityInput::new(
+        crate::command_catalog::InteractionContext::Guild,
+    );
+    input.application_owner = is_owner;
+    input.permissions =
+        crate::commands_help::permissions_input(interaction_permissions.unwrap_or_default());
+    crate::command_catalog::access_allows(crate::command_catalog::AccessId::A7.rule(), &input)
 }
 
 async fn voice_verification_runtime(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, &'static str> {
@@ -42,16 +48,14 @@ async fn voice_verification_runtime(ctx: Context<'_>) -> Result<Arc<VoiceRuntime
     if guild_id.get() != runtime.config.guild_id {
         return Err("Abbey voice is locked to a different server by deployment configuration.");
     }
-    let is_owner = ctx
-        .guild()
-        .is_some_and(|guild| guild.owner_id == ctx.author().id);
+    let is_owner = ctx.framework().options().owners.contains(&ctx.author().id);
     let interaction_permissions = ctx
         .author_member()
         .await
         .and_then(|member| member.permissions);
     if !can_access_voice_verification(is_owner, interaction_permissions) {
         return Err(
-            "Only the server owner or an administrator can control or read live voice verification.",
+            "Only the application owner or an administrator can control or read live voice verification.",
         );
     }
     Ok(runtime)
@@ -75,23 +79,28 @@ pub async fn voice_verify_start(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
+    // Hold `transition` from the mode check through the arm, as `/voice mode`
+    // holds it from its check through its write. Without it the two admin
+    // commands can interleave: this reads local and arms while a switch that
+    // already saw "no run armed" moves the backend away, leaving a local-only
+    // run armed under OpenAI.
+    let transition = runtime.transition.lock().await;
     if runtime.effective_mode() != VoiceMode::Local {
+        drop(transition);
         ctx.say("Privacy-safe live verification is available only for local voice mode; disabled mode has no media and the direct cloud backup does not expose local STT completion.")
             .await?;
         return Ok(());
     }
     let snapshot = runtime.snapshot().await;
-    if snapshot.start_pending
-        || !matches!(
-            snapshot.phase,
-            VoicePhase::Disconnected | VoicePhase::PresenceOnly | VoicePhase::Failed
-        )
-    {
+    if snapshot.start_pending || !snapshot.phase.accepts_backend_change() {
+        drop(transition);
         ctx.say("Start verification before the consented join. Leave the current conversational session first so the run can observe the complete join, participant-change resume, and final leave sequence.")
             .await?;
         return Ok(());
     }
-    match runtime.begin_verification() {
+    let armed = runtime.begin_verification();
+    drop(transition);
+    match armed {
         Ok(run) => {
             ctx.say(format!(
                 "Armed redacted live voice verification run {} in process memory. It records only fixed counters, disables conversation commits, and does not start capture. Collect unanimous current consent, then use the normal manager `/voice join consent:true` flow.",

@@ -535,9 +535,9 @@ status: in_progress
   platforms** (run `33879118089`): #79 built `VoiceConfig` with a struct literal and #76 made two
   of its fields private the same morning, so the test binary no longer compiled. The Pages build
   failed at the same head because the diagnosis spec from #77 quotes Jinja that Jekyll's Liquid
-  parser rejects (`{% set %}`), and this repository has no `_config.yml` or `.nojekyll`. #80
+  parser rejects (a Jinja `set` tag), and this repository has no `_config.yml` or `.nojekyll`. #80
   (`be2915f`) fixed both: the fixture now uses `VoiceConfig::selected_only`, and the two quoted
-  blocks sit inside `{% raw %}`. Two individually green PRs producing a red `main` is the concrete
+  blocks sit inside Liquid raw tags. Two individually green PRs producing a red `main` is the concrete
   argument for requiring the three Gate checks on `main`; that is a repository setting and
   Donald's call. As before, this closes only the exact-head CI item; nothing here qualifies the
   provider, the installed artifact, live connectors, managed deployment, or consented voice.
@@ -545,5 +545,29 @@ status: in_progress
   member-consent feature) and run `33885035333` is **red on Gate (Windows)** in
   `audible_playback_still_stops_on_speech` (Ubuntu and macOS passed). That is the shared-scheduler
   test defect diagnosed in the voice section; PR #85 restores the gate and its merge is Donald's.
-  The exact-head item is therefore open again until a `main` run at or after #85 is green on all
-  three platforms.
+  That exact-head item closed at `53836c0`: run `33891829308` passed Ubuntu, macOS, and Windows
+  after #85 landed. The merge of this ledger repair will create a newer `main` head whose push
+  gates remain a separate requirement.
+  **And again, same mistake, same day:** the Pages build failed at `bb65c81` (#84) and `a4ca221`
+  (#85) because the ledger bullet above quoted the Jinja tag and the Liquid raw tag literally, and
+  Jekyll parses `tasks/goals.md` too. Fixed by rewriting those tokens as prose and by adding
+  `scripts/check-pages-liquid.py` to the gate, which fails on any Liquid-looking token in Markdown
+  outside a raw span, so the gate catches this before Pages does.
+  The exact merged repair head `20e9d83` then closed both upstream layers: Pages run
+  `33894994514` succeeded, and Rust run `33894995541` passed Ubuntu, macOS, and Windows. A
+  follow-up selector audit found that the first preventive gate modeled only `.md` and scanned
+  indexed metadata that Jekyll does not render. The follow-up now pins the observed Pages v232
+  source set, covers all five case-insensitive Jekyll Markdown suffixes, mirrors default entry and
+  optional-front-matter/readme-index behavior, and fails closed when configuration, front-matter
+  routing, symlinks, or Jekyll magic directories invalidate that model. Its merge will again create
+  a newer head whose hosted gates must be evaluated separately.
+- **2026-09-04 (evening): the newer head `3c13589` is green on both hosted gates, as the line
+  above requires.** Rust run `33932415417` passed Ubuntu, macOS, and Windows; Pages run
+  `33932414418` passed. Windows matters most here: it is the runner that failed twice
+  (`ac909b9`, `bb65c81`) on `audible_playback_still_stops_on_speech`, and it has now passed at
+  `53836c0`, `20e9d83`, and `3c13589` carrying #85's private-scheduler fixture, so the
+  shared-scheduler diagnosis holds on the platform that exposed it rather than only locally.
+  Open at the time of writing: #82 (the `/voice mode` idle guard, switch serialization, and the
+  Codex P1 fix, green on all three platforms at `8da591c`, merge Donald's). As before, this
+  closes only the exact-head CI item; nothing here qualifies the provider, the installed
+  artifact, live connectors, managed deployment, or consented voice.

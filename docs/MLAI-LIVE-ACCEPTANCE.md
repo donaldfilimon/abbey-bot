@@ -1,3 +1,7 @@
+> **Update 2026-09-04 ~19:07 ET — community redesign saved and blueprint repair installed:** Native Discord onboarding now uses eight defaults (six chattable), three participation tasks, a rewritten Abbey welcome, and public interest mappings. Help is a default; ABI/WDBX are optional. The Community Guidelines resource now contains the existing screening standards and useful channel links; Help posting guidance was improved. A full client reload and roleless newcomer preview verified saved content and navigation. Two archives remain outside onboarding; custom Guide banner requires Level 2 (current Level 1). No channel deletion, private-channel opening, or member-role grant occurred.
+>
+> Source **`71468e1`** repairs read-only blueprint posting/thread denies and misleading role inheritance wording. `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` passed **870 tests, 0 failed, 2 intentional ignores**, warnings-denied clippy, locked release, deployment checks, and WDBX parity. Managed launchd installation succeeded; installed and tested SHA-256 both **`da7fbe97a1f96ba740b550c9ce424b0b51b60c099f45426be33db368709b5417`**. PID **24593**, one run/no exits; gateway connected at **19:06:02 ET**. Native `/server community` at **19:07 ET** returned the corrected blueprint ephemerally. Rollback: `rollback/abbey/20260904T230557Z.FnLdiU`. Existing automatic voice presence returned muted/deafened; logs confirm decoding/transmission disabled. No conversational voice activation or audible test occurred. Source remains local/unpushed; this is not hosted CI evidence. README adds a reviewed Apollo Rust coding-skill reference; runtime remains the seven compiled tools, with no SKILL.md loader added.
+
 > **Update 2026-09-04 ~08:52 ET — queue failure repair installed:** Source **`106c97d`** preserves earlier in-flight and queued recognition when a sequence gap damages the current utterance. Every STT failure, including empty or malformed responses, and unexpected task failure now closes media through one failure transition; completed speech cannot be silently dropped while capture remains open. Shared activity reporting keeps pending recognition visible after speech, playback completion, and recoverable generation failures. Four regressions reproduced the defects before repair. The final `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` passed **813 tests, 0 failed, 2 intentional ignores**, warnings-denied clippy, WDBX parity, deployment checks, and locked release build. Independent bounded review found no remaining production issue; its two test synchronization findings were fixed before this gate.
 >
 > The managed installer exited successfully. Installed SHA-256 **`3e2fe27bcc4a9c41a22a38445dfda96a1cf3c1159cca6050ed8417dccb345b7c`** matches the tested release; launchd PID **34682** is stable (one run, no exits), with gateway readiness at **08:51:33 ET**. The runtime environment is byte-for-byte unchanged. Rollback is retained under `rollback/abbey/20260904T125128Z.gMS4XD`. The 08:52 ET REST snapshot shows Abbey in Office Hours, self-muted and self-deafened, with server mute/deaf/suppression false. No activation or human-audible test was performed after this restart. Hosted checks must be read on the final PR head, and current participant verification/application status remains separate from these transport flags.
@@ -136,7 +140,7 @@ Voice destination vs MLAI: **guild ID matches**. Channel is the single 19-digit 
 
 Required lifecycle (todo + `docs/live-test-protocol.md` §4):  
 **join `consent:true` → wake → barge-in → membership-close → resume → leave**  
-plus owner/admin `/voice verify start` / `report` with `observed: 8/8`, written `stop listening`, and a human audible witness. Source tests and historical consent are **not** substitutes.
+plus owner/admin `/voice verify start` / `report` with `observed: 8/8`, an Abbey mention with written `stop listening`, and a human audible witness. Source tests and historical consent are **not** substitutes.
 
 ### Preconditions (MLX-Audio sidecar is up; human 8/8 and in-VC consent still failing)
 
@@ -163,7 +167,7 @@ Run these **in MLAI Community** (`1275617641620443146`) while Donald is **in the
 | 6 | Human | Membership-close: a person joins or leaves the VC (new/unattested participant) | Locked VC |
 | 7 | Humans in VC | Fresh notice + unanimous consent for the **new** set | Locked VC |
 | 8 | Manager, **in VC** | `/voice resume consent:true` | New consent epoch; do not reuse the old one |
-| 9 | Human in VC chat | Written `stop listening` (authoritative in local mode) | Locked VC text |
+| 9 | Human in VC chat | Mention Abbey and write `stop listening` (authoritative in local mode) | Locked VC text |
 | 10 | Manager or present member | `/voice leave` | Same guild |
 | 11 | Owner/admin | `/voice verify report` | Same guild. Pass only if `observed: 8/8` **and** a human attests audible wake/reply + current unanimous consent |
 
@@ -182,7 +186,7 @@ Record only human pass/fail, coarse Inspect states, and verify counters. Do **no
 | Barge-in | Playback **audibly** stops mid-utterance; barge-in counter increments | Playback finishes; counter unchanged; error reported as barge |
 | Membership-close | New/unknown/unattested participant immediately closes capture, playback, STT; conversational `Decode` disconnects; Inspect `paused`; no frame from the new person is processed | Session continues; new speaker transcribed |
 | Resume | New notice + fresh consent + `/voice resume consent:true` starts a **new** epoch | Resume without re-consent; old epoch reused |
-| Written stop | `stop listening` yields authoritative inactive status (local mode) | Spoken backup prose treated as authority |
+| Written stop | Mentioning Abbey and writing `stop listening` yields authoritative inactive status (local mode) | Spoken backup prose treated as authority |
 | Leave | `/voice leave`: no voice presence, no UDP, no later MLX-Audio speech requests | Ghost presence / socket remains |
 | Verify | `/voice verify report` = `observed: 8/8` **plus** human audible + consent attestation | Counters only, or verifier used as proof of consent |
 | Other guild / DM Inspect | Voice state `off` | Leak of `active`/`paused` |
@@ -199,7 +203,7 @@ Inspect legal values only: `off`, `presence`, `awaiting-consent`, `active`, `pau
 - Whisper STT → canonical read-only Abbey reply → Kokoro TTS on loopback.
 - Truncate playback on barge-in and bump the aggregate counter.
 - Close the epoch on membership / unattested SSRC, disconnect `Decode`, stop STT/TTS, require resume.
-- Treat written `stop listening` / first-person consent withdrawal as authority (local mode).
+- Treat an Abbey mention with written `stop listening` / first-person consent withdrawal as authority (local mode).
 - Tear down on `/voice leave`.
 - Keep content-free `/voice verify` counters in process memory (cleared on restart). **While armed, conversation commits are disabled** — the verifier is not a spoken-quality test.
 
@@ -211,7 +215,7 @@ Inspect legal values only: `off`, `presence`, `awaiting-consent`, `active`, `pau
 - Speak the wake name and the barge-in utterance.
 - Cause the membership change (join/leave).
 - Witness that playback was actually heard and that barge-in actually cut it.
-- Write `stop listening`.
+- Mention Abbey and write `stop listening`.
 - Confirm `/voice verify report` against what they heard. The 8/8 counter is not proof of consent or audibility.
 
 **Do not automate:** consent, audible witness, membership-change as a fake event, or using MLX access logs as live-voice evidence.

@@ -18,10 +18,11 @@ use crate::inspect::{VoiceInspectRegistry, VoiceInspectState};
 use crate::voice::{VoiceBackendConfig, VoiceConfig, VoiceMode};
 
 mod control;
+mod music;
 mod playback;
 mod verification;
 
-pub use control::{authoritative_text_reply, requests_consent_withdrawal};
+pub use control::{authoritative_text_reply, requests_consent_withdrawal, withdrawal_requested};
 pub use playback::{PlaybackTermination, register_playback_termination};
 pub use verification::VerificationActivation;
 use verification::VerificationState;
@@ -55,6 +56,16 @@ impl VoicePhase {
         }
     }
 
+    /// No media epoch can be open and no join is in flight: `Disconnected`,
+    /// the muted/self-deafened autojoin presence (which never decodes,
+    /// whatever the backend), and `Failed` (media closed by `fail_safe`).
+    /// `AwaitingConsent` is excluded on purpose: a paused session still owns
+    /// the consent it was granted under, and a resume must honour it.
+    #[must_use]
+    pub const fn accepts_backend_change(self) -> bool {
+        matches!(self, Self::Disconnected | Self::PresenceOnly | Self::Failed)
+    }
+
     #[must_use]
     pub const fn processes_audio(self) -> bool {
         matches!(self, Self::Listening | Self::Thinking | Self::Speaking)
@@ -63,6 +74,7 @@ impl VoicePhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
+    MusicTerminated { reason: PlaybackTermination },
     PlaybackTerminated {
         turn: u64,
         termination: PlaybackTermination,
@@ -164,6 +176,7 @@ struct RuntimeState {
     status: String,
     consent_epoch: u64,
     participants: HashSet<u64>,
+    processing_mode: VoiceMode,
     control: Option<SessionControl>,
 }
 
@@ -223,6 +236,39 @@ pub enum DiscordSessionEvent {
     Unknown { epoch: u64, media_was_enabled: bool },
 }
 
+/// Why a `/voice mode` switch to `requested` must be refused right now, as
+/// the sentence to post, or `None` when it may proceed. Pure: the caller
+/// holds `transition` so the snapshot cannot go stale between check and
+/// write. An armed verification run pins the backend to local because the
+/// run is only defined for local inference; `/voice leave` completes it even
+/// from idle.
+#[must_use]
+pub fn mode_switch_blocker(
+    snapshot: &VoiceSnapshot,
+    verification_armed: bool,
+    requested: VoiceMode,
+) -> Option<String> {
+    if snapshot.start_pending {
+        return Some(
+            "Voice is starting right now. Stop it with `/voice leave` before changing the backend."
+                .to_string(),
+        );
+    }
+    if !snapshot.phase.accepts_backend_change() {
+        return Some(format!(
+            "Voice is {} right now. Stop it with `/voice leave` before changing the backend.",
+            snapshot.phase.label()
+        ));
+    }
+    if verification_armed && requested != VoiceMode::Local {
+        return Some(
+            "A live voice verification run is armed, and it observes local inference only. Finish it with `/voice leave` before switching away from local."
+                .to_string(),
+        );
+    }
+    None
+}
+
 #[derive(Debug, Clone)]
 pub struct VoiceSnapshot {
     pub epoch: u64,
@@ -239,7 +285,9 @@ pub struct VoiceSnapshot {
 }
 
 pub struct VoiceRuntime {
+    pub music: music::MusicController,
     pub config: VoiceConfig,
+    pub consent: Arc<crate::voice_consent_store::ConsentStore>,
     /// The mode in force right now, which `/voice mode` may change while the
     /// call is disconnected. Deliberately an atomic rather than a lock: every
     /// read is a copy-out, so this can never participate in the
@@ -266,6 +314,11 @@ pub struct VoiceRuntime {
     inner: Mutex<RuntimeState>,
 }
 
+pub struct ConsentChange {
+    pub epoch_to_stop: Option<u64>,
+    pub saved: tokio::task::JoinHandle<Result<bool, &'static str>>,
+}
+
 /// `VoiceMode` as a stable byte, so the mode in force can live in an atomic
 /// instead of a lock. The mapping is private and only ever round-tripped
 /// through the two functions below.
@@ -289,27 +342,42 @@ const fn mode_from_code(code: u8) -> VoiceMode {
 }
 
 impl VoiceRuntime {
+    #[cfg(test)]
     #[must_use]
     pub fn new(config: VoiceConfig) -> Self {
-        Self::build(config, None)
+        let consent = Arc::new(crate::voice_consent_store::ConsentStore::load(
+            None,
+            config.guild_id,
+        ));
+        Self::build(config, None, consent)
     }
 
     #[must_use]
-    pub fn new_with_inspect(config: VoiceConfig, registry: Arc<VoiceInspectRegistry>) -> Self {
+    pub fn new_with_inspect(
+        config: VoiceConfig,
+        registry: Arc<VoiceInspectRegistry>,
+        consent: Arc<crate::voice_consent_store::ConsentStore>,
+    ) -> Self {
         let guild_id = config.guild_id.to_string();
         let inspect = VoiceInspectBinding {
             registry,
             scoped_guild_id: crate::guild::scoped_guild_id("discord", Some(&guild_id)),
         };
-        let runtime = Self::build(config, Some(inspect));
+        let runtime = Self::build(config, Some(inspect), consent);
         runtime.publish_inspect(VoiceInspectState::Off);
         runtime
     }
 
-    fn build(config: VoiceConfig, inspect: Option<VoiceInspectBinding>) -> Self {
+    fn build(
+        config: VoiceConfig,
+        inspect: Option<VoiceInspectBinding>,
+        consent: Arc<crate::voice_consent_store::ConsentStore>,
+    ) -> Self {
         let (start_changes, _) = watch::channel(0);
         let selected_mode = AtomicU8::new(mode_code(config.mode()));
         Self {
+            music: music::MusicController::default(),
+            consent,
             selected_mode,
             config,
             transition: Mutex::new(()),
@@ -332,6 +400,7 @@ impl VoiceRuntime {
                 status: "configured; disconnected".into(),
                 consent_epoch: 0,
                 participants: HashSet::new(),
+                processing_mode: VoiceMode::Disabled,
                 control: None,
             }),
         }
@@ -384,6 +453,7 @@ impl VoiceRuntime {
     }
 
     fn publish_inspect_phase(&self, phase: VoicePhase, media_enabled: bool) {
+        self.music.phase(phase);
         let state = match phase {
             VoicePhase::Disconnected => VoiceInspectState::Off,
             VoicePhase::PresenceOnly => VoiceInspectState::Presence,
@@ -491,6 +561,29 @@ impl VoiceRuntime {
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.reserve_if_unchanged_locked(operation_token)
+    }
+
+    /// `reserve_start_if_unchanged`, plus the backend this start will use,
+    /// captured in the same critical section. `/voice mode` writes the mode
+    /// under the same lock and refuses while a start is pending, so a join
+    /// either reserves first (and the switch is refused) or reserves after
+    /// (and captures the new backend). Without this, a join could reserve
+    /// and snapshot between the switch's check and its write, then activate
+    /// the old backend while status reported the new one.
+    pub fn reserve_start_with_backend(
+        &self,
+        operation_token: u64,
+    ) -> Option<(u64, Option<VoiceBackendConfig>)> {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation = self.reserve_if_unchanged_locked(operation_token)?;
+        Some((generation, self.effective_backend()))
+    }
+
+    fn reserve_if_unchanged_locked(&self, operation_token: u64) -> Option<u64> {
         if self.start_generation.load(Ordering::SeqCst) != operation_token {
             return None;
         }
@@ -499,6 +592,25 @@ impl VoiceRuntime {
             .store(generation, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
         Some(generation)
+    }
+
+    /// Switch the effective mode only while no start is reserved and no media
+    /// epoch is open, checked and written under `activation_gate` so the
+    /// decision is atomic with `reserve_start_with_backend`. Returns whether
+    /// the switch happened. Callers still consult `mode_switch_blocker` first
+    /// for the phase and verification rules and the user-facing sentence.
+    pub fn switch_effective_mode_if_idle(&self, requested: VoiceMode) -> bool {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.pending_start_generation.load(Ordering::SeqCst) != 0
+            || self.media_epoch.load(Ordering::SeqCst) != 0
+        {
+            return false;
+        }
+        self.set_effective_mode(requested);
+        true
     }
 
     /// Cancel a pending start and synchronously close any media gate it may
@@ -515,6 +627,47 @@ impl VoiceRuntime {
         self.media_epoch.store(0, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
         self.mark_inspect_media_revoked();
+    }
+
+    /// Atomically deny a member's saved choice against final activation. Present
+    /// or epoch-attested members can stop the call; other absent members can
+    /// still withdraw their own agreement. The result carries exact-epoch
+    /// teardown authority across later cache updates.
+    pub fn change_consent(
+        &self,
+        user: u64,
+        event: u64,
+        choice: crate::voice_consent::Choice,
+        now: u64,
+        stop_call: bool,
+    ) -> ConsentChange {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let change = self.consent.change(user, event, choice, now);
+        let epoch = self.current_epoch.load(Ordering::SeqCst);
+        let attested = {
+            let sessions = self
+                .discord_sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            sessions.attested_epoch == epoch && sessions.attested.contains(&user)
+        };
+        // Departures do not discard this epoch's immutable attested set. A
+        // withdrawal while away must prevent reusing that authority on rejoin.
+        let stop_call = choice.withdraws() && change.current && (stop_call || attested);
+        if stop_call {
+            let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            self.pending_start_generation.store(0, Ordering::SeqCst);
+            self.media_epoch.store(0, Ordering::SeqCst);
+            self.start_changes.send_replace(generation);
+            self.mark_inspect_media_revoked();
+        }
+        ConsentChange {
+            epoch_to_stop: stop_call.then_some(epoch),
+            saved: change.saved,
+        }
     }
 
     /// Clear a completed/failed start reservation without invalidating a newer
@@ -710,6 +863,7 @@ impl VoiceRuntime {
         inner.status = "joining Discord voice safely".into();
         inner.consent_epoch = inner.consent_epoch.saturating_add(1);
         inner.participants = participants;
+        inner.processing_mode = self.effective_mode();
         self.current_epoch.store(epoch, Ordering::SeqCst);
         self.publish_inspect_phase(VoicePhase::Connecting, false);
         epoch
@@ -755,6 +909,10 @@ impl VoiceRuntime {
             || inner.phase != VoicePhase::Connecting
             || !self.is_current(epoch)
             || !self.start_is_current(start_generation)
+            || !self
+                .consent
+                .coverage(&inner.participants, inner.processing_mode)
+                .is_ok_and(|missing| missing.is_empty())
         {
             return false;
         }
@@ -937,6 +1095,7 @@ impl VoiceRuntime {
     }
 
     pub async fn disconnect(&self, status: impl Into<String>) {
+        self.music.stop("voice disconnected", PlaybackTermination::Stopped);
         self.stop_to(VoicePhase::Disconnected, status).await;
     }
 
@@ -948,6 +1107,7 @@ impl VoiceRuntime {
     }
 
     pub async fn fail_safe(&self, status: impl Into<String>) {
+        self.music.stop("voice failed", PlaybackTermination::Errored);
         self.stop_to(VoicePhase::Failed, status).await;
     }
 

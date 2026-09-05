@@ -21,6 +21,16 @@ use crate::runtime::AppState;
 
 mod foundation_models;
 
+/// Tool rejection removes the vocabulary, not the provider's text route.
+/// Both generation and help consult the same effective fallback capability.
+pub(crate) fn fm_cli_text_available(fm: Option<&crate::provider::FoundationModels>) -> bool {
+    fm.is_some_and(|fm| {
+        fm.router
+            .candidates(ProviderCapabilities::text())
+            .contains(&ProviderRoute::FoundationModelsCli)
+    })
+}
+
 /// Progressive-reply pacing: post once this many characters have arrived…
 pub const STREAM_FIRST_POST_CHARS: usize = 60;
 /// …or this many seconds have passed since generation started, whichever first.
@@ -406,11 +416,7 @@ pub async fn generate_with_tools<O: Outbound + Sync>(
         }
         Err(error) => error,
     };
-    let fm_cli_available = state.foundation_models.as_ref().is_some_and(|fm| {
-        fm.router
-            .candidates(ProviderCapabilities::text_with_tools())
-            .contains(&ProviderRoute::FoundationModelsCli)
-    });
+    let fm_cli_available = fm_cli_text_available(state.foundation_models.as_ref());
     let routes = foundation_models::fallback_routes(
         delivery.is_some(),
         primary_streamed,
@@ -540,11 +546,7 @@ pub async fn generate_read_only<O: Outbound + Sync>(
                 .candidates(streamed_text)
                 .contains(&ProviderRoute::FoundationModelsServer)
         });
-    let fm_cli_available = state.foundation_models.as_ref().is_some_and(|fm| {
-        fm.router
-            .candidates(ProviderCapabilities::text())
-            .contains(&ProviderRoute::FoundationModelsCli)
-    });
+    let fm_cli_available = fm_cli_text_available(state.foundation_models.as_ref());
     let routes = foundation_models::fallback_routes(
         delivery.is_some(),
         primary_streamed,
@@ -681,12 +683,13 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     // Constructing the vocabulary is intentionally capability-gated. This is
     // more than an empty slice at dispatch time: disabled voice turns never
     // allocate or even materialize model-callable tool descriptions.
-    let vocabulary = (access.is_enabled()
-        && foundation_models::primary_tools_are_available(
-            state.foundation_models.as_ref(),
-            state.tools_enabled.load(Ordering::Relaxed),
-        ))
-    .then(crate::tools::production_tools);
+    let vocabulary = crate::tools::production_tools_when_enabled(
+        access.is_enabled()
+            && foundation_models::primary_tools_are_available(
+                state.foundation_models.as_ref(),
+                state.tools_enabled.load(Ordering::Relaxed),
+            ),
+    );
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {

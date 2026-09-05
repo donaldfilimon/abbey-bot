@@ -471,7 +471,7 @@ async fn play_audio(
 ) -> Result<bool, String> {
     let input: songbird::input::Input = RawAdapter::new(Cursor::new(pcm_f32), 24_000, 1).into();
     let mut call = call.lock().await;
-    let Some(handle) = runtime.with_media_enabled(epoch, || call.play_only_input(input)) else {
+    let Some(handle) = runtime.with_media_enabled(epoch, || call.play_input(input)) else {
         return Ok(false);
     };
     drop(call);

@@ -8,9 +8,9 @@ use super::discord::{
     required_voice_permissions,
 };
 use super::supervision::{
-    on_voice_permissions_changed, on_voice_state_update, withdraw_voice_from_text,
+    on_voice_permissions_changed, on_voice_state_update, stop_voice_for_withdrawal,
 };
-use crate::voice_session::{authoritative_text_reply, requests_consent_withdrawal};
+use crate::voice_session::{authoritative_text_reply, withdrawal_requested};
 
 /// Handle the voice-specific portion of a gateway event. `true` means an
 /// operational text message was answered and must not also enter the social
@@ -22,6 +22,9 @@ pub async fn on_gateway_event(
     data: &crate::Data,
 ) -> bool {
     match event {
+        FullEvent::InteractionCreate {
+            interaction: serenity::all::Interaction::Component(interaction),
+        } => super::consent::component(ctx, interaction, data).await,
         FullEvent::Message { new_message } => {
             handle_voice_control_message(ctx, new_message, data).await
         }
@@ -172,22 +175,41 @@ async fn handle_voice_control_message(
     }
 
     let translated_text = crate::gateway::strip_bot_mention(&message.content, bot_id.get());
+    let withdrawing = withdrawal_requested(&translated_text);
+    let stop_call =
+        withdrawing && super::consent::caller_may_stop(ctx, runtime, message.author.id.get());
+    let save = withdrawing.then(|| {
+        runtime.change_consent(
+            message.author.id.get(),
+            message.id.get(),
+            crate::voice_consent::Choice::Withdraw,
+            crate::runtime::now(),
+            stop_call,
+        )
+    });
     let mut snapshot = runtime.snapshot().await;
     let Some(mut text) = authoritative_text_reply(&translated_text, &snapshot) else {
         return false;
     };
-    if requests_consent_withdrawal(&translated_text, &snapshot) {
-        let _ = withdraw_voice_from_text(ctx, runtime, message.author.id.get()).await;
+    if let Some(change) = save {
+        if let Some(epoch) = change.epoch_to_stop {
+            let _ = stop_voice_for_withdrawal(ctx, runtime, epoch).await;
+        }
         snapshot = runtime.snapshot().await;
         if let Some(updated) = authoritative_text_reply(&translated_text, &snapshot) {
             text = updated;
+        }
+        match change.saved.await {
+            Ok(Ok(true)) => text.push_str(" Your saved agreement is withdrawn for both processing modes. Use /voice consent if you want to agree again."),
+            Ok(Ok(false)) => text.push_str(" A newer saved choice is already recorded; review /voice consent."),
+            _ => text.push_str(" Your withdrawal could not be saved. The operator must inspect the consent store before restarting Abbey; do not resume voice."),
         }
     }
 
     let mut reference: MessageReference = (message.channel_id, message.id).into();
     reference.fail_if_not_exists = Some(false);
     let builder = CreateMessage::new()
-        .content(text)
+        .content(crate::gateway::shared::clamp_message(text))
         .allowed_mentions(crate::gateway::no_mentions())
         .reference_message(reference);
     match message.channel_id.send_message(&ctx.http, builder).await {

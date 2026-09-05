@@ -614,6 +614,13 @@ pub async fn modcall(
         return Ok(());
     };
 
+    let (moderator, guild) = fetch_member_and_guild(ctx, guild_id, ctx.author().id).await?;
+    let held = guild.member_permissions(&moderator);
+    if !crate::commands_help::modcall_access_allowed(held) {
+        ctx.say("Discord must currently grant you Moderate Members to use this command.")
+            .await?;
+        return Ok(());
+    }
     let history = History {
         warnings: warnings.unwrap_or(0),
         timeouts: timeouts.unwrap_or(0),
@@ -623,43 +630,33 @@ pub async fn modcall(
     // Whether *the moderator asking* can carry it out — not whether the bot
     // can. Two independent ways Discord refuses: the permission bit, and role
     // hierarchy. Report the first that applies.
-    let blocker: Option<String> = match recommendation.action.required_permission() {
-        None => None,
-        Some(required) => {
-            let ((moderator, guild), target) = tokio::try_join!(
-                fetch_member_and_guild(ctx, guild_id, ctx.author().id),
-                async {
-                    guild_id
-                        .member(ctx.http(), user.id)
-                        .await
-                        .map_err(Error::from)
-                },
-            )?;
-
-            // The canonical calculation: includes @everyone's grants and
-            // returns all() for the owner and for Administrator, which is why
-            // no separate owner/admin check exists here any more.
-            let held = guild.member_permissions(&moderator);
-
-            if !held.get_permission_names().contains(&required) {
-                Some(format!(
-                    "You do not have **{required}**, so you cannot carry this out — hand it to someone who does."
-                ))
-            } else {
-                moderation::hierarchy_blocker(
-                    ctx.author().id == guild.owner_id,
-                    top_role_position(&moderator, &guild),
-                    user.id == guild.owner_id,
-                    guild
-                        .member_permissions(&target)
-                        .contains(Permissions::ADMINISTRATOR),
-                    top_role_position(&target, &guild),
-                    matches!(recommendation.action, moderation::Action::Timeout(_)),
-                )
-                .map(str::to_string)
-            }
+    let target = guild_id.member(ctx.http(), user.id).await?;
+    let blocker = recommendation.action.required_permission().and_then(|required| {
+        if !held.get_permission_names().contains(&required) {
+            Some(format!("You do not have **{required}**, so you cannot carry this out — hand it to someone who does."))
+        } else {
+            moderation::hierarchy_blocker(
+                ctx.author().id == guild.owner_id,
+                top_role_position(&moderator, &guild),
+                user.id == guild.owner_id,
+                guild.member_permissions(&target).contains(Permissions::ADMINISTRATOR),
+                top_role_position(&target, &guild),
+                matches!(recommendation.action, moderation::Action::Timeout(_)),
+            ).map(str::to_string)
         }
-    };
+    });
+    if !crate::commands_help::resolved_modcall_allowed(held, Some(blocker.is_none())) {
+        let refusal = blocker
+            .as_deref()
+            .unwrap_or("Discord must currently grant you Moderate Members to use this command.");
+        ctx.say(clamp_message(moderation::render(
+            &user.name,
+            &recommendation,
+            Some(refusal),
+        )))
+        .await?;
+        return Ok(());
+    }
 
     ctx.say(clamp_message(moderation::render(
         &user.name,
@@ -807,7 +804,13 @@ mod tests {
                 .roles
                 .iter()
                 .flat_map(|role| role.permissions.iter())
-                .chain(bp.everyone.iter());
+                .chain(bp.everyone.iter())
+                .chain(
+                    bp.categories
+                        .iter()
+                        .flat_map(|category| category.channels)
+                        .flat_map(|channel| channel.deny_everyone.iter()),
+                );
             for permission in named {
                 assert!(
                     vocabulary.iter().any(|known| known == permission),

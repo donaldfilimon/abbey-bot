@@ -12,14 +12,29 @@ Apply every body edit to both, or they drift.
 ## Commands
 
 ```bash
-./check.sh              # gate: fmt, clippy -D warnings, tests, release build
-./check.ps1             # same gate on Windows (no POSIX/plist checks)
+./check.sh              # gate: fmt, deploy/privacy/contracts/rustsec/wdbx python checks, clippy -D warnings, tests, release build
+ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh   # strict form used for release evidence (needs ../wdbx)
+./check.ps1             # Windows gate; skips the POSIX/plist checks and three deploy python tests
 cargo test <name>       # single test, substring-matched against full path;
                         # no -p or --workspace (single binary crate, tests in bin)
-./target/release/abbey-bot --provider-self-test primary --json
+cargo run               # run the bot; needs DISCORD_TOKEN (or DISCORD_BOT_TOKEN fallback), optional ABBEY_GUILD_ID
+./target/release/abbey-bot --provider-self-test primary --json   # --json is mandatory; exit 0 pass, 1 probe failure, 2 bad args/configuration
 ./target/release/abbey-bot --provider-self-test fm --json
 ./target/release/abbey-bot --provider-self-test all --json
+./target/release/abbey-bot --voice-self-test out.wav             # token-free local TTS → STT loop; refuses to overwrite
+python3 scripts/check-abbey-contracts.py                         # every scripts/*.py gate check runs standalone; --root defaults to contracts/abbey
+deploy/install-launchd.sh [--uninstall]                          # Discord bot service; MLX installers listed below
 ```
+
+`./check.sh` shells out to `cargo audit` and `scripts/check-rustsec-debt.py`
+requires exactly version `0.22.2` (CI installs it); the Linux dependency tree is
+checked to be Rustls/WebPKI-only, so a dep that pulls `native-tls`/`openssl`
+fails the gate. Accepted RUSTSEC debt is enumerated in
+`security/rustsec-accepted-debt.json` and the checker fails closed on any
+missing, extra, or changed record. `.claude/settings.json` has a `PostToolUse`
+hook that runs the full `./check.sh` in the background after every `.rs`
+Write/Edit, and both it and `.codex/hooks.json` append to the gitignored
+`tasks/session-log.md`; `tasks/goals.md` and `tasks/todo.md` are the ledgers.
 
 `cargo test moderation::` runs one module's tests. Gate runs `--locked` on
 purpose: a Cargo.toml bump without a regenerated lock keeps CI green while every
@@ -42,8 +57,36 @@ The Discord/network surface (imports serenity/poise / adapters):
 | File | Role |
 |---|---|
 | `commands.rs`, `commands_brain.rs`, `commands_voice.rs` (+ `commands_voice/`) | Translate Discord data into plain structs and lifecycle calls |
-| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | Gateway events (FullEvent → SocialEvent → pipeline::handle) plus Telegram/Slack adapters |
+| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | `discord.rs` matches eight `FullEvent` variants (Ready, Message, ReactionAdd/Remove, MessageDelete, GuildCreate/Delete, GuildMemberAddition — reactions and deletes feed rewards, not replies) into `SocialEvent` → `pipeline::handle`; `shared.rs` holds the `Outbound` impl and `clamp_message`; Slack/Telegram are serenity-free adapters |
+| `voice_session.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_self_test.rs` (+ `voice_session/`, `voice_local/`) | Songbird-facing voice actors (see the voice paragraph below) |
 | `main.rs` | Env parsing and framework wiring only; reads no guild data |
+
+Pure subsystems the table above does not name but that you will touch:
+`pipeline.rs` (decides *whether* to speak; the shell contract is its `Outbound`
+trait, which is what lets the decision path run behind a recording fake),
+`generation.rs` (decides *how*: progressive posting after 60 chars or 4 s, edits
+at most every 2 s, `StreamEnd::{Text,Calls}` is the tool-loop seam),
+`brain/` (DQN `[18, 64, 32, 3]`, replay 10k, reward settlement), `persist.rs`
++ `wdbx.rs` (no database: one `abbey-state.json` plus one `wdbx.seg.0.jsonl`
+segment under `ABBEY_DATA_DIR`, temp-file + rename writes; WDBX keys are
+`mem:{scoped_guild_id}:{vector_id}` with a scoped-user filter on read, which is
+the privacy boundary), `provider/` + `provider.rs` + `provider_self_test.rs`
+(`--provider-self-test` runs the legacy primary/FM probes only; the generic
+route catalog and discovery in `provider/` and the `ABBEY_PROVIDER_*` env
+family they parse are exercised by their own unit tests and are not yet wired
+into the CLI or the running bot, so setting those variables changes nothing
+at runtime), `contracts/` (`#[cfg(test)]`-only guard over the
+pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
+`recall.rs`, `vad.rs`, `offline_voice.rs`.
+
+**Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`, and
+`persona.rs` carry local transcriptions of ABI formats or algorithms (golden
+vectors pin `wyhash`; the `wyhash` crate returns different values) rather than
+a dependency on the `abi` workspace. `ask.rs` transcribes Aviva and Abi's
+contract descriptions and suffixes; Abbey intentionally follows the separate
+Grok Bot Abbey voice, and response prefixes are not transcribed. `persona.rs` is frozen
+(29 keywords, 0.40/0.30/0.30 prior) and is not edited; new routing intelligence
+composes on top in `routing_signals.rs`.
 
 **If you find yourself writing an `if` inside a `#[poise::command]` function that isn't about fetching data, it belongs in a pure module instead.**
 
@@ -85,12 +128,21 @@ reaction events; it does *not* carry message content, presence, or the member li
 `ABBEY_MESSAGE_CONTENT=1` must be enabled in the Dev Portal *and* set here — both,
 or the gateway silently sends nothing.
 
-**Unsolicited speech is gated four times before the policy is consulted:** the
-blank-content guard first (no content → nothing to learn from), then in order
+**An ordinary unsolicited message is gated five times before the policy is
+consulted** (`pipeline::guards`, in order): own traffic is ignored first, then the content
+guard (passes if there is text, an attachment, or the message is forced), then
 `ABBEY_QUIET=1` (operator, wins over everything) → the guild's `/admin act on`
-(opt-in, default off) → `/admin learning off`. After the policy picks reply/react:
-per-channel cooldown, then the per-guild hourly budget (`brain/budget.rs`, default
-6/h); over budget returns `Outcome::OverBudget` and records **no** experience.
+(opt-in, default off) → `/admin learning off`. After the policy picks reply/react,
+`RateLimits::try_acquire` checks the per-guild hourly budget (`brain/budget.rs`,
+default 6/h, ceiling 60) and then the per-channel cooldown (default 20 s, ceiling
+600) atomically under one lock pair; the Reply branch acquires only after the
+backend check so a missing backend costs no budget. `OverBudget` and `CooledDown`
+record **no** experience; a `Stay` decision does record a silence experience.
+Replies stay open for a 150 s settlement window with a −0.2 baseline
+(`brain/reward.rs`), so engagement has to earn the reward back. Generated
+welcomes (`RouteDecision::Welcome`) are the exception: that branch runs only
+`check_unsolicited` (quiet and act-off) and returns without `guards`, the
+learning gate, the policy, or the rate limits.
 
 **DMs are one-person guilds.** `SocialEvent::scoped_guild_id` returns
 `"{network}:dm:{user}"` when there is no guild. A shared `"discord:dm"` would let
@@ -192,6 +244,18 @@ voice channel. `server::render` normalizes per channel kind, and a test asserts
 the voice exemption is actually exercised so the asymmetry cannot rot into an
 untested claim.
 
+**Voice is five actors with one cancellation rule.** `voice.rs` is the
+provider-neutral policy; `voice_session.rs` serializes the lifecycle with
+epoch-based cancellation (rejoin/pause/leave/move/shutdown advance the epoch
+first, one provider task and one playback handle at a time); `voice_local.rs`
+is the default local STT → cognition → TTS actor whose audio callbacks only
+enqueue frames; `voice_openai.rs` is the explicit `ABBEY_VOICE_MODE=openai`
+backup; `offline_voice.rs` is the MLX-Audio loopback client and knows nothing
+about Discord; `vad.rs` is the single VAD trait (`EnergyVad`, `SemanticVad`,
+`ComposedVad`) so the two paths cannot drift. Raw audio and transcripts are
+never persisted, and while an operator verification run (`/voice verify`) is
+armed, conversational commits are disabled.
+
 **Everything pure takes `now: u64` and a seed; nothing pure reads the clock or
 `rand`.** `runtime::now()` is the single wall-clock read; `brain::nn::Rng` is a
 splitmix64 seeded by the caller. This is what makes reward settlement, cooldown,
@@ -211,9 +275,18 @@ a user sees.
 
 ## Deploy artifacts (reference only)
 
-Configuration is env-only: `DISCORD_TOKEN`, optional `ABBEY_GUILD_ID`,
-`RUST_LOG`, backend vars (`ANTHROPIC_API_KEY`, `ABBEY_BOT_LLM_ENDPOINT`,
-`ABBEY_BOT_LLM_MODEL`), and voice variables. The token lives in
+Configuration is env-only: `DISCORD_TOKEN` (or the `DISCORD_BOT_TOKEN`
+fallback — primary wins, and a present-but-blank primary is an error that does
+**not** fall through), optional `ABBEY_GUILD_ID`, `RUST_LOG`, backend vars
+(`ANTHROPIC_API_KEY`, `ABBEY_BOT_LLM_ENDPOINT`, `ABBEY_BOT_LLM_MODEL`,
+`ABBEY_BOT_LLM_CONCURRENCY`/`_QUEUE_SECS`/`_TIMEOUT_SECS`),
+`SLACK_*`/`TELEGRAM_BOT_TOKEN`, and the
+`ABBEY_VOICE_*` set (`ABBEY_VOICE_MODE=local` is the default and is never
+inferred from key presence). Blank handling is variable-specific: backend
+and voice parsers normalize optional blank values, but a present blank Discord
+token fails, and `ABBEY_GUILD_ID` must be absent or a nonzero numeric snowflake.
+Launchd uses its fixed private
+data path and ignores an `ABBEY_DATA_DIR` line in the env file. The token lives in
 `/etc/abbey-bot/env` (systemd) or `~/.config/abbey-bot/env` (launchd), never
 baked into image layers.
 
@@ -225,7 +298,9 @@ then `cargo build --release --locked`.
 ## What has and has not been verified
 
 Authoritative live Mac acceptance notes live in `docs/MLAI-LIVE-ACCEPTANCE.md`
-(refresh there, not here). As of 2026-09-03 ET: Ollama `:11434` is the reasoner;
+(refresh there, not here; it already carries 2026-09-04 entries newer than this
+file, and README's nine-layer evidence ladder is the rule for what each layer
+proves — passing one never implies the next). As of 2026-09-03 ET: Ollama `:11434` is the reasoner;
 MLX-Audio `:8181` is up; MLX-VLM `:8282` is not published (tool-continuation
 blocked). Do not treat README MLX primary cutover snippets as the current
 launchd primary.

@@ -8,6 +8,13 @@ use crate::pipeline::{self, Outbound};
 use crate::platform::{self, OutboundMessage, TelegramPoller, TgFile, TgResponse, TgUpdate};
 use crate::runtime::AppState;
 
+/// Render a reqwest failure without its URL. Telegram authenticates by putting
+/// the bot token in the URL path, so reqwest's default error display is not
+/// safe for user-facing errors or logs.
+fn render_reqwest_error(error: reqwest::Error) -> String {
+    error.without_url().to_string()
+}
+
 /// Telegram Bot API delivery. Token is held as `SecretString` so `Debug`
 /// never prints it.
 pub struct TelegramOutbound {
@@ -45,9 +52,9 @@ impl TelegramOutbound {
             .json(body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(render_reqwest_error)?;
         let status = response.status();
-        let value: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+        let value: serde_json::Value = response.json().await.map_err(render_reqwest_error)?;
         if !status.is_success()
             || value.get("ok").and_then(serde_json::Value::as_bool) != Some(true)
         {
@@ -120,10 +127,10 @@ impl Outbound for TelegramOutbound {
                     .get(platform::get_file_url(&self.base(), file_id))
                     .send()
                     .await
-                    .map_err(|e| e.to_string())?
+                    .map_err(render_reqwest_error)?
                     .json()
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(render_reqwest_error)?;
                 let path = body
                     .result
                     .filter(|_| body.ok)
@@ -178,13 +185,16 @@ pub async fn run_telegram(state: Arc<AppState>, token: String) {
                     continue;
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "telegram getUpdates decode failed");
+                    tracing::warn!(
+                        error = %render_reqwest_error(e),
+                        "telegram getUpdates decode failed"
+                    );
                     backoff.wait().await;
                     continue;
                 }
             },
             Err(e) => {
-                tracing::warn!(error = %e, "telegram getUpdates failed");
+                tracing::warn!(error = %render_reqwest_error(e), "telegram getUpdates failed");
                 backoff.wait().await;
                 continue;
             }
@@ -213,6 +223,26 @@ mod tests {
         let dbg = format!("{out:?}");
         assert!(!dbg.contains("super-secret-token"));
         assert!(dbg.contains("<redacted>"));
+    }
+
+    #[test]
+    fn telegram_reqwest_errors_strip_token_bearing_urls() {
+        let token = "synthetic-secret-token";
+        let url = format!("https://api.telegram.org/bot{token}/getUpdates");
+        let error = reqwest::Client::new()
+            .get(&url)
+            .header("x-invalid", "invalid\nheader")
+            .build()
+            .expect_err("invalid header value should fail request construction")
+            .with_url(url.parse().expect("synthetic Telegram URL should parse"));
+
+        assert!(
+            error.url().is_some_and(|url| url.as_str().contains(token)),
+            "test setup must produce a reqwest error carrying the token-bearing URL"
+        );
+        let rendered = render_reqwest_error(error);
+        assert!(!rendered.contains(token));
+        assert!(!rendered.contains("api.telegram.org"));
     }
 
     #[test]

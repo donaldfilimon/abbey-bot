@@ -68,6 +68,8 @@ pub struct ChannelSpec {
     /// When set, `@everyone` is denied View Channel here and this role is
     /// allowed it. Must name a role the same blueprint creates.
     pub gated_to: Option<&'static str>,
+    /// Channel overwrites denied to @everyone, including members with guild grants.
+    pub deny_everyone: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +133,7 @@ const fn text(name: &'static str, gated_to: Option<&'static str>) -> ChannelSpec
         name,
         kind: ChannelKind::Text,
         gated_to,
+        deny_everyone: &[],
     }
 }
 
@@ -139,6 +142,7 @@ const fn voice(name: &'static str, gated_to: Option<&'static str>) -> ChannelSpe
         name,
         kind: ChannelKind::Voice,
         gated_to,
+        deny_everyone: &[],
     }
 }
 
@@ -147,6 +151,25 @@ const fn forum(name: &'static str, gated_to: Option<&'static str>) -> ChannelSpe
         name,
         kind: ChannelKind::Forum,
         gated_to,
+        deny_everyone: &[],
+    }
+}
+
+/// Prevent both top-level posting and thread creation/replies. Guild role grants
+/// do not override these channel denies; explicit channel role allows do.
+const READ_ONLY_POSTING: &[&str] = &[
+    "Send Messages",
+    "Create Public Threads",
+    "Create Private Threads",
+    "Send Messages in Threads",
+];
+
+const fn read_only(name: &'static str) -> ChannelSpec {
+    ChannelSpec {
+        name,
+        kind: ChannelKind::Text,
+        gated_to: None,
+        deny_everyone: READ_ONLY_POSTING,
     }
 }
 
@@ -171,7 +194,7 @@ const COMMUNITY_ROLES: &[RoleSpec] = &[
 const COMMUNITY_CATEGORIES: &[Category] = &[
     Category {
         name: "Start Here",
-        channels: &[text("rules", None), text("announcements", None)],
+        channels: &[read_only("rules"), read_only("announcements")],
     },
     Category {
         name: "Community",
@@ -253,7 +276,7 @@ const PROJECT_CATEGORIES: &[Category] = &[
     Category {
         name: "Project",
         channels: &[
-            text("announcements", None),
+            read_only("announcements"),
             text("general", Some("Contributor")),
             forum("decisions", Some("Contributor")),
         ],
@@ -338,23 +361,20 @@ pub fn render(archetype: Archetype) -> String {
     out.push_str("**Role hierarchy** (highest first)\n");
     for role in bp.roles {
         out.push_str(&format!(
-            "- **{}** — {}\n  {}\n",
+            "- **{}**: {}. {}\n",
             role.name,
             role.permissions.join(", "),
             role.note
         ));
     }
-    out.push_str(&format!(
-        "- **@everyone** — {}\n  Everything else is granted by a role, never here.\n",
-        bp.everyone.join(", ")
-    ));
+    out.push_str(&format!("- **@everyone**: {}\n", bp.everyone.join(", ")));
 
     out.push_str("\n**Channels**\n");
     for category in bp.categories {
         out.push_str(&format!("- {}\n", category.name));
         for channel in category.channels {
             let gate = match channel.gated_to {
-                Some(role) => format!(" — {role}+ only"),
+                Some(role) => format!(" [{role}]"),
                 None => String::new(),
             };
             // Text and forum names go out in the form Discord will actually
@@ -368,20 +388,37 @@ pub fn render(archetype: Archetype) -> String {
                 "  - {}{}{}\n",
                 kind_marker(channel.kind),
                 name,
-                gate
+                if channel.deny_everyone.is_empty() {
+                    gate
+                } else {
+                    format!("{gate} [read-only]")
+                }
             ));
         }
     }
 
     out.push_str("\n**Steps**\n");
-    out.push_str("1. Create the roles top-down, in the order above — a role can only manage roles below its own position.\n");
-    out.push_str(&format!(
-        "2. Set `@everyone` to exactly: {}. Everything else comes from a role.\n",
-        bp.everyone.join(", ")
-    ));
-    out.push_str("3. Create the categories, then the channels inside them. Channels inherit category overwrites, so set the gate on the category where every child shares it.\n");
-    out.push_str("4. For each gated channel: deny `@everyone` View Channel, allow the named role. Do not grant the role Administrator as a shortcut — it bypasses every overwrite you just set.\n");
-    out.push_str("5. Verify with `/perms` on a test account before inviting anyone.\n");
+    out.push_str("1. Create roles in the order above; grant only listed permissions. Assign the named access roles to staff too: position does not inherit access.\n");
+    out.push_str("2. Create categories/channels. For [Role], deny @everyone View Channel and allow that role View Channel. Share category overwrites only when all children match.\n");
+    if let Some(channel) = bp
+        .categories
+        .iter()
+        .flat_map(|c| c.channels)
+        .find(|ch| !ch.deny_everyone.is_empty())
+    {
+        out.push_str(&format!("3. For [read-only], deny @everyone: {}. Keep other channel role/member posting allows unset; only Admin publishes (Administrator bypasses denies).\n", channel.deny_everyone.join(", ")));
+    } else {
+        out.push_str(
+            "3. Keep Administrator limited to the listed Admins; it bypasses channel denies.\n",
+        );
+    }
+    out.push_str("4. ");
+    if bp.roles.iter().any(|role| role.name == "Member") {
+        out.push_str("Set up Member assignment after the rules gate. ");
+    }
+    out.push_str(
+        "Verify access and posting with `/perms` and a non-admin test account before inviting.\n",
+    );
 
     out
 }
@@ -523,6 +560,71 @@ mod tests {
             for section in ["Role hierarchy", "Channels", "Steps"] {
                 assert!(out.contains(section), "{archetype:?} missing {section}");
             }
+        }
+    }
+
+    #[test]
+    fn complete_blueprints_fit_one_discord_message() {
+        for archetype in Archetype::ALL {
+            let out = render(archetype);
+            assert!(
+                out.chars().count() <= 2000,
+                "{archetype:?}: {} characters",
+                out.chars().count()
+            );
+            assert!(out.contains("`/perms`"), "missing verification step: {out}");
+        }
+    }
+
+    #[test]
+    fn gate_instructions_do_not_imply_role_inheritance() {
+        let out = render(Archetype::Community);
+        assert!(!out.contains("Member+"), "{out}");
+        assert!(
+            out.contains("Assign the named access roles to staff too"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn information_channels_block_member_posts_and_thread_bypasses() {
+        for archetype in [Archetype::Community, Archetype::Project] {
+            let bp = blueprint(archetype);
+            for channel in bp.categories.iter().flat_map(|c| c.channels) {
+                if matches!(channel.name, "rules" | "announcements") {
+                    // Even if a member's guild roles grant every posting permission,
+                    // channel @everyone denies must remove each path to posting.
+                    for permission in [
+                        "Send Messages",
+                        "Create Public Threads",
+                        "Create Private Threads",
+                        "Send Messages in Threads",
+                    ] {
+                        assert!(
+                            channel.deny_everyone.contains(&permission),
+                            "{archetype:?}/{} leaves {permission} open",
+                            channel.name
+                        );
+                    }
+                    assert!(
+                        channel.gated_to.is_none(),
+                        "newcomers must see {}",
+                        channel.name
+                    );
+                } else {
+                    assert!(
+                        channel.deny_everyone.is_empty(),
+                        "discussion channel {} became read-only",
+                        channel.name
+                    );
+                }
+            }
+            let out = render(archetype);
+            assert!(out.contains("#announcements [read-only]"), "{out}");
+            assert!(
+                out.contains("Keep other channel role/member posting allows unset"),
+                "{out}"
+            );
         }
     }
 

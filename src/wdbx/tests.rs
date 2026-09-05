@@ -306,6 +306,38 @@ fn load_and_save_round_trip_in_a_temp_dir() {
 }
 
 #[test]
+fn save_encoding_failure_preserves_the_previous_segment() {
+    let dir = std::env::temp_dir().join(format!(
+        "abbey-bot-wdbx-encode-failure-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("memory.wdbx");
+    let previous = b"# ABI-WDBX v1\n{\"type\":\"kv\",\"key\":\"kept\",\"value\":\"old\"}\n";
+    fs::write(&path, previous).expect("seed previous segment");
+
+    let mut store = WdbxStore::new();
+    store.insert_vector(vec![f32::NAN]);
+    let error = store.save(&path).expect_err("non-finite vector must fail");
+    assert!(matches!(error, WdbxError::Encode { .. }), "{error}");
+    assert_eq!(
+        fs::read(&path).expect("previous segment remains readable"),
+        previous,
+        "encoding failure must not replace the previous segment"
+    );
+    assert!(
+        !dir.join("memory.wdbx.tmp").exists(),
+        "encoding must fail before a temporary file is created"
+    );
+
+    fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[test]
 fn error_display_is_one_sentence_each() {
     let missing = WdbxError::MissingHeader {
         found: "garbage".into(),
@@ -319,6 +351,13 @@ fn error_display_is_one_sentence_each() {
         reason: "not JSON".into(),
     };
     assert_eq!(bad.to_string(), "WDBX store line 4 is malformed: not JSON");
+    let encode = WdbxError::Encode {
+        source: WdbxEncodeError,
+    };
+    assert_eq!(
+        encode.to_string(),
+        "WDBX store contains a value that cannot be encoded"
+    );
 }
 
 /// Cross-implementation conformance: the exact bytes this module writes are

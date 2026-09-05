@@ -317,8 +317,7 @@ pub(super) fn can_stop_voice(
     present_in_configured_channel: bool,
     interaction_permissions: Option<Permissions>,
 ) -> bool {
-    present_in_configured_channel
-        || interaction_permissions.is_some_and(|permissions| permissions.manage_guild())
+    crate::commands_help::leave_allowed(present_in_configured_channel, interaction_permissions)
 }
 
 /// The public disclosure participants see. Takes the mode explicitly rather
@@ -329,10 +328,10 @@ pub(super) fn consent_notice(mode: VoiceMode, channel_id: ChannelId, resumed: bo
     let action = if resumed { "resuming" } else { "starting" };
     match mode {
         VoiceMode::Local => format!(
-            "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start. A clearly attributed spoken withdrawal is honored locally; `/voice leave` or writing `stop listening` in this voice chat is the authoritative stop. A new participant pauses and disconnects the session until renewed consent."
+            "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start. A clearly attributed spoken withdrawal is honored locally; for an authoritative stop, use `/voice leave` or mention Abbey and write `stop listening` in this voice chat. A new participant pauses and disconnects the session until renewed consent."
         ),
         VoiceMode::OpenAi => format!(
-            "☁️ Abbey is {action} consented voice in <#{channel_id}> using the explicitly configured direct OpenAI Realtime backup. Participant audio is sent to that provider and complete responses are buffered before Discord playback. This degraded backup does not use local ABI persona routing or WDBX context; use local mode for canonical Abbey. Abbey does not retain raw audio locally. Spoken control is not authoritative in this degraded mode: use `/voice leave` or write `stop listening` in this voice chat to stop immediately. A new participant pauses and disconnects the session until renewed consent."
+            "☁️ Abbey is {action} consented voice in <#{channel_id}> using the explicitly configured direct OpenAI Realtime backup. Participant audio is sent to that provider and complete responses are buffered before Discord playback. This degraded backup does not use local ABI persona routing or WDBX context; use local mode for canonical Abbey. Abbey does not retain raw audio locally. Spoken control is not authoritative in this degraded mode: use `/voice leave` or mention Abbey and write `stop listening` in this voice chat to stop immediately. A new participant pauses and disconnects the session until renewed consent."
         ),
         VoiceMode::Disabled => unreachable!(),
     }
@@ -419,5 +418,14 @@ mod tests {
         let error = public_error(&format!("bad\n{}", "x".repeat(500)));
         assert!(!error.contains('\n'));
         assert!(error.chars().count() <= 241);
+    }
+
+    #[test]
+    fn consent_notices_name_guaranteed_written_stop_route_and_fit_discord() {
+        for mode in [VoiceMode::Local, VoiceMode::OpenAi] {
+            let notice = consent_notice(mode, ChannelId::new(u64::MAX), false);
+            assert!(notice.contains("mention Abbey and write `stop listening`"));
+            assert!(notice.chars().count() < 2000);
+        }
     }
 }
