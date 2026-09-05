@@ -18,7 +18,7 @@ ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh   # strict form used for release evi
 cargo test <name>       # single test, substring-matched against full path;
                         # no -p or --workspace (single binary crate, tests in bin)
 cargo run               # run the bot; needs DISCORD_TOKEN (or DISCORD_BOT_TOKEN fallback), optional ABBEY_GUILD_ID
-./target/release/abbey-bot --provider-self-test primary --json   # --json is mandatory; exit 0 pass, 1 probe failure, 2 bad args
+./target/release/abbey-bot --provider-self-test primary --json   # --json is mandatory; exit 0 pass, 1 probe failure, 2 bad args/configuration
 ./target/release/abbey-bot --provider-self-test fm --json
 ./target/release/abbey-bot --provider-self-test all --json
 ./target/release/abbey-bot --voice-self-test out.wav             # token-free local TTS → STT loop; refuses to overwrite
@@ -76,10 +76,12 @@ the privacy boundary), `provider/` + `provider.rs` + `provider_self_test.rs`
 pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
 `recall.rs`, `vad.rs`, `offline_voice.rs`.
 
-**Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`,
-`persona.rs`, and `ask.rs` each carry a verbatim transcription of the `abi`
-algorithm (golden vectors pin `wyhash`; the `wyhash` crate returns different
-values) rather than a dependency on the `abi` workspace. `persona.rs` is frozen
+**Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`, and
+`persona.rs` carry local transcriptions of ABI formats or algorithms (golden
+vectors pin `wyhash`; the `wyhash` crate returns different values) rather than
+a dependency on the `abi` workspace. `ask.rs` transcribes Aviva and Abi's
+contract descriptions and suffixes; Abbey intentionally follows the separate
+Grok Bot Abbey voice, and response prefixes are not transcribed. `persona.rs` is frozen
 (29 keywords, 0.40/0.30/0.30 prior) and is not edited; new routing intelligence
 composes on top in `routing_signals.rs`.
 
@@ -274,8 +276,10 @@ fallback — primary wins, and a present-but-blank primary is an error that does
 `ABBEY_BOT_LLM_CONCURRENCY`/`_QUEUE_SECS`/`_TIMEOUT_SECS`), the
 `ABBEY_PROVIDER_*` route family, `SLACK_*`/`TELEGRAM_BOT_TOKEN`, and the
 `ABBEY_VOICE_*` set (`ABBEY_VOICE_MODE=local` is the default and is never
-inferred from key presence). Blank counts as unset for every one of them
-because `.env.example` ships blank assignments. Launchd uses its fixed private
+inferred from key presence). Blank handling is variable-specific: backend
+and voice parsers normalize optional blank values, but a present blank Discord
+token fails, and `ABBEY_GUILD_ID` must be absent or a nonzero numeric snowflake.
+Launchd uses its fixed private
 data path and ignores an `ABBEY_DATA_DIR` line in the env file. The token lives in
 `/etc/abbey-bot/env` (systemd) or `~/.config/abbey-bot/env` (launchd), never
 baked into image layers.
