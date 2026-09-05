@@ -510,6 +510,7 @@ pub async fn run(mut session: LocalSession) {
                         // external transport fault. Stop Decode immediately.
                         disconnect_call(&session.call).await;
                         let _ = stop_playback(&session.playback).await;
+                        session.runtime.music_consent_teardown_complete(session.epoch.saturating_add(1)).await;
                         if !matches!(saved.saved.await, Ok(Ok(true))) {
                             tracing::error!("spoken voice withdrawal could not be confirmed durable; operator must inspect consent storage before restart");
                         }
@@ -957,7 +958,21 @@ async fn play_audio(
         let _ = handle.stop();
         return Err(error);
     }
-    *playback.lock().await = Some(handle);
+    let mut playback = playback.lock().await;
+    // Stop only the previous spoken reply. Music owns a separate handle.
+    // Recheck the media gate while installing so cancellation cannot leave an
+    // unowned TTS handle after the old slot was already reaped.
+    if runtime
+        .with_media_enabled(epoch, || {
+            if let Some(previous) = playback.replace(handle.clone()) {
+                let _ = previous.stop();
+            }
+        })
+        .is_none()
+    {
+        let _ = handle.stop();
+        return Ok(false);
+    }
     Ok(true)
 }
 

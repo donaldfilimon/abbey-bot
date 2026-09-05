@@ -9,7 +9,7 @@ let package = Package(
         .target(name: "AudioTapCore"),
         .target(name: "AudioTapRuntime", dependencies: ["AudioTapCore"]),
         .executableTarget(name: "AbbeyAudioTap", dependencies: ["AudioTapRuntime"]),
-        .testTarget(name: "AudioTapCoreTests", dependencies: ["AudioTapCore"]),
+        .testTarget(name: "AudioTapCoreTests", dependencies: ["AudioTapCore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "AudioTapRuntimeTests", dependencies: ["AudioTapRuntime"]),
     ]
 )

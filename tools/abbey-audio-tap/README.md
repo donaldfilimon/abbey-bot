@@ -1,9 +1,10 @@
 # Abbey audio tap
 
-A macOS 14+ Swift 6 sidecar for the proposed `/voice play` audio source. It uses
+A macOS 14+ Swift 6 sidecar for the `/voice play` audio source. It uses
 Apple ScreenCaptureKit and Network.framework, without third-party dependencies.
-This package implements capture and loopback transport only. The Rust client,
-music commands, player control and Discord mixer are separate work.
+This package implements capture and loopback transport. The Rust client,
+native-player controls and Discord mixer are implemented in the parent crate;
+see its README for music command and consent semantics.
 
 The source build and offline tests do not establish TCC permission, live capture,
 audible Discord playback or freedom from feedback on a particular Mac. Those

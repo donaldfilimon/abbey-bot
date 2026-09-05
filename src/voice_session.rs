@@ -64,7 +64,9 @@ impl VoicePhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
-    MusicTerminated { reason: PlaybackTermination },
+    MusicTerminated {
+        reason: PlaybackTermination,
+    },
     PlaybackTerminated {
         turn: u64,
         termination: PlaybackTermination,
@@ -253,6 +255,7 @@ pub struct VoiceRuntime {
     selected_mode: AtomicU8,
     pub transition: Mutex<()>,
     current_epoch: AtomicU64,
+    music_ready_epoch: AtomicU64,
     media_epoch: AtomicU64,
     start_generation: AtomicU64,
     pending_start_generation: AtomicU64,
@@ -339,6 +342,7 @@ impl VoiceRuntime {
             config,
             transition: Mutex::new(()),
             current_epoch: AtomicU64::new(0),
+            music_ready_epoch: AtomicU64::new(0),
             media_epoch: AtomicU64::new(0),
             start_generation: AtomicU64::new(0),
             pending_start_generation: AtomicU64::new(0),
@@ -1010,7 +1014,8 @@ impl VoiceRuntime {
     }
 
     pub async fn disconnect(&self, status: impl Into<String>) {
-        self.music.stop("voice disconnected", PlaybackTermination::Stopped);
+        self.music
+            .stop("voice disconnected", PlaybackTermination::Stopped);
         self.stop_to(VoicePhase::Disconnected, status).await;
     }
 
@@ -1022,7 +1027,8 @@ impl VoiceRuntime {
     }
 
     pub async fn fail_safe(&self, status: impl Into<String>) {
-        self.music.stop("voice failed", PlaybackTermination::Errored);
+        self.music
+            .stop("voice failed", PlaybackTermination::Errored);
         self.stop_to(VoicePhase::Failed, status).await;
     }
 
@@ -1099,6 +1105,17 @@ impl VoiceRuntime {
             barge_ins: self.barge_ins.load(Ordering::Relaxed),
             completed_turns: self.completed_turns.load(Ordering::Relaxed),
         }
+    }
+
+    /// Published only after the exact revoked Decode call is physically torn down.
+    pub async fn music_consent_teardown_complete(&self, epoch: u64) {
+        let inner = self.inner.lock().await;
+        if inner.epoch == epoch && inner.phase == VoicePhase::AwaitingConsent {
+            self.music_ready_epoch.store(epoch, Ordering::SeqCst);
+        }
+    }
+    pub fn music_may_restore_output(&self, epoch: u64) -> bool {
+        self.current_epoch() == epoch && self.music_ready_epoch.load(Ordering::SeqCst) == epoch
     }
 
     pub async fn phase(&self) -> VoicePhase {

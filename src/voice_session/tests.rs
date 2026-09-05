@@ -1203,3 +1203,57 @@ async fn incomplete_authorization_cannot_satisfy_the_acceptance_check() {
             .contains("Authorization: pending")
     );
 }
+
+#[tokio::test]
+async fn music_never_opens_or_renews_listening_consent() {
+    let runtime = runtime();
+    let before = runtime.snapshot().await;
+    let generation = runtime.music.begin(crate::player_control::Player::Spotify);
+    runtime.music.set_volume(35);
+    let after = runtime.snapshot().await;
+    assert_eq!(after.epoch, before.epoch);
+    assert_eq!(after.consent_epoch, before.consent_epoch);
+    assert!(!after.media_enabled);
+    let epoch = runtime.begin(HashSet::new()).await;
+    runtime
+        .pause_epoch_for_consent(epoch, HashSet::new(), "withdrawn")
+        .await;
+    assert!(
+        runtime.music.current(generation),
+        "listening withdrawal cannot cancel music"
+    );
+    assert!(!runtime.music_may_restore_output(runtime.current_epoch()));
+    runtime.music_consent_teardown_complete(epoch).await;
+    assert!(
+        !runtime.music_may_restore_output(runtime.current_epoch()),
+        "stale teardown cannot restore output"
+    );
+    runtime
+        .music_consent_teardown_complete(runtime.current_epoch())
+        .await;
+    assert!(runtime.music_may_restore_output(runtime.current_epoch()));
+    assert!(!runtime.snapshot().await.media_enabled);
+    runtime.disconnect("leave").await;
+    assert!(
+        !runtime.music.current(generation),
+        "leave cancels both paths"
+    );
+}
+
+#[tokio::test]
+async fn stale_music_completion_cannot_stop_a_replacement() {
+    let runtime = runtime();
+    let old = runtime.music.begin(crate::player_control::Player::Spotify);
+    let new = runtime.music.begin(crate::player_control::Player::Music);
+    runtime
+        .music
+        .finish(old, "old failed", PlaybackTermination::Errored);
+    assert!(runtime.music.current(new));
+    runtime.music.stop("paused", PlaybackTermination::Stopped);
+    assert!(!runtime.music.current(new));
+    assert_eq!(
+        runtime.music.player(),
+        Some(crate::player_control::Player::Music)
+    );
+    assert!(!runtime.snapshot().await.media_enabled);
+}

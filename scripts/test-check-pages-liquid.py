@@ -434,6 +434,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/plans/2026-09-03-residual-ops.md",
             "docs/superpowers/plans/2026-09-04-abbey-bot-full-modernization.md",
             "docs/superpowers/plans/2026-09-04-catalog-audio-tap-evidence.md",
+            "docs/superpowers/plans/2026-09-04-voice-play-evidence.md",
             "docs/superpowers/specs/2026-08-19-guild-learning-loop-design.md",
             "docs/superpowers/specs/2026-08-19-reply-quality-speed-design.md",
             "docs/superpowers/specs/2026-08-19-tools-design.md",

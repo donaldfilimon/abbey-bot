@@ -20,6 +20,8 @@ use crate::voice_session::{SessionControl, SharedPlayback, VerificationActivatio
 use crate::{Context, Error};
 
 mod acknowledgement;
+mod play;
+use play::{voice_pause, voice_play, voice_resume_music, voice_stop_music, voice_volume};
 mod consent;
 mod discord;
 mod events;
@@ -66,6 +68,11 @@ impl Drop for StartAttempt {
     guild_only,
     ephemeral,
     subcommands(
+        "voice_play",
+        "voice_pause",
+        "voice_resume_music",
+        "voice_stop_music",
+        "voice_volume",
         "voice_join",
         "voice_resume",
         "voice_leave",
@@ -830,7 +837,13 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
     };
     let Some(closed_media) = authorize_and_close_media(
         || can_stop_voice(present, interaction_permissions),
-        || runtime.cancel_pending_start(),
+        || {
+            runtime.music.stop(
+                "voice leave",
+                crate::voice_session::PlaybackTermination::Stopped,
+            );
+            runtime.cancel_pending_start();
+        },
     ) else {
         ctx.say("Only someone currently in the configured voice channel or a member with Manage Server can stop Abbey voice.")
             .await?;
@@ -980,8 +993,9 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         || "Saved voice choices: current voice roster unavailable; activation is blocked.".into(),
         |users| consent::coverage_text(runtime, &users, effective_mode),
     );
+    let music_status = runtime.music.status();
     ctx.say(clamp_message(format!(
-        "Abbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{choices}\n{}\n{}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
+        "{music_status}\nAbbey voice: {current}\nMode: {}\nPhase: {}\nMedia gate: {}\nPending start: {}\nStatus: {}\nConsent epoch: {} · participants attested: {}\n{choices}\n{}\n{}\n{}\nQueue drops: {} · overrun-aborted turns: {} · barge-ins: {} · completed turns: {}\nSession epoch: {}",
         effective_mode.label(),
         snapshot.phase.label(),
         if snapshot.media_enabled { "open" } else { "closed" },

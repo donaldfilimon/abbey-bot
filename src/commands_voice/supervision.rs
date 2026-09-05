@@ -176,6 +176,9 @@ pub(super) async fn stop_voice_for_withdrawal(
         && let Some(manager) = manager
     {
         remove_call_for_consent(&manager, guild_id).await;
+        runtime
+            .music_consent_teardown_complete(epoch.saturating_add(1))
+            .await;
     }
     drop(transition);
     true
@@ -344,11 +347,14 @@ async fn stop_for_new_participant(
     if let Some(manager) = manager {
         remove_call_for_consent(&manager, guild_id).await;
     }
+    runtime
+        .music_consent_teardown_complete(epoch.saturating_add(1))
+        .await;
     drop(transition);
     let _ = channel_id
         .say(
             &ctx.http,
-            "Abbey disconnected voice because someone new joined. Capture and playback are stopped. Each uncovered member can choose Agree in `/voice consent` or the pinned voice notice. Saved choices still count; a manager can then use `/voice resume consent:true`.",
+            "Abbey disconnected listening because someone new joined. Discord input and spoken replies are stopped; separately enabled music may continue. Each uncovered member can choose Agree in `/voice consent` or the pinned voice notice. Saved choices still count; a manager can then use `/voice resume consent:true`.",
         )
         .await;
 }
@@ -389,6 +395,10 @@ pub(super) async fn on_voice_permissions_changed(
         }
         runtime.revoke_for_external_event()
     };
+    runtime.music.stop(
+        "required Discord permissions changed",
+        crate::voice_session::PlaybackTermination::Errored,
+    );
     let snapshot = runtime.snapshot().await;
     if snapshot.epoch != epoch
         || !matches!(

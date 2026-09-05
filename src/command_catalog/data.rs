@@ -410,6 +410,61 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Publish the member voice consent controls."
     ),
     spec!(
+        VoicePlay,
+        Slash,
+        "voice play",
+        GUILD,
+        A5,
+        C4,
+        Voice,
+        true,
+        "Play native music and mirror eligible host audio; requires macOS."
+    ),
+    spec!(
+        VoicePause,
+        Slash,
+        "voice pause",
+        GUILD,
+        A5,
+        C4,
+        Voice,
+        true,
+        "Pause music and close host capture without changing consent."
+    ),
+    spec!(
+        VoiceResumeMusic,
+        Slash,
+        "voice resume-music",
+        GUILD,
+        A5,
+        C4,
+        Voice,
+        true,
+        "Resume music only; never renew listening consent."
+    ),
+    spec!(
+        VoiceStopMusic,
+        Slash,
+        "voice stop-music",
+        GUILD,
+        A5,
+        C4,
+        Voice,
+        true,
+        "Stop host audio capture and mirrored music."
+    ),
+    spec!(
+        VoiceVolume,
+        Slash,
+        "voice volume",
+        GUILD,
+        A5,
+        C4,
+        Voice,
+        true,
+        "Set music volume; duck to one quarter while Abbey speaks."
+    ),
+    spec!(
         VoiceJoin,
         Slash,
         "voice join",

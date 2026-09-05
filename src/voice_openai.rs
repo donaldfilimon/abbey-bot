@@ -479,7 +479,21 @@ async fn play_audio(
         let _ = handle.stop();
         return Err(error);
     }
-    *playback.lock().await = Some(handle);
+    let mut playback = playback.lock().await;
+    // Stop only the previous spoken reply. Music owns a separate handle.
+    // Recheck the media gate while installing so cancellation cannot leave an
+    // unowned TTS handle after the old slot was already reaped.
+    if runtime
+        .with_media_enabled(epoch, || {
+            if let Some(previous) = playback.replace(handle.clone()) {
+                let _ = previous.stop();
+            }
+        })
+        .is_none()
+    {
+        let _ = handle.stop();
+        return Ok(false);
+    }
     Ok(true)
 }
 

@@ -221,8 +221,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(access_valid(spec.eligibility.access.rule(), 0));
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
-    assert_eq!(keys.len(), 46);
-    assert_eq!(registered_commands().len(), 41);
+    assert_eq!(keys.len(), 51);
+    assert_eq!(registered_commands().len(), 46);
     assert_eq!(planned_commands().len(), 5);
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
@@ -264,4 +264,34 @@ fn readme_generated_region_matches_catalog_exactly() {
     let start = readme.find(begin).unwrap();
     let stop = readme.find(end).unwrap() + end.len();
     assert_eq!(&readme[start..stop], render_readme());
+}
+
+#[test]
+fn music_commands_require_management_and_presence_without_inference_capability() {
+    for key in [
+        CommandKey::VoicePlay,
+        CommandKey::VoicePause,
+        CommandKey::VoiceResumeMusic,
+        CommandKey::VoiceStopMusic,
+        CommandKey::VoiceVolume,
+    ] {
+        let spec = command(key);
+        for manager in [false, true] {
+            for present in [false, true] {
+                let mut input = member();
+                input.permissions = if manager {
+                    vec![DiscordPermission::ManageServer]
+                } else {
+                    vec![]
+                };
+                input.caller_present_in_voice = Some(present);
+                input.capabilities = vec![Capability::VoiceConfigured];
+                assert_eq!(
+                    eligible(spec, &input, EvaluationMode::Invocation),
+                    manager && present
+                );
+                assert!(spec.private);
+            }
+        }
+    }
 }

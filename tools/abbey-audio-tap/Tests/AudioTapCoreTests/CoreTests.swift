@@ -174,3 +174,11 @@ func browserAndBodyRequestsRejected(headers: String) {
     #expect(json["ready"] as? Bool == false)
     #expect(Set(json.keys) == ["service", "protocol_version", "status", "ready", "audio", "stream_path", "error"])
 }
+
+
+@Test func rustClientSharesTheExactWireContract() throws {
+    let header = try #require(Bundle.module.url(forResource: "stream-header", withExtension: "http", subdirectory: "Fixtures"))
+    let health = try #require(Bundle.module.url(forResource: "health-idle", withExtension: "json", subdirectory: "Fixtures"))
+    #expect(try Data(contentsOf: header) == HTTP.streamHeader)
+    #expect(try Data(contentsOf: health) == StreamState().health())
+}

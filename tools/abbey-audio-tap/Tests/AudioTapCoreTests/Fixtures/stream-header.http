@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+Transfer-Encoding: chunked
+Cache-Control: no-store
+Connection: close
+X-Content-Type-Options: nosniff
+X-Audio-Format: s16le
+X-Audio-Sample-Rate: 48000
+X-Audio-Channels: 2
+

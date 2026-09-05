@@ -1,2 +1,4 @@
 tests/fixtures/*.seg.jsonl text eol=lf
 contracts/abbey/** -text
+# Binary HTTP wire fixture: preserve CRLF and the terminal empty header line.
+tools/abbey-audio-tap/Tests/AudioTapCoreTests/Fixtures/stream-header.http -text -diff

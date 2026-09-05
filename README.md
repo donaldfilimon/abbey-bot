@@ -74,6 +74,11 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/admin reset` | guild | private | Clear only this channel's transcript. |
 | `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
 | `/voice notice` | guild | private | Publish the member voice consent controls. |
+| `/voice play` | guild | private | Play native music and mirror eligible host audio; requires macOS. |
+| `/voice pause` | guild | private | Pause music and close host capture without changing consent. |
+| `/voice resume-music` | guild | private | Resume music only; never renew listening consent. |
+| `/voice stop-music` | guild | private | Stop host audio capture and mirrored music. |
+| `/voice volume` | guild | private | Set music volume; duck to one quarter while Abbey speaks. |
 | `/voice join` | guild | private | Start voice after every participant's saved agreement. |
 | `/voice resume` | guild | private | Resume voice after current participant consent checks. |
 | `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |
@@ -278,7 +283,7 @@ Gemma default.
 ## macOS audio-tap sidecar
 
 The [audio-tap package](tools/abbey-audio-tap/README.md) supplies a native
-ScreenCaptureKit audio source for the planned `/voice play` feature. It streams
+ScreenCaptureKit audio source for `/voice play`. It streams
 48 kHz stereo PCM over `127.0.0.1:8182` and excludes identified Discord clients,
 browsers, terminal hosts, Abbey, and unidentified sources. Its `/health` endpoint
 does not start capture or request permission. The package documents the exact
@@ -287,8 +292,8 @@ permission setup.
 
 This source slice includes the Swift executable and a transactional launchd
 installer with tests using a temporary home and fake service commands. Rust
-streaming, player controls, mixer ducking, and `/voice play` registration remain
-separate work. Source tests do not establish live capture, installation, or
+streaming, player controls, mixer ducking and `/voice play` registration are
+implemented in the parent crate; see Local music mirroring below. Source tests do not establish live capture, installation, or
 audible Discord acceptance. `./check.sh` runs synthetic audio tests and a Swift
 release build on macOS; Windows and Linux explicitly skip the macOS SDK layer.
 
@@ -823,3 +828,51 @@ The shared Rust sequence is
 `cargo fmt --all -- --check`, platform-appropriate deployment validation, then
 `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`,
 and `cargo build --release --locked`.
+
+
+## Local music mirroring
+
+`/voice play [query] [player]` requires Manage Server and presence in the configured
+voice channel on a macOS host. Spotify is the default player: supply a
+`spotify:track:` URI or omit the query to resume its current selection. Music
+accepts text searches of the local Music library and plays the first match.
+Spotify's native scripting dictionary has no catalog text-search command;
+unsupported searches are refused. Player arguments never become script source.
+
+`/voice pause` stops capture and pauses the selected player. `/voice resume-music`
+resumes that player with a fresh capture stream. `/voice stop-music` stops
+mirroring while leaving the native player alone. `/voice volume level:0..100`
+controls only the music track, which drops to 25% of that level while Abbey
+speaks. `/voice status` includes private music state. All music controls are
+private, manager-gated and require channel presence.
+
+The existing `/voice resume consent:true` remains the listening-consent command.
+Music never writes consent receipts or opens the Discord input gate. When
+listening consent is withdrawn, the Decode call is destroyed first; music may
+briefly interrupt and reconnect on a fresh non-decoding, self-deafened output
+call. `/voice leave`, shutdown, permission loss and transport failure stop music.
+TTS mixes with music instead of replacing it.
+
+The Rust client uses `ABBEY_AUDIO_TAP_ENDPOINT` (default
+`http://127.0.0.1:8182`). It accepts only numeric loopback HTTP authorities and
+rejects credentials, paths, queries, fragments, redirects and proxies. The
+shipped Swift sidecar binds IPv4 `127.0.0.1:8182` exclusively; alternate numeric
+loopback ports are useful for compatible test sources. `/health` checks identity
+without capture. Only `/stream` starts capture after explicit music control.
+The tap excludes Discord, browser and terminal audio; other eligible applications
+can still transmit private notifications or calls. See
+[the sidecar capture contract](tools/abbey-audio-tap/README.md).
+
+Capture EOF, malformed formats, stalled input, stale frames or queue overflow
+stop the music track and discard queued PCM. The client uses 20 ms stereo frames,
+100 ms application buffering/freshness, and a 250 ms missing-input deadline;
+known termination stops playback immediately when observed. These are application
+bounds, not guarantees about Apple, TCP or Discord buffering. No silence is
+synthesized. Failure updates private status and attempts an ephemeral follow-up
+to the original command; after Discord's interaction token expires, `/voice status`
+is the remaining diagnostic surface. Audio is neither saved nor sent to STT.
+
+The offline suite uses synthetic PCM and fake HTTP sources. Source/build checks
+cannot prove permission, live capture exclusion, audible playback or ducking in
+Discord. Installation, permission setup, real capture and live launchd changes
+remain separate operator actions and were not performed for this implementation.

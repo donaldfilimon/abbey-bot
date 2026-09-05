@@ -319,3 +319,26 @@ dependency, a port source, or a reference implementation. The separate active
 Swift/Vapor/DiscordBM product is `~/dev/active/AbbeyBot`; it shares no code
 with this Rust crate. Treat its architecture as an adjacent implementation, not
 a dependency or source of runtime truth for this project.
+
+## Host music output
+
+`commands_voice/play.rs` controls native Spotify/Music and the independent music
+track; `audio_tap.rs` validates loopback-only sidecar HTTP and converts bounded
+s16le frames to the f32 PCM required by RawAdapter. `player_control.rs` and
+`music.rs` hold script selection, input validation, access and ducking decisions.
+Music arguments are argv data, never interpolated AppleScript source.
+
+Music never creates or extends listening consent. `/voice resume consent:true`
+keeps its existing meaning; `/voice resume-music` is output-only. Consent teardown
+must destroy Decode before publishing `music_consent_teardown_complete` for the
+exact resulting epoch. Only then may music reconnect with DecodeMode::Pass and
+self-deafen. `/voice leave` synchronously cancels the music token as well as the
+listening gate. Providers use `play_input` and replace only their own TTS handle;
+`play_only_input` would silently destroy the independently owned music track.
+
+The Swift and Rust offline tests share the header and idle-health fixtures in
+`tools/abbey-audio-tap/Tests/AudioTapCoreTests/Fixtures`. They start no real capture.
+The sidecar already excludes identified Discord, browser and terminal sources;
+source evidence remains separate from permission, installation and audible
+Discord/feedback acceptance. Do not run the installer, permission command or
+production stream endpoint as part of source validation.

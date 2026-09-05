@@ -1,0 +1,1 @@
+{"service":"abbey-audio-tap","protocol_version":1,"status":"idle","ready":false,"audio":{"sample_rate":48000,"channels":2,"format":"s16le"},"stream_path":"/stream","error":null}

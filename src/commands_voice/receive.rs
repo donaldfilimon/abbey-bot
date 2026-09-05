@@ -157,6 +157,9 @@ impl EventHandler for DiscordAudioForwarder {
                             if let Some(manager) = manager.upgrade() {
                                 remove_call_for_consent(&manager, guild_id).await;
                             }
+                            runtime
+                                .music_consent_teardown_complete(epoch.saturating_add(1))
+                                .await;
                             drop(transition);
                         });
                     }

@@ -348,3 +348,13 @@ yet: no observed settle whose reward moved because of a typed outcome.
       typed outcome (thanks and correction on comparable turns), and one same-channel follow-up
       credited with no reply-to pointer. Until that lands in `tasks/goals.md`, this is a loop that
       is **closable**, not a loop observed closing.
+
+## 2026-09-04 voice play source slice
+
+- [x] Integrate the approved Swift audio tap with the Rust native-player commands,
+      separate music ownership, fail-closed buffering and unchanged listening consent.
+- [x] Add pure policy, synthetic transport, cancellation and shared Swift/Rust
+      wire-contract tests. See `docs/superpowers/plans/2026-09-04-voice-play-evidence.md`.
+- [ ] Separate operator acceptance: installed identity, capture permission,
+      real capture exclusion, audible music/ducking and participant echo checks.
+      No live capture or launchd change is authorized by this source task.

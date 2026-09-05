@@ -1,6 +1,6 @@
 # Voice play: abbey-bot mirrors local music into Discord voice
 
-Status: **Approach A sidecar selected for source implementation by Donald (2026-09-04).** The explicit request to implement the Discord-excluded macOS audio-tap sidecar resolves the A/B decision below. This slice covers the sidecar, its offline tests, and deployment artifacts only. Player controls, Rust streaming integration, music mixing, and `/voice play` registration remain follow-up work. Installation, Screen Recording permission, actual audio capture, and live Discord/launchd acceptance are not authorized by this source task.
+Status: **Approach A approved for sidecar and Rust control-path implementation by Donald (2026-09-04).** This request extends the previous sidecar-only slice to the Rust client, player controls, mixing and command registration. Installation, permission setup, actual capture and live Discord/launchd acceptance remain outside authorization.
 
 ## Context
 
@@ -33,7 +33,7 @@ Donald's instruction "use local apps like Spotify and Music for now" removes the
 
 ## Selected approach
 
-**A, the Swift sidecar.** The full architecture below describes the eventual `/voice play` feature. Only the sidecar slice is selected for this implementation; the Rust crate remains free of audio-tap FFI and `unsafe`.
+**A, the Swift sidecar.** The full architecture below describes the eventual `/voice play` feature. The sidecar and Rust control path are selected for this implementation; the Rust crate remains free of audio-tap FFI and `unsafe`.
 
 ## Architecture (approach A)
 
@@ -75,3 +75,25 @@ The original draft recorded concurrent dirty voice files and PR #75. That is his
 ## Out of scope
 
 Queue/library ownership, per-app capture (declined), non-macOS capture, Go Live video, any change to the consent grammar.
+
+
+## Implementation clarifications
+
+- The existing `/voice resume consent:true` retains its required consent argument.
+  Music uses `/voice resume-music` to avoid overloading a listening authorization.
+- The sidecar has already landed with positive application inclusion filtering;
+  native Discord variants, browsers, terminal hosts and unidentified applications
+  are excluded, including processes launched after the capture snapshot.
+- Songbird RawAdapter takes f32 PCM. The Rust client losslessly converts the
+  sidecar s16le samples to f32 and checks the exact adapter bytes in integration tests.
+- Spotify supports a native track URI or current selection; Music searches its
+  library. Spotify text search is refused because the native scripting dictionary
+  exposes no search command. No browser automation or cloud search is substituted.
+- Consent withdrawal physically destroys Decode first. An independent music token
+  may then restore a self-deafened Pass call after an exact-epoch teardown marker.
+  Buffers are discarded across this transition; brief music interruption is possible.
+- Missing-input detection uses a 250 ms timeout, while known failures stop immediately
+  on observation. The client bounds queued audio to 100 ms. A literal one-frame
+  guarantee for an unobservable network stall or OS buffers cannot be promised.
+- Failure reporting uses an ephemeral follow-up while its interaction token remains
+  valid and retains a content-free private music status afterward.
