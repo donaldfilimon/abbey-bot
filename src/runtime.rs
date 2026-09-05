@@ -24,7 +24,10 @@ use crate::brain::state::{BotAction, STATE_DIMENSIONS};
 use crate::engine::Engine;
 use crate::guild::{GuildRegistry, ReplyCooldown};
 use crate::llm::{Backend, HttpTransport};
-use crate::persist::Stores;
+use crate::persist::{
+    FsPersistenceSink, PersistComponentOutcome, PersistReport, PersistenceSink, Stores,
+    persist_canonical, persist_projection,
+};
 use crate::platform::SocialNetwork;
 use crate::provider::{FoundationModels, ProviderCapabilities, ProviderRoute};
 use crate::vision::{ConfiguredVision, VisionError, VisionRequest, VisionTransport};
@@ -226,6 +229,7 @@ pub struct AppState {
     pub attachments: reqwest::Client,
     pub vision: Option<ConfiguredVision<HttpVisionTransport>>,
     pub data_dir: Option<PathBuf>,
+    persistence_sink: Arc<dyn PersistenceSink>,
     /// The bot's own user id per platform (`"discord:123"`), filled in at
     /// ready time; needed to tell a mention from a message and to ignore
     /// Abbey's own traffic.
@@ -507,6 +511,7 @@ impl AppState {
             attachments: attachment_client(),
             vision: provider_setup.vision,
             data_dir,
+            persistence_sink: Arc::new(FsPersistenceSink),
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
         }))
@@ -516,6 +521,13 @@ impl AppState {
     /// the pipeline tests run against, and what `from_env` degrades to when
     /// nothing is configured.
     pub fn in_memory() -> Arc<Self> {
+        Self::in_memory_with_persistence(None, Arc::new(FsPersistenceSink))
+    }
+
+    fn in_memory_with_persistence(
+        data_dir: Option<PathBuf>,
+        persistence_sink: Arc<dyn PersistenceSink>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             stores: Mutex::new(Stores::default()),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -537,7 +549,8 @@ impl AppState {
             llm: HttpTransport::default(),
             attachments: attachment_client(),
             vision: None,
-            data_dir: None,
+            data_dir,
+            persistence_sink,
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
         })
@@ -789,25 +802,34 @@ impl AppState {
         Self::lock(&self.social).flush(&mut *stores);
     }
 
-    /// Snapshot every brain, flush reputation, evict idle sessions, and write
-    /// the data directory (if configured). Errors are logged, never fatal: a
-    /// failed persist must not take the gateway down.
-    pub fn persist_all(&self) {
-        let t = now();
+    /// Snapshot every brain, flush reputation, evict idle sessions, and report
+    /// exactly what reached each durable authority. A failed persist does not
+    /// take the gateway down, but it is never represented as success.
+    pub fn persist_all(&self) -> PersistReport {
+        self.persist_all_at(now())
+    }
+
+    fn persist_all_at(&self, t: u64) -> PersistReport {
+        Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
         let snapshots = self.memory_service().consistent_snapshot_after(|stores| {
             Self::lock(&self.brains).persist_all(stores, t);
             Self::lock(&self.social).flush(stores);
             stores.pending_rewards = Self::lock(&self.rewards).export_pending();
         });
-        Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
-        let Some(dir) = &self.data_dir else { return };
-        if let Err(e) = snapshots.0.save(dir) {
-            tracing::error!(error = %e, "persisting canonical state failed; WDBX projection was not published");
-            return;
+        let Some(dir) = &self.data_dir else {
+            return PersistReport::memory_only();
+        };
+        if let Err(category) = persist_canonical(&*self.persistence_sink, dir, &snapshots.0) {
+            return PersistReport::from_components(
+                PersistComponentOutcome::Failed(category),
+                PersistComponentOutcome::SkippedCanonicalFailure,
+            );
         }
-        if let Err(e) = snapshots.1.save(&Stores::wdbx_path(dir)) {
-            tracing::error!(error = %e, "persisting the WDBX segment failed");
-        }
+        let projection = persist_projection(&*self.persistence_sink, dir, &snapshots.1)
+            .map_or_else(PersistComponentOutcome::Failed, |()| {
+                PersistComponentOutcome::Committed
+            });
+        PersistReport::from_components(PersistComponentOutcome::Committed, projection)
     }
 
     /// Rolling channel summaries — the spec's "rolling 2k-token summary
@@ -890,7 +912,16 @@ impl AppState {
         };
         spawn(LEARN_EVERY, Self::learn_all);
         spawn(FLUSH_EVERY, Self::flush_social);
-        spawn(PERSIST_EVERY, Self::persist_all);
+        let persistence_state = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(PERSIST_EVERY);
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let report = persistence_state.persist_all();
+                crate::persist::log_report("scheduled", &report);
+            }
+        });
         spawn(SETTLE_EVERY, Self::settle_rewards);
         let state = Arc::clone(self);
         tokio::spawn(async move {
@@ -920,6 +951,7 @@ mod tests {
     use super::*;
     use crate::brain::social::ReputationStore;
     use crate::guild::GuildSettings;
+    use crate::persist::{PersistComponentOutcome, PersistErrorCategory, PersistOverall};
 
     #[test]
     fn dqn_round_trips_through_the_brain_trait() {
@@ -935,6 +967,78 @@ mod tests {
             ),
             "topology drift is rejected, not silently accepted"
         );
+    }
+
+    #[test]
+    fn process_persistence_reports_memory_only_without_calling_a_sink() {
+        let sink = crate::persist::tests::RuntimeRecordingSink::success();
+        let state = AppState::in_memory_with_persistence(None, Arc::new(sink.clone()));
+        let report = state.persist_all_at(42);
+        assert_eq!(report.overall, PersistOverall::MemoryOnly);
+        assert_eq!(
+            report.canonical_state,
+            PersistComponentOutcome::NotConfigured
+        );
+        assert_eq!(
+            report.wdbx_projection,
+            PersistComponentOutcome::NotConfigured
+        );
+        assert!(sink.attempts().is_empty());
+    }
+
+    #[test]
+    fn canonical_failure_skips_the_wdbx_projection() {
+        let sink = crate::persist::tests::RuntimeRecordingSink::fail_canonical(
+            PersistErrorCategory::SyncTemporary,
+        );
+        let state = AppState::in_memory_with_persistence(
+            Some(PathBuf::from("/injected/state")),
+            Arc::new(sink.clone()),
+        );
+        let report = state.persist_all_at(42);
+        assert_eq!(report.overall, PersistOverall::Failed);
+        assert_eq!(
+            report.canonical_state,
+            PersistComponentOutcome::Failed(PersistErrorCategory::SyncTemporary)
+        );
+        assert_eq!(
+            report.wdbx_projection,
+            PersistComponentOutcome::SkippedCanonicalFailure
+        );
+        assert_eq!(sink.attempts(), ["canonical"]);
+    }
+
+    #[test]
+    fn both_durable_components_committing_is_complete() {
+        let sink = crate::persist::tests::RuntimeRecordingSink::success();
+        let state = AppState::in_memory_with_persistence(
+            Some(PathBuf::from("/injected/state")),
+            Arc::new(sink.clone()),
+        );
+        let report = state.persist_all_at(42);
+        assert_eq!(report.overall, PersistOverall::Complete);
+        assert_eq!(report.canonical_state, PersistComponentOutcome::Committed);
+        assert_eq!(report.wdbx_projection, PersistComponentOutcome::Committed);
+        assert_eq!(sink.attempts(), ["canonical", "wdbx"]);
+    }
+
+    #[test]
+    fn projection_failure_is_partial_after_a_canonical_commit() {
+        let sink = crate::persist::tests::RuntimeRecordingSink::fail_projection(
+            PersistErrorCategory::SyncDirectory,
+        );
+        let state = AppState::in_memory_with_persistence(
+            Some(PathBuf::from("/injected/state")),
+            Arc::new(sink.clone()),
+        );
+        let report = state.persist_all_at(42);
+        assert_eq!(report.overall, PersistOverall::Partial);
+        assert_eq!(report.canonical_state, PersistComponentOutcome::Committed);
+        assert_eq!(
+            report.wdbx_projection,
+            PersistComponentOutcome::Failed(PersistErrorCategory::SyncDirectory)
+        );
+        assert_eq!(sink.attempts(), ["canonical", "wdbx"]);
     }
 
     #[tokio::test]

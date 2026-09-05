@@ -23,7 +23,7 @@ pub use telegram::{TelegramOutbound, run_telegram};
 
 use std::sync::Arc;
 
-use crate::persist::Stores;
+use crate::persist::{PersistReport, log_report};
 use crate::runtime::AppState;
 
 /// Spawn the Telegram adapter if `TELEGRAM_BOT_TOKEN` is set.
@@ -55,9 +55,29 @@ pub fn maybe_start_slack(state: &Arc<AppState>) {
 }
 
 /// Persist on the way out. Called from the ctrl-c handler in `main`.
-pub fn shutdown(state: &AppState) {
-    state.persist_all();
-    if let Some(dir) = &state.data_dir {
-        tracing::info!(path = %Stores::state_path(dir).display(), "state persisted on shutdown");
+pub fn shutdown(state: &AppState) -> PersistReport {
+    let report = state.persist_all();
+    log_report("shutdown", &report);
+    report
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persist::{PersistComponentOutcome, PersistOverall};
+
+    #[test]
+    fn shutdown_returns_the_same_truthful_process_report() {
+        let state = AppState::in_memory();
+        let report = shutdown(&state);
+        assert_eq!(report.overall, PersistOverall::MemoryOnly);
+        assert_eq!(
+            report.canonical_state,
+            PersistComponentOutcome::NotConfigured
+        );
+        assert_eq!(
+            report.wdbx_projection,
+            PersistComponentOutcome::NotConfigured
+        );
     }
 }

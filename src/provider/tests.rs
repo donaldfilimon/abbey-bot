@@ -130,6 +130,17 @@ fn routing_requires_the_full_capability_set_and_separate_evidence() {
         router.candidates(vision),
         [ProviderRoute::FoundationModelsServer]
     );
+
+    let fallback_off = ProviderRouter::new(Some(&local()), true, Some(server), Some(cli), false);
+    assert_eq!(
+        fallback_off.candidates(ProviderCapabilities::text()),
+        [ProviderRoute::Primary],
+        "qualified FM routes remain ineligible until fallback is explicitly enabled"
+    );
+    assert!(
+        fallback_off.candidates(vision).is_empty(),
+        "vision cannot silently opt into FM through the text fallback router"
+    );
 }
 
 #[test]

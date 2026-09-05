@@ -107,10 +107,14 @@ Improve interaction surfaces that already ride the bot token (no OAuth secret).
   `collector` feature), re-check memory authorization, and
   `UpdateMessage` so the 3s interaction ack is never missed. Slash
   `/pending confirm|dismiss` + autocomplete remain for overflow / power users.
-- **Defer policy:** long ops (LLM, voice join/leave/status, memory mutate,
-  admin mutate) call `defer` / `defer_ephemeral` before awaits; instant
-  validation failures may `say` without defer. Component button handlers
-  acknowledge via `UpdateMessage` (or ephemeral `Message` on auth failure).
+- **Defer policy:** every ordinary slash command calls `defer` /
+  `defer_ephemeral` before any guard, network, or other command path. The sole
+  exception is `/voice leave`: it authorizes synchronously from the interaction
+  payload, closes the media gate before its first await, and then polls its
+  acknowledgement concurrently with transition-lock acquisition and teardown;
+  its configuration and authorization guard paths answer directly inside the
+  three-second window. Component button handlers acknowledge via
+  `UpdateMessage` (or ephemeral `Message` on auth failure).
 - **Not in this slice:** `/voice` consent button (keep explicit
   `consent:true` slash gate + public notice), `/admin show` selects, modals,
   context menus — follow-ups once Components V2 lands or classic UX still wins.
