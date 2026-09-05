@@ -74,7 +74,9 @@ impl VoicePhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
-    MusicTerminated { reason: PlaybackTermination },
+    MusicTerminated {
+        reason: PlaybackTermination,
+    },
     PlaybackTerminated {
         turn: u64,
         termination: PlaybackTermination,
@@ -1095,7 +1097,8 @@ impl VoiceRuntime {
     }
 
     pub async fn disconnect(&self, status: impl Into<String>) {
-        self.music.stop("voice disconnected", PlaybackTermination::Stopped);
+        self.music
+            .stop("voice disconnected", PlaybackTermination::Stopped);
         self.stop_to(VoicePhase::Disconnected, status).await;
     }
 
@@ -1107,7 +1110,8 @@ impl VoiceRuntime {
     }
 
     pub async fn fail_safe(&self, status: impl Into<String>) {
-        self.music.stop("voice failed", PlaybackTermination::Errored);
+        self.music
+            .stop("voice failed", PlaybackTermination::Errored);
         self.stop_to(VoicePhase::Failed, status).await;
     }
 
