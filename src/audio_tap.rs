@@ -205,8 +205,10 @@ impl PcmBuffer {
         }
         // RawAdapter requires f32, not s16. This conversion is exact for every i16.
         let converted = pcm
-            .chunks_exact(2)
-            .flat_map(|v| (f32::from(i16::from_le_bytes([v[0], v[1]])) / 32768.0).to_le_bytes())
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|v| (f32::from(i16::from_le_bytes(*v)) / 32768.0).to_le_bytes())
             .collect::<Vec<_>>();
         q.size += converted.len();
         q.bytes.push_back((Instant::now(), converted));
