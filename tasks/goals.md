@@ -571,3 +571,41 @@ status: in_progress
   Codex P1 fix, green on all three platforms at `8da591c`, merge Donald's). As before, this
   closes only the exact-head CI item; nothing here qualifies the provider, the installed
   artifact, live connectors, managed deployment, or consented voice.
+- **2026-09-04 night: the exact-head item is OPEN again, and this is the third direct-push break
+  in one day.** The bullet above is dated evidence, not current state: `main` has been red since
+  `e39e13c`, a direct push adding the private `/help` surface and a macOS audio tap. It failed the
+  gate four separate ways, and the first one hid the rest because `cargo fmt` is step one of
+  `check.sh`. (1) `src/audio_tap.rs` declared `#[cfg(test)] mod tests;` without committing the
+  file, so the test binary would not compile; repaired in #89, which supplies ten tests covering
+  the endpoint validator, the one-frame push contract, the s16-to-f32 conversion, the queue bound,
+  close, the freshness window, and the error strings. (2) 27 `cargo fmt` diffs across six files;
+  repaired in #91. (3) `clippy::chunks_exact_to_as_chunks` in `audio_tap.rs`, which is **not** dead
+  code and would therefore survive the wiring; #91 was merged at its first commit before that fix
+  was pushed, so it is still open as #93. (4) clippy dead code for `AudioTapClient`, `TapStream`,
+  `Script`, `gate`, `play`, and `pause`: `PcmBuffer` has a consumer in `voice_session/music.rs` but
+  the client half has none, because the command that would drive the tap is not written. That
+  fourth one is a design decision rather than a repair and is deliberately untouched; after #93 it
+  is the only gate failure left. The exact-head item closes again on a green run at a head that
+  carries both.
+
+  Counting the pattern, because it is the argument: `057e6b1` (#71) landed unformatted; `4681509`
+  went red because #79 and #76 were each green against their own base and broke only in
+  combination; `e39e13c` went red four ways. Three breaks in one day, all on a branch with no
+  protection, two of them from pushes that never ran the documented gate. Requiring the three Gate
+  checks on `main` remains a repository setting and Donald's call, now with three dated instances
+  behind it rather than one.
+- **2026-09-04 night: a review of the merged `/voice mode` work found and fixed a real defect in
+  it (#92, `975c295`).** `/voice mode` checked "is a start pending" twice through two mechanisms,
+  one of which the code itself called advisory: `snapshot.start_pending` in a pure blocker that
+  returned a rendered sentence, and `pending_start_generation` in a `bool`-returning writer. The
+  writer discarded its reason, so the caller had to invent a sentence, and the identical refusal
+  text ended up written twice and kept in sync by hand. `switch_effective_mode` now checks every
+  rule and writes in one critical section, returning `Result<(), ModeSwitchRefusal>`; the
+  reservation, the media epoch, and the verification run are all read under `activation_gate`
+  rather than from a snapshot. The refactor surfaced a case the old shape could not express, since
+  activation clears the pending-start token: an open media epoch is now its own refusal with its
+  own test. Net lines are flat; the reduction is in concepts. Standing follow-up, not yet done:
+  `src/voice_session.rs` is 1283 lines and the mode-switching cluster belongs in
+  `src/voice_session/mode.rs` beside the existing `control.rs`, `playback.rs`, and
+  `verification.rs`. That is a pure move, and it is being held until the in-flight music feature
+  stops editing the same file.
