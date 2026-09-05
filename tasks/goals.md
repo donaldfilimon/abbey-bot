@@ -561,3 +561,13 @@ status: in_progress
   optional-front-matter/readme-index behavior, and fails closed when configuration, front-matter
   routing, symlinks, or Jekyll magic directories invalidate that model. Its merge will again create
   a newer head whose hosted gates must be evaluated separately.
+- **2026-09-04 (evening): the newer head `3c13589` is green on both hosted gates, as the line
+  above requires.** Rust run `33932415417` passed Ubuntu, macOS, and Windows; Pages run
+  `33932414418` passed. Windows matters most here: it is the runner that failed twice
+  (`ac909b9`, `bb65c81`) on `audible_playback_still_stops_on_speech`, and it has now passed at
+  `53836c0`, `20e9d83`, and `3c13589` carrying #85's private-scheduler fixture, so the
+  shared-scheduler diagnosis holds on the platform that exposed it rather than only locally.
+  Open at the time of writing: #82 (the `/voice mode` idle guard, switch serialization, and the
+  Codex P1 fix, green on all three platforms at `8da591c`, merge Donald's). As before, this
+  closes only the exact-head CI item; nothing here qualifies the provider, the installed
+  artifact, live connectors, managed deployment, or consented voice.

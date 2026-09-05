@@ -56,6 +56,16 @@ impl VoicePhase {
         }
     }
 
+    /// No media epoch can be open and no join is in flight: `Disconnected`,
+    /// the muted/self-deafened autojoin presence (which never decodes,
+    /// whatever the backend), and `Failed` (media closed by `fail_safe`).
+    /// `AwaitingConsent` is excluded on purpose: a paused session still owns
+    /// the consent it was granted under, and a resume must honour it.
+    #[must_use]
+    pub const fn accepts_backend_change(self) -> bool {
+        matches!(self, Self::Disconnected | Self::PresenceOnly | Self::Failed)
+    }
+
     #[must_use]
     pub const fn processes_audio(self) -> bool {
         matches!(self, Self::Listening | Self::Thinking | Self::Speaking)
@@ -226,6 +236,30 @@ pub enum DiscordSessionEvent {
     Current { epoch: u64, media_was_enabled: bool },
     Retired,
     Unknown { epoch: u64, media_was_enabled: bool },
+}
+
+/// Why a `/voice mode` switch was refused. Carrying the reason as a value
+/// rather than a rendered sentence keeps one copy of each message and lets
+/// tests assert on the decision instead of on prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeSwitchRefusal {
+    Starting,
+    MediaOpen,
+    Active(VoicePhase),
+    VerificationArmed,
+}
+
+impl ModeSwitchRefusal {
+    #[must_use]
+    pub fn message(self) -> String {
+        let leave = "Stop it with `/voice leave` before changing the backend.";
+        match self {
+            Self::Starting => format!("Voice is starting right now. {leave}"),
+            Self::MediaOpen => format!("Voice is active right now. {leave}"),
+            Self::Active(phase) => format!("Voice is {} right now. {leave}", phase.label()),
+            Self::VerificationArmed => "A live voice verification run is armed, and it observes local inference only. Finish it with `/voice leave` before switching away from local.".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -522,6 +556,29 @@ impl VoiceRuntime {
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.reserve_if_unchanged_locked(operation_token)
+    }
+
+    /// `reserve_start_if_unchanged`, plus the backend this start will use,
+    /// captured in the same critical section. `/voice mode` writes the mode
+    /// under the same lock and refuses while a start is pending, so a join
+    /// either reserves first (and the switch is refused) or reserves after
+    /// (and captures the new backend). Without this, a join could reserve
+    /// and snapshot between the switch's check and its write, then activate
+    /// the old backend while status reported the new one.
+    pub fn reserve_start_with_backend(
+        &self,
+        operation_token: u64,
+    ) -> Option<(u64, Option<VoiceBackendConfig>)> {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation = self.reserve_if_unchanged_locked(operation_token)?;
+        Some((generation, self.effective_backend()))
+    }
+
+    fn reserve_if_unchanged_locked(&self, operation_token: u64) -> Option<u64> {
         if self.start_generation.load(Ordering::SeqCst) != operation_token {
             return None;
         }
@@ -530,6 +587,45 @@ impl VoiceRuntime {
             .store(generation, Ordering::SeqCst);
         self.start_changes.send_replace(generation);
         Some(generation)
+    }
+
+    /// Check every rule and write the mode in one critical section, so the
+    /// decision is atomic with `reserve_start_with_backend`: a join either
+    /// reserves first and this refuses, or reserves after and captures the
+    /// switched backend.
+    ///
+    /// `phase` is passed in because reading it needs the async `inner` lock,
+    /// which cannot be taken here. That is sound: the caller holds
+    /// `transition` across both, and every phase transition takes it. The
+    /// start reservation, the media epoch, and the verification run are all
+    /// read here rather than from a snapshot, so none of them can move
+    /// between the check and the write.
+    pub fn switch_effective_mode(
+        &self,
+        requested: VoiceMode,
+        phase: VoicePhase,
+    ) -> Result<(), ModeSwitchRefusal> {
+        let _activation = self
+            .activation_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.pending_start_generation.load(Ordering::SeqCst) != 0 {
+            return Err(ModeSwitchRefusal::Starting);
+        }
+        if self.media_epoch.load(Ordering::SeqCst) != 0 {
+            return Err(ModeSwitchRefusal::MediaOpen);
+        }
+        if !phase.accepts_backend_change() {
+            return Err(ModeSwitchRefusal::Active(phase));
+        }
+        // An armed run observes local inference only, so leaving `Local`
+        // would record a cloud activation as local evidence. Read under the
+        // same gate `begin_verification` arms under, in that lock order.
+        if requested != VoiceMode::Local && self.verification_active() {
+            return Err(ModeSwitchRefusal::VerificationArmed);
+        }
+        self.set_effective_mode(requested);
+        Ok(())
     }
 
     /// Cancel a pending start and synchronously close any media gate it may
