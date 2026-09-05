@@ -45,10 +45,12 @@
 
 mod ask;
 mod brain;
+mod command_catalog;
 #[cfg(test)]
 mod command_registration_tests;
 mod commands;
 mod commands_brain;
+mod commands_help;
 mod commands_voice;
 #[cfg(test)]
 mod contracts;
@@ -58,6 +60,7 @@ mod gateway;
 mod generation;
 mod grounding;
 mod guild;
+mod help_center;
 mod http_body;
 mod inspect;
 mod llm;
@@ -303,8 +306,21 @@ async fn main() -> Result<(), Error> {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: application_commands(),
-            event_handler: |ctx, event, _framework, data| {
+            event_handler: |ctx, event, framework, data| {
                 Box::pin(async move {
+                    if let serenity::all::FullEvent::InteractionCreate {
+                        interaction: serenity::all::Interaction::Component(interaction),
+                    } = event
+                        && commands_help::dispatch_component(
+                            ctx,
+                            interaction,
+                            data,
+                            framework.options().owners.contains(&interaction.user.id),
+                        )
+                        .await
+                    {
+                        return Ok(());
+                    }
                     let handled = commands_voice::on_gateway_event(ctx, event, data).await;
                     if !handled {
                         gateway::on_discord_event(ctx, event, &data.state).await;
@@ -634,7 +650,8 @@ fn provider_self_test_usage() -> String {
 /// Abbey-owned commands only. Discord's application-owned Entry Point is
 /// deliberately absent and is merged only for global registration.
 fn application_commands() -> Vec<poise::Command<Data, Error>> {
-    vec![
+    let mut commands = vec![
+        commands_help::help(),
         commands::persona(),
         commands::whois(),
         commands::profile_context_menu(),
@@ -654,7 +671,9 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_brain::stats(),
         commands_brain::admin(),
         commands_voice::voice(),
-    ]
+    ];
+    commands_help::bind_commands(&mut commands);
+    commands
 }
 
 /// Purely merge fetched application-owned Entry Points into Abbey's freshly

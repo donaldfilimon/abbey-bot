@@ -16,6 +16,8 @@ sh -n deploy/install-mlx-audio-launchd.sh
 sh -n deploy/install-mlx-vlm-launchd.sh
 sh -n deploy/run-mlx-audio.sh
 sh -n deploy/run-mlx-vlm.sh
+sh -n deploy/install-audio-tap-launchd.sh
+sh -n scripts/check-audio-tap.sh
 python3 scripts/check-python-syntax.py
 python3 deploy/check-python-locks.py \
   deploy/mlx-vlm-requirements.txt \
@@ -24,6 +26,7 @@ python3 deploy/check-python-locks.py \
 python3 deploy/test-configure-mlx-primary.py
 python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
+python3 deploy/test-install-audio-tap-launchd.py
 python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
 python3 deploy/test-patch-mlx-vlm-tool-encoding.py
 python3 scripts/check-privacy.py
@@ -41,7 +44,11 @@ if command -v plutil >/dev/null 2>&1; then
   plutil -lint deploy/com.donaldfilimon.abbey-bot.plist
   plutil -lint deploy/com.donaldfilimon.abbey-mlx-audio.plist
   plutil -lint deploy/com.donaldfilimon.abbey-mlx-vlm.plist
+  plutil -lint deploy/com.donaldfilimon.abbey-audio-tap.plist
 fi
+
+echo "== offline macOS audio tap =="
+sh scripts/check-audio-tap.sh
 
 echo "== clippy =="
 cargo clippy --all-targets --locked -- -D warnings

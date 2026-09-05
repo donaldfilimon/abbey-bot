@@ -81,13 +81,19 @@
 
 **Interfaces:** Produces `CommandKey`, `CommandKind`, `InteractionContext`, composable `AccessRule`/`ConditionRule`, `RegistrationPolicy`, `EligibilityRule`, `Capability`, `HelpSection`, `CommandSpec`, `registered_commands()`, and the versioned help component protocol.
 
-- [ ] Add the complete catalog for every existing and planned leaf command/context menu with named typed access/condition rules and separate registration defaults.
-- [ ] Add recursive Poise/catalog/runtime-rule parity and README generated-region parity tests.
-- [ ] Implement ephemeral `/help [section]` with the shared composable context, subject, permission, caller-presence, selected-mode, input, and capability evaluator.
-- [ ] Implement central component dispatch for `abbey:help:v1:<owner>:<expiry>:<section>` with 15-minute expiry and strict 100-character IDs.
-- [ ] Ensure component acknowledgement precedes permissions/network work and full IDs are never logged.
-- [ ] Test DM/member/moderator/webhook-manager/server-manager/admin matrices, unavailable capabilities, hidden voice channels, Discord limits, clamping, and Entry Point retention.
-- [ ] Commit the reviewed catalog/help slice.
+- [x] Add the complete catalog for every existing and planned leaf command/context menu with named typed access/condition rules and separate registration defaults.
+- [x] Add recursive Poise/catalog/runtime-rule parity and README generated-region parity tests.
+- [x] Implement ephemeral `/help [section]` with the shared composable context, subject, permission, caller-presence, selected-mode, input, and capability evaluator.
+- [x] Implement central component dispatch for `abbey:help:v1:<owner>:<expiry>:<section>` with 15-minute expiry and strict 100-character IDs.
+- [x] Ensure component acknowledgement precedes permissions/network work and full IDs are never logged.
+- [x] Test DM/member/moderator/webhook-manager/server-manager/admin matrices, unavailable capabilities, hidden voice channels, Discord limits, clamping, and Entry Point retention.
+- [x] Commit the reviewed catalog/help slice.
+
+Completion evidence and compatibility rulings are recorded in
+[the catalog/audio-tap implementation evidence](2026-09-04-catalog-audio-tap-evidence.md).
+Five Task 5/6 entries remain explicitly planned. The existing detailed voice
+status remains private and manager-only until Task 6 adds its member-safe view;
+typed voice-mode choices also remain Task 6 work.
 
 ### Task 5: Privacy-Aligned Memory and Image Context Menus
 

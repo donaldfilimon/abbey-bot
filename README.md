@@ -24,7 +24,7 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 | Layer | Status | Evidence |
 |-------|--------|----------|
-| Source gate (`./check.sh`) | **PASS** | 787 tests, clippy clean, locked release build (measured 2026-09-04 03:51 on `e0825b9` plus the context-menu / wake-word branch) |
+| Source gate (`./check.sh`) | **PASS** | 904 Rust tests passed, 2 live tests ignored; clippy and locked release build passed; 27 named Swift tests and Swift release build passed; 25 fake audio-tap installer tests and strict sibling WDBX parity passed. See [catalog/audio-tap source evidence](docs/superpowers/plans/2026-09-04-catalog-audio-tap-evidence.md). |
 | Cross-platform CI (Ubuntu/macOS/Windows) | **Repaired, unverified at new head** | Run `33835423344` at `057e6b1` failed on all three at `cargo fmt --check`; PR #72 fixed it and merged as `e0825b9`. That fix was green on all three *on the PR branch* — no post-merge `main` run has been read here, so this is a repair, not a fresh pass. The older `33218303755` at `9716f00` is a pre-stabilization baseline, not current status. |
 | Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
 | Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
@@ -37,24 +37,53 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `/persona route <request> [as]` | Shows which persona takes a request and why. `as` is a dropdown that forces one. |
-| `/persona ask <question>` | Routes the question to a persona and answers it via the configured generation backend (see "Configured backends"). With none configured, it says so. Questions are capped at 2,000 characters and each user gets one accepted invocation per 30 seconds. |
-| `/whois <user>` | Profile read: identity, standing, roles, join date. |
-| `/perms <channel> <user>` | Walks a channel's permission overwrites in Discord's evaluation order. Threads are redirected to their parent, which owns the overwrites they inherit. |
-| `/modcall <user> <severity> [warnings] [timeouts]` | Recommends a moderation action and says whether *you* can carry it out — both the permission bit and role hierarchy (owner-target, admin-timeout, top-role comparison). |
-| `/server <kind>` | Emits a role hierarchy, channel structure, and numbered setup steps. |
-| `/webhook <channel>` | Incoming-webhook setup guide: steps, curl, and a safe-by-default payload. Threads get a curl carrying their actual `?thread_id=`; forums (and media channels) get post semantics — `thread_name` or `?thread_id=`. |
-| `/remember <fact> [user]` | Store a durable fact (ephemeral) in plain memory and WDBX. Facts are whitespace-normalized, non-empty, and capped at 300 Unicode characters. The subject defaults to you; choosing another member requires Manage Messages, Manage Guild, or Administrator. |
-| `/forget <fact> [user]` | Remove a stored fact from plain memory and WDBX. The subject defaults to you and autocomplete is scoped to your own facts; choosing another member requires Manage Messages, Manage Guild, or Administrator. |
-| `/recall [user]` | What Abbey remembers about you, plus your standing. Looking up another member requires Manage Messages, Manage Guild, or Administrator. |
-| `/reputation [user]` | A member's reputation score (0–1) in this server. |
-| `/summarize [count] [as]` | Summarize the recent messages Abbey has seen in the channel via the backend; stores the summary as the channel's context. |
-| `/see <image> [question]` / `/ocr <image>` | Image understanding through the configured vision endpoint. JPEG, PNG, WebP, and GIF are fully decoded locally under 8192×8192-pixel and 96 MiB allocation ceilings before transport; GIF's first rendered frame is normalized to PNG. |
-| `/stats` | Command usage counts, messages seen, this server's brain (ε / steps / buffer), pending rewards, which backends are on. |
-| `/admin show\|persona\|learning\|vision\|cooldown\|act\|budget\|brain\|flush\|export\|reset` | Per-server config and the learning loop's controls (Manage Server): default persona, learning on/off, vision on/off, unsolicited-reply cooldown, `act on` opts the server in to unsolicited replies (default off), `budget` caps them per hour (default 6), ε override + brain inspection (last decision's Q-values, action histogram, recent reward mean, budget left), persist now, export the brain snapshot as JSON, clear this channel's transcript. |
-| `/voice consent`; `/voice notice`; `/voice join consent:true\|resume consent:true\|leave\|status`; `/voice verify start\|report` | `/voice consent` lets each member review, agree or withdraw privately. A manager can publish the same controls with `/voice notice`. Join/resume require Manage Server, the caller to be present, saved individual agreement from every current participant for the selected processing mode, and public disclosure before the media gate opens. New or unidentified participants stop and disconnect the call. Leave is available to someone present or a manager. The owner/admin-only local verifier uses content-free in-memory counters and disables voice conversation commits while armed. Automatic presence is muted and self-deafened. |
+<!-- BEGIN GENERATED COMMAND CATALOG -->
+| Command | Context | Response | What it does |
+|---|---|---|---|
+| `/help` | guild, bot DM | private | Browse commands available to you privately. |
+| `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
+| `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
+| `/whois` | guild | public | Read a member's profile and roles. |
+| `Abbey: profile` | guild | private | Read the selected member's profile privately. |
+| `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
+| `/perms` | guild | public | Explain a member's channel permissions. |
+| `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
+| `/server` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
+| `/remember` | guild, bot DM | private | Store a fact about yourself; moderators may choose a member. |
+| `/forget` | guild, bot DM | private | Remove a stored fact about yourself or an authorized member. |
+| `/pending list` | guild, bot DM | private | Review proposed fact replacements. |
+| `/pending confirm` | guild, bot DM | private | Apply an explicitly chosen fact replacement. |
+| `/pending dismiss` | guild, bot DM | private | Dismiss a proposed replacement and keep both facts. |
+| `/recall` | guild, bot DM | private | Read your facts and standing, or an authorized member's. |
+| `/reputation` | guild, bot DM | private | Read your standing privately; moderators may choose a member. |
+| `/summarize` | guild, bot DM | public | Summarize the recent conversation through the backend. |
+| `/see` | guild, bot DM | public | Describe an image; an optional question also needs generation. |
+| `/ocr` | guild, bot DM | public | Read the text in an image. |
+| `/stats` | guild, bot DM | private | Read command usage and learning statistics. |
+| `/admin show` | guild | private | Read this server's settings. |
+| `/admin persona` | guild | private | Set the server's default persona. |
+| `/admin learning` | guild | private | Control learning for this server. |
+| `/admin vision` | guild | private | Control image understanding for this server. |
+| `/admin cooldown` | guild | private | Set the unsolicited reply cooldown. |
+| `/admin act` | guild | private | Opt this server into unsolicited replies or turn them off. |
+| `/admin budget` | guild | private | Set the hourly unsolicited reply budget. |
+| `/admin brain` | guild | private | Inspect the learning policy and exploration setting. |
+| `/admin flush` | guild | private | Persist current state and report each result. |
+| `/admin export` | guild | private | Export the server's brain snapshot privately. |
+| `/admin reset` | guild | private | Clear only this channel's transcript. |
+| `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
+| `/voice notice` | guild | private | Publish the member voice consent controls. |
+| `/voice join` | guild | private | Start voice after every participant's saved agreement. |
+| `/voice resume` | guild | private | Resume voice after current participant consent checks. |
+| `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |
+| `/voice status` | guild | private | Read private operator voice diagnostics (member view planned). |
+| `/voice mode` | guild | private | Read or select a fully configured voice mode. |
+| `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |
+| `/voice verify report` | guild | private | Read the private local voice acceptance report. |
+
+Planned (not registered or shown as usable in help): `Abbey: memory`, `Abbey: describe image`, `Abbey: read image text`, `admin dashboard`, `voice diagnostics`. Member-safe `/voice status` and typed voice-mode choices also remain Task 6 work; the current status is private and manager-only.
+<!-- END GENERATED COMMAND CATALOG -->
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned
 notice and choose **Agree** for the displayed processing mode. Each member
@@ -245,6 +274,23 @@ server facade is text-only and tool-incapable; CLI capabilities are enabled
 only when a current, owner-only qualification manifest matches the Abbey
 binary, `fm` executable, OS build, mode, and fixture version. It is not the
 Gemma default.
+
+## macOS audio-tap sidecar
+
+The [audio-tap package](tools/abbey-audio-tap/README.md) supplies a native
+ScreenCaptureKit audio source for the planned `/voice play` feature. It streams
+48 kHz stereo PCM over `127.0.0.1:8182` and excludes identified Discord clients,
+browsers, terminal hosts, Abbey, and unidentified sources. Its `/health` endpoint
+does not start capture or request permission. The package documents the exact
+stream protocol, eligible-application restrictions, and separate operator
+permission setup.
+
+This source slice includes the Swift executable and a transactional launchd
+installer with tests using a temporary home and fake service commands. Rust
+streaming, player controls, mixer ducking, and `/voice play` registration remain
+separate work. Source tests do not establish live capture, installation, or
+audible Discord acceptance. `./check.sh` runs synthetic audio tests and a Swift
+release build on macOS; Windows and Linux explicitly skip the macOS SDK layer.
 
 ## Configured backends
 
