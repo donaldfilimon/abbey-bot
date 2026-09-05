@@ -279,8 +279,8 @@ Configuration is env-only: `DISCORD_TOKEN` (or the `DISCORD_BOT_TOKEN`
 fallback — primary wins, and a present-but-blank primary is an error that does
 **not** fall through), optional `ABBEY_GUILD_ID`, `RUST_LOG`, backend vars
 (`ANTHROPIC_API_KEY`, `ABBEY_BOT_LLM_ENDPOINT`, `ABBEY_BOT_LLM_MODEL`,
-`ABBEY_BOT_LLM_CONCURRENCY`/`_QUEUE_SECS`/`_TIMEOUT_SECS`), the
-`ABBEY_PROVIDER_*` route family, `SLACK_*`/`TELEGRAM_BOT_TOKEN`, and the
+`ABBEY_BOT_LLM_CONCURRENCY`/`_QUEUE_SECS`/`_TIMEOUT_SECS`),
+`SLACK_*`/`TELEGRAM_BOT_TOKEN`, and the
 `ABBEY_VOICE_*` set (`ABBEY_VOICE_MODE=local` is the default and is never
 inferred from key presence). Blank handling is variable-specific: backend
 and voice parsers normalize optional blank values, but a present blank Discord
