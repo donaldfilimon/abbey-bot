@@ -213,7 +213,7 @@ impl PcmBuffer {
             .as_chunks::<2>()
             .0
             .iter()
-            .flat_map(|v| (f32::from(i16::from_le_bytes([v[0], v[1]])) / 32768.0).to_le_bytes())
+            .flat_map(|v| (f32::from(i16::from_le_bytes(*v)) / 32768.0).to_le_bytes())
             .collect::<Vec<_>>();
         q.size += converted.len();
         q.bytes.push_back((Instant::now(), converted));
