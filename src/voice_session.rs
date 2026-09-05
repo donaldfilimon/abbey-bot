@@ -74,7 +74,9 @@ impl VoicePhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
-    MusicTerminated { reason: PlaybackTermination },
+    MusicTerminated {
+        reason: PlaybackTermination,
+    },
     PlaybackTerminated {
         turn: u64,
         termination: PlaybackTermination,
@@ -236,37 +238,28 @@ pub enum DiscordSessionEvent {
     Unknown { epoch: u64, media_was_enabled: bool },
 }
 
-/// Why a `/voice mode` switch to `requested` must be refused right now, as
-/// the sentence to post, or `None` when it may proceed. Pure: the caller
-/// holds `transition` so the snapshot cannot go stale between check and
-/// write. An armed verification run pins the backend to local because the
-/// run is only defined for local inference; `/voice leave` completes it even
-/// from idle.
-#[must_use]
-pub fn mode_switch_blocker(
-    snapshot: &VoiceSnapshot,
-    verification_armed: bool,
-    requested: VoiceMode,
-) -> Option<String> {
-    if snapshot.start_pending {
-        return Some(
-            "Voice is starting right now. Stop it with `/voice leave` before changing the backend."
-                .to_string(),
-        );
+/// Why a `/voice mode` switch was refused. Carrying the reason as a value
+/// rather than a rendered sentence keeps one copy of each message and lets
+/// tests assert on the decision instead of on prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeSwitchRefusal {
+    Starting,
+    MediaOpen,
+    Active(VoicePhase),
+    VerificationArmed,
+}
+
+impl ModeSwitchRefusal {
+    #[must_use]
+    pub fn message(self) -> String {
+        let leave = "Stop it with `/voice leave` before changing the backend.";
+        match self {
+            Self::Starting => format!("Voice is starting right now. {leave}"),
+            Self::MediaOpen => format!("Voice is active right now. {leave}"),
+            Self::Active(phase) => format!("Voice is {} right now. {leave}", phase.label()),
+            Self::VerificationArmed => "A live voice verification run is armed, and it observes local inference only. Finish it with `/voice leave` before switching away from local.".to_string(),
+        }
     }
-    if !snapshot.phase.accepts_backend_change() {
-        return Some(format!(
-            "Voice is {} right now. Stop it with `/voice leave` before changing the backend.",
-            snapshot.phase.label()
-        ));
-    }
-    if verification_armed && requested != VoiceMode::Local {
-        return Some(
-            "A live voice verification run is armed, and it observes local inference only. Finish it with `/voice leave` before switching away from local."
-                .to_string(),
-        );
-    }
-    None
 }
 
 #[derive(Debug, Clone)]
@@ -594,23 +587,43 @@ impl VoiceRuntime {
         Some(generation)
     }
 
-    /// Switch the effective mode only while no start is reserved and no media
-    /// epoch is open, checked and written under `activation_gate` so the
-    /// decision is atomic with `reserve_start_with_backend`. Returns whether
-    /// the switch happened. Callers still consult `mode_switch_blocker` first
-    /// for the phase and verification rules and the user-facing sentence.
-    pub fn switch_effective_mode_if_idle(&self, requested: VoiceMode) -> bool {
+    /// Check every rule and write the mode in one critical section, so the
+    /// decision is atomic with `reserve_start_with_backend`: a join either
+    /// reserves first and this refuses, or reserves after and captures the
+    /// switched backend.
+    ///
+    /// `phase` is passed in because reading it needs the async `inner` lock,
+    /// which cannot be taken here. That is sound: the caller holds
+    /// `transition` across both, and every phase transition takes it. The
+    /// start reservation, the media epoch, and the verification run are all
+    /// read here rather than from a snapshot, so none of them can move
+    /// between the check and the write.
+    pub fn switch_effective_mode(
+        &self,
+        requested: VoiceMode,
+        phase: VoicePhase,
+    ) -> Result<(), ModeSwitchRefusal> {
         let _activation = self
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if self.pending_start_generation.load(Ordering::SeqCst) != 0
-            || self.media_epoch.load(Ordering::SeqCst) != 0
-        {
-            return false;
+        if self.pending_start_generation.load(Ordering::SeqCst) != 0 {
+            return Err(ModeSwitchRefusal::Starting);
+        }
+        if self.media_epoch.load(Ordering::SeqCst) != 0 {
+            return Err(ModeSwitchRefusal::MediaOpen);
+        }
+        if !phase.accepts_backend_change() {
+            return Err(ModeSwitchRefusal::Active(phase));
+        }
+        // An armed run observes local inference only, so leaving `Local`
+        // would record a cloud activation as local evidence. Read under the
+        // same gate `begin_verification` arms under, in that lock order.
+        if requested != VoiceMode::Local && self.verification_active() {
+            return Err(ModeSwitchRefusal::VerificationArmed);
         }
         self.set_effective_mode(requested);
-        true
+        Ok(())
     }
 
     /// Cancel a pending start and synchronously close any media gate it may
@@ -1095,7 +1108,8 @@ impl VoiceRuntime {
     }
 
     pub async fn disconnect(&self, status: impl Into<String>) {
-        self.music.stop("voice disconnected", PlaybackTermination::Stopped);
+        self.music
+            .stop("voice disconnected", PlaybackTermination::Stopped);
         self.stop_to(VoicePhase::Disconnected, status).await;
     }
 
@@ -1107,7 +1121,8 @@ impl VoiceRuntime {
     }
 
     pub async fn fail_safe(&self, status: impl Into<String>) {
-        self.music.stop("voice failed", PlaybackTermination::Errored);
+        self.music
+            .stop("voice failed", PlaybackTermination::Errored);
         self.stop_to(VoicePhase::Failed, status).await;
     }
 

@@ -1087,23 +1087,9 @@ pub async fn voice_mode(
     // snapshot finish under the old backend while this reports the new one.
     let transition = runtime.transition.lock().await;
     let snapshot = runtime.snapshot().await;
-    if let Some(blocker) = crate::voice_session::mode_switch_blocker(
-        &snapshot,
-        runtime.verification_active(),
-        requested,
-    ) {
+    if let Err(refusal) = runtime.switch_effective_mode(requested, snapshot.phase) {
         drop(transition);
-        ctx.say(clamp_message(blocker)).await?;
-        return Ok(());
-    }
-    // The blocker's `start_pending` read is advisory; this write is the
-    // authoritative one, atomic with a join's reservation-plus-snapshot.
-    if !runtime.switch_effective_mode_if_idle(requested) {
-        drop(transition);
-        ctx.say(
-            "Voice is starting right now. Stop it with `/voice leave` before changing the backend.",
-        )
-        .await?;
+        ctx.say(clamp_message(refusal.message())).await?;
         return Ok(());
     }
     drop(transition);
