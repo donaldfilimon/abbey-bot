@@ -609,3 +609,22 @@ status: in_progress
   `src/voice_session/mode.rs` beside the existing `control.rs`, `playback.rs`, and
   `verification.rs`. That is a pure move, and it is being held until the in-flight music feature
   stops editing the same file.
+- **2026-09-05 00:40: `b9df963` went red on all three platforms with the Mac gate fully green,
+  which is a different failure class from the three direct-push breaks above.** That merge landed
+  the music wiring and cleared the dead-code blocker; `./check.sh` passed end to end here before the
+  push (940 tests, release build). CI run `33944219413` then failed three ways that a macOS gate is
+  structurally unable to see. (1) `voice::tests::music_command_channel_config_is_optional_nonzero_and_requires_voice_scope`
+  built its fixture from `destination()`, which selects the default `local` mode, and `local` fails
+  closed off macOS before the music channel is ever compared; Ubuntu and Windows both panicked at
+  the unwrap. The fixture now pins `mode: disabled`, the one mode every platform accepts, which is
+  honest because the channel id is parsed before the mode. (2) `command_catalog::tests::readme_generated_region_matches_catalog_exactly`
+  compares `include_str!("README.md")` byte for byte with the generator's LF output; the Windows
+  runner checks out with `autocrlf`, so the whole file arrived as CRLF. `.gitattributes` now pins
+  `README.md text eol=lf` beside the existing fixture rule. (3) `tools/abbey-audio-tap`'s
+  `ServerTests.swift:126` destructured a tuple straight out of `NSLock.withLock`'s generic result,
+  which the local Swift 6.4 infers and the runner's older compiler does not. The binding now carries
+  an explicit `(DispatchQueue?, DeferredSource?)` type. That one is verified against a real older
+  compiler rather than reasoned: Swift 6.3.2 rejects the original line at the same column and
+  accepts the fixed one, and the package passes on both 6.3.2 and 6.4. The exact-head item stays
+  open until a three-platform run is green at a head that carries this fix; the local gate is the
+  Mac layer of the evidence ladder, and this is the recorded instance of why it is not the last rung.

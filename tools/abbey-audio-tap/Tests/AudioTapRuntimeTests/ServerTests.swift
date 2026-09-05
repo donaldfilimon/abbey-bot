@@ -123,7 +123,7 @@ private final class DeferredControl: @unchecked Sendable {
     func didRequestStop() { lock.withLock { pending = true } }
     func didShutdown() { lock.withLock { completed = true } }
     func finish() {
-        let (queue, source) = lock.withLock { (queue, source) }
+        let (queue, source): (DispatchQueue?, DeferredSource?) = lock.withLock { (self.queue, self.source) }
         queue?.async { [weak source] in source?.finish() }
     }
 }

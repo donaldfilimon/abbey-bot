@@ -2,3 +2,7 @@ tests/fixtures/*.seg.jsonl text eol=lf
 contracts/abbey/** -text
 # Binary HTTP wire fixture: preserve CRLF and the terminal empty header line.
 tools/abbey-audio-tap/Tests/AudioTapCoreTests/Fixtures/stream-header.http -text -diff
+# command_catalog's readme test include_str!s this file and compares the
+# generated region byte for byte with LF output; an autocrlf checkout
+# (the Windows runner) must not rewrite it.
+README.md text eol=lf

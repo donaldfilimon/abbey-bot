@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn music_command_channel_config_is_optional_nonzero_and_requires_voice_scope() {
         for value in [None, Some(""), Some("  ")] {
-            let mut values = destination();
+            let mut values = music_destination();
             values.music_command_channel = value.map(str::to_owned);
             assert_eq!(
                 VoiceConfig::from_values(values)
@@ -613,7 +613,7 @@ mod tests {
                 None
             );
         }
-        let mut values = destination();
+        let mut values = music_destination();
         values.music_command_channel = Some("1545633393402843236".into());
         assert_eq!(
             VoiceConfig::from_values(values)
@@ -623,7 +623,7 @@ mod tests {
             Some(1545633393402843236)
         );
         for value in ["0", "bad", "18446744073709551616"] {
-            let mut values = destination();
+            let mut values = music_destination();
             values.music_command_channel = Some(value.into());
             assert!(
                 VoiceConfig::from_values(values)
@@ -646,6 +646,17 @@ mod tests {
             guild: Some("123".into()),
             channel: Some("456".into()),
             ..VoiceEnv::default()
+        }
+    }
+
+    // The music channel is parsed before the mode, so it is pinned under
+    // `disabled`, the one mode every platform accepts. `destination()` alone
+    // selects `local`, which fails closed off macOS before the channel is
+    // ever compared.
+    fn music_destination() -> VoiceEnv {
+        VoiceEnv {
+            mode: Some("disabled".into()),
+            ..destination()
         }
     }
 
