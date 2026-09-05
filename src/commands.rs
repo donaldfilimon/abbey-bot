@@ -807,7 +807,13 @@ mod tests {
                 .roles
                 .iter()
                 .flat_map(|role| role.permissions.iter())
-                .chain(bp.everyone.iter());
+                .chain(bp.everyone.iter())
+                .chain(
+                    bp.categories
+                        .iter()
+                        .flat_map(|category| category.channels)
+                        .flat_map(|channel| channel.deny_everyone.iter()),
+                );
             for permission in named {
                 assert!(
                     vocabulary.iter().any(|known| known == permission),

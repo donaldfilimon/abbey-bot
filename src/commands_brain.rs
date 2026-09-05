@@ -22,6 +22,7 @@ use crate::engine;
 use crate::guild::{self, GuildSettings};
 use crate::llm;
 use crate::memory;
+use crate::persist::{PersistReport, render_component_outcome};
 use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
 use crate::{Context, Error};
@@ -1029,16 +1030,21 @@ pub async fn admin_brain(
 }
 
 /// Flush reputation and persist everything to disk now.
+fn render_admin_flush(report: &PersistReport) -> String {
+    format!(
+        "Persistence is {}. Canonical state: {}. WDBX projection: {}.",
+        report.overall.as_str(),
+        render_component_outcome(report.canonical_state),
+        render_component_outcome(report.wdbx_projection)
+    )
+}
+
 #[poise::command(slash_command, guild_only, ephemeral, rename = "flush")]
 pub async fn admin_flush(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    state.persist_all();
-    ctx.say(match &state.data_dir {
-        Some(dir) => format!("Flushed and persisted to `{}`.", dir.display()),
-        None => "Flushed in memory. ABBEY_DATA_DIR is unset, so nothing is on disk.".to_string(),
-    })
-    .await?;
+    let report = state.persist_all();
+    ctx.say(clamp_message(render_admin_flush(&report))).await?;
     Ok(())
 }
 
@@ -1083,11 +1089,46 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persist::{PersistComponentOutcome, PersistErrorCategory, PersistReport};
 
     #[test]
     fn on_off_labels() {
         assert!(OnOff::On.is_on());
         assert_eq!(OnOff::Off.label(), "off");
+    }
+
+    #[test]
+    fn admin_flush_copy_is_truthful_component_level_and_content_free() {
+        let report = PersistReport::from_components(
+            PersistComponentOutcome::Committed,
+            PersistComponentOutcome::Failed(PersistErrorCategory::SyncDirectory),
+        );
+        let rendered = render_admin_flush(&report);
+        assert_eq!(
+            rendered,
+            "Persistence is partial. Canonical state: committed. WDBX projection: failed (sync-directory)."
+        );
+        assert!(!rendered.contains('/'));
+        assert!(!rendered.contains("injected"));
+
+        assert_eq!(
+            render_admin_flush(&PersistReport::memory_only()),
+            "Persistence is memory-only. Canonical state: not configured. WDBX projection: not configured."
+        );
+        assert_eq!(
+            render_admin_flush(&PersistReport::from_components(
+                PersistComponentOutcome::Committed,
+                PersistComponentOutcome::Committed,
+            )),
+            "Persistence is complete. Canonical state: committed. WDBX projection: committed."
+        );
+        assert_eq!(
+            render_admin_flush(&PersistReport::from_components(
+                PersistComponentOutcome::Failed(PersistErrorCategory::WriteTemporary),
+                PersistComponentOutcome::SkippedCanonicalFailure,
+            )),
+            "Persistence is failed. Canonical state: failed (write-temporary). WDBX projection: skipped after canonical failure."
+        );
     }
 
     #[test]

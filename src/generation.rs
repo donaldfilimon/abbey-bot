@@ -681,12 +681,13 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     // Constructing the vocabulary is intentionally capability-gated. This is
     // more than an empty slice at dispatch time: disabled voice turns never
     // allocate or even materialize model-callable tool descriptions.
-    let vocabulary = (access.is_enabled()
-        && foundation_models::primary_tools_are_available(
-            state.foundation_models.as_ref(),
-            state.tools_enabled.load(Ordering::Relaxed),
-        ))
-    .then(crate::tools::production_tools);
+    let vocabulary = crate::tools::production_tools_when_enabled(
+        access.is_enabled()
+            && foundation_models::primary_tools_are_available(
+                state.foundation_models.as_ref(),
+                state.tools_enabled.load(Ordering::Relaxed),
+            ),
+    );
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round in 0..=crate::tools::MAX_TOOL_ROUNDS {

@@ -91,9 +91,9 @@ pub(super) async fn generate_with_fm_cli_and_access<F: FmTurnSource>(
         .router()
         .effective_capabilities(ProviderRoute::FoundationModelsCli)
         .is_some_and(|capabilities| capabilities.tools);
-    let vocabulary =
-        (access.is_enabled() && fm_tools && state.tools_enabled.load(Ordering::Relaxed))
-            .then(crate::tools::production_tools);
+    let vocabulary = crate::tools::production_tools_when_enabled(
+        access.is_enabled() && fm_tools && state.tools_enabled.load(Ordering::Relaxed),
+    );
     let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
     let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
     for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {

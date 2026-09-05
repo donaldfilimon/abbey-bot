@@ -729,6 +729,23 @@ binary it produced, not an installation or service.
 
 ## Gate
 
+### Supplemental coding skills
+
+[Apollo GraphQL's Rust best practices](https://github.com/apollographql/skills/tree/main/skills/rust-best-practices)
+is a reviewed supplemental reference for ownership, error handling, testing,
+and code review, discovered through `npx skills find rust`. Use relevant chapters
+alongside this repository's agent guidance; the gate below and its lint policy
+take precedence over generic skill commands or lint-suppression advice.
+
+Agent `SKILL.md` packages guide the coding assistant. Abbey's runtime does not
+load them: its seven tools are compiled Core/Inspect groups in `src/tools.rs`.
+Installing a coding skill does not grant Abbey browsing, shell, or server-editing
+capabilities. `/server` emits a blueprint; apply and verify server settings in
+Discord. Its read-only channel instructions cover messages and threads, and
+named channel-access roles must also be assigned to staff who need them.
+
+### Required checks
+
 ```sh
 ./check.sh
 # On Windows PowerShell:

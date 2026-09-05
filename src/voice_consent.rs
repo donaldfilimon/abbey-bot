@@ -188,6 +188,20 @@ mod tests {
     }
 
     #[test]
+    fn consent_ledger_v1_wire_format_remains_byte_compatible() {
+        let mut ledger = Ledger::new(10);
+        assert!(ledger.apply(20, 100, Choice::Agree(VoiceMode::Local), 5));
+        let encoded = serde_json::to_string(&ledger).expect("consent ledger serializes");
+        assert_eq!(
+            encoded,
+            r#"{"version":1,"guild":10,"members":{"20":{"last_event":100,"local":{"policy":1,"interaction":100,"acknowledged_at":5},"openai":null}}}"#
+        );
+        let decoded: Ledger = serde_json::from_str(&encoded).expect("v1 ledger remains readable");
+        assert!(decoded.agrees(20, VoiceMode::Local));
+        assert_eq!(decoded.version, POLICY_VERSION);
+    }
+
+    #[test]
     fn complete_public_notice_and_private_status_fit_discord() {
         for mode in [VoiceMode::Local, VoiceMode::OpenAi, VoiceMode::Disabled] {
             let text = notice(mode, u64::MAX);

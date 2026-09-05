@@ -45,6 +45,8 @@
 
 mod ask;
 mod brain;
+#[cfg(test)]
+mod command_registration_tests;
 mod commands;
 mod commands_brain;
 mod commands_voice;
@@ -300,27 +302,7 @@ async fn main() -> Result<(), Error> {
     let setup_voice_runtime = voice_runtime.clone();
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![
-                commands::persona(),
-                commands::whois(),
-                commands::profile_context_menu(),
-                commands::ask_context_menu(),
-                commands::perms(),
-                commands::modcall(),
-                commands::server(),
-                commands::webhook(),
-                commands_brain::remember(),
-                commands_brain::forget(),
-                commands_brain::pending(),
-                commands_brain::recall(),
-                commands_brain::reputation(),
-                commands_brain::summarize(),
-                commands_brain::see(),
-                commands_brain::ocr(),
-                commands_brain::stats(),
-                commands_brain::admin(),
-                commands_voice::voice(),
-            ],
+            commands: application_commands(),
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
                     let handled = commands_voice::on_gateway_event(ctx, event, data).await;
@@ -649,6 +631,59 @@ fn provider_self_test_usage() -> String {
     "usage: abbey-bot --provider-self-test primary|fm|all --json".into()
 }
 
+/// Abbey-owned commands only. Discord's application-owned Entry Point is
+/// deliberately absent and is merged only for global registration.
+fn application_commands() -> Vec<poise::Command<Data, Error>> {
+    vec![
+        commands::persona(),
+        commands::whois(),
+        commands::profile_context_menu(),
+        commands::ask_context_menu(),
+        commands::perms(),
+        commands::modcall(),
+        commands::server(),
+        commands::webhook(),
+        commands_brain::remember(),
+        commands_brain::forget(),
+        commands_brain::pending(),
+        commands_brain::recall(),
+        commands_brain::reputation(),
+        commands_brain::summarize(),
+        commands_brain::see(),
+        commands_brain::ocr(),
+        commands_brain::stats(),
+        commands_brain::admin(),
+        commands_voice::voice(),
+    ]
+}
+
+/// Purely merge fetched application-owned Entry Points into Abbey's freshly
+/// generated global command payload. Guild registration never calls this.
+fn merge_entry_point_commands(
+    mut generated: Vec<serenity::all::CreateCommand>,
+    existing: impl IntoIterator<Item = serenity::all::Command>,
+) -> Vec<serenity::all::CreateCommand> {
+    use serenity::all::{CommandType, CreateCommand};
+
+    for command in existing
+        .into_iter()
+        .filter(|command| command.kind == CommandType::PrimaryEntryPoint)
+    {
+        let mut preserved = CreateCommand::new(command.name)
+            .kind(CommandType::PrimaryEntryPoint)
+            .description(command.description)
+            .integration_types(command.integration_types);
+        if let Some(contexts) = command.contexts {
+            preserved = preserved.contexts(contexts);
+        }
+        if let Some(handler) = command.handler {
+            preserved = preserved.handler(handler);
+        }
+        generated.push(preserved);
+    }
+    generated
+}
+
 /// Global registration that survives Discord's Entry Point command.
 ///
 /// Apps with Activities enabled get an auto-created command of type
@@ -663,27 +698,16 @@ async fn register_globally_keeping_entry_point(
     ctx: &serenity::all::Context,
     commands: &[poise::Command<Data, Error>],
 ) -> Result<(), Error> {
-    use serenity::all::{Command, CommandType, CreateCommand};
+    use serenity::all::{Command, CommandType};
 
-    let mut create = poise::builtins::create_application_commands(commands);
+    let create = poise::builtins::create_application_commands(commands);
     let existing = Command::get_global_commands(&ctx.http).await?;
-    for cmd in existing
-        .into_iter()
-        .filter(|c| c.kind == CommandType::PrimaryEntryPoint)
-    {
-        let mut keep = CreateCommand::new(cmd.name.clone())
-            .kind(CommandType::PrimaryEntryPoint)
-            .description(cmd.description.clone())
-            .integration_types(cmd.integration_types.clone());
-        if let Some(contexts) = cmd.contexts.clone() {
-            keep = keep.contexts(contexts);
+    for command in &existing {
+        if command.kind == CommandType::PrimaryEntryPoint {
+            tracing::info!(name = %command.name, "preserving the app's Entry Point command");
         }
-        if let Some(handler) = cmd.handler {
-            keep = keep.handler(handler);
-        }
-        tracing::info!(name = %cmd.name, "preserving the app's Entry Point command");
-        create.push(keep);
     }
+    let create = merge_entry_point_commands(create, existing);
     Command::set_global_commands(&ctx.http, create).await?;
     Ok(())
 }
@@ -745,6 +769,13 @@ mod startup_argument_tests {
 
     #[test]
     fn provider_self_test_requires_exact_target_and_json_mode() {
+        assert_eq!(
+            provider_self_test_usage(),
+            "usage: abbey-bot --provider-self-test primary|fm|all --json"
+        );
+        assert_eq!(provider_self_test::SelfTestExit::Success.code(), 0);
+        assert_eq!(provider_self_test::SelfTestExit::ProbeFailure.code(), 1);
+        assert_eq!(provider_self_test::SelfTestExit::Configuration.code(), 2);
         assert_eq!(
             parse(&["--provider-self-test", "primary", "--json"]).unwrap(),
             StartupAction::ProviderSelfTest(provider::QualificationTarget::Primary)
