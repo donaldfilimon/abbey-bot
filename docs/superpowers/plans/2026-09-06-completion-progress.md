@@ -304,3 +304,19 @@ cleanup receipt will live in canonical ignored
 `.superpowers/completion-20260906/delivery.json`, after those actions complete.
 Live installation, provider, Discord, connector and voice acceptance stay
 explicitly separate. No overall hosted/live completion is claimed.
+
+## Hosted Windows fixture correction
+
+The first exact-push run `34029900946` on `d41fdcf` exposed Git autocrlf
+conversion of the new canonical readiness fixture to CRLF before the Windows
+protocol assertion. The assertion correctly requires the encoder's LF bytes.
+The follow-up pins service-protocol JSON and the exact-byte voice-consent
+fixture to LF in `.gitattributes`, preserving the wire format and assertions.
+An isolated Git checkout with `core.autocrlf=true` reproduced all three affected
+fixture mismatches before the rules and preserved canonical bytes afterward.
+Independent review found no other new fixture consumer with this conversion
+risk. Protocol and readiness Python suites passed 20 and 24 tests; affected
+Rust readiness and consent-store suites passed eight and seven tests. This changes
+checkout metadata only; the tested local source and release artifact bytes are
+unchanged. Replacement exact-commit CI remains required and its result belongs
+in the canonical delivery receipt.

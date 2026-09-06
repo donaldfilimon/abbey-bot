@@ -6,3 +6,7 @@ tools/abbey-audio-tap/Tests/AudioTapCoreTests/Fixtures/stream-header.http -text 
 # generated region byte for byte with LF output; an autocrlf checkout
 # (the Windows runner) must not rewrite it.
 README.md text eol=lf
+# Managed protocol golden bytes end in one LF on every platform.
+tests/fixtures/service-protocol/*.json text eol=lf
+# Consent serialization is also compared byte for byte after its LF.
+tests/fixtures/voice_consent_v1.json text eol=lf
