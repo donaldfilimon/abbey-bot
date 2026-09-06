@@ -851,3 +851,45 @@ guilds. Member access, manager access, global/DM command scope, current unanimou
 voice agreement and human audible confirmation each need their own observation.
 No source test or synthetic speech probe substitutes for those checks. See
 `docs/live-test-protocol.md` for the workflow matrix and restoration requirements.
+
+### Red-main repair and branch/worktree consolidation (2026-09-06 11:2x EDT)
+
+`6a3000c` (guild-scoped voice sessions, pushed by a concurrent session) left
+`main` red on all three CI platforms. Repaired at `f45b7b2`: `src/host_music.rs`
+formatting, the `private_interfaces` denial on `AppState::host_music` (widened
+`HostMusic` to `pub`, matching every other type reachable from a public
+`AppState` field), and the `actual_unconfigured_voice_status_reaches_explanatory_handler`
+assertion, which still expected the pre-scoping startup-global wording after
+`voice_status` / `voice_diagnostics` deliberately moved to the per-guild text.
+Behaviour was not reverted; only the stale assertion was corrected.
+
+Strict gate green on the pushed tree: `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh`
+with `ABBEY_WDBX_REPO=../wdbx` — 1,249 tests passed, 0 failed, 5 intentional live
+ignores, warnings-denied all-target locked Clippy, formatting, WDBX
+cross-repository fixture parity, locked Rust release build, offline Swift
+audio-tap build.
+
+Exact-SHA CI on `f45b7b2` then showed what the Mac gate structurally cannot:
+macOS passed, Ubuntu passed, **Windows failed** on `-D unused-mut` at
+`src/voice_registry.rs:376`, where the `fs::DirBuilder` binding is `mut` only
+for the unix `DirBuilderExt::mode` call. Repaired at `566a449` with
+`#[cfg_attr(not(unix), allow(unused_mut))]`, scoped to the affected targets so
+unix still enforces the lint there. Verified by compiling a minimal
+reproduction for three targets: the old form fires the lint on
+x86_64-pc-windows-msvc only; the new form is clean on Windows, Linux and
+macOS. A full local cross-compile is impossible (`ring` needs MSVC C headers),
+so hosted Windows CI remains the authority and the exact-SHA three-platform
+run on `566a449` is the closing evidence. The Mac gate does not substitute.
+
+Repository consolidation the same session: `abbey-bot` already had only `main`
+(the `abbey-bot-wt-*` worktrees were gone before this pass) and is level with
+`origin/main`. All 6 stashes were dropped on Donald's explicit instruction after
+capture to `~/at-risk-bundles/abbey-bot-stashes-20260906/`; stashes 0 and 5 touch
+`src/voice.rs` / `src/voice_local.rs` and may overlap the voice work above.
+
+Sibling `dev/active/AbbeyBot` (Swift) was consolidated to `main` at `dae6c42`:
+`codex/quasar-linux-process-groups` and `cursor/quasar-completion-20260906`
+merged, `Scripts/verify-all.sh` green twice, 2 local and 4 remote branches
+deleted at zero unique commits, and the live `AbbeyBot-wt-quasar-completion-20260906`
+worktree removed on Donald's explicit call while its session was still
+committing. Its CI and the `aae40b4` Linux verification remain outstanding there.
