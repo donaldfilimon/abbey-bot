@@ -196,6 +196,35 @@ immediately. Leave it unset and commands register globally, where propagation ca
 take up to an hour — fine once the command set is stable, miserable while
 iterating. See `.env.example`.
 
+Build a server from a plan file, from the operator's shell, never from a slash
+command:
+
+```sh
+cargo build --locked --release
+set -a; . "$HOME/.config/abbey-bot/env"; set +a
+./target/release/abbey-bot --server-plan blueprints/mlai-community.toml --guild 123456789012345678
+```
+
+That is a dry run: it reads the guild over REST, prints every change the
+`additive` stage would make, the blockers that would stop it, the warnings a
+human should read first, and the steps the engine leaves to a human on
+purpose. Nothing changes until the same command is re-run with `--apply`, and
+`--apply` re-reads the guild afterwards and exits non-zero unless the stage
+has nothing left. The stages follow the redesign proposal's rollout order:
+`--stage additive` (the default) creates missing roles with zero permissions
+and missing categories and channels hidden from `@everyone`, touching nothing
+that exists; `--stage reveal` sets role cosmetics, moves plan channels into
+their categories, sets topics, and applies planned overwrites while changing
+what `@everyone` can see only from engine-hidden to visible; `--stage
+overwrites --category NAME` applies every planned overwrite for one category
+and warns about each view gate it flips on a channel people can see. The
+engine cannot delete a role, channel, or category, cannot edit any existing
+role's permissions (`@everyone`'s included), and cannot reorder roles; those
+are printed as manual steps. `blueprints/mlai-community.toml` is the shipped
+plan and a unit test validates it, including every permission name it uses.
+Exit codes: 0 done or nothing to do, 1 the guild refused or a blocker stands,
+2 the invocation or the plan is wrong.
+
 On Apple Silicon, install the pinned local speech sidecar once before enabling
 local voice:
 
@@ -792,9 +821,12 @@ take precedence over generic skill commands or lint-suppression advice.
 Agent `SKILL.md` packages guide the coding assistant. Abbey's runtime does not
 load them: its seven tools are compiled Core/Inspect groups in `src/tools.rs`.
 Installing a coding skill does not grant Abbey browsing, shell, or server-editing
-capabilities. `/server` emits a blueprint; apply and verify server settings in
-Discord. Its read-only channel instructions cover messages and threads, and
-named channel-access roles must also be assigned to staff who need them.
+capabilities. `/server` emits a blueprint; building a server happens only
+through the operator CLI's `--server-plan` mode (dry run by default, additive
+by construction), and server settings the engine cannot express are applied
+and verified in Discord. Its read-only channel instructions cover messages and
+threads, and named channel-access roles must also be assigned to staff who
+need them.
 
 ### Required checks
 

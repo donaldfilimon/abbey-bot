@@ -35,6 +35,8 @@
 //!   local or Realtime voice still requires `/voice join consent:true`.
 //! - `--voice-self-test OUTPUT.wav` — run local TTS → STT → canonical Abbey
 //!   reasoning → TTS without a Discord token, microphone, or call.
+//! - `--server-plan PLAN.toml --guild ID [--stage …] [--category …] [--apply]` —
+//!   diff a server plan against a live guild; dry run unless `--apply`
 //! - `--provider-self-test primary|fm|all --json` — qualify configured routes
 //!   with synthetic, non-persistent fixtures before reading Discord or state.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
@@ -159,6 +161,23 @@ async fn main() -> Result<(), Error> {
                 report.channels,
                 report.duration_millis,
             );
+            return Ok(());
+        }
+        StartupAction::ServerPlan(options) => {
+            // Same fail-closed token selection as the service path; the plan
+            // engine is REST-only and never opens the gateway.
+            let credential = match read_discord_token(|source| std::env::var(source.env_name())) {
+                Ok(credential) => credential,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            };
+            let http = serenity::http::HttpBuilder::new(credential.secret()).build();
+            let code = server::run::run(&options, &http).await;
+            if code != 0 {
+                std::process::exit(code);
+            }
             return Ok(());
         }
         StartupAction::ProviderSelfTest(target) => {
@@ -607,6 +626,7 @@ enum StartupAction {
     Discord,
     VoiceSelfTest(std::path::PathBuf),
     ProviderSelfTest(provider::QualificationTarget),
+    ServerPlan(server::run::Options),
 }
 
 fn startup_action() -> Result<StartupAction, String> {
@@ -632,6 +652,9 @@ fn parse_startup_arguments(
         }
         return Ok(StartupAction::VoiceSelfTest(output.into()));
     }
+    if mode == std::ffi::OsStr::new("--server-plan") {
+        return server::run::parse_options(arguments).map(StartupAction::ServerPlan);
+    }
     if mode == std::ffi::OsStr::new("--provider-self-test") {
         let target = arguments.next().ok_or_else(provider_self_test_usage)?;
         let target = match target.to_str() {
@@ -648,7 +671,7 @@ fn parse_startup_arguments(
         return Ok(StartupAction::ProviderSelfTest(target));
     }
     Err(format!(
-        "unknown argument {mode:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav | --provider-self-test primary|fm|all --json]"
+        "unknown argument {mode:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav | --provider-self-test primary|fm|all --json | --server-plan PLAN.toml --guild ID [--stage additive|reveal|overwrites] [--category NAME] [--apply]]"
     ))
 }
 
@@ -787,6 +810,33 @@ mod startup_argument_tests {
         );
         assert!(parse(&["--voice-self-test"]).is_err());
         assert!(parse(&["--voice-self-test", "one.wav", "two.wav"]).is_err());
+    }
+
+    #[test]
+    fn server_plan_hands_its_arguments_to_the_engine_parser() {
+        let action = parse(&[
+            "--server-plan",
+            "blueprints/mlai-community.toml",
+            "--guild",
+            "42",
+        ])
+        .unwrap();
+        assert_eq!(
+            action,
+            StartupAction::ServerPlan(server::run::Options {
+                plan: std::path::PathBuf::from("blueprints/mlai-community.toml"),
+                guild_id: 42,
+                stage: server::diff::Stage::Additive,
+                category: None,
+                apply: false,
+            })
+        );
+        assert!(parse(&["--server-plan"]).is_err());
+        assert!(
+            parse(&["--server-plan", "p.toml"]).is_err(),
+            "--guild is required"
+        );
+        assert!(parse(&["--server-plan", "p.toml", "--guild", "0"]).is_err());
     }
 
     #[test]

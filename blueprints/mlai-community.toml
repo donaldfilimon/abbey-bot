@@ -1,0 +1,331 @@
+# MLAI community server plan.
+#
+# Transcribed from the redesign proposal of 2026-09-04 (sections 2.2 channel
+# tree, 2.3 role hierarchy, 2.6 permission overwrites, 2.8 naming decisions).
+# `abbey-bot --server-plan blueprints/mlai-community.toml --guild <id>` reads
+# this file; a unit test parses and validates it on every gate run.
+#
+# What this file can and cannot express, on purpose:
+# - Roles here are CREATED with zero permissions (proposal stage 1). The
+#   `permissions` list is the target the engine reports as a manual step; the
+#   engine never edits an existing role's permissions, @everyone's included.
+# - There is no way to say "delete". Superseded channels are moved into the
+#   ARCHIVE category by a human (stage 10), never deleted by the engine.
+# - Bot/integration roles are not listed: Discord creates those, and they are
+#   granted per channel by hand (2.6, "Bot roles").
+# - Permission names are serenity's `get_permission_names` vocabulary
+#   ("Manage Guild", not "Manage Server"); a typo fails the gate.
+
+name = "MLAI"
+source = "~/Archive/2026-09-04-desktop-recovery/mlai-discord-redesign-proposal.md"
+
+[everyone]
+# "Read most things, write in the commons, no mention-everyone, no manage
+# anything." Rendered as a manual step, never applied by the engine.
+# "Create Invites" is kept because growth matters (2.6 row 1, footnote).
+permissions = [
+  "View Channel",
+  "Read Message History",
+  "Send Messages",
+  "Send Messages in Threads",
+  "Create Public Threads",
+  "Embed Links",
+  "Attach Files",
+  "Add Reactions",
+  "Use External Emojis",
+  "Use Application Commands",
+  "Change Nickname",
+  "Create Invites",
+  "Connect",
+  "Speak",
+  "Use Voice Activity",
+  "Stream",
+  "Request to Speak",
+]
+
+# ---------------------------------------------------------------- roles ----
+# Highest first. Ordering is a manual step: the engine never repositions roles
+# (3.B.8, silent breakage).
+
+[[roles]]
+name = "Owner"
+hoist = true
+colour = "#05070d"
+permissions = ["Administrator"]
+note = "Donald. The only account with Manage Guild, Manage Roles, Manage Channels, Manage Webhooks."
+
+[[roles]]
+name = "Team"
+hoist = true
+colour = "#22d3ee"
+permissions = [
+  "Manage Messages",
+  "Manage Threads",
+  "Mute Members",
+  "Deafen Members",
+  "Move Members",
+  "Kick Members",
+  "Moderate Members",
+]
+note = "No Manage Roles, no Manage Channels, no Ban. Posts in #announcements and crossposts via the channel overwrite."
+
+[[roles]]
+name = "Moderator"
+hoist = true
+colour = "#a855f7"
+permissions = ["Manage Messages", "Manage Threads", "Moderate Members", "Kick Members"]
+note = "No Ban, no role management, no channel management. Ban stays with Owner."
+
+[[roles]]
+name = "Contributor"
+hoist = true
+colour = "#34d399"
+permissions = ["Create Public Threads"]
+note = "Cosmetic plus trust; granted by staff after a merged PR. Sees #ci-and-deploys via the channel overwrite."
+
+[[roles]]
+name = "Console"
+permissions = []
+note = "Manual grant to a member confirmed as a WorkOS-organization Quesar user. Sole key to #ops-console."
+
+[[roles]]
+name = "Member"
+permissions = ["Send Messages", "Connect", "Speak"]
+note = "Baseline write access. Backfill to every existing human before any channel is gated to it (3.B.9)."
+
+# Interest roles: zero permissions, self-assigned through onboarding, used for
+# opt-in pings and channel discovery only. Colours follow the product axis
+# (2.3, colour decision), never the persona axis.
+
+[[roles]]
+name = "WDBX"
+colour = "#22d3ee"
+note = "Interest role."
+
+[[roles]]
+name = "ABI"
+colour = "#a855f7"
+note = "Interest role."
+
+[[roles]]
+name = "Abbey"
+colour = "#34d399"
+note = "Interest role."
+
+[[roles]]
+name = "Apple Silicon"
+note = "Interest role."
+
+[[roles]]
+name = "Site Builder"
+note = "Interest role."
+
+[[roles]]
+name = "Announcements"
+note = "Ping opt-in only."
+
+# ----------------------------------------------------------- categories ----
+# A channel with no `overwrites` inherits its category's; a channel with its
+# own list stands alone (the engine never syncs, 3.B.6).
+
+[[categories]]
+name = "START HERE"
+
+[[categories.channels]]
+name = "welcome"
+kind = "text"
+topic = "What MLAI is, the three layers, and which channel each kind of question belongs in. One pinned orientation post."
+overwrites = [
+  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
+]
+
+[[categories.channels]]
+name = "rules"
+kind = "text"
+topic = "Conduct plus the claims rule. This is the Community rules channel."
+overwrites = [
+  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
+]
+
+[[categories.channels]]
+name = "announcements"
+kind = "announcement"
+topic = "Releases, papers, site changes. Followable by other servers. Staff post only."
+overwrites = [
+  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
+  { role = "Team", allow = ["Send Messages", "Manage Messages"] },
+]
+
+[[categories.channels]]
+name = "introductions"
+kind = "text"
+topic = "One post per member: what you build, or what you are evaluating."
+
+[[categories]]
+name = "COMMONS"
+
+[[categories.channels]]
+name = "general"
+kind = "text"
+topic = "Everything that does not yet have a home."
+
+[[categories.channels]]
+name = "help"
+kind = "forum"
+topic = "One thread per question, so answers stay findable."
+tags = ["wdbx", "abi", "abbey", "site-builder", "mobile", "apple-silicon", "build"]
+overwrites = [
+  { role = "@everyone", allow = ["Send Messages", "Send Messages in Threads"], deny = ["Manage Threads"] },
+  { role = "Moderator", allow = ["Manage Threads"] },
+]
+
+[[categories.channels]]
+name = "showcase"
+kind = "forum"
+topic = "What people built on the stack, one thread each."
+overwrites = [
+  { role = "@everyone", allow = ["Send Messages", "Send Messages in Threads"], deny = ["Manage Threads"] },
+  { role = "Moderator", allow = ["Manage Threads"] },
+]
+
+[[categories.channels]]
+name = "off-topic"
+kind = "text"
+topic = "Pressure valve, so the technical channels stay technical."
+
+[[categories]]
+name = "THE STACK"
+
+[[categories.channels]]
+name = "wdbx"
+kind = "text"
+topic = "The Rust retrieval and memory substrate: HNSW, MVCC, durability, provenance, the audit chain."
+
+[[categories.channels]]
+name = "abi-runtime"
+kind = "text"
+topic = "The Rust orchestration runtime: CLI, MCP tools, accelerator contracts, capability reporting."
+
+[[categories.channels]]
+name = "personas"
+kind = "text"
+topic = "Abbey, Aviva, Abi: routing, the blend coefficient, the claims ledger, persona behaviour."
+
+[[categories.channels]]
+name = "apple-silicon"
+kind = "text"
+topic = "Metal, Accelerate, Core ML, MLX, unified memory."
+
+[[categories.channels]]
+name = "contributing"
+kind = "text"
+topic = "PRs, issues, repository gates, Apache-2.0 questions."
+
+[[categories]]
+name = "BUILD LOG"
+
+[[categories.channels]]
+name = "releases"
+kind = "text"
+topic = "GitHub releases and tags across the public repos. Bot writes, humans read."
+overwrites = [
+  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
+]
+
+[[categories.channels]]
+name = "research"
+kind = "forum"
+topic = "One thread per paper."
+overwrites = [
+  { role = "@everyone", allow = ["Send Messages", "Send Messages in Threads"], deny = ["Manage Threads"] },
+  { role = "Moderator", allow = ["Manage Threads"] },
+]
+
+[[categories.channels]]
+name = "ci-and-deploys"
+kind = "text"
+topic = "Actions, Pages, and Cloud Run signal. Staff and Contributors only."
+overwrites = [
+  { role = "@everyone", deny = ["View Channel"] },
+  { role = "Contributor", allow = ["View Channel"] },
+  { role = "Team", allow = ["View Channel"] },
+]
+
+[[categories]]
+name = "PRODUCTS"
+
+[[categories.channels]]
+name = "ops-console"
+kind = "text"
+topic = "Quesar private AI operations. The console is invite-only; this channel is not a signup."
+overwrites = [
+  { role = "@everyone", deny = ["View Channel"] },
+  { role = "Console", allow = ["View Channel", "Send Messages"] },
+  { role = "Team", allow = ["View Channel"] },
+]
+
+[[categories.channels]]
+name = "site-builder"
+kind = "text"
+topic = "Quasar, the local AI website builder. v1 is local-only with no deploy step."
+
+[[categories.channels]]
+name = "mobile-companion"
+kind = "text"
+topic = "The Expo companion and the CloudKit Vault. Pre-release; not on the App Store."
+
+[[categories]]
+name = "VOICE"
+
+[[categories.channels]]
+name = "Lounge"
+kind = "voice"
+
+[[categories.channels]]
+name = "Pairing"
+kind = "voice"
+
+[[categories.channels]]
+name = "Office Hours"
+kind = "stage"
+overwrites = [
+  { role = "@everyone", allow = ["View Channel", "Connect", "Request to Speak"], deny = ["Speak"] },
+  { role = "Team", allow = ["Speak", "Move Members", "Mute Members"] },
+]
+
+[[categories]]
+name = "STAFF"
+# The one category where sync is left on deliberately: children inherit.
+overwrites = [
+  { role = "@everyone", deny = ["View Channel"] },
+  { role = "Moderator", allow = ["View Channel"] },
+  { role = "Team", allow = ["View Channel"] },
+]
+
+[[categories.channels]]
+name = "mod-chat"
+kind = "text"
+topic = "Staff coordination."
+
+[[categories.channels]]
+name = "mod-log"
+kind = "text"
+topic = "AutoMod alerts, join/leave, bot logs."
+
+[[categories.channels]]
+name = "staging"
+kind = "text"
+topic = "Draft announcements before they go to #announcements."
+
+[[categories.channels]]
+name = "server-updates"
+kind = "text"
+topic = "The Community public-updates channel where Discord posts administrative notices."
+
+[[categories]]
+name = "ARCHIVE"
+# Created at rollout and filled by a human (stage 10): superseded channels are
+# moved here, renamed with a z- prefix, and made read-only. Nothing is deleted.
+overwrites = [
+  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
+]

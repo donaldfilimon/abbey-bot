@@ -669,9 +669,11 @@ pub async fn modcall(
 
 /// Produce a server blueprint: role hierarchy, channel structure, numbered steps.
 ///
-/// Emits a plan; it creates nothing. Building the server is a sequence of
-/// destructive-ish structural changes, and those stay with a human who can see
-/// what already exists.
+/// Emits a plan; it creates nothing. The slash command never builds a server:
+/// the boundary now lives in the plan engine's `server::diff::Change` type,
+/// which has no delete variant and is driven only from the operator CLI
+/// (`abbey-bot --server-plan`, dry run by default), never from a guild
+/// interaction.
 #[poise::command(slash_command, ephemeral)]
 pub async fn server(
     ctx: Context<'_>,

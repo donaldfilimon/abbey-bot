@@ -22,6 +22,7 @@ cargo run               # run the bot; needs DISCORD_TOKEN (or DISCORD_BOT_TOKEN
 ./target/release/abbey-bot --provider-self-test fm --json
 ./target/release/abbey-bot --provider-self-test all --json
 ./target/release/abbey-bot --voice-self-test out.wav             # token-free local TTS → STT loop; refuses to overwrite
+./target/release/abbey-bot --server-plan blueprints/mlai-community.toml --guild ID   # dry run of the additive stage; add --stage reveal | --stage overwrites --category NAME; --apply performs and re-verifies; exit 0/1/2 as above
 python3 scripts/check-abbey-contracts.py                         # every scripts/*.py gate check runs standalone; --root defaults to contracts/abbey
 deploy/install-launchd.sh [--uninstall]                          # Discord bot service; MLX installers listed below
 ```
@@ -93,6 +94,25 @@ types; regenerate that fixture from the canonical crate if the v3 contract
 changes, never by hand. Principal ids are keyed wyhash digests of scoped ids;
 the gateway policy must key the guild as `discord-<guild id>` because the store
 admits only `[a-z0-9_.-]`.
+
+`server/` (added 2026-09-06) is the server-plan engine behind
+`abbey-bot --server-plan PLAN.toml --guild ID [--stage …] [--apply]`. Pure:
+`plan.rs` (owned TOML model + validator; `From<&Blueprint>` runs the four
+`/server` archetypes through the same checks), `observe.rs` (a serenity-free
+`GuildSnapshot` carrying permission *names*), `diff.rs` (plan + snapshot +
+stage → `Change`s, blockers, warnings, manual steps), `apply.rs` (performs
+`Change`s through the `GuildWriter` seam, stops at the first failure, no
+rollback; its tests drive a fake guild and prove each stage idempotent).
+serenity-facing: `discord.rs` (REST snapshot, `DiscordWriter`, and the one
+place a permission name becomes a bit) and `run.rs` (the CLI mode: dry run
+by default, `--apply` re-reads and re-diffs to verify). `Change` has no delete
+variant and no role-permission edit, and a test enumerates the variants;
+`reveal` changes what `@everyone` can see only from engine-hidden (the hide
+marker is the channel's *only* overwrite) to visible, so a hand-gated channel
+is never opened or gated outside `--stage overwrites --category`. A plan role
+that matches an integration-managed role is a blocker in every stage (the live
+MLAI bot is named Abbey; so is a plan interest role). `blueprints/` holds the
+plan files; `include_str!` pins the MLAI one in tests, never a runtime path.
 
 **Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`, and
 `persona.rs` carry local transcriptions of ABI formats or algorithms (golden
@@ -206,7 +226,11 @@ a raw bitfield. An early version derived permission names by scraping that and
 would have rendered numbers into chat. Use `get_permission_names()`, which returns
 client-facing strings (`"View Channel"`, `"Ban Members"`). Two tests pin the
 strings this codebase hardcodes against that vocabulary, because a typo there
-fails silently — `/modcall` would tell every moderator they cannot act.
+fails silently — `/modcall` would tell every moderator they cannot act. The
+same trap bit `server::NEVER_FOR_EVERYONE`: it listed `"Mention Everyone"`, a
+name serenity never emits (`"Mention @everyone, @here, and All Roles"` is the
+real one), so that entry could never fire; `server::discord` now tests every
+name in that constant, the archetypes, and the shipped plan against serenity.
 
 **`Backend` and `LlmRequest` hand-write `Debug` — never `#[derive(Debug)]` on
 anything that carries a credential.** Both hold the Anthropic key (in the enum

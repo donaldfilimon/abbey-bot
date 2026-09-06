@@ -18,6 +18,19 @@
 //!   referential integrity.
 //! - **`@everyone` must never carry a dangerous permission.** It is the one role
 //!   nobody can be removed from.
+//!
+//! The four archetypes below are `&'static` tables rendered by `/server`. The
+//! file-backed, owned form that the plan engine consumes lives in [`plan`];
+//! `plan::Plan: From<&Blueprint>` runs the archetypes through the same
+//! validator. [`observe`], [`diff`], and [`apply`] are the engine's pure
+//! halves; [`discord`] and [`run`] are the only parts that touch serenity.
+
+pub mod apply;
+pub mod diff;
+pub mod discord;
+pub mod observe;
+pub mod plan;
+pub mod run;
 
 /// The kind of server being built. Chosen by a human; this module does not infer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +66,51 @@ pub struct RoleSpec {
     pub note: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Channel kinds a plan can ask for. Discord stores text, announcement, and
+/// forum names in normalized form (see [`normalize_text_name`]); voice and
+/// stage names are kept as written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ChannelKind {
     Text,
     Voice,
     Forum,
+    /// Discord's "News" channel type: followable, staff-posted.
+    Announcement,
+    /// One-to-many voice with a request-to-speak queue.
+    Stage,
+}
+
+impl ChannelKind {
+    /// Whether Discord rewrites this kind's name (lowercase, hyphenated).
+    #[must_use]
+    pub const fn normalizes_name(self) -> bool {
+        matches!(self, Self::Text | Self::Forum | Self::Announcement)
+    }
+
+    /// Whether the kind carries a topic in Discord's channel resource.
+    #[must_use]
+    pub const fn has_topic(self) -> bool {
+        matches!(self, Self::Text | Self::Forum | Self::Announcement)
+    }
+
+    /// Kinds that Discord only allows on a guild with the `COMMUNITY` feature.
+    #[must_use]
+    pub const fn needs_community(self) -> bool {
+        matches!(self, Self::Forum | Self::Announcement | Self::Stage)
+    }
+
+    /// Lowercase label, matching the TOML spelling.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Voice => "voice",
+            Self::Forum => "forum",
+            Self::Announcement => "announcement",
+            Self::Stage => "stage",
+        }
+    }
 }
 
 /// A channel, and the role it is gated to if any.
@@ -90,15 +143,13 @@ pub struct Blueprint {
     pub everyone: &'static [&'static str],
 }
 
-/// Discord caps a category at 50 channels. A specification constant: the
-/// property test below is what enforces it, so it is test-only rather than
-/// carried as dead weight in the binary.
-#[cfg(test)]
+/// Discord caps a category at 50 channels. Enforced by the property test below
+/// and by `plan::Plan::validate` for file-backed plans.
 pub const MAX_CHANNELS_PER_CATEGORY: usize = 50;
 
 /// Permissions `@everyone` must never hold. Each one lets any member escalate or
 /// wreck the server, and `@everyone` is the one role membership is not optional.
-#[cfg(test)]
+/// Load-bearing: `plan::Plan::validate` refuses a plan that grants any of them.
 pub const NEVER_FOR_EVERYONE: &[&str] = &[
     "Administrator",
     // serenity emits "Manage Guild"; the Discord client labels it
@@ -110,7 +161,10 @@ pub const NEVER_FOR_EVERYONE: &[&str] = &[
     "Manage Webhooks",
     "Ban Members",
     "Kick Members",
-    "Mention Everyone",
+    // serenity's exact string. The earlier entry, "Mention Everyone", was a
+    // name serenity never emits, so that check was structurally incapable of
+    // firing; `server::discord` now tests every entry here against serenity.
+    "Mention @everyone, @here, and All Roles",
 ];
 
 /// The gated archetypes strip `@everyone` to read-only; roles grant the rest.
@@ -350,6 +404,8 @@ fn kind_marker(kind: ChannelKind) -> &'static str {
         ChannelKind::Text => "#",
         ChannelKind::Voice => "🔊 ",
         ChannelKind::Forum => "🗂 ",
+        ChannelKind::Announcement => "📣 ",
+        ChannelKind::Stage => "🎙 ",
     }
 }
 
@@ -380,9 +436,10 @@ pub fn render(archetype: Archetype) -> String {
             // Text and forum names go out in the form Discord will actually
             // store, so the steps below always match the resulting server even
             // if a blueprint table drifts.
-            let name = match channel.kind {
-                ChannelKind::Text | ChannelKind::Forum => normalize_text_name(channel.name),
-                ChannelKind::Voice => channel.name.to_string(),
+            let name = if channel.kind.normalizes_name() {
+                normalize_text_name(channel.name)
+            } else {
+                channel.name.to_string()
             };
             out.push_str(&format!(
                 "  - {}{}{}\n",
@@ -452,7 +509,7 @@ mod tests {
         for archetype in Archetype::ALL {
             for category in blueprint(archetype).categories {
                 for channel in category.channels {
-                    if matches!(channel.kind, ChannelKind::Text | ChannelKind::Forum) {
+                    if channel.kind.normalizes_name() {
                         assert_eq!(
                             normalize_text_name(channel.name),
                             channel.name,

@@ -37,6 +37,9 @@ memchr = "2.8"
 # it to an OpenAI-compatible vision endpoint. GIF is normalized to first-frame
 # PNG because Ollama rejects the otherwise valid image/gif data-URL prefix.
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+# Server plan files (`--server-plan`). Parse-only: the bot reads blueprints and
+# never writes TOML, so the display half of the crate stays out of the tree.
+toml = { version = "1.1.5", default-features = false, features = ["parse", "serde", "std"] }
 
 [dev-dependencies]
 regex = "1.13.1"
