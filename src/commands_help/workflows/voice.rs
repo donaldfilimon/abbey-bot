@@ -34,7 +34,7 @@ pub(super) async fn render(
     });
     let mut body = view.render();
     if permissions.contains(Permissions::VIEW_CHANNEL) {
-        body.push_str(&format!("\n\n**Music output**\n{}\nThis is the current local output state, not evidence of an audible Discord result.", runtime.music.status()));
+        body.push_str(&format!("\n\n**Music output**\n{}\nThis is the current local output state, not evidence of an audible Discord result.", member_music_status(&runtime.music.status())));
         if permissions.contains(Permissions::MANAGE_GUILD) {
             body.push_str("\nUse `/voice play` for the host player's current selection, `/voice pause` to pause music, `/voice resume-music` to resume, and `/voice stop-music` to stop it. Playback needs a working host player/audio sidecar and voice output; this view does not probe the sidecar.");
         } else {
@@ -43,4 +43,36 @@ pub(super) async fn render(
     }
     body.push_str("\nMusic never grants listening agreement. Review `/voice consent` for your agreement; `/voice leave` stops voice for a present member or manager.");
     body
+}
+
+/// Music's internal status can contain a sidecar error. Members receive only a
+/// closed phase label, never the error text, host paths, or player metadata.
+fn member_music_status(status: &str) -> &'static str {
+    match status
+        .strip_prefix("Music: ")
+        .and_then(|s| s.split_once("; volume "))
+        .map(|(phase, _)| phase)
+    {
+        Some("starting") => "Music: starting",
+        Some("playing") => "Music: playing",
+        Some("paused") => "Music: paused",
+        Some("stopped" | "Music stopped.") => "Music: stopped",
+        _ => "Music: stopped or unavailable; a manager can review `/voice diagnostics`.",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn member_music_projection_never_exposes_operational_error_text() {
+        assert_eq!(
+            member_music_status("Music: playing; volume 100%"),
+            "Music: playing"
+        );
+        let rendered =
+            member_music_status("Music: failure at /private/host token=secret; volume 100%");
+        assert!(!rendered.contains("private") && !rendered.contains("secret"));
+        assert!(rendered.contains("unavailable"));
+    }
 }

@@ -1,459 +1,90 @@
 # CLAUDE.md
 
-This file provides guidance to coding agents working in this repository.
-`README.md` is written for a human running the bot — commands, env vars, and
-per-feature design notes. Read it first. This file holds what the README leaves
-out: the shape of the codebase, the rules that keep it that shape, and the traps
-this project has already hit.
+Rust/Serenity/Poise bot, not the separate Swift `../AbbeyBot` product.
+`AGENTS.md` and `CLAUDE.md` are verbatim mirrors except for the first heading;
+edit both bodies together. `README.md` owns commands, configuration and feature
+details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
 
-`AGENTS.md` and `CLAUDE.md` are verbatim mirrors except for their header line.
-Apply every body edit to both, or they drift.
+## Verification
 
-## Commands
+- Rust **1.98.0 stable**, edition 2024 (`rust-toolchain.toml`); single binary crate.
+- Gate: `./check.sh`. It runs fmt, deployment/privacy/Pages/contracts/security
+  checks, offline macOS Swift audio-tap tests/build, then locked all-target Clippy
+  with `-D warnings`, locked Rust tests and a locked release build.
+- Keep `--locked`: the gate must catch manifest/lock drift before deployment.
+  Do not pipe gate output through a command that hides its exit status.
+- Focus: `cargo test --locked moderation::` or `cargo test --locked <filter>`;
+  tests live in the binary, not a library or workspace member.
+- Strict release evidence: `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh`.
+  `scripts/check-wdbx-conformance.py` compares the frozen v1 fixture to `../wdbx`;
+  `ABBEY_WDBX_REPO` overrides that path. Missing external fixtures otherwise skip.
+- `cargo-audit` must be exactly **0.22.2**; accepted debt is pinned in
+  `security/rustsec-accepted-debt.json`. The Linux TLS check rejects native TLS;
+  preserve the reviewed `patches/openmls_rust_crypto-0.5.1` dependency patch.
+- Windows CI uses `./check.ps1`: POSIX/plist, launchd execution and Swift checks
+  are not equivalent coverage. `scripts/check-audio-tap.sh` skips off macOS;
+  on macOS it uses Xcode Swift, clears `TOOLCHAINS`, and tests synthetic PCM only.
+- Markdown check: `python3 scripts/check-pages-liquid.py`. Pages parses template
+  delimiters even in code fences; use Liquid raw spans or avoid those delimiters.
+- Source gates do not prove installed artifact identity, provider qualification,
+  Discord behavior or audible consented voice. Never run installers, permission
+  commands or production capture endpoints as source validation.
 
-```bash
-./check.sh              # gate: fmt, deploy/privacy/contracts/rustsec/wdbx python checks, clippy -D warnings, tests, release build
-ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh   # strict form used for release evidence (needs ../wdbx)
-./check.ps1             # Windows gate; skips the POSIX/plist checks and three deploy python tests
-cargo test <name>       # single test, substring-matched against full path;
-                        # no -p or --workspace (single binary crate, tests in bin)
-cargo run               # run the bot; needs DISCORD_TOKEN (or DISCORD_BOT_TOKEN fallback), optional ABBEY_GUILD_ID
-./target/release/abbey-bot --provider-self-test primary --json   # --json is mandatory; exit 0 pass, 1 probe failure, 2 bad args/configuration
-./target/release/abbey-bot --provider-self-test fm --json
-./target/release/abbey-bot --provider-self-test all --json
-./target/release/abbey-bot --voice-self-test out.wav             # token-free local TTS → STT loop; refuses to overwrite
-./target/release/abbey-bot --server-plan blueprints/mlai-community.toml --guild ID   # dry run of the additive stage; add --stage reveal | --stage overwrites --category NAME; --apply performs and re-verifies; exit 0/1/2 as above
-python3 scripts/check-abbey-contracts.py                         # every scripts/*.py gate check runs standalone; --root defaults to contracts/abbey
-deploy/install-launchd.sh [--uninstall]                          # Discord bot service; MLX installers listed below
-```
+## Boundaries
 
-`./check.sh` shells out to `cargo audit` and `scripts/check-rustsec-debt.py`
-requires exactly version `0.22.2` (CI installs it); the Linux dependency tree is
-checked to be Rustls/WebPKI-only, so a dep that pulls `native-tls`/`openssl`
-fails the gate. Accepted RUSTSEC debt is enumerated in
-`security/rustsec-accepted-debt.json` and the checker fails closed on any
-missing, extra, or changed record. `.claude/settings.json` has a `PostToolUse`
-hook that runs the full `./check.sh` in the background after every `.rs`
-Write/Edit, and both it and `.codex/hooks.json` append to the gitignored
-`tasks/session-log.md`; `tasks/goals.md` and `tasks/todo.md` are the ledgers.
-
-`cargo test moderation::` runs one module's tests. Gate runs `--locked` on
-purpose: a Cargo.toml bump without a regenerated lock keeps CI green while every
-deploy build dies. The gate proves the property the deploy depends on — do not
-remove the flag to "fix" a lock error; regenerate the lock.
-
-The gate runs `scripts/check-wdbx-conformance.py`. With the canonical sibling
-`../wdbx` checkout present, it compares frozen WDBX-v1 fixtures byte for byte.
-Standalone CI reports that external layer as explicitly skipped; set
-`ABBEY_REQUIRE_WDBX_CONFORMANCE=1` (and `ABBEY_WDBX_REPO`) for an
-integration/release run where absence must fail.
-
-## Architecture: pure core, thin Discord shell
-
-The pure modules hold every decision the bot makes, and **none of them import
-serenity or poise**. The entire decision suite runs with no gateway connection.
-
-The Discord/network surface (imports serenity/poise / adapters):
-
-| File | Role |
-|---|---|
-| `commands.rs`, `commands_brain.rs`, `commands_voice.rs` (+ `commands_voice/`) | Translate Discord data into plain structs and lifecycle calls |
-| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | `discord.rs` handles ten `FullEvent` variants: Ready/Resume/ShardStageUpdate maintain connection evidence; Message, ReactionAdd/Remove, MessageDelete, GuildCreate/Delete and GuildMemberAddition translate activity into `SocialEvent` → `pipeline::handle` or scoped lifecycle changes. Reactions and deletes feed rewards, not replies. `shared.rs` holds shared output helpers; Slack/Telegram are serenity-free adapters |
-| `voice_session.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_self_test.rs` (+ `voice_session/`, `voice_local/`) | Songbird-facing voice actors (see the voice paragraph below) |
-| `main.rs` | Env parsing and framework wiring only; reads no guild data |
-
-Pure subsystems the table above does not name but that you will touch:
-`pipeline.rs` (decides *whether* to speak; the shell contract is its `Outbound`
-trait, which is what lets the decision path run behind a recording fake),
-`generation.rs` (decides *how*: progressive posting after 60 chars or 4 s, edits
-at most every 2 s, `StreamEnd::{Text,Calls}` is the tool-loop seam),
-`brain/` (DQN `[18, 64, 32, 3]`, replay 10k, reward settlement), `persist.rs`
-+ `wdbx.rs` (no database: one `abbey-state.json` plus one `wdbx.seg.0.jsonl`
-segment under `ABBEY_DATA_DIR`, temp-file + rename writes; WDBX keys are
-`mem:{scoped_guild_id}:{vector_id}` with a scoped-user filter on read, which is
-the privacy boundary), `provider/` + `provider.rs` + `provider_self_test.rs`
-(`ProviderRuntime` owns executable legacy-configured Anthropic/OpenAI-compatible,
-qualified FM and configured vision routes, conversation-local pins, capacity,
-circuits and effect-aware fallback. `ABBEY_PROVIDER_ORDER` enables adaptive
-selection among implemented routes, `ABBEY_PROVIDER_DISABLED` excludes named
-routes, and `ABBEY_PROVIDER_STATE_DIR` selects private operational block state.
-Generic discovery and per-provider endpoint/model/credential settings describe
-future adapters and do not configure executable backends. FM qualification
-still uses `ABBEY_FM_CAPABILITY_MANIFEST`; the parsed generic
-`ABBEY_PROVIDER_MANIFEST` is not its runtime input. Provider self-test grammar
-remains `primary|fm|all --json`), `contracts/` (`#[cfg(test)]`-only guard over the
-pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
-`recall.rs`, `vad.rs`, `offline_voice.rs`.
-
-`episode_gate.rs` (added 2026-09-06) is the bot's caller of the WDBX v3
-episode gate and is **default-off** (`ABBEY_EPISODE_GATE_CONFIG` unset means
-byte-identical behaviour). The config's optional `guilds` list is deployment
-scoping (which scoped guild ids this instance proposes for, so one guild can
-go first); `AppState::gate_for(scoped_guild)` is the one place that decides,
-and an uncovered scope is byte-identical to no gate on every path below,
-including checkpoints. It is not a hole in the constitution: the ledger's
-per-guild policy still decides what it admits. It runs the `abi` binary (`abi
-wdbx episode propose --json`) with a cleared environment, an owner-only temp
-write file, a timeout, and capped output, and records two things. First, a content-free `proposal`
-that a guild administrator asked for `/admin learning on|off`; the local toggle
-never waits on it, and approval/execution/terminal events belong to the
-constitutional host, so nothing here claims the ledger authorized the toggle.
-Second, since the memory-candidate amendment (2026-09-06; `memory_gate.rs`,
-`checkpoint_gate.rs`), `memory_candidate` events for every memory write:
-`/remember`, `/forget`, and `/pending confirm` propose first and write locally
-only on `appended` (a refusal or an unreachable gate stores nothing and tells
-the person); the model's `remember_fact` tool queues the write while the gate
-is configured (the tool host is synchronous and cannot propose; the queue is
-drained after the turn's reply and before every gated persist, the model is
-told nothing is on record yet, and a refused item is dropped, not retried); and
-each guild's DQN checkpoint (`BrainRow`) is proposed as an `experience`
-candidate once per changed persist, superseding the last admitted one, on the
-scheduled and `/admin flush` paths (`persist_all_gated`). The synchronous
-shutdown persist proposes nothing and writes only admitted checkpoints,
-substituting the last admitted (or pre-gate on-disk) row, so a gate outage
-never drops a checkpoint that was already on disk and never holds facts or
-settings hostage. Receipts (episode digests) live in `Stores.memory_receipts`
-keyed by guild, user, and fact text; a fact stored before the gate has none,
-so its deletion is counted as an "ungated forget" on `/inspect`'s gate line
-instead of tombstoned. The write vocabulary is a transcription pinned by
-`tests/fixtures/episode_write_proposal.json` and
-`tests/fixtures/episode_write_memory_candidate.json`, both generated from
-`abi-wdbx`'s types; regenerate them from the canonical crate if the v3 contract
-changes, never by hand. Principal ids are keyed wyhash digests of scoped ids;
-the gateway policy must key the guild as `discord-<guild id>` because the store
-admits only `[a-z0-9_.-]`. Known consequence of the store's accounting: every
-candidate's `payload_bytes` is charged against the guild's storage budget and a
-superseded checkpoint is never refunded, so a large brain row exhausts a small
-budget after a few changed checkpoints, after which the gate refuses and the
-last admitted row keeps being persisted. Donald's call (2026-09-06): the accounting
-stays; size `storage_budget_bytes` for checkpoint guilds as roughly changed
-checkpoints × checkpoint bytes, within the store's 64 MiB ledger cap, before
-turning the gate on for a chatty guild. Live acceptance is `src/episode_gate/acceptance.rs`: an `#[ignore]` test that drives the real `abi` binary against a real gateway through the tool host, the queue and drain, the slash-style admit and forget, and the gated checkpoint persist, verifying every receipt with `abi wdbx episode verify` from a separate process and proving one live refusal; run it on purpose with `ABBEY_EPISODE_GATE_ACCEPTANCE_CONFIG=... cargo test acceptance -- --ignored` against a scratch gateway, never the production store (each run charges the acceptance guild's budget forever). Deployment: `deploy/install-wdbx-gateway-launchd.sh` installs the gateway agent (`com.donaldfilimon.abbey-wdbx-gateway`, loopback 50051/50052, store `~/.local/share/abbey-bot/wdbx-gateway`, policy `~/.config/abbey-bot/episode-policy.json`); it must be up before the bot restarts with the gate on, or every covered memory write fails closed (visibly, on `/inspect`'s gate line). Budget rule: the ledger charges every candidate's `payload_bytes` cumulatively and never refunds, the store caps `storage_budget_bytes` at 64 MiB, and a checkpoint is the whole serialized `BrainRow` (about 52 KB for MLAI), so a guild's storage budget is a hard lifetime of roughly 1,290 admitted checkpoints; raise it per guild (Donald's decision 2026-09-06) rather than amending §4.4.
-
-`server/` (added 2026-09-06) is the server-plan engine behind
-`abbey-bot --server-plan PLAN.toml --guild ID [--stage …] [--apply]`. Pure:
-`plan.rs` (owned TOML model + validator; `From<&Blueprint>` runs the four
-`/server` archetypes through the same checks), `observe.rs` (a serenity-free
-`GuildSnapshot` carrying permission *names*), `diff.rs` (plan + snapshot +
-stage → `Change`s, blockers, warnings, manual steps), `apply.rs` (performs
-`Change`s through the `GuildWriter` seam, stops at the first failure, no
-rollback; its tests drive a fake guild and prove each stage idempotent).
-serenity-facing: `discord.rs` (REST snapshot, `DiscordWriter`, and the one
-place a permission name becomes a bit) and `run.rs` (the CLI mode: dry run
-by default, `--apply` re-reads and re-diffs to verify). `Change` has no delete
-variant and no role-permission edit, and a test enumerates the variants;
-`reveal` changes what `@everyone` can see only from engine-hidden (the hide
-marker is the channel's *only* overwrite) to visible, so a hand-gated channel
-is never opened or gated outside `--stage overwrites --category`. A plan role
-that matches an integration-managed role is a blocker in every stage (the live
-MLAI bot's role is named Abbey, which is why the plan's interest role is
-"Personas"; the first live dry run caught it). `blueprints/` holds the
-plan files; `include_str!` pins the MLAI one in tests, never a runtime path.
-
-**Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`, and
-`persona.rs` carry local transcriptions of ABI formats or algorithms (golden
-vectors pin `wyhash`; the `wyhash` crate returns different values) rather than
-a dependency on the `abi` workspace. `ask.rs` transcribes Aviva and Abi's
-contract descriptions and suffixes; Abbey intentionally follows the separate
-Grok Bot Abbey voice, and response prefixes are not transcribed. `persona.rs` is frozen
-(29 keywords, 0.40/0.30/0.30 prior) and is not edited; new routing intelligence
-composes on top in `routing_signals.rs`.
-
-**If you find yourself writing an `if` inside a `#[poise::command]` function that isn't about fetching data, it belongs in a pure module instead.**
-
-**Abbey default voice (code):** warm, sharp friend — result-first, clear, honest about uncertainty (`src/persona.rs` / `src/ask.rs`). Do not rewrite prompts toward help-desk filler.
-
-## Module size and extraction
-
-The gate runs `scripts/check-rust-module-size.py`: production Rust modules must
-remain below 1,000 lines, and files above 800 require responsibility review.
-External test-only modules are exempt; inline tests count until extracted.
-Split by responsibility, preserve existing test module paths and literal data,
-and use narrow re-exports when callers need the original path. Module-wide
-`allow` or `expect` for dead code or unused imports is forbidden.
-
-## Managed process ownership and operational evidence
-
-`service/` owns accepted framework callbacks, connector actors, scheduler work,
-voice actors, episode children and serialized persistence. Register work before
-it runs; dropping an interaction response receiver does not release its actual
-owner. The root closes admission before draining and freezes state only after
-all mutation owners have joined. Voice consent persistence remains independent.
-A cancellation, abort or kill request is never evidence of completed cleanup.
-Shutdown uses one 20-second cooperative budget with four stages capped at five
-seconds each; retained blocking work may require the explicit process boundary.
-Final persistence is attempted at most once after observed quiescence.
-
-Managed mode is selected only by `--managed-service`. `managed_service`,
-`managed_env`, `bootstrap`, `readiness` and `managed_log` implement its private
-preflight/artifact contract. Operational JSONL accepts only the closed types in
-`observability`; do not feed raw tracing, IDs, paths, endpoints, model names,
-content or error text into it. `InteractionEntry` retains categorized metadata
-only, and managed startup rewrites legacy state before ready. A retained
-readiness owner refreshes during startup and draining as well as normal running.
-Actual command registration, presence, Discord readiness and scheduler execution
-must precede ready; a connection-stage notification alone cannot restore it.
-`shutdown_finalizing` records that final cleanup is starting. Only the root's
-observed shutdown report classifies completed cleanup; the log cannot attest its
-own future retirement.
-
-The private fact browser (`memory_browser`, `commands_memory_browser`) reads a
-fresh authorized subject snapshot on every navigation. Its envelope binds owner,
-subject, scope and fixed expiry; current permissions are checked before reading
-facts. `scoped_stats` and `operator_guidance` provide read-only member/operator
-views. Keep these rendering decisions outside the Discord shell.
-
-## Live Mac backends (2026-09-03 — fail closed)
-
-- **Reasoner:** Ollama host-only `ABBEY_BOT_LLM_ENDPOINT=http://127.0.0.1:11434`. `src/llm/dialect.rs` appends `/v1/chat/completions`. Do **not** put `/v1` on the LLM base URL.
-- **Vision:** keeps `/v1` (live: `http://127.0.0.1:11434/v1`).
-- **MLX-Audio:** launchd `127.0.0.1:8181` via `deploy/install-mlx-audio-launchd.sh`. Operator readiness: `GET /` or `GET /v1/models` — **not** `/health` as the probe.
-- **MLX-VLM:** `:8282` **unpublished**. Staged 4-bit Gemma tool-result continuation loops `<|channel>thought` into content until length; installer still fail-closes on `TOOL_CONTINUATION_READY`. Ollama remains the reasoner. Do not point `ABBEY_BOT_LLM_ENDPOINT` at `:8282` until that probe passes on the exact snapshot.
-- **Discord ops:** Bot API + launchd (`deploy/install-launchd.sh`), not an Electron UI. Gap-fill only; **no mass Member grant** without Donald.
-- **Gate / installers:** `./check.sh`; `deploy/install-mlx-audio-launchd.sh`; `deploy/install-mlx-vlm-launchd.sh` (publish only after smokes pass).
-
-## Rules that are not preferences
-
-**Defer before touching the network, unconditionally.** Discord invalidates an
-interaction token 3 seconds after issuing it, and one cold REST round-trip can
-spend that alone. Every command calls `ctx.defer()` or `ctx.defer_ephemeral()` first.
-A command that defers only when it looks slow is a command that races eventually.
-The one exception: `/voice leave` closes the voice media gate before its first
-await, so its guard paths answer the interaction directly inside the 3-second
-window and the defer runs concurrently with the transition lock.
-
-**Never declare a `GuildChannel` parameter.** Poise resolves it with a REST fetch
-*during argument parsing*, before the body and its defer ever run. Take `ChannelId`
-and fetch after deferring, the way `/perms` does.
-
-**Every rendered answer passes through `clamp_message`.** Discord rejects messages
-over 2,000 codepoints after the defer has already succeeded, surfacing as "Message
-too large." Every call that posts the output of a pure module is wrapped through
-`clamp_message`. The exception is fixed guard strings of known length (e.g.
-"This one only works inside a server.", thread-redirect line that interpolates a
-channel id).
-
-**Intents stay `non_privileged()` by default.** That set carries guild message and
-reaction events; it does *not* carry message content, presence, or the member list.
-`/whois`, `/perms`, and `/modcall` fetch over REST instead. The opt-in
-`ABBEY_MESSAGE_CONTENT=1` must be enabled in the Dev Portal *and* set here — both,
-or the gateway silently sends nothing.
-
-**An ordinary unsolicited message is gated five times before the policy is
-consulted** (`pipeline::guards`, in order): own traffic is ignored first, then the content
-guard (passes if there is text, an attachment, or the message is forced), then
-`ABBEY_QUIET=1` (operator, wins over everything) → the guild's `/admin act on`
-(opt-in, default off) → `/admin learning off`. After the policy picks reply/react,
-`RateLimits::try_acquire` checks the per-guild hourly budget (`brain/budget.rs`,
-default 6/h, ceiling 60) and then the per-channel cooldown (default 20 s, ceiling
-600) atomically under one lock pair; the Reply branch acquires only after the
-backend check so a missing backend costs no budget. `OverBudget` and `CooledDown`
-record **no** experience; a `Stay` decision does record a silence experience.
-Replies stay open for a 150 s settlement window with a −0.2 baseline
-(`brain/reward.rs`), so engagement has to earn the reward back. Generated
-welcomes (`RouteDecision::Welcome`) are the exception: that branch runs only
-`check_unsolicited` (quiet and act-off) and returns without `guards`, the
-learning gate, the policy, or the rate limits.
-
-**DMs are one-person guilds.** `SocialEvent::scoped_guild_id` returns
-`"{network}:dm:{user}"` when there is no guild. A shared `"discord:dm"` would let
-semantic recall surface one person's facts to another — the pipeline test
-`two_dm_users_never_share_recall_or_facts` pins this.
-
-**The forced path (mention/DM) loads the guild's brain before replying.**
-`BrainRegistry::remember` drops experiences for unloaded guilds; without the touch,
-every mention reply's reward settles into nothing. A forced reply that fails at the
-backend posts `ask::render_failure` instead of dead air, and the typing indicator is
-re-broadcast every 8 s while a local model thinks.
-
-**Tool capability is explicit at the generation boundary.** Mentions, DMs, and
-`/persona ask` enter `generation::generate_with_tools*` with a live `ToolScope`;
-unsolicited policy replies, voice, and `/summarize` enter a read-only function
-with an explicit persona and never construct the vocabulary or host. Production
-exposes exactly seven tools in this stable order:
-`remember_fact`, `lookup_reputation`, `recall`, `switch_persona`,
-`recent_messages`, `inspect_status`, `list_facts`. `ABBEY_BOT_LLM_TOOLS=off`
-suppresses the complete vocabulary; there is no partial Inspect toggle.
-
-**`/persona ask` answers come from a backend or says so — never from the bot.**
-`llm::Backend::from_values` picks `ANTHROPIC_API_KEY` first, else
-`ABBEY_BOT_LLM_ENDPOINT` (an OpenAI-compatible base URL; the bot appends
-`/v1/chat/completions`), else none — and a blank value counts as unset because
-`.env.example` ships blank assignments. With no backend the command posts
-`ask::degraded_reply`, which names the routed persona and states plainly that
-nothing can answer; a template echo dressed up as AI is what the
-2026-08-10 proposal forbids.
-
-**Fetch over REST, not from the cache.** The cache is only as complete as the
-intents held, so a cache read produces a silently thinner answer instead of an
-error.
-
-**Whether a moderator may act goes through `hierarchy_blocker`.** It encodes
-Discord's refusal rules in one place — the owner cannot be actioned,
-administrators cannot be timed out, and the actor's top role must sit *strictly*
-above the target's — and returns the sentence explaining a refusal rather than a
-bool, so the answer stays actionable. Any acting command added later must consult
-it, not re-derive the rules at the call site.
-
-## Traps this repository has already hit
-
-**`Permissions` does not `Debug` into flag names.** It prints `Permissions(3072)` —
-a raw bitfield. An early version derived permission names by scraping that and
-would have rendered numbers into chat. Use `get_permission_names()`, which returns
-client-facing strings (`"View Channel"`, `"Ban Members"`). Two tests pin the
-strings this codebase hardcodes against that vocabulary, because a typo there
-fails silently — `/modcall` would tell every moderator they cannot act. The
-same trap bit `server::NEVER_FOR_EVERYONE`: it listed `"Mention Everyone"`, a
-name serenity never emits (`"Mention @everyone, @here, and All Roles"` is the
-real one), so that entry could never fire; `server::discord` now tests every
-name in that constant, the archetypes, and the shipped plan against serenity.
-
-**`Backend` and `LlmRequest` hand-write `Debug` — never `#[derive(Debug)]` on
-anything that carries a credential.** Both hold the Anthropic key (in the enum
-payload, and in the `x-api-key` header), and a derived `Debug` printed it in
-full through paths nobody plans for — a `tracing` field, a panic message, a
-failing `assert_eq!` in CI logs (PR #9 is the fix). If you add a type that holds
-a secret, give it the same treatment and the same test. Related: the key travels
-in a header, never in the URL, so no error message can include it.
-
-**Match overwrites on snowflake id, never on name.** Discord permits two roles in
-one guild to share a display name — divider roles routinely do — so a name-based
-match pulls a stranger's overwrite into the chain and produces a confidently
-wrong walkthrough. `perms::Scope` therefore carries the id alongside the name:
-match on the id, render the name. The neighbouring shape rule is that
-`perms::explain` takes a *pre-formatted* `channel_label` (`#general`,
-`🔊 Lobby`), because only the caller knows the channel kind — a hardcoded `#`
-here misrendered voice channels and categories.
-
-**`GuildId::new` panics on zero.** It does not return an error, so a literal
-`ABBEY_GUILD_ID=0` parses as a valid `u64` and then aborts the process — the
-opposite of the fail-fast-with-a-sentence startup path the rest of `main.rs`
-maintains. The explicit zero check before the call is that guard; do not fold it
-away as redundant with the parse.
-
-**A test can be structurally incapable of failing.** `MAX_TIMEOUT_MINUTES` is
-enforced by a clamp that *every* `Action::Timeout` is constructed through, which
-means the ladder sweep asserting no rung exceeds the ceiling can never fail no
-matter what a future rung asks for — the clamp has already capped it. Only
-`timeout_clamps_beyond_discords_ceiling`, which calls the constructor directly
-with an over-long value, actually exercises the constant. When a constant becomes
-load-bearing to silence a dead-code lint, check whether the test that justified it
-still tests anything.
-
-**Dead-code lints: this is a binary crate, so `pub` exempts nothing.** Clippy
-runs with `-D warnings`, and a `pub` constant used only by tests is an error.
-This has come up twice, and the resolution both times was one of two honest
-moves, never `#[allow]`:
-
-- *Make it load-bearing* if it deserves to be. `MAX_TIMEOUT_MINUTES` became a
-  clamp every `Action::Timeout` is built through; `normalize_text_name` now runs
-  inside `server::render`. Both are better code than before the lint fired.
-- *Mark it `#[cfg(test)]`* if it is genuinely a specification constant the
-  property tests enforce — `Archetype::ALL`, `NEVER_FOR_EVERYONE`,
-  `MAX_CHANNELS_PER_CATEGORY`, `Action::severity_rank`.
-
-**Discord rewrites text channel names and leaves voice names alone.** Text and
-forum names are lowercased with whitespace hyphenated, so a blueprint saying
-`General Chat` describes a server you do not get; `Squad 1` is a perfectly legal
-voice channel. `server::render` normalizes per channel kind, and a test asserts
-the voice exemption is actually exercised so the asymmetry cannot rot into an
-untested claim.
-
-**Voice is five actors with one cancellation rule.** `voice.rs` is the
-provider-neutral policy; `voice_session.rs` serializes the lifecycle with
-epoch-based cancellation (rejoin/pause/leave/move/shutdown advance the epoch
-first, one provider task and one playback handle at a time); `voice_local.rs`
-is the default local STT → cognition → TTS actor whose audio callbacks only
-enqueue frames; `voice_openai.rs` is the explicit `ABBEY_VOICE_MODE=openai`
-backup; `offline_voice.rs` is the MLX-Audio loopback client and knows nothing
-about Discord; `vad.rs` is the single VAD trait (`EnergyVad`, `SemanticVad`,
-`ComposedVad`) so the two paths cannot drift. Raw audio and transcripts are
-never persisted, and while an operator verification run (`/voice verify`) is
-armed, conversational commits are disabled.
-
-**Everything pure takes `now: u64` and a seed; nothing pure reads the clock or
-`rand`.** `runtime::now()` is the single wall-clock read; `brain::nn::Rng` is a
-splitmix64 seeded by the caller. This is what makes reward settlement, cooldown,
-eviction, and the DQN all deterministic under test. A `SystemTime::now()` or a
-`rand` import inside `brain/`, `guild.rs`, `memory.rs`, `engine.rs`, or `wdbx.rs`
-is a regression, not a convenience.
-
-**`Experience` keys by guild, and reputation keys by `(guild, user)` — never by
-a joined `"guild:user"` string.** Scoped ids already contain a colon
-(`discord:123`), so the spec's split-on-first-colon would mis-split.
-`persist.rs` joins with U+001F for the same reason.
-
-**A passing property test is not evidence that output reads well.** The `/server`
-blueprints passed every invariant while rendering `🗂help` with the glyph jammed
-against the name. Print the rendered string and read it before shipping anything
-a user sees.
-
-## Deploy artifacts (reference only)
-
-Configuration is env-only: `DISCORD_TOKEN` (or the `DISCORD_BOT_TOKEN`
-fallback — primary wins, and a present-but-blank primary is an error that does
-**not** fall through), optional `ABBEY_GUILD_ID`, `RUST_LOG`, backend vars
-(`ANTHROPIC_API_KEY`, `ABBEY_BOT_LLM_ENDPOINT`, `ABBEY_BOT_LLM_MODEL`,
-`ABBEY_BOT_LLM_CONCURRENCY`/`_QUEUE_SECS`/`_TIMEOUT_SECS`),
-`SLACK_*`/`TELEGRAM_BOT_TOKEN`, and the
-`ABBEY_VOICE_*` set (`ABBEY_VOICE_MODE=local` is the default and is never
-inferred from key presence). Blank handling is variable-specific: backend
-and voice parsers normalize optional blank values, but a present blank Discord
-token fails, and `ABBEY_GUILD_ID` must be absent or a nonzero numeric snowflake.
-Launchd uses its fixed private
-data path and ignores an `ABBEY_DATA_DIR` line in the env file. The token lives in
-`/etc/abbey-bot/env` (systemd) or `~/.config/abbey-bot/env` (launchd), never
-baked into image layers.
-
-`./check.sh` is the gate: fmt, then deploy shell/python/plist checks (including
-mlx installers, privacy, contracts, rustsec, wdbx), then
-`cargo clippy --all-targets --locked -- -D warnings`, then `cargo test --locked`,
-then `cargo build --release --locked`.
-
-## What has and has not been verified
-
-Authoritative live Mac acceptance notes live in `docs/MLAI-LIVE-ACCEPTANCE.md`
-(refresh there, not here; it already carries 2026-09-04 entries newer than this
-file, and README's nine-layer evidence ladder is the rule for what each layer
-proves — passing one never implies the next). As of 2026-09-03 ET: Ollama `:11434` is the reasoner;
-MLX-Audio `:8181` is up; MLX-VLM `:8282` is not published (tool-continuation
-blocked). Do not treat README MLX primary cutover snippets as the current
-launchd primary.
-
-## Related, and easy to confuse
-
-**The authoritative live checkout is `~/dev/active/abbey-bot`.** The former
-`~/sources/repos/abbey-bot` path is absent; a discarded redundant clone under
-Trash is not an authority. Concurrent sessions can still share the active
-working tree, so inspect its current status before editing and fetch before
-making claims about `origin/main`.
-
-`~/dev/archive/swift-discord` is a home-grown Swift Discord library with its
-own gateway and REST targets. It shares no code with this crate and is not a
-dependency, a port source, or a reference implementation. The separate active
-Swift/Vapor/DiscordBM product is `~/dev/active/AbbeyBot`; it shares no code
-with this Rust crate. Treat its architecture as an adjacent implementation, not
-a dependency or source of runtime truth for this project.
-
-## Host music output
-
-`commands_voice/play.rs` controls native Spotify/Music and the independent music
-track; `audio_tap.rs` validates loopback-only sidecar HTTP and converts bounded
-s16le frames to the f32 PCM required by RawAdapter. `player_control.rs` and
-`music.rs` hold script selection, input validation, access and ducking decisions.
-Music arguments are argv data, never interpolated AppleScript source.
-
-Music never creates or extends listening consent. `/voice resume consent:true`
-keeps its existing meaning; `/voice resume-music` is output-only. Consent teardown
-must destroy Decode before publishing `music_consent_teardown_complete` for the
-exact resulting epoch. Only then may music reconnect with DecodeMode::Pass and
-self-deafen. `/voice leave` synchronously cancels the music token as well as the
-listening gate. Providers use `play_input` and replace only their own TTS handle;
-`play_only_input` would silently destroy the independently owned music track.
-
-The Swift and Rust offline tests share the header and idle-health fixtures in
-`tools/abbey-audio-tap/Tests/AudioTapCoreTests/Fixtures`. They start no real capture.
-The sidecar already excludes identified Discord, browser and terminal sources;
-source evidence remains separate from permission, installation and audible
-Discord/feedback acceptance. Do not run the installer, permission command or
-production stream endpoint as part of source validation.
+- Keep decisions in pure modules and Discord translation in `commands*`/`gateway`.
+  `pipeline::Outbound` is the fakeable shell seam; pass time and seeds into pure
+  policy code rather than adding wall-clock/random reads.
+- Transcribe, never depend on ABI: `wdbx.rs`, `embedding.rs`, `wyhash.rs` and
+  `persona.rs` are pinned by golden contracts. Do not substitute the wyhash crate.
+  Keep `persona.rs` frozen; compose new routing in `routing_signals.rs`. Preserve
+  Abbey's distinct voice in `ask.rs`, not a generic help-desk prompt.
+- Production Rust modules must be below 1,000 lines; above 800 requires review
+  (`scripts/check-rust-module-size.py`). External test-only modules are exempt,
+  inline tests count. Preserve test module paths; no module-wide unused/dead-code
+  suppression. A binary crate's `pub` does not exempt it from dead-code linting.
+- Defer interactions before network calls; accept `ChannelId`, not `GuildChannel`
+  (the latter fetches before the body). `/voice leave` instead closes media and
+  music gates before its first await. Clamp rendered replies with `clamp_message`.
+- Default intents remain non-privileged; message content needs both the env opt-in
+  and Dev Portal enablement. Fetch member/permission facts over REST, not cache.
+  Acting moderation consults `hierarchy_blocker`; match overwrites by snowflake,
+  not display name, and use `get_permission_names()`, not `Debug` flag output.
+- DMs scope as `network:dm:user`, never one shared DM guild. Recall filters both
+  scoped guild and user; persistence uses U+001F, not colon-splitting scoped IDs.
+  Browser navigation rechecks current authorization before a fresh fact snapshot.
+- Preserve pipeline guards/budget ordering and forced-path brain loading; tools
+  require an explicit `ToolScope`. Voice, unsolicited generation and summaries
+  remain read-only. Missing backends render an honest degraded reply.
+- LLM base endpoints exclude `/v1` (`llm/dialect.rs` appends it); vision bases
+  include it. Optional blank backend values differ from a blank `DISCORD_TOKEN`,
+  which fails rather than falling through to `DISCORD_BOT_TOKEN`. Reject guild 0.
+  Credential-bearing types need redacted `Debug`, and keys travel in headers.
+- FM qualification consumes `ABBEY_FM_CAPABILITY_MANIFEST`, not the generic
+  `ABBEY_PROVIDER_MANIFEST`; discovery metadata alone is not an executable adapter.
+- `service/` owns admitted work through observed joins; dropping a waiter or
+  requesting abort is not cleanup. Close admission, join mutation owners, then
+  freeze and attempt final persistence at most once. Consent persistence is
+  independent. Managed JSONL accepts only closed `observability` types, never raw
+  tracing/content/identifiers/errors; readiness needs actual startup evidence.
+- Voice transitions advance the cancellation epoch before work; raw audio and
+  transcripts are not persisted. Verification mode disables conversational commits.
+  Music never grants listening consent. Destroy Decode before publishing teardown
+  for that epoch; output-only reconnect uses Pass/self-deafen. Use `play_input`,
+  not `play_only_input`, so TTS cannot destroy the independently owned music track.
+  Music arguments are argv data, never interpolated AppleScript source.
+- Episode gating is default-off and scoped through `AppState::gate_for`. Covered
+  memory writes require `appended`; synchronous model tools queue until drain,
+  and refused items are dropped. Checkpoints persist only admitted or pre-gate
+  on-disk rows; shutdown must not propose. Preserve receipts and regenerate episode
+  fixtures from canonical types, not by hand (`episode_gate/tests.rs`). Budgets
+  charge each candidate cumulatively without refunds; size for changed checkpoints,
+  not current live state. Keep the existing accounting policy.
+- Live episode acceptance is deliberately ignored: run
+  `ABBEY_EPISODE_GATE_ACCEPTANCE_CONFIG=... cargo test --locked acceptance -- --ignored --nocapture`
+  only against a scratch gateway. It permanently charges that guild's budget;
+  see `src/episode_gate/acceptance.rs` for both required scopes.
+- Server plans are dry-run by default; `--apply` mutates and re-verifies, stopping
+  on failure without rollback. Keep `Change` additive (no deletes/role-permission
+  edits), reveal only engine-hidden channels, and scope overwrite stages to one
+  category. No mass Member grants without Donald.

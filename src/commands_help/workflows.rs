@@ -194,27 +194,23 @@ pub(super) async fn dispatch_component(
         }
         return true;
     }
-    if interaction
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Defer(
-                CreateInteractionResponseMessage::new().ephemeral(true),
-            ),
-        )
-        .await
-        .is_err()
-    {
-        delivery_failed(data);
-        return true;
-    }
-    let result = run_component(ctx, interaction, data, session).await;
+    let result = acknowledged(
+        async {
+            interaction.create_response(&ctx.http, CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true))).await.map_err(Error::from)
+        },
+        || async {
+            if run_component(ctx, interaction, data, session).await.is_err() {
+                delivery_failed(data);
+                // Retry only the explanatory response; never re-run a domain operation.
+                let response = interaction.edit_response(&ctx.http, edit("The task could not finish delivering its result. Open `/help` and refresh the current state before retrying.".into())).await;
+                let _ = crate::startup::command_errors::delivery_result(&data.state, response);
+            }
+            Ok(())
+        },
+    ).await;
     if result.is_err() {
-        tracing::warn!(
-            category = "task_operation",
-            "guided task did not deliver its result"
-        );
-        // Retry only the explanatory response; never re-run a domain operation.
-        if interaction.edit_response(&ctx.http, edit("The task could not finish delivering its result. Open `/help` and refresh the current state before retrying.".into())).await.is_err() { delivery_failed(data); }
+        delivery_failed(data);
     }
     true
 }
@@ -321,20 +317,21 @@ pub async fn dispatch_modal(
     if !interaction.data.custom_id.starts_with("abbey:task:") {
         return false;
     }
-    if interaction
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Defer(
-                CreateInteractionResponseMessage::new().ephemeral(true),
-            ),
-        )
-        .await
-        .is_err()
-    {
-        delivery_failed(data);
-        return true;
-    }
-    let result = run_modal(ctx, interaction, data).await;
+    let result = acknowledged(
+        async {
+            interaction
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Defer(
+                        CreateInteractionResponseMessage::new().ephemeral(true),
+                    ),
+                )
+                .await
+                .map_err(Error::from)
+        },
+        || run_modal(ctx, interaction, data),
+    )
+    .await;
     if result.is_err() {
         delivery_failed(data);
     }
@@ -440,7 +437,7 @@ where
     Load: FnOnce() -> Work,
     Work: std::future::Future<Output = Result<T, Error>>,
 {
-    drop(acknowledgement);
+    acknowledgement.await?;
     load().await
 }
 

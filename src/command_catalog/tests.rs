@@ -470,3 +470,19 @@ fn availability_distinguishes_exact_operations_and_policy() {
         Availability::AccessBlocked(Blocker::Permission)
     );
 }
+
+#[test]
+fn image_followup_requires_read_only_generation_and_names_that_blocker() {
+    let mut input = member();
+    input.capabilities = vec![Capability::Vision];
+    input.follow_up_absent = Some(false);
+    assert_eq!(
+        availability(command(CommandKey::See), &input),
+        Availability::Blocked(Blocker::Generation)
+    );
+    input.capabilities.push(Capability::Generation);
+    assert_eq!(
+        availability(command(CommandKey::See), &input),
+        Availability::Ready
+    );
+}

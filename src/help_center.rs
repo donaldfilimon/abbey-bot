@@ -1,49 +1,5 @@
 //! Owner-bound private help protocol; callers supply time and identities.
-use crate::command_catalog::{
-    self as catalog, CommandKey, CommandKind, EligibilityInput, EvaluationMode, HelpSection,
-    InteractionContext,
-};
-
-pub struct HelpShortcut {
-    pub section: HelpSection,
-    pub label: &'static str,
-}
-
-/// Shortcuts navigate; current catalog eligibility decides which tasks exist here.
-pub fn help_shortcuts(input: &EligibilityInput) -> Vec<HelpShortcut> {
-    let mut own = input.clone();
-    own.self_subject = Some(true);
-    [
-        (
-            HelpSection::Conversation,
-            "Talk with Abbey",
-            &[CommandKey::PersonaAsk][..],
-        ),
-        (
-            HelpSection::Memory,
-            "Review memory",
-            &[CommandKey::Recall][..],
-        ),
-        (
-            HelpSection::Images,
-            "Use an image",
-            &[CommandKey::Ocr, CommandKey::DescribeImage][..],
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(section, label, keys)| {
-        keys.iter()
-            .any(|key| {
-                catalog::eligible(
-                    catalog::command(*key),
-                    &own,
-                    EvaluationMode::Discoverability,
-                )
-            })
-            .then_some(HelpShortcut { section, label })
-    })
-    .collect()
-}
+use crate::command_catalog::{CommandKind, HelpSection, InteractionContext};
 
 pub const fn invocation_hint(kind: CommandKind) -> &'static str {
     match kind {
@@ -179,70 +135,6 @@ mod tests {
         );
         for context in [InteractionContext::Guild, InteractionContext::BotDm] {
             assert_eq!(visibility_hint(true, context), "private");
-        }
-    }
-
-    #[test]
-    fn shortcuts_use_current_catalog_eligibility_for_the_callers_own_memory() {
-        use crate::command_catalog::{
-            self as catalog, Capability, CommandKey, EligibilityInput, EvaluationMode,
-            InteractionContext,
-        };
-        for context in [InteractionContext::Guild, InteractionContext::BotDm] {
-            for bits in 0..4 {
-                let mut input = EligibilityInput::new(context);
-                input.self_subject = Some(false);
-                if bits & 1 != 0 {
-                    input.capabilities.push(Capability::Generation);
-                }
-                if bits & 2 != 0 {
-                    input.capabilities.push(Capability::Vision);
-                }
-                let shortcuts = help_shortcuts(&input);
-                let mut own = input.clone();
-                own.self_subject = Some(true);
-                for (section, label, keys) in [
-                    (
-                        HelpSection::Conversation,
-                        "Talk with Abbey",
-                        &[CommandKey::PersonaAsk][..],
-                    ),
-                    (
-                        HelpSection::Memory,
-                        "Review memory",
-                        &[CommandKey::Recall][..],
-                    ),
-                    (
-                        HelpSection::Images,
-                        "Use an image",
-                        &[CommandKey::Ocr, CommandKey::DescribeImage][..],
-                    ),
-                ] {
-                    let expected = keys.iter().any(|key| {
-                        catalog::eligible(
-                            catalog::command(*key),
-                            &own,
-                            EvaluationMode::Discoverability,
-                        )
-                    });
-                    assert_eq!(
-                        shortcuts.iter().any(|shortcut| shortcut.section == section),
-                        expected
-                    );
-                    if expected {
-                        assert_eq!(
-                            shortcuts
-                                .iter()
-                                .find(|shortcut| shortcut.section == section)
-                                .unwrap()
-                                .label,
-                            label
-                        );
-                    }
-                }
-                assert!(shortcuts.len() <= 3);
-                assert_eq!(input.self_subject, Some(false));
-            }
         }
     }
 

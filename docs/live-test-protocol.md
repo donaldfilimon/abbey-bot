@@ -12,6 +12,31 @@ the neutral labels **Guild A** and **Guild B**; actual Discord identifiers are
 transient execution inputs, not acceptance evidence. Use synthetic content and
 restore both guilds to their initial settings after every run.
 
+## Current executable qualification profile
+
+The command-workflow release preserves the configured legacy generation and
+vision routes and the existing `--provider-self-test primary|fm|all --json`
+interface. The primary report can establish synthetic text, streaming,
+structured-output, tools, image-description and OCR results for the exact
+Abbey binary and configured route. It binds the endpoint and model selection,
+but does not itself attest immutable model bytes. The checked-in publisher
+emits version-1 qualification reports; a primary probe does not qualify an
+unconfigured FM route.
+
+For local-only release probes, explicitly select numeric loopback endpoints
+and omit cloud credentials from the probe environment. An empty generic
+`ABBEY_PROVIDER_CLOUD_ALLOW` does not override legacy route authorization.
+Opening help remains observational and never runs these probes.
+
+The current launchd transaction stages and rolls back the binary and plist.
+It preserves the owner environment and does not atomically replace models or
+provider manifests. Consequently, passing that transaction and the primary
+synthetic probes does not satisfy the broader immutable-model, sandbox,
+version-2 publication or complete identity-transaction requirements in stages
+2 and 5 below. Record those requirements as unverified when their specified
+evidence is unavailable; do not synthesize a manifest or expand provider
+adapters to label this workflow release complete.
+
 ## Evidence and privacy boundary
 
 Create each evidence directory mode 0700 and every evidence file mode 0600.
@@ -123,6 +148,32 @@ Swap the roles: restore Guild A to default-off, enable Guild B under the same
 small bounds, and repeat the isolation-sensitive tool, memory, policy,
 provider, budget, and voice-Inspect checks. Restore both guilds to their exact
 initial settings when complete and remove all temporary facts.
+
+## 3a — guided command workflows
+
+Exercise the reviewed command-workflow release as an ordinary member and as a
+manager in both sandbox guilds. Verify the exact running artifact and actual
+registration scope first. Guild-only registration does not establish that the
+same commands are available in DMs. Record each role/workflow result separately;
+a manager completing a task does not establish ordinary-member authorization.
+
+| Help task | Required observation |
+|---|---|
+| Conversation | The button opens the question modal promptly. Blank input receives actionable guidance. A synthetic valid question produces a private provider answer or a specific provider failure, without publishing a shared-channel transcript. |
+| Memory | The button opens the existing private fact browser. Navigation reads the current authorized subject snapshot; another user's control, another guild, or a lost permission cannot expose facts. |
+| Images | The view names the exact attachment slash commands and image message-menu actions, distinguishes description from OCR availability, and explains any policy/provider blocker. Exercise both operations with synthetic images. |
+| Voice & Music | The view reports the current state and supported commands without starting capture or playback. Unconfigured voice still permits status. Active status includes wake-name and stop guidance; audible behavior belongs to stage 4. |
+| Administration | An authorized manager opens the existing dashboard. Ordinary members cannot gain administration through a button or slash command. Requested settings and effective blockers appear together. Restore every setting changed during the test. |
+
+Reopen `/help` after an expired control and confirm that its recovery action
+works. Recheck a control after permission revocation and in a different guild or
+channel. Verify that button and slash entry points enforce the same authority.
+An accepted operation must end in a result, a truthful partial result, an
+explicit cancellation, or an actionable failure. A response-delivery failure
+after a successful mutation does not authorize repeating that mutation; verify
+the resulting state before any deliberate retry. Source fault-injection tests
+cover failures that cannot be induced safely in these live sandbox runs; retain
+their evidence separately from observed Discord behavior.
 
 ## 4 — consented foreground voice
 

@@ -152,9 +152,7 @@ fn dashboard_input(
                 data.state.quiet,
                 data.state
                     .providers
-                    .request_readiness(crate::provider::RequestClass::text(
-                        data.state.providers.tools_enabled()
-                    ))
+                    .request_readiness_for(crate::provider::RequestClass::TextReadOnly, true)
                     .is_ok()
             ),
             crate::admin_dashboard::vision_status(settings.vision_enabled, description, ocr),
@@ -592,6 +590,71 @@ async fn edit_admin(
 #[cfg(test)]
 mod outcome_tests {
     use super::*;
+
+    #[test]
+    fn unsolicited_dashboard_uses_streaming_read_only_route_without_tool_capability() {
+        use crate::provider::{
+            FmConfig, FmMode, FoundationModels, ProviderCapabilities, ProviderRuntime,
+            RequestClass, VerifiedFmCapabilities,
+        };
+        let fm = FoundationModels::new_qualified(
+            FmConfig {
+                mode: FmMode::System,
+                endpoint: Some("http://127.0.0.1:9".into()),
+                cli: std::path::PathBuf::from("synthetic-dashboard-cli-not-executed"),
+                fallback: true,
+                timeout_secs: 1,
+            },
+            None,
+            true,
+            VerifiedFmCapabilities {
+                server: Some(ProviderCapabilities {
+                    text: true,
+                    streaming: true,
+                    ..ProviderCapabilities::default()
+                }),
+                cli: ProviderCapabilities::default(),
+            },
+        );
+        let mut state = AppState::in_memory();
+        std::sync::Arc::get_mut(&mut state).unwrap().providers =
+            ProviderRuntime::legacy(None, None, Some(fm), None, true, 1, 1);
+        let data = crate::Data { state, voice: None };
+        assert!(data.state.providers.tools_enabled());
+        assert!(
+            data.state
+                .providers
+                .request_readiness(RequestClass::TextReadOnly)
+                .is_err()
+        );
+        assert_eq!(
+            data.state
+                .providers
+                .request_readiness_for(RequestClass::TextReadOnly, true),
+            Ok(())
+        );
+        assert!(
+            data.state
+                .providers
+                .request_readiness(RequestClass::TextWithTools)
+                .is_err()
+        );
+        update_dashboard_setting(&data, 7, |settings| {
+            settings.unsolicited = true;
+            settings.learning_enabled = true;
+        });
+        let view = dashboard_input(&data, 7, 8, None);
+        assert!(
+            view.effective_policy
+                .contains("eligible for policy selection"),
+            "{}",
+            view.effective_policy
+        );
+        assert!(
+            !view.capabilities.contains(&"generation"),
+            "interactive tool conversation must remain unavailable"
+        );
+    }
 
     #[test]
     fn failed_delivery_keeps_the_setting_change_and_the_original_failure() {

@@ -88,3 +88,28 @@ fn guild_registration_payload_never_invents_an_entry_point() {
             == Some(u64::from(u8::from(CommandType::PrimaryEntryPoint)))
     }));
 }
+
+/// Export the exact source registration request for an operator's read-only
+/// comparison with Discord. This starts no client and needs no bot credential.
+/// Unix only: creation relies on owner-only mode bits, not inherited ACLs.
+#[cfg(unix)]
+#[test]
+#[ignore = "operator export: set ABBEY_COMMAND_PAYLOAD_OUTPUT to a new private file"]
+fn export_command_registration_payload() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let destination = std::env::var_os("ABBEY_COMMAND_PAYLOAD_OUTPUT")
+        .expect("ABBEY_COMMAND_PAYLOAD_OUTPUT must name a new private output file");
+    let payload = poise::builtins::create_application_commands(&application_commands());
+    let mut encoded = serde_json::to_vec_pretty(&payload).expect("serialize registration payload");
+    encoded.push(b'\n');
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    let mut output = options
+        .open(destination)
+        .expect("create new command payload file without replacing existing files or symlinks");
+    output.write_all(&encoded).expect("write command payload");
+    output.sync_all().expect("sync command payload");
+}

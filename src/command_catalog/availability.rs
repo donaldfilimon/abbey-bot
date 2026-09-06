@@ -117,8 +117,18 @@ fn condition_blocker(rule: ConditionRule, input: &EligibilityInput) -> Option<Bl
         ConditionRule::SelectedVoiceModeReady => Blocker::VoiceMode,
         ConditionRule::HierarchyAllowsAction if input.action_target_resolved => Blocker::Hierarchy,
         ConditionRule::HierarchyAllowsAction | ConditionRule::Input(_) => Blocker::Target,
-        ConditionRule::All(rules) | ConditionRule::Any(rules) => rules
+        ConditionRule::All(rules) => rules
             .iter()
+            .find_map(|rule| condition_blocker(*rule, input))
+            .unwrap_or(Blocker::Unavailable),
+        ConditionRule::Any(rules) => rules
+            .iter()
+            .filter(|rule| !matches!(rule, ConditionRule::Input(_)))
+            .chain(
+                rules
+                    .iter()
+                    .filter(|rule| matches!(rule, ConditionRule::Input(_))),
+            )
             .find_map(|rule| condition_blocker(*rule, input))
             .unwrap_or(Blocker::Unavailable),
         ConditionRule::Always => return None,

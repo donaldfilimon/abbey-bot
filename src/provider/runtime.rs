@@ -612,14 +612,37 @@ impl ProviderRuntime {
     }
     /// Snapshot-only request-class projection. No reservation, network call or qualification.
     pub fn request_readiness(&self, class: RequestClass) -> Result<(), RouteUnavailableReason> {
-        if self
-            .order
-            .iter()
-            .any(|id| self.eligible(id, class) && self.entries[id].slots.available_permits() > 0)
-        {
-            return Ok(());
+        self.request_readiness_for(class, false)
+    }
+
+    /// Snapshot-only readiness for the execution mode used by the caller.
+    /// Stream-only adapters cannot serve ordinary nonstreaming command requests.
+    pub fn request_readiness_for(
+        &self,
+        class: RequestClass,
+        streaming: bool,
+    ) -> Result<(), RouteUnavailableReason> {
+        let supports_execution = |entry: &Entry| {
+            let adapter = match class {
+                RequestClass::VisionDescribe | RequestClass::VisionOcr => entry.image.is_some(),
+                _ => entry.adapter.is_some(),
+            };
+            adapter && (!entry.stream_only || (streaming && class == RequestClass::TextReadOnly))
+        };
+        let blocked = lock(&self.state).blocks.failed();
+        let mut busy = false;
+        if !blocked {
+            for id in &self.order {
+                let entry = &self.entries[id];
+                if supports_execution(entry) && self.eligible(id, class) {
+                    if entry.slots.available_permits() > 0 {
+                        return Ok(());
+                    }
+                    busy = true;
+                }
+            }
         }
-        if self.available(class, false) {
+        if busy {
             return Err(RouteUnavailableReason::Busy);
         }
         if self.order.is_empty() {
@@ -632,11 +655,15 @@ impl ProviderRuntime {
             let Some(descriptor) = self.catalog.descriptor(id) else {
                 continue;
             };
-            if !class.supported_by(descriptor.declared_capabilities) {
+            if !supports_execution(&self.entries[id])
+                || !class.supported_by(descriptor.declared_capabilities)
+            {
                 continue;
             }
             if !descriptor.eligibility.is_routable() || state.router.profile(id, class).is_none() {
                 reason = reason.max(RouteUnavailableReason::BlockedPendingRequalification);
+            } else if state.blocks.failed() {
+                reason = reason.max(RouteUnavailableReason::BudgetExhausted);
             } else if let Some(snapshot) = snapshots.iter().find(|entry| &entry.provider_id == id) {
                 reason = reason.max(match snapshot.circuit.phase {
                     CircuitPhase::Blocked => RouteUnavailableReason::BlockedPendingRequalification,

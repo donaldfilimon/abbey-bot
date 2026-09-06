@@ -880,3 +880,48 @@ fn read_only_provider_does_not_admit_tool_conversation() {
     );
     assert_eq!(adapter.calls.load(Ordering::Relaxed), 0);
 }
+
+#[tokio::test]
+async fn stream_only_read_only_route_is_not_advertised_for_nonstreaming_execution() {
+    let mut runtime = ProviderRuntime::empty();
+    let adapter = fake(&mut runtime, "primary", vec![], vec![], false);
+    runtime.entries.get_mut(&adapter.id).unwrap().stream_only = true;
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextReadOnly),
+        Err(RouteUnavailableReason::CapabilityUnavailable)
+    );
+    let mut nonstreaming = runtime.begin(false, false);
+    assert_eq!(
+        nonstreaming.reserve().await.unwrap_err().unavailable(),
+        Some(RouteUnavailableReason::CapabilityUnavailable)
+    );
+    assert_eq!(
+        runtime.request_readiness_for(RequestClass::TextReadOnly, true),
+        Ok(())
+    );
+    assert_eq!(
+        runtime.request_readiness_for(RequestClass::TextWithTools, true),
+        Err(RouteUnavailableReason::CapabilityUnavailable)
+    );
+    let mut streaming = runtime.begin(false, true);
+    streaming.reserve().await.unwrap();
+    drop(streaming);
+    assert_eq!(adapter.calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn declared_text_without_executable_adapter_is_not_ready() {
+    let mut runtime = ProviderRuntime::empty();
+    let adapter = fake(&mut runtime, "primary", vec![], vec![], false);
+    runtime.entries.get_mut(&adapter.id).unwrap().adapter = None;
+    assert!(
+        runtime
+            .request_readiness(RequestClass::TextReadOnly)
+            .is_err()
+    );
+    assert!(
+        runtime
+            .request_readiness_for(RequestClass::TextReadOnly, true)
+            .is_err()
+    );
+}

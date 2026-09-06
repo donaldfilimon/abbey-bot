@@ -326,9 +326,7 @@ pub async fn admin_act(
         ctx.data()
             .state
             .providers
-            .request_readiness(crate::provider::RequestClass::text(
-                ctx.data().state.providers.tools_enabled(),
-            ))
+            .request_readiness_for(crate::provider::RequestClass::TextReadOnly, true)
             .is_ok(),
     )))
     .await?;

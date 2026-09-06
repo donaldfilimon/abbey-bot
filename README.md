@@ -72,14 +72,27 @@ qualify the current integration, and newer live observations remain dated in
 
 ## Commands
 
-Open `/help` for a private command guide. Start offers **Talk with Abbey**,
-**Review memory**, and **Use an image** when those tasks are available; these
-buttons open guidance. The section selector covers all command groups. Each
-entry names its slash command, member menu, or message menu and says whether
-its result is private, channel-visible, or a reply in the current DM. For a
-menu action, open the member or message menu and choose **Apps**. Availability
-refreshes as you navigate. Controls belong to you and expire 15 minutes after
-opening; run `/help` again for a fresh session.
+Open `/help` for a private task home and command reference. **Talk with Abbey**
+opens a question form with a private answer; **Review memory** opens your private
+fact browser. **Use an image** explains how to attach an image or choose its
+message-menu action. In a server, **Voice & Music** shows the current call and
+music state with the next supported action, and authorized managers can open
+**Manage Abbey** directly. Opening these views starts neither voice listening
+nor music playback. Existing slash and context-menu commands remain available.
+
+The section selector is the command reference. Entries identify their exact
+command or menu and whether replies are private, channel-visible, or in the
+current DM. Permitted but unavailable functions stay visible with a specific
+reason and next step. Conversation with tools, read-only generation, image
+description and OCR are checked separately. Availability is a current routing
+decision, not a provider health guarantee; execution rechecks its requirements.
+
+Controls belong to you, remain bound to the issuing context, and expire after
+15 minutes. Permissions are refreshed on action and question submission. Open
+`/help` again for fresh controls. A private question uses the existing ephemeral
+generation path and is not committed to the shared channel conversation.
+Administration distinguishes requested settings from effective policy blockers.
+Active voice guidance includes a wake-name example and the stop command.
 
 <!-- BEGIN GENERATED COMMAND CATALOG -->
 | Command | Context | Response | What it does |

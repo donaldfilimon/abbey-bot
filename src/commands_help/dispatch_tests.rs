@@ -171,7 +171,7 @@ impl DiscordFixture {
                     } else if method == "POST" && route == "/v1/chat/completions" {
                         (
                             "application/json",
-                            json!({"choices":[{"message":{"content":"x".repeat(3_000)}}]})
+                            json!({"choices":[{"message":{"role":"assistant","content":"x".repeat(3_000)},"finish_reason":"stop"}]})
                                 .to_string()
                                 .into_bytes(),
                         )
@@ -1132,6 +1132,9 @@ async fn registered_ordinary_guards_deny_missing_capabilities() {
             ConditionId::C1 | ConditionId::C8 => catalog::Blocker::Generation,
             ConditionId::C2 | ConditionId::C3 => catalog::Blocker::Vision,
             ConditionId::C9 => catalog::Blocker::Ocr,
+            ConditionId::C4 if binding(command).eligibility.access == AccessId::A5 => {
+                catalog::Blocker::VoicePresence
+            }
             ConditionId::C4 => catalog::Blocker::VoiceSetup,
             ConditionId::C5 | ConditionId::C6 => catalog::Blocker::VoiceMode,
             _ => unreachable!(),
@@ -2339,8 +2342,13 @@ async fn actual_unconfigured_voice_status_reaches_explanatory_handler() {
     let requests = fixture.take_requests();
     assert_deferred_first(&requests, command);
     assert!(requests.iter().any(|request| {
-        request.body["content"]
-            .as_str()
-            .is_some_and(|body| body.contains("not configured"))
+        request.body["content"].as_str().is_some_and(|body| {
+            body.contains(
+                "Abbey voice is off because no complete destination was configured at startup.",
+            )
+        })
     }));
 }
+
+#[path = "workflows/dispatch_tests.rs"]
+mod workflow_dispatch_tests;
