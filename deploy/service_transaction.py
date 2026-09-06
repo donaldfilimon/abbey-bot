@@ -23,7 +23,7 @@ try:
     from service_installation import binary_digest, validate_managed_plist
     from service_protocol import ProtocolError, read_optional_private
     from service_readiness import (BUDGET_NS, TransactionContext, ReadinessError,
-                                   launchd_pid, make_context, wait_ready, parse_pid_record)
+                                   launchd_pid, make_context, wait_ready, parse_pid_record, cleanup_incomplete)
 except Exception:
     print("installation: bundle", file=sys.stderr)
     raise SystemExit(1) from None
@@ -363,7 +363,9 @@ def bootstrap(home, state):
         try:
             pid = SYSTEM.pid(context.deadline_monotonic_ns)
             break
-        except ReadinessError:
+        except ReadinessError as error:
+            if error.code.value == 'cleanup':
+                raise
             SYSTEM.sleep(min(.25, max(0, context.deadline_monotonic_ns - SYSTEM.monotonic()) / 1e9))
     else:
         raise TransactionError('timeout')
@@ -542,15 +544,23 @@ def main(args):
                         raise TransactionError('protocol')
                     make_context((value['run_nonce'],), wall_ms=lambda: 0, monotonic=lambda: 0)
         result = phase(args[0], home, state, Path(__file__).resolve().parent.parent)
+        if _CHILDREN or cleanup_incomplete():
+            raise TransactionError('cleanup')
         print(json.dumps(result, separators=(',', ':')))
         return 0
     except TransactionError as error:
         print('installation: ' + error.code, file=sys.stderr)
-    except (ProtocolError, ReadinessError):
+        if error.code == 'cleanup':
+            return 79
+    except ReadinessError as error:
+        print('installation: verification', file=sys.stderr)
+        if error.code.value == 'cleanup':
+            return 79
+    except ProtocolError:
         print('installation: verification', file=sys.stderr)
     except Exception:
         print('installation: failure', file=sys.stderr)
-    return 1
+    return 79 if _CHILDREN or cleanup_incomplete() else 1
 
 
 if __name__ == '__main__':

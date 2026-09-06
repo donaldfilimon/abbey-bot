@@ -31,8 +31,12 @@ run_phase() {
   if [ "$INTERRUPTED" -eq 1 ]; then return 1; fi
   PHASE_ACTIVE=1
   phase_result=0
-  next_state=$(phase "$1") || phase_result=1
+  next_state=$(phase "$1") || phase_result=$?
   PHASE_ACTIVE=0
+  if [ "$phase_result" -eq 79 ]; then
+    RETAINED=1
+    echo 'installation: cleanup_incomplete' >&2
+  fi
   if [ "$phase_result" -ne 0 ]; then return 1; fi
   STATE=$next_state
   if [ "$INTERRUPTED" -eq 1 ]; then return 1; fi
@@ -43,6 +47,10 @@ cleanup() {
   trap '' HUP INT TERM
   set +e
   INTERRUPTED=0
+  if [ "$RETAINED" -eq 1 ]; then
+    echo 'installation: recovery_retained' >&2
+    exit 1
+  fi
   if [ "$ROLLBACK" -eq 1 ]; then
     if run_phase capture && run_phase stop && run_phase restore; then
       if [ "$HAD_PRIOR" -eq 1 ]; then

@@ -105,6 +105,8 @@ class Fake:
             (home / '.local/share/abbey-bot/install.lock/owner').write_text('f'*64)
         if mode.startswith('signal_') and not mode.startswith('signal_publish_') and state['starts'] == 1:
             self.send_signal(mode[len('signal_'):])
+        if mode == 'cleanup_incomplete':
+            raise ReadinessError(FailureCode.CLEANUP)
         if mode == 'bootstrap_failure':
             return 1
         base = home / '.local/share/abbey-bot'
@@ -263,6 +265,17 @@ class Tests(unittest.TestCase):
                 self.assertEqual(result.returncode,1)
                 self.assertIn(b'recovery_retained',result.stderr)
                 self.assertTrue((h.home / '.local/share/abbey-bot/install.lock').is_dir())
+    def test_incomplete_child_cleanup_never_starts_competing_rollback_or_releases_lock(self):
+        with tempfile.TemporaryDirectory() as temp:
+            h=Harness(temp,'cleanup_incomplete',prior=True)
+            result=h.run();self.check_private(result,h)
+            self.assertEqual(result.returncode,1)
+            self.assertIn(b'cleanup_incomplete',result.stderr)
+            self.assertIn(b'recovery_retained',result.stderr)
+            self.assertEqual(h.state()['commands'],['bootout','bootstrap'])
+            self.assertEqual(h.binary().read_bytes(),b'candidate binary')
+            self.assertTrue((h.home/'.local/share/abbey-bot/install.lock/owner').is_file())
+
     def test_rollback_failure_retains_recovery(self):
         for mode in ('bootstrap_failure','starting','wrong_sha'):
             with tempfile.TemporaryDirectory() as temp:

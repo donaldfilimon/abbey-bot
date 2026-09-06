@@ -25,6 +25,11 @@ DECIMAL = re.compile(r"0|[1-9][0-9]*", re.ASCII)
 _OUTSTANDING_CHILDREN = []
 
 
+def cleanup_incomplete():
+    """Whether a child is still retained without an observed successful wait."""
+    return bool(_OUTSTANDING_CHILDREN)
+
+
 class FailureCode(str, Enum):
     USAGE = "usage"
     CONTEXT = "context"
