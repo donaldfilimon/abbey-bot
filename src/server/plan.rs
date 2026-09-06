@@ -748,7 +748,7 @@ kind = "text"
         for name in [
             "WDBX",
             "ABI",
-            "Abbey",
+            "Personas",
             "Apple Silicon",
             "Site Builder",
             "Announcements",

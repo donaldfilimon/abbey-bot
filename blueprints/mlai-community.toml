@@ -21,8 +21,12 @@ source = "~/Archive/2026-09-04-desktop-recovery/mlai-discord-redesign-proposal.m
 
 [everyone]
 # "Read most things, write in the commons, no mention-everyone, no manage
-# anything." Rendered as a manual step, never applied by the engine.
-# "Create Invites" is kept because growth matters (2.6 row 1, footnote).
+# anything." Rendered as a manual step, never applied by the engine. The list
+# is Discord's default @everyone set as the live server held it on
+# 2026-09-06 (it had already dropped Change Nickname; kept that way). None of
+# the 2.6 row-1 denies (Mention @everyone, Manage Messages, Manage Threads,
+# Manage Nicknames) were held. "Create Invites" is kept because growth
+# matters (2.6 row 1, footnote).
 permissions = [
   "View Channel",
   "Read Message History",
@@ -33,8 +37,15 @@ permissions = [
   "Attach Files",
   "Add Reactions",
   "Use External Emojis",
+  "Use External Stickers",
+  "Use External Sounds",
+  "Use External Apps",
   "Use Application Commands",
-  "Change Nickname",
+  "Use Embedded Activities",
+  "Use Soundboard",
+  "Send Voice Messages",
+  "Send Polls",
+  "Set Voice Channel status",
   "Create Invites",
   "Connect",
   "Speak",
@@ -107,10 +118,15 @@ name = "ABI"
 colour = "#a855f7"
 note = "Interest role."
 
+# The proposal named this interest role "Abbey". The live guild's bot is
+# named Abbey too, and its integration-managed role carries that name, so the
+# engine refused the plan on the first dry run (2026-09-06). Renamed to match
+# the #personas channel (Abbey, Aviva, Abi); the product colour stays. Donald
+# may flip the name, but it cannot be "Abbey" while the bot's role is.
 [[roles]]
-name = "Abbey"
+name = "Personas"
 colour = "#34d399"
-note = "Interest role."
+note = "Interest role: Abbey, Aviva, Abi."
 
 [[roles]]
 name = "Apple Silicon"

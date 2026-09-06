@@ -854,7 +854,7 @@ impl<'a> Context<'a> {
             let revoke: Vec<&str> = current.difference(&wanted).copied().collect();
             if !grant.is_empty() || !revoke.is_empty() {
                 self.report.manual.push(format!(
-                    "@everyone guild permissions: grant [{}]; revoke [{}] (the engine never edits an existing role's permissions)",
+                    "@everyone guild permissions differ from the plan: missing [{}]; extra [{}] (the engine never edits an existing role's permissions; decide each one by hand)",
                     grant.join(", "),
                     revoke.join(", ")
                 ));
@@ -871,7 +871,7 @@ impl<'a> Context<'a> {
                     let revoke: Vec<&str> = held.difference(&wanted).copied().collect();
                     if !grant.is_empty() || !revoke.is_empty() {
                         self.report.manual.push(format!(
-                            "role {:?} permissions: grant [{}]; revoke [{}]",
+                            "role {:?} permissions differ from the plan: missing [{}]; extra [{}] (review by hand; guild permissions add to @everyone's, so an extra is not always wrong)",
                             role.name,
                             grant.join(", "),
                             revoke.join(", ")
@@ -1342,13 +1342,14 @@ mod tests {
 
     #[test]
     fn a_plan_role_that_matches_a_bots_managed_role_is_a_blocker() {
-        // The live MLAI guild's bot is named Abbey, and the plan has an
-        // interest role named Abbey. Guessing would edit the bot's role.
+        // The live MLAI guild's bot role is named Abbey and the proposal had
+        // an interest role of that name; the first live dry run refused it.
+        // Guessing would edit the bot's role, so any such match blocks.
         let plan = mlai();
         let mut snapshot = guild(&["Administrator"]);
         snapshot.roles.push(RoleState {
             managed: true,
-            ..role(650, "Abbey", 3, &[])
+            ..role(650, "Team", 3, &[])
         });
         // The overwrites stage checks roles only inside an existing category,
         // so it is covered by the rollout tests in `apply`; the two stages
@@ -1366,7 +1367,7 @@ mod tests {
                 report
                     .blockers
                     .iter()
-                    .any(|b| b.contains("\"Abbey\" is an integration-managed role")),
+                    .any(|b| b.contains("\"Team\" is an integration-managed role")),
                 "{stage:?}: {:?}",
                 report.blockers
             );

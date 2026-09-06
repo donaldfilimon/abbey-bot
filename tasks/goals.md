@@ -656,3 +656,25 @@ status: in_progress
   bot cannot supply); DQN/memory-bank writes are *not* routed through the gate,
   because the gate's vocabulary is operation lifecycle, not memory vectors.
 
+## Build the MLAI server from a plan file (`--server-plan`)
+status: in_progress
+- 2026-09-06: `server/{plan,observe,diff,apply,discord,run}` + `blueprints/mlai-community.toml`
+  land the engine the 2026-09-04 design asked for, with the boundary moved into the type
+  system: `diff::Change` has no delete variant and no role-permission edit (a test enumerates
+  the variants). Stages mirror the proposal's rollout (additive → reveal → overwrites per
+  category); `reveal` changes @everyone visibility only from engine-hidden (the hide marker is
+  the channel's only overwrite) to visible, and a plan role matching an integration-managed
+  role blocks every stage. Preflight: Manage Channels/Manage Roles unless Administrator,
+  bot top role above any role it edits, COMMUNITY for forum/announcement/stage, and the bot
+  may only grant/deny permissions it holds. `--apply` re-reads and re-diffs to verify.
+- Evidence: 61 `server::` unit tests (fake guild proves every stage idempotent and that
+  `SetOverwrite` never removes another entry), gate green, and a read-only dry run against
+  the live MLAI guild as the bot (33 additive changes, no blockers after renaming the
+  colliding interest role to "Personas"). Two live findings fixed here: the `@me` guild-member
+  route is user-token only, and `NEVER_FOR_EVERYONE` listed a name serenity never emits.
+- Honest scope: **nothing has been applied to any guild.** `--apply` is built and tested only
+  against the fake guild; it needs a further explicit yes from Donald, and the proposal's
+  Stage 0 export must happen first. Role permissions, role order, Community settings,
+  onboarding, AutoMod, and every deletion remain human steps by design. Forum tags and
+  slowmode are creation-time only (not diffed afterwards).
+
