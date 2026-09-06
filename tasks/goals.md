@@ -645,6 +645,12 @@ status: in_progress
   `ABI_WDBX_PATH`): `decision=appended`, nothing under `~/.abi` touched, and the replay refused
   with `AlreadyExists: episode_replay`. The bot's own runner is proven only against fake
   scripts, and no gateway is deployed.
+- **OWNED MISTAKE, 2026-09-06 03:1x:** the direct push of `f3c0ba8` turned the Windows gate red
+  (5 `episode_gate` unit tests): the tests hardcoded POSIX absolute paths, which are relative on
+  Windows, and built JSON by string formatting, so a Windows temp path's backslashes made the
+  config invalid. Ubuntu and macOS were green, and the local Mac gate cannot catch this class.
+  Fixed here: paths derive from `temp_dir()` and the JSON is built with `serde_json::json!`.
+  This is the fourth direct-push break the ledger above argues about; the argument stands.
   Honest scope: wired and tested;
   only the proposal stage is emitted (approval needs a distinct human approver the
   bot cannot supply); DQN/memory-bank writes are *not* routed through the gate,

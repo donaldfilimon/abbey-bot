@@ -2,14 +2,38 @@ use super::*;
 
 const DIGEST_HEX: &str = "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da";
 
+/// Absolute on every platform (a POSIX literal is relative on Windows).
+fn abi_path() -> String {
+    std::env::temp_dir().join("abi").display().to_string()
+}
+
+fn token_path() -> String {
+    std::env::temp_dir()
+        .join("abbey-episode-token")
+        .display()
+        .to_string()
+}
+
+/// Built with serde_json so Windows path separators are escaped correctly.
+fn config_json_with(abi_cli: &str, token_file: &str, timeout_secs: u64) -> String {
+    serde_json::json!({
+        "abi_cli": abi_cli,
+        "endpoint": "http://127.0.0.1:50051",
+        "token_file": token_file,
+        "policy_version": "policy_v1",
+        "contract_revision": 2,
+        "contract_digest": DIGEST_HEX,
+        "timeout_secs": timeout_secs,
+    })
+    .to_string()
+}
+
 fn config_json(abi_cli: &str, timeout_secs: u64) -> String {
-    format!(
-        r#"{{"abi_cli":"{abi_cli}","endpoint":"http://127.0.0.1:50051","token_file":"/private/tmp/abbey-episode-token","policy_version":"policy_v1","contract_revision":2,"contract_digest":"{DIGEST_HEX}","timeout_secs":{timeout_secs}}}"#
-    )
+    config_json_with(abi_cli, &token_path(), timeout_secs)
 }
 
 fn config() -> EpisodeGateConfig {
-    EpisodeGateConfig::from_json(&config_json("/usr/local/bin/abi", 5)).unwrap()
+    EpisodeGateConfig::from_json(&config_json(&abi_path(), 5)).unwrap()
 }
 
 fn request() -> LearningToggleRequest {
@@ -74,38 +98,45 @@ fn config_parses_and_validates() {
             .unwrap_err()
             .contains("abi_cli")
     );
-    let dotdot = config_json("/usr/../bin/abi", 5);
+    let dotdot = config_json(
+        &std::env::temp_dir()
+            .join("..")
+            .join("abi")
+            .display()
+            .to_string(),
+        5,
+    );
     assert!(
         EpisodeGateConfig::from_json(&dotdot)
             .unwrap_err()
             .contains("abi_cli")
     );
-    let slow = config_json("/usr/local/bin/abi", 0);
+    let slow = config_json(&abi_path(), 0);
     assert!(
         EpisodeGateConfig::from_json(&slow)
             .unwrap_err()
             .contains("timeout_secs")
     );
-    let unknown = config_json("/usr/local/bin/abi", 5)
-        .replace("\"timeout_secs\"", "\"token\":\"x\",\"timeout_secs\"");
+    let unknown =
+        config_json(&abi_path(), 5).replace("\"timeout_secs\"", "\"token\":\"x\",\"timeout_secs\"");
     assert!(
         EpisodeGateConfig::from_json(&unknown)
             .unwrap_err()
             .contains("invalid JSON")
     );
-    let zero_digest = config_json("/usr/local/bin/abi", 5).replace(DIGEST_HEX, &"0".repeat(64));
+    let zero_digest = config_json(&abi_path(), 5).replace(DIGEST_HEX, &"0".repeat(64));
     assert!(
         EpisodeGateConfig::from_json(&zero_digest)
             .unwrap_err()
             .contains("contract_digest")
     );
-    let bad_scheme = config_json("/usr/local/bin/abi", 5).replace("http://", "grpc://");
+    let bad_scheme = config_json(&abi_path(), 5).replace("http://", "grpc://");
     assert!(
         EpisodeGateConfig::from_json(&bad_scheme)
             .unwrap_err()
             .contains("endpoint")
     );
-    let bad_level = config_json("/usr/local/bin/abi", 5).replace(
+    let bad_level = config_json(&abi_path(), 5).replace(
         "\"timeout_secs\"",
         "\"evidence_level\":\"c9\",\"timeout_secs\"",
     );
@@ -119,8 +150,7 @@ fn config_parses_and_validates() {
 #[test]
 fn endpoint_transport_mirrors_the_abi_cli_rule() {
     let with = |endpoint: &str, ca: bool| {
-        let mut text =
-            config_json("/usr/local/bin/abi", 5).replace("http://127.0.0.1:50051", endpoint);
+        let mut text = config_json(&abi_path(), 5).replace("http://127.0.0.1:50051", endpoint);
         if ca {
             text = text.replace(
                 "\"timeout_secs\"",
@@ -160,10 +190,7 @@ fn from_path_requires_the_named_files_to_exist() {
     let abi = dir.join("abi");
     let token = dir.join("token");
     std::fs::write(&abi, "").unwrap();
-    let text = config_json(&abi.display().to_string(), 5).replace(
-        "/private/tmp/abbey-episode-token",
-        &token.display().to_string(),
-    );
+    let text = config_json_with(&abi.display().to_string(), &token.display().to_string(), 5);
     let config_file = dir.join("gate.json");
     std::fs::write(&config_file, &text).unwrap();
     let error = EpisodeGateConfig::from_path(&config_file).unwrap_err();
@@ -180,7 +207,7 @@ fn from_path_requires_the_named_files_to_exist() {
 
 #[test]
 fn config_errors_never_echo_values() {
-    let text = config_json("/usr/local/bin/abi", 5).replace("policy_v1", "Policy V1 SECRET");
+    let text = config_json(&abi_path(), 5).replace("policy_v1", "Policy V1 SECRET");
     let error = EpisodeGateConfig::from_json(&text).unwrap_err();
     assert!(error.contains("policy_version"));
     assert!(!error.contains("SECRET"));
@@ -360,7 +387,7 @@ mod with_a_fake_abi {
         assert_eq!(lines.next(), Some("--endpoint"));
         assert_eq!(lines.next(), Some("http://127.0.0.1:50051"));
         assert_eq!(lines.next(), Some("--token-file"));
-        assert_eq!(lines.next(), Some("/private/tmp/abbey-episode-token"));
+        assert_eq!(lines.next(), Some(token_path().as_str()));
         let body = lines.next().unwrap();
         let write: EpisodeWrite = serde_json::from_str(body).unwrap();
         assert_eq!(write.guild_ref, "discord-123456789012345678");
