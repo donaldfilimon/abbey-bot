@@ -23,6 +23,7 @@ pub enum AdminAction {
     SetPersona(Persona),
     SetCooldown(u32),
     SetBudget(u32),
+    SetEpsilon(u16),
     Flush,
     Export,
     RequestReset,
@@ -38,6 +39,7 @@ pub enum AdminEffect {
     SetPersona(Persona),
     SetCooldown(u32),
     SetBudget(u32),
+    SetEpsilon(u16),
     Persist,
     Export,
     ResetChannel,
@@ -106,6 +108,9 @@ impl AdminAction {
             Self::SetBudget(1) => "budget-1",
             Self::SetBudget(6) => "budget-6",
             Self::SetBudget(_) => "budget-60",
+            Self::SetEpsilon(5) => "epsilon-5",
+            Self::SetEpsilon(20) => "epsilon-20",
+            Self::SetEpsilon(_) => "epsilon-50",
             Self::Flush => "flush",
             Self::Export => "export",
             Self::ConfirmReset => "confirm-reset",
@@ -134,6 +139,9 @@ impl AdminAction {
             "budget-1" => Self::SetBudget(1),
             "budget-6" => Self::SetBudget(6),
             "budget-60" => Self::SetBudget(60),
+            "epsilon-5" => Self::SetEpsilon(5),
+            "epsilon-20" => Self::SetEpsilon(20),
+            "epsilon-50" => Self::SetEpsilon(50),
             "flush" => Self::Flush,
             "export" => Self::Export,
             "confirm-reset" => Self::ConfirmReset,
@@ -203,7 +211,7 @@ impl AdminSession {
             | AdminAction::SetUnsolicited(_)
             | AdminAction::SetPersona(_)
             | AdminAction::SetCooldown(_) => AdminPage::Conversation,
-            AdminAction::SetBudget(_) => AdminPage::Learning,
+            AdminAction::SetBudget(_) | AdminAction::SetEpsilon(_) => AdminPage::Learning,
             AdminAction::Flush | AdminAction::Export => AdminPage::Operations,
         };
         Ok((
@@ -246,12 +254,19 @@ pub fn reduce(action: AdminAction, settings: &GuildSettings) -> AdminEffect {
         {
             AdminEffect::SetBudget(crate::guild::clamp_budget(i64::from(value)))
         }
+        AdminAction::SetEpsilon(value)
+            if settings.epsilon_override
+                != Some(crate::guild::clamp_epsilon(f64::from(value) / 100.0)) =>
+        {
+            AdminEffect::SetEpsilon(value)
+        }
         AdminAction::SetLearning(_)
         | AdminAction::SetVision(_)
         | AdminAction::SetUnsolicited(_)
         | AdminAction::SetPersona(_)
         | AdminAction::SetCooldown(_)
-        | AdminAction::SetBudget(_) => AdminEffect::None,
+        | AdminAction::SetBudget(_)
+        | AdminAction::SetEpsilon(_) => AdminEffect::None,
         AdminAction::Flush => AdminEffect::Persist,
         AdminAction::Export => AdminEffect::Export,
         AdminAction::ConfirmReset => AdminEffect::ResetChannel,
@@ -344,6 +359,18 @@ mod tests {
         assert_eq!(
             reduce(AdminAction::SetLearning(false), &settings),
             AdminEffect::SetLearning(false)
+        );
+        let settings = GuildSettings {
+            epsilon_override: Some(crate::guild::clamp_epsilon(0.2)),
+            ..settings
+        };
+        assert_eq!(
+            reduce(AdminAction::SetEpsilon(20), &settings),
+            AdminEffect::None
+        );
+        assert_eq!(
+            reduce(AdminAction::SetEpsilon(50), &settings),
+            AdminEffect::SetEpsilon(50)
         );
     }
 

@@ -82,6 +82,11 @@ impl MemberVoiceView {
             MemberVoiceState::AwaitingConsent if !input.caller_agrees => {
                 "Review `/voice consent` and save your choice."
             }
+            MemberVoiceState::AwaitingConsent
+                if input.caller_can_manage && !input.caller_present =>
+            {
+                "Join the configured voice channel before using `/voice resume consent:true`."
+            }
             MemberVoiceState::AwaitingConsent if input.caller_can_manage => {
                 "After everyone present agrees, use `/voice resume consent:true`."
             }
@@ -89,10 +94,18 @@ impl MemberVoiceView {
                 "Use `/voice leave` whenever you want processing to stop."
             }
             MemberVoiceState::Presence if input.caller_can_manage => {
-                "After everyone present agrees, use `/voice join consent:true`."
+                if input.caller_present {
+                    "After everyone present agrees, use `/voice join consent:true`."
+                } else {
+                    "Join the configured voice channel before using `/voice join consent:true`."
+                }
             }
             MemberVoiceState::Paused if input.caller_can_manage => {
-                "Review consent, then use `/voice join consent:true`."
+                if input.caller_present {
+                    "Review consent, then use `/voice join consent:true`."
+                } else {
+                    "Join the configured voice channel before using `/voice join consent:true`."
+                }
             }
             _ => "Review `/voice consent`; a manager controls starting the call.",
         };
@@ -231,5 +244,44 @@ mod tests {
         assert_eq!(rendered.lines().count(), 5, "{rendered}");
         assert!(rendered.contains("awaiting consent"));
         assert!(rendered.contains("OpenAI"));
+    }
+
+    #[test]
+    fn manager_next_action_requires_presence_before_join_or_resume() {
+        for phase in [
+            VoicePhase::PresenceOnly,
+            VoicePhase::Disconnected,
+            VoicePhase::AwaitingConsent,
+        ] {
+            let base = MemberVoiceInput {
+                configured: true,
+                phase: Some(phase),
+                mode: VoiceMode::Local,
+                caller_agrees: true,
+                channel_id: Some(7),
+                caller_can_view_channel: false,
+                caller_present: false,
+                caller_can_manage: true,
+            };
+            let absent = MemberVoiceView::project(base.clone());
+            assert!(
+                absent
+                    .next_action
+                    .starts_with("Join the configured voice channel"),
+                "{}",
+                absent.next_action
+            );
+            let present = MemberVoiceView::project(MemberVoiceInput {
+                caller_present: true,
+                ..base
+            });
+            assert!(
+                !present
+                    .next_action
+                    .starts_with("Join the configured voice channel"),
+                "{}",
+                present.next_action
+            );
+        }
     }
 }

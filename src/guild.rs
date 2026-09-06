@@ -309,6 +309,15 @@ pub fn clamp_budget(per_hour: i64) -> u32 {
     per_hour.clamp(1, i64::from(MAX_BUDGET_PER_HOUR)) as u32
 }
 
+/// Clamp the shared exploration override to the DQN's supported range.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "epsilon is bounded to 0..=1 before conversion"
+)]
+pub fn clamp_epsilon(value: f64) -> f32 {
+    value.clamp(0.0, 1.0) as f32
+}
+
 fn on_off(flag: bool) -> &'static str {
     if flag { "on" } else { "off" }
 }

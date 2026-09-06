@@ -110,8 +110,13 @@ impl DiscordFixture {
                     let mut first = headers.lines().next().unwrap().split_whitespace();
                     let method = first.next().unwrap().to_string();
                     let route = first.next().unwrap().to_string();
+                    let multipart = headers
+                        .to_ascii_lowercase()
+                        .contains("content-type: multipart/form-data");
                     let body = if length == 0 {
                         Value::Null
+                    } else if multipart {
+                        json!({"multipart": String::from_utf8_lossy(&bytes[header_end..header_end + length])})
                     } else {
                         serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap()
                     };
@@ -298,6 +303,26 @@ impl DiscordFixture {
             serde_json::from_value(serde_json::to_value(guild).unwrap()).unwrap();
         self.context.cache.update(&mut event);
     }
+}
+
+fn admin_component(
+    fixture: &DiscordFixture,
+    session: &crate::admin_dashboard::AdminSession,
+    action: crate::admin_dashboard::AdminAction,
+    channel: u64,
+) -> serenity::all::ComponentInteraction {
+    let mut message = Message::default();
+    message.id = serenity::all::MessageId::new(900);
+    message.channel_id = ChannelId::new(channel);
+    message.author = fixture.context.cache.current_user().clone().into();
+    serde_json::from_value(json!({
+        "id": "901", "application_id": "321",
+        "data": {"custom_id": session.custom_id(action), "component_type": 2},
+        "guild_id": GUILD.to_string(), "channel_id": channel.to_string(),
+        "message": message, "user": user(ACTOR), "token": "offline-component",
+        "version": 1, "locale": "en-US", "entitlements": [], "attachment_size_limit": 1048576
+    }))
+    .unwrap()
 }
 
 impl Drop for DiscordFixture {
@@ -1158,4 +1183,225 @@ async fn registered_authorized_voice_leave_closes_pending_media_before_teardown_
     fixture.acknowledgement_release.add_permits(1);
     transition.release.add_permits(1);
     assert!(action.await.is_err());
+}
+
+#[tokio::test]
+async fn actual_admin_dispatch_enforces_ack_permission_reload_reset_scope_and_private_export() {
+    use crate::admin_dashboard::{AdminAction, AdminPage, AdminSession};
+    let fixture = DiscordFixture::new().await;
+    fixture
+        .permissions
+        .store(Permissions::MANAGE_GUILD.bits(), Ordering::SeqCst);
+    let data = configured_data();
+    let session = AdminSession {
+        owner: ACTOR,
+        guild: GUILD,
+        expiry: runtime::now() + 900,
+        page: AdminPage::Operations,
+    };
+
+    fixture.fail_permissions.store(true, Ordering::SeqCst);
+    let interaction = admin_component(&fixture, &session, AdminAction::Flush, CHANNEL);
+    assert!(
+        crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data)
+            .await
+    );
+    let requests = fixture.take_requests();
+    assert_eq!(requests[0].body["type"], 5);
+    assert_ne!(
+        requests[0].body["data"]["flags"].as_u64().unwrap_or(0) & 64,
+        0
+    );
+    assert!(requests.iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|body| body.contains("Nothing changed"))
+    }));
+
+    fixture.fail_permissions.store(false, Ordering::SeqCst);
+    fixture
+        .permissions
+        .store(Permissions::empty().bits(), Ordering::SeqCst);
+    let interaction = admin_component(&fixture, &session, AdminAction::SetLearning(true), CHANNEL);
+    assert!(
+        crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data)
+            .await
+    );
+    assert!(
+        !crate::runtime::AppState::lock(&data.state.stores)
+            .guilds
+            .get("discord:123")
+            .is_some_and(|settings| settings.learning_enabled)
+    );
+    fixture.take_requests();
+
+    fixture
+        .permissions
+        .store(Permissions::MANAGE_GUILD.bits(), Ordering::SeqCst);
+    let authoritative = crate::guild::GuildSettings {
+        learning_enabled: true,
+        ..crate::guild::GuildSettings::default()
+    };
+    crate::runtime::AppState::lock(&data.state.stores)
+        .guilds
+        .insert("discord:123".into(), authoritative);
+    let interaction = admin_component(&fixture, &session, AdminAction::SetLearning(true), CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    let requests = fixture.take_requests();
+    assert!(requests.iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|body| body.contains("already has"))
+    }));
+
+    let interaction = admin_component(&fixture, &session, AdminAction::SetEpsilon(20), CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    fixture.take_requests();
+    let epsilon = crate::guild::clamp_epsilon(0.2);
+    assert_eq!(
+        crate::runtime::AppState::lock(&data.state.stores).guilds["discord:123"].epsilon_override,
+        Some(epsilon)
+    );
+    let brain_epsilon = {
+        let stores = crate::runtime::AppState::lock(&data.state.stores);
+        crate::runtime::AppState::lock(&data.state.brains)
+            .brain("discord:123", &*stores, runtime::now())
+            .epsilon()
+    };
+    assert_eq!(brain_epsilon, epsilon);
+    let interaction = admin_component(&fixture, &session, AdminAction::SetEpsilon(20), CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    assert!(fixture.take_requests().iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|body| body.contains("already has"))
+    }));
+
+    let current = crate::guild::scoped_channel_id("discord", &CHANNEL.to_string());
+    let other = crate::guild::scoped_channel_id("discord", "457");
+    crate::runtime::AppState::lock(&data.state.engine).commit(&current, "one", "reply", 1);
+    crate::runtime::AppState::lock(&data.state.engine).commit(&other, "two", "reply", 1);
+    let interaction = admin_component(&fixture, &session, AdminAction::RequestReset, CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    assert_eq!(
+        crate::runtime::AppState::lock(&data.state.engine).session_len(&current),
+        2
+    );
+    fixture.take_requests();
+    let interaction = admin_component(&fixture, &session, AdminAction::ConfirmReset, CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    assert_eq!(
+        crate::runtime::AppState::lock(&data.state.engine).session_len(&current),
+        0
+    );
+    assert_eq!(
+        crate::runtime::AppState::lock(&data.state.engine).session_len(&other),
+        2
+    );
+    fixture.take_requests();
+    let interaction = admin_component(&fixture, &session, AdminAction::ConfirmReset, CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    assert!(fixture.take_requests().iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|body| body.contains("already clear"))
+    }));
+
+    let interaction = admin_component(&fixture, &session, AdminAction::Export, CHANNEL);
+    crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
+    let requests = fixture.take_requests();
+    assert_eq!(requests[0].body["type"], 5);
+    assert_ne!(
+        requests[0].body["data"]["flags"].as_u64().unwrap_or(0) & 64,
+        0
+    );
+    assert!(requests.iter().any(|request| {
+        request.body["multipart"]
+            .as_str()
+            .is_some_and(|body| body.contains("brain.json") && body.contains("allowed_mentions"))
+    }));
+}
+
+#[tokio::test]
+async fn actual_admin_dispatch_never_reads_or_mutates_before_acknowledgement() {
+    use crate::admin_dashboard::{AdminAction, AdminPage, AdminSession};
+    let fixture = DiscordFixture::new().await;
+    fixture
+        .permissions
+        .store(Permissions::MANAGE_GUILD.bits(), Ordering::SeqCst);
+    fixture.hold_acknowledgement.store(true, Ordering::SeqCst);
+    let data = configured_data();
+    let session = AdminSession {
+        owner: ACTOR,
+        guild: GUILD,
+        expiry: runtime::now() + 900,
+        page: AdminPage::Learning,
+    };
+    let interaction = admin_component(&fixture, &session, AdminAction::SetLearning(true), CHANNEL);
+    let action =
+        crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data);
+    tokio::pin!(action);
+    tokio::select! {
+        entered = fixture.acknowledgement_entered.acquire() => entered.unwrap().forget(),
+        _ = &mut action => panic!("admin mutation completed before held acknowledgement"),
+    }
+    let requests = fixture.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body["type"], 5);
+    assert!(
+        !crate::runtime::AppState::lock(&data.state.stores)
+            .guilds
+            .contains_key("discord:123")
+    );
+    fixture.acknowledgement_release.add_permits(1);
+    assert!(action.await);
+    fixture.take_requests();
+
+    fixture.hold_acknowledgement.store(false, Ordering::SeqCst);
+    fixture.fail_acknowledgement.store(true, Ordering::SeqCst);
+    let interaction = admin_component(&fixture, &session, AdminAction::SetVision(false), CHANNEL);
+    assert!(
+        crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data)
+            .await
+    );
+    assert_eq!(fixture.take_requests().len(), 1);
+    let settings = crate::runtime::AppState::lock(&data.state.stores).guilds["discord:123"].clone();
+    assert!(settings.vision_enabled);
+}
+
+#[tokio::test]
+async fn actual_member_voice_status_hides_channel_and_runs_no_provider_probe() {
+    let fixture = DiscordFixture::new().await;
+    fixture
+        .permissions
+        .store(Permissions::empty().bits(), Ordering::SeqCst);
+    let data = configured_data();
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::VoiceStatus);
+    assert!(!invoke_voice_slash_fails(&fixture, command, &data, None).await);
+    let requests = fixture.take_requests();
+    assert_deferred_first(&requests, command);
+    let body = requests
+        .iter()
+        .find_map(|request| request.body["content"].as_str())
+        .expect("member status response");
+    assert!(body.contains("configured channel hidden"), "{body}");
+    assert!(!body.contains(&CHANNEL.to_string()), "{body}");
+    for forbidden in [
+        "epoch",
+        "model",
+        "endpoint",
+        "queue",
+        "participant",
+        "verifier",
+    ] {
+        assert!(!body.to_ascii_lowercase().contains(forbidden), "{body}");
+    }
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.route.contains("health")
+                || request.route.contains("models")
+                || request.route.contains("chat/completions"))
+    );
 }

@@ -1015,11 +1015,7 @@ pub async fn admin_brain(
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let state = &ctx.data().state;
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "ε is a 0–1 knob; f64→f32 loses nothing that matters"
-    )]
-    let override_eps = epsilon.map(|e| e.clamp(0.0, 1.0) as f32);
+    let override_eps = epsilon.map(guild::clamp_epsilon);
     if override_eps.is_some() {
         update_settings(ctx, |s| s.epsilon_override = override_eps);
     }
@@ -1276,6 +1272,17 @@ fn dashboard_rows(session: &crate::admin_dashboard::AdminSession) -> Vec<CreateA
                     .label("Budget 60/h")
                     .style(ButtonStyle::Secondary),
             ],
+            vec![
+                CreateButton::new(session.custom_id(A::SetEpsilon(5)))
+                    .label("Epsilon .05")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetEpsilon(20)))
+                    .label("Epsilon .20")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetEpsilon(50)))
+                    .label("Epsilon .50")
+                    .style(ButtonStyle::Secondary),
+            ],
         ],
         P::Operations => vec![vec![
             CreateButton::new(session.custom_id(A::Flush))
@@ -1309,6 +1316,7 @@ fn dashboard_rows(session: &crate::admin_dashboard::AdminSession) -> Vec<CreateA
 /// permission REST reads, state reloads, or mutations.
 enum AdminPreparation {
     Rejected(crate::admin_dashboard::Rejection),
+    LookupUnavailable,
     PermissionDenied,
     Ready(
         crate::admin_dashboard::AdminSession,
@@ -1339,7 +1347,10 @@ where
         Ok(value) => value,
         Err(error) => return Ok(AdminPreparation::Rejected(error)),
     };
-    let (permissions, settings) = load().await?;
+    let (permissions, settings) = match load().await {
+        Ok(value) => value,
+        Err(_) => return Ok(AdminPreparation::LookupUnavailable),
+    };
     if !permissions.contains(Permissions::MANAGE_GUILD)
         && !permissions.contains(Permissions::ADMINISTRATOR)
     {
@@ -1400,6 +1411,16 @@ pub async fn dispatch_admin_component(
         Err(_) => return true,
         Ok(AdminPreparation::Rejected(error)) => {
             edit_admin(ctx, interaction, error.message(), Vec::new()).await;
+            return true;
+        }
+        Ok(AdminPreparation::LookupUnavailable) => {
+            edit_admin(
+                ctx,
+                interaction,
+                "Discord could not confirm your current permission. Nothing changed.",
+                Vec::new(),
+            )
+            .await;
             return true;
         }
         Ok(AdminPreparation::PermissionDenied) => {
@@ -1476,6 +1497,16 @@ pub async fn dispatch_admin_component(
                 s.unsolicited_per_hour = guild::clamp_budget(i64::from(value))
             });
             result = Some(format!("Unsolicited budget is now **{value}/h**."));
+        }
+        AdminEffect::SetEpsilon(value) => {
+            let epsilon = guild::clamp_epsilon(f64::from(value) / 100.0);
+            update_dashboard_setting(data, guild_id.get(), |s| s.epsilon_override = Some(epsilon));
+            let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.get().to_string()));
+            let stores = AppState::lock(&data.state.stores);
+            AppState::lock(&data.state.brains)
+                .brain(&scoped, &*stores, runtime::now())
+                .set_epsilon(epsilon);
+            result = Some(format!("Exploration epsilon is now **{epsilon:.2}**."));
         }
         AdminEffect::Persist => result = Some(render_admin_flush(&data.state.persist_all())),
         AdminEffect::ResetChannel => {
