@@ -124,6 +124,61 @@ class PrivateFileTests(unittest.TestCase):
             self.assertEqual(protocol.read_private(self.home), protocol.parse_document(self.raw))
         self.assertEqual(self.path.read_bytes(), self.raw)
 
+    def test_optional_read_only_accepts_verified_leaf_absence(self):
+        self.assertEqual(protocol.read_optional_private(self.home), protocol.parse_document(self.raw))
+        self.path.unlink()
+        with patch.object(protocol.os, "kill", side_effect=AssertionError("no process probes")):
+            self.assertIsNone(protocol.read_optional_private(self.home))
+        self.assertFalse(self.path.exists())
+        self.parent.rmdir()
+        with self.assertRaises(protocol.ProtocolError) as error:
+            protocol.read_optional_private(self.home)
+        self.assertEqual(error.exception.category, protocol.Failure.UNAVAILABLE)
+
+    def test_optional_read_rejects_unsafe_and_malformed_evidence(self):
+        self.path.write_bytes(b"PRIVATE_CANARY")
+        with self.assertRaises(protocol.ProtocolError) as error:
+            protocol.read_optional_private(self.home)
+        self.assertEqual(error.exception.category, protocol.Failure.INVALID_DOCUMENT)
+        self.path.unlink()
+        self.path.symlink_to(self.parent / "missing")
+        with self.assertRaises(protocol.ProtocolError) as error:
+            protocol.read_optional_private(self.home)
+        self.assertEqual(error.exception.category, protocol.Failure.UNSAFE_FILE)
+        self.path.unlink()
+        self.parent.chmod(0o755)
+        with self.assertRaises(protocol.ProtocolError) as error:
+            protocol.read_optional_private(self.home)
+        self.assertEqual(error.exception.category, protocol.Failure.UNSAFE_FILE)
+
+    def test_optional_read_preserves_leaf_io_errors(self):
+        original = os.open
+        for code in (errno.EACCES, errno.EIO):
+            def open_file(path, flags, *args, **kwargs):
+                if path == "readiness.json":
+                    raise OSError(code, "PRIVATE_CANARY")
+                return original(path, flags, *args, **kwargs)
+            with patch.object(protocol.os, "open", side_effect=open_file):
+                with self.assertRaises(protocol.ProtocolError) as error:
+                    protocol.read_optional_private(self.home)
+            self.assertEqual(error.exception.category, protocol.Failure.UNAVAILABLE)
+            self.assertNotIn("CANARY", str(error.exception))
+
+    def test_optional_absence_requires_successful_descriptor_cleanup(self):
+        self.path.unlink()
+        original = os.close
+        closed = []
+        def close(fd):
+            original(fd)
+            closed.append(fd)
+            raise OSError(errno.EIO, "PRIVATE_CANARY")
+        with patch.object(protocol.os, "close", side_effect=close):
+            with self.assertRaises(protocol.ProtocolError) as error:
+                protocol.read_optional_private(self.home)
+        self.assertEqual(error.exception.category, protocol.Failure.UNAVAILABLE)
+        self.assertEqual(len(closed), 4)
+        self.assertEqual(len(set(closed)), 4)
+
     def test_mode_and_owner_fail_closed(self):
         for target, bad_mode in ((self.path, 0o644), (self.parent, 0o755), (self.home / ".local", 0o777)):
             original = stat.S_IMODE(target.stat().st_mode)

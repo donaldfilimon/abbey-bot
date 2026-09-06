@@ -157,6 +157,17 @@ def _safe(metadata, uid: int, mode: int, directory: bool) -> bool:
 
 
 def read_private(home: Path, kind: str = "readiness", *, uid: int | None = None) -> dict:
+    return _read_private(home, kind, uid=uid, allow_absent=False)
+
+
+def read_optional_private(home: Path, kind: str = "readiness", *,
+                          uid: int | None = None) -> dict | None:
+    """Return None only for an absent fixed leaf under validated private parents."""
+    return _read_private(home, kind, uid=uid, allow_absent=True)
+
+
+def _read_private(home: Path, kind: str, *, uid: int | None,
+                  allow_absent: bool) -> dict | None:
     """Read the fixed owner path with descriptor-relative no-follow checks.
 
     The Home root is supplied by the caller, never by a path-bearing CLI flag.
@@ -182,25 +193,31 @@ def read_private(home: Path, kind: str = "readiness", *, uid: int | None = None)
             if component == "abbey-bot" and not _safe(meta, owner, 0o700, True):
                 raise ProtocolError(Failure.UNSAFE_FILE)
         filename = "readiness.json" if kind == "readiness" else "bootstrap-status.json"
-        handle = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=current)
-        descriptors.append(handle)
-        before = os.fstat(handle)
-        if not _safe(before, owner, 0o600, False):
-            raise ProtocolError(Failure.UNSAFE_FILE)
-        limit = _SCHEMA[kind]["max_bytes"]
-        if before.st_size > limit:
-            raise ProtocolError(Failure.INVALID_DOCUMENT)
-        raw = bytearray()
-        while len(raw) <= limit:
-            chunk = os.read(handle, limit + 1 - len(raw))
-            if not chunk:
-                break
-            raw.extend(chunk)
-        after = os.fstat(handle)
-        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-            raise ProtocolError(Failure.UNAVAILABLE)
-        result = parse_document(bytes(raw), kind)
+        try:
+            handle = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=current)
+        except FileNotFoundError:
+            if not allow_absent:
+                raise
+            result = None
+        else:
+            descriptors.append(handle)
+            before = os.fstat(handle)
+            if not _safe(before, owner, 0o600, False):
+                raise ProtocolError(Failure.UNSAFE_FILE)
+            limit = _SCHEMA[kind]["max_bytes"]
+            if before.st_size > limit:
+                raise ProtocolError(Failure.INVALID_DOCUMENT)
+            raw = bytearray()
+            while len(raw) <= limit:
+                chunk = os.read(handle, limit + 1 - len(raw))
+                if not chunk:
+                    break
+                raw.extend(chunk)
+            after = os.fstat(handle)
+            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ProtocolError(Failure.UNAVAILABLE)
+            result = parse_document(bytes(raw), kind)
     except OSError as error:
         category = Failure.UNSAFE_FILE if error.errno in (errno.ELOOP, errno.ENOTDIR) else Failure.UNAVAILABLE
         raise ProtocolError(category) from None

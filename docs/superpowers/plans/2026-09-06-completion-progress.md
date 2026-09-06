@@ -78,7 +78,7 @@ Guided-help Task 1 is committed at `8d5a06f8` and independently reviewed: condit
 ## Shared service protocol foundation
 
 The read-only Python parser/private-file reader and shared service schema/corpus
-are implemented as a partial Tasks 10/11 foundation. Sixteen offline tests pass,
+are implemented as a partial Tasks 10/11 foundation. Twenty offline tests pass,
 covering 215 document vectors and 28 freshness vectors; independent review
 approved the source after cleanup and symlink-test fixes. Removing no-follow in
 a review-only mutation causes six meaningful test failures. Rust conformance,
@@ -86,10 +86,17 @@ continuous readiness, checker CLI, installer transactions, gate wiring and live
 service acceptance remain outstanding. Bootstrap has exactly six keys in the
 binding specification; an earlier ignored supplemental count was corrected.
 
-Remote main was fetched at `ba61202358808981c5566524b66bf2676aea1c29`. It adds
-constitutional memory-proposal adapters beyond our last canonical merge, and
-canonical has additional in-progress changes. Integrate committed changes at a
-clean boundary; preserve the other session's dirty gateway/episode work.
+The optional baseline reader now returns absence only after validating every
+parent and observing ENOENT at the fixed leaf. Missing parents, unsafe types,
+malformed content, I/O errors and cleanup failures cannot become an empty nonce
+baseline. An independent reviewer reran all 20 tests successfully.
+
+Remote main was freshly fetched at `cf22506`; the canonical checkout is clean
+at that commit. It adds constitutional memory-proposal adapters, per-guild gate
+coverage, checkpoint admission and gateway deployment source beyond our last
+canonical merge. Integrate that committed work after the provider runtime's
+clean commit. Its live-operation ledger belongs to the other session and is not
+new acceptance evidence from this modernization run.
 
 The service specification now explicitly supplies pre-transaction nonce and
 absolute deadline evidence to the unchanged three-argument checker via bounded
