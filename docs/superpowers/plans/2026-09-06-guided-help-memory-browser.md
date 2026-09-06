@@ -1,6 +1,6 @@
 # Guided Help and Private Memory Browser Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make existing Discord actions discoverable and every stored fact privately readable.
 
@@ -105,7 +105,7 @@ pub fn render(subject: u64, page: &FactPage<'_>) -> String;
 
 Session new/navigate/custom_id methods use checked `now + 900`, preserve owner/subject/scope/expiry, and change only a validated page. Do not derive Debug for identity-bearing sessions. The shell uses the existing Serenity context/Data/component signature and returns a handled boolean for its protocol branch.
 
-- [ ] Add pure tests for all facts reachable without truncation, empty/shrinking data, Unicode, and strict envelopes. Pin maximum-width IDs at 99 characters. Reject zero/noncanonical/overflow IDs, extra fields, unknown versions, page >24, wrong actor/scope, DM cross-subject, expiry at now and expiry over 900 seconds away.
+- [x] Add pure tests for all facts reachable without truncation, empty/shrinking data, Unicode, and strict envelopes. Pin maximum-width IDs at 99 characters. Reject zero/noncanonical/overflow IDs, extra fields, unknown versions, page >24, wrong actor/scope, DM cross-subject, expiry at now and expiry over 900 seconds away.
 
 ```rust
 let facts: Vec<String> = (0..100).map(|n| format!("{n}:{}", "x".repeat(296))).collect();
@@ -116,11 +116,20 @@ assert_eq!(shortened.index, 1);
 assert_eq!(shortened.facts, &facts[4..5]);
 ```
 
-- [ ] Run `cargo test --locked memory_browser::` to establish failing requirements, then implement canonical parser, snapshot pager and bounded full-text renderer. Empty data has a stable page-one-of-one presentation and no enabled navigation. Use at most four full facts per page; canonical store bounds remain the authority.
-- [ ] Add Browse facts to both shared summary reply paths when facts exist, preserving their identical card body. Use separate previous/next controls whose IDs encode destination pages. After acknowledgement, validate bot-authored message and local envelope, fetch current guild permissions when needed, apply shared A1, and only then fetch the fresh subject snapshot. Map DM to the caller's existing one-person memory scope; never trust a serialized scope to select a different current conversation.
-- [ ] Add actual registered menu/slash and component tests against fake HTTP and a recording snapshot seam. Prove no snapshot on denied/expired/foreign-context requests, permission loss on navigation, full text/private/no-mentions delivery, fixed expiry, current pagination after deletions elsewhere, and zero memory/transcript/reward/learning/voice mutations by browsing.
-- [ ] Update README with Browse facts and its read-only scope. Run `cargo test --locked memory_browser::`, `cargo test --locked commands_memory_browser::`, `cargo test --locked commands_help::`, `cargo test --locked commands_brain::tests::`, format and all-targets Clippy. Commit exact owned paths and obtain independent review.
+- [x] Implement the canonical parser, snapshot pager and bounded full-text renderer, and verify their regression fixtures in the integrated test binary. Empty data has a stable page-one-of-one presentation and no enabled navigation. Use at most four full facts per page; canonical store bounds remain the authority.
+- [x] Add Browse facts to both shared summary reply paths when facts exist, preserving their identical card body. Use separate previous/next controls whose IDs encode destination pages. After acknowledgement, validate bot-authored message and local envelope, fetch current guild permissions when needed, apply shared A1, and only then fetch the fresh subject snapshot. Map DM to the caller's existing one-person memory scope; never trust a serialized scope to select a different current conversation.
+- [x] Add actual registered menu/slash and component tests against fake HTTP and a recording snapshot seam. Prove no snapshot on denied/expired/foreign-context requests, permission loss on navigation, full text/private/no-mentions delivery, fixed expiry, current pagination after deletions elsewhere, and zero memory/transcript/reward/learning/voice mutations by browsing.
+- [x] Update README with Browse facts and its read-only scope. Run `cargo test --locked memory_browser::`, `cargo test --locked commands_memory_browser::`, `cargo test --locked commands_help::`, `cargo test --locked commands_brain::tests::`, format and all-targets Clippy. Commit exact owned paths and obtain independent review.
 
 ## Plan self-review
 
 All guided-help and private-browsing design requirements map to Tasks 1/2, including actual adapter enforcement and full fact visibility. Pure types are defined above; existing authorities retain their signatures. No mutation or live-operation task is introduced. The separate operator plan owns design sections 3/4, and modernization Task 12 remains the final integrated gate.
+
+## Delivered source acceptance
+
+Task 2 is committed in `c22a4e6`, independently reviewed and included in the
+1,175-pass locked suite with four intentional ignores, formatting and all-target
+Clippy. Actual adapter fixtures cover acknowledgement, authorization, fresh
+snapshots, privacy and navigation. Validation was consolidated at the integrated
+module-wiring boundary; standalone pre-implementation red runs for Task 2 are
+not claimed. Final fresh strict delivery and live UX remain separate layers.

@@ -499,7 +499,7 @@ fn autocomplete_never_enters_the_defer_or_permission_lookup_path() {
     assert!(requires_command_guard(
         poise::CommandInteractionType::Command
     ));
-    let source = include_str!("../commands_brain.rs");
+    let source = include_str!("../commands_brain/memory_commands.rs");
     for name in ["autocomplete_fact", "autocomplete_pending"] {
         let start = source.find(&format!("async fn {name}(")).unwrap();
         let body = &source[start..source[start..].find("\n}").unwrap() + start];

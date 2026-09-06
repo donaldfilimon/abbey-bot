@@ -229,9 +229,9 @@ Task 11 Python source closure: reviewed installer work through `a241dd4` and gat
 
 **Interfaces:** Preserve crate-private re-exports and all deliberate interfaces above.
 
-- [ ] Move provider, runtime, command, brain-command, voice-command, local/offline voice, and voice-session responsibilities into focused modules without behavior changes.
-- [ ] Keep every production Rust file below 1,000 lines; flag files above 800 for review; add a size ratchet and forbid module-wide dead-code/import allowances.
-- [ ] Preserve voice epoch, media-gate, cancellation, leave, and actor-reap ordering during movement.
+- [x] Move provider, runtime, command, brain-command, voice-command, local/offline voice, and voice-session responsibilities into focused modules without behavior changes.
+- [x] Keep every production Rust file below 1,000 lines; flag files above 800 for review; add a size ratchet and forbid module-wide dead-code/import allowances.
+- [x] Preserve voice epoch, media-gate, cancellation, leave, and actor-reap ordering during movement.
 - [ ] In a separate lockfile commit, apply compatible patch/minor updates that retain Rust 1.98 and current Serenity/Poise/Songbird/Reqwest/Symphonia compatibility groups.
 - [ ] Retain the reviewed OpenMLS patch and four explicit RustSec records unless compatible upstream changes genuinely remove them; add no OpenSSL/native-TLS graph.
 - [ ] Update README, roadmap, live protocol, goals/todo, readiness/logging runbook, and mirrored AGENTS.md/CLAUDE.md with claim-honest evidence.

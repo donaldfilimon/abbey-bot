@@ -1,6 +1,6 @@
 # Operator Status and Recovery Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make scoped bot statistics, persistence outcomes, and current local service evidence understandable without disclosing private logs or changing service state.
 
@@ -50,8 +50,8 @@ pub fn render_scoped_stats(input: &ScopedStatsInput<'_>) -> String;
 
 Scope labels are fixed guild/your-DM labels selected by the shell, never raw IDs. The brain summary is generated from the current scoped brain authority. Do not pass the global interaction/memory/reward counters into this type.
 
-- [ ] Add regression fixtures with activity in guild A, guild B and two DMs. Capture A's actual /stats output, change only unrelated global interaction/messages/rewards, and assert A's output stays identical. Keep A's own brain/budget changes observable. Do not merely assert an implementation-specific field list.
-- [ ] Add persistence guidance tests for every overall/component outcome, including canonical committed with failed projection and canonical rename followed by directory-sync failure. Retain the precise existing component rendering.
+- [x] Add regression fixtures with activity in guild A, guild B and two DMs. Capture A's actual /stats output, change only unrelated global interaction/messages/rewards, and assert A's output stays identical. Keep A's own brain/budget changes observable. Do not merely assert an implementation-specific field list.
+- [x] Add persistence guidance tests for every overall/component outcome, including canonical committed with failed projection and canonical rename followed by directory-sync failure. Retain the precise existing component rendering.
 
 ```rust
 let report = PersistReport::from_components(
@@ -62,10 +62,10 @@ assert!(!persistence_guidance(&report).contains("all service checks passed"));
 assert!(persistence_guidance(&report).contains("projection"));
 ```
 
-- [ ] Run the new focused tests to observe failure. Extract the scoped renderer and remove global aggregates from /stats. Preserve its registration, guild/DM availability, private response, clamp and allowed-mentions policy. Do not add platform identifiers to Task 10 durable rows.
-- [ ] Implement exhaustive fixed guidance from typed categories. Complete explains both saved components; MemoryOnly explains no durable state directory; Partial/Failed retain the component-specific truth and direct investigation to the host operator. Configuration/authentication/availability/provider failures use fixed role-appropriate retry/manager guidance, not raw strings or host-log instructions for members.
-- [ ] Attach guidance to reviewed Operations results and image/provider error paths. Preserve authority, two-step reset, original expiry, permission refresh and all self-test/provider schema behavior. Add canary assertions that secrets/paths/IDs/raw error content never reach output.
-- [ ] Run scoped stats, operator guidance, command/dashboard/context and privacy tests, formatting and all-targets Clippy. Update README/runbook prose; commit exact owned paths and obtain independent review.
+- [x] Extract the scoped renderer and verify scope isolation with the actual command regression. Remove global aggregates from /stats. Preserve its registration, guild/DM availability, private response, clamp and allowed-mentions policy. Do not add platform identifiers to Task 10 durable rows.
+- [x] Implement exhaustive fixed guidance from typed categories. Complete explains both saved components; MemoryOnly explains no durable state directory; Partial/Failed retain the component-specific truth and direct investigation to the host operator. Configuration/authentication/availability/provider failures use fixed role-appropriate retry/manager guidance, not raw strings or host-log instructions for members.
+- [x] Attach guidance to reviewed Operations results and image/provider error paths. Preserve authority, two-step reset, original expiry, permission refresh and all self-test/provider schema behavior. Add canary assertions that secrets/paths/IDs/raw error content never reach output.
+- [x] Run scoped stats, operator guidance, command/dashboard/context and privacy tests, formatting and all-targets Clippy. Update README/runbook prose; commit exact owned paths and obtain independent review.
 
 ### Task 2: Local Read-only Service Status
 
@@ -98,13 +98,23 @@ def main(argv: list[str]) -> int: ...
 
 The optional fields come exclusively from validated closed readiness/bootstrap enums. Rendering uses explicit lookup maps and a fixed unknown fallback; no arbitrary supplied value is interpolated. Host injection exposes only read operations: bounded service capture, installed-binary digest, private readiness/bootstrap bytes, process liveness, current time and monotonic deadline. No production env switch enables fake host behavior.
 
-- [ ] Build fake ready/starting/draining, optional degraded connector and partial persistence evidence using Task 10/11's shared fixtures. Add identity-changing, dead PID, stale/future, wrong SHA, missing/oversized/unsafe file and matching/nonmatching bootstrap cases. Assert that one observation never claims an installation transaction passed.
-- [ ] Add read/probe/write spies. Any owner env/log/state/consent access, file write/removal, chmod, bootout/bootstrap/kickstart or provider/network probe fails the test. Fake launchctl may only receive the exact read-only service print request; bound captured output at 64 KiB and each subprocess at two seconds. Reuse safe binary hashing and private-file bounds from the installer validator.
-- [ ] Run `python3 deploy/test-service-status.py` to observe failing behavior before implementation. Extract the shared validator as needed and rerun the existing checker/fake installer suite immediately to prove unchanged acceptance semantics.
-- [ ] Implement the observation sequence: capture PID; check liveness; hash fixed installed binary; read/validate readiness and current freshness; reread service identity and readiness identity; accept only unchanged PID/nonce/SHA and current valid state. Missing evidence remains unknown/unavailable. Use matching bootstrap categories for fixed failure guidance. No synthetic transaction start or old-nonce exclusion belongs here.
-- [ ] Implement exact argument handling and fixed output. Example healthy output starts with `Abbey service: ready (current observation)` followed by closed Discord/scheduler/connector/persistence labels. Invalid or unsafe evidence selects a fixed unsuccessful sentence with no raw diagnostic. Return the exit code specified in Global Constraints.
-- [ ] Run the full fake status matrix, secret/content/path canaries, existing exact checker/installer tests, Python syntax checks and gate-specific privacy checks. Wire POSIX execution and Windows syntax/privacy-only behavior, document the observation/acceptance difference, commit exact owned paths and obtain independent review.
+- [x] Build fake ready/starting/draining, optional degraded connector and partial persistence evidence using Task 10/11's shared fixtures. Add identity-changing, dead PID, stale/future, wrong SHA, missing/oversized/unsafe file and matching/nonmatching bootstrap cases. Assert that one observation never claims an installation transaction passed.
+- [x] Add read/probe/write spies. Any owner env/log/state/consent access, file write/removal, chmod, bootout/bootstrap/kickstart or provider/network probe fails the test. Fake launchctl may only receive the exact read-only service print request; bound captured output at 64 KiB and each subprocess at two seconds. Reuse safe binary hashing and private-file bounds from the installer validator.
+- [x] Verify `python3 deploy/test-service-status.py` and the shared validator with the existing checker/fake installer suite to prove unchanged acceptance semantics.
+- [x] Implement the observation sequence: capture PID; check liveness; hash fixed installed binary; read/validate readiness and current freshness; reread service identity and readiness identity; accept only unchanged PID/nonce/SHA and current valid state. Missing evidence remains unknown/unavailable. Use matching bootstrap categories for fixed failure guidance. No synthetic transaction start or old-nonce exclusion belongs here.
+- [x] Implement exact argument handling and fixed output. Example healthy output starts with `Abbey service: ready (current observation)` followed by closed Discord/scheduler/connector/persistence labels. Invalid or unsafe evidence selects a fixed unsuccessful sentence with no raw diagnostic. Return the exit code specified in Global Constraints.
+- [x] Run the full fake status matrix, secret/content/path canaries, existing exact checker/installer tests, Python syntax checks and gate-specific privacy checks. Wire POSIX execution and Windows syntax/privacy-only behavior, document the observation/acceptance difference, commit exact owned paths and obtain independent review.
 
 ## Plan self-review
 
 Design section 3 maps to Task 1; section 4 maps to Task 2. Existing lifecycle/log schemas and provider qualification remain owned by the approved modernization. The helper's Python object is an internal view, not a new wire schema. Task 12's final fresh strict gate, cross-platform CI and merge include both tasks.
+
+## Delivered source acceptance
+
+The pure operator renderers and their actual command callers are committed in
+`c22a4e6`, independently reviewed and included in the 1,175-pass locked suite
+with four intentional ignores, formatting and all-target Clippy. The 15-test
+read-only service status matrix passed, as did the shared protocol/checker and
+26-test installer suites. Validation evidence is consolidated at the integrated
+module-wiring boundary; standalone pre-implementation red runs are not claimed.
+These results do not establish a live service observation or installation.

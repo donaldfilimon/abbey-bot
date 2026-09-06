@@ -203,3 +203,27 @@ resolved before execution because the private-path contract rejects the macOS
 implemented, reviewed and validated for the combined integration commit; Task 12
 still owns mechanical decomposition, compatible dependency refresh and final
 delivery validation.
+
+Task 12 mechanical extraction now has independent lexical/body evidence for
+the six root-owned command/voice groups: 911 decoded string-literal occurrences
+and 265 function-body sequences are unchanged from `c22a4e6`. Existing test
+module names are preserved. The 818-line offline adapter and 887-line voice
+session root passed responsibility review and remain below the hard 1,000-line
+limit. Independent review of the provider/runtime/startup/episode extraction preserved
+565 decoded string-literal occurrences and 214 function-body sequences; original
+inline test module names remain unchanged. Coordinated Rust
+verification follows when the pending-memory correctness fix is source-stable.
+
+Whole-branch review found stale moderator permissions and acknowledgement order
+in pending-memory controls. Its assigned fix also binds displayed entries so a
+concurrent list change cannot redirect an old button to another fact. A separate
+subprocess pre-cancellation fix follows the mechanical boundary. These are tracked
+source corrections, not requests for live operations.
+
+The completed mechanical source passed all-target Clippy (13.02 seconds),
+formatting and the size/suppression gate. Its full suite reported 1,178 passes,
+one source-location fixture failure and four intentional ignores (47.28 seconds).
+The fixture still read the old brain-command file; correcting that include path
+preserved its namespace and its focused rerun passed. This is not a claim of a
+second full-suite run after the one-line fixture correction. All extraction
+slices passed independent body/literal and responsibility review.

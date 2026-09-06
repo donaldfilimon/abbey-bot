@@ -163,6 +163,15 @@ composes on top in `routing_signals.rs`.
 
 **Abbey default voice (code):** warm, sharp friend — result-first, clear, honest about uncertainty (`src/persona.rs` / `src/ask.rs`). Do not rewrite prompts toward help-desk filler.
 
+## Module size and extraction
+
+The gate runs `scripts/check-rust-module-size.py`: production Rust modules must
+remain below 1,000 lines, and files above 800 require responsibility review.
+External test-only modules are exempt; inline tests count until extracted.
+Split by responsibility, preserve existing test module paths and literal data,
+and use narrow re-exports when callers need the original path. Module-wide
+`allow` or `expect` for dead code or unused imports is forbidden.
+
 ## Managed process ownership and operational evidence
 
 `service/` owns accepted framework callbacks, connector actors, scheduler work,
