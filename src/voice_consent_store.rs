@@ -431,4 +431,52 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn literal_v1_fixture_loads_canonically_and_incompatible_versions_fail_closed() {
+        const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/voice_consent_v1.json");
+        const GUILD: u64 = 111_111_111_111_111_111;
+        const LOCAL_MEMBER: u64 = 222_222_222_222_222_222;
+        const OPENAI_MEMBER: u64 = 333_333_333_333_333_333;
+
+        let dir = Scratch::new();
+        fs::write(dir.0.join(FILE), FIXTURE).unwrap();
+        let store = ConsentStore::load(Some(&dir.0), GUILD);
+        assert!(store.agrees(LOCAL_MEMBER, VoiceMode::Local));
+        assert!(!store.agrees(LOCAL_MEMBER, VoiceMode::OpenAi));
+        assert!(store.agrees(OPENAI_MEMBER, VoiceMode::OpenAi));
+        assert!(!store.agrees(OPENAI_MEMBER, VoiceMode::Local));
+        assert!(
+            ConsentStore::load(Some(&dir.0), GUILD + 1)
+                .coverage(&HashSet::new(), VoiceMode::Local)
+                .is_err()
+        );
+
+        let ledger: Ledger = serde_json::from_slice(FIXTURE).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&ledger).unwrap(),
+            FIXTURE.strip_suffix(b"\n").unwrap_or(FIXTURE)
+        );
+        assert_eq!(
+            ledger.members[&LOCAL_MEMBER].local.as_ref().unwrap().policy,
+            1
+        );
+        assert_eq!(
+            ledger.members[&OPENAI_MEMBER]
+                .openai
+                .as_ref()
+                .unwrap()
+                .policy,
+            1
+        );
+
+        let mut incompatible: serde_json::Value = serde_json::from_slice(FIXTURE).unwrap();
+        incompatible["version"] = 2.into();
+        fs::write(dir.0.join(FILE), serde_json::to_vec(&incompatible).unwrap()).unwrap();
+        assert!(
+            ConsentStore::load(Some(&dir.0), GUILD)
+                .coverage(&HashSet::new(), VoiceMode::Local)
+                .is_err()
+        );
+    }
 }

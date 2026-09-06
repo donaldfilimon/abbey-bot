@@ -359,6 +359,17 @@ impl Invocation {
         }
     }
 
+    fn voice(command: &poise::Command<Data, Error>, consent: Option<bool>) -> Self {
+        let mut invocation = Self::new(command, true, None);
+        invocation.interaction.data.options = consent.map_or_else(Vec::new, |consent| {
+            serde_json::from_value(json!([{
+                "name": "consent", "type": 5, "value": consent
+            }]))
+            .unwrap()
+        });
+        invocation
+    }
+
     fn context<'a>(
         &'a self,
         fixture: &'a DiscordFixture,
@@ -367,11 +378,23 @@ impl Invocation {
         data: &'a Data,
         interaction_type: poise::CommandInteractionType,
     ) -> poise::ApplicationContext<'a, Data, Error> {
+        self.context_with_args(fixture, command, options, data, interaction_type, &[])
+    }
+
+    fn context_with_args<'a>(
+        &'a self,
+        fixture: &'a DiscordFixture,
+        command: &'a poise::Command<Data, Error>,
+        options: &'a poise::FrameworkOptions<Data, Error>,
+        data: &'a Data,
+        interaction_type: poise::CommandInteractionType,
+        args: &'a [serenity::all::ResolvedOption<'a>],
+    ) -> poise::ApplicationContext<'a, Data, Error> {
         poise::ApplicationContext {
             serenity_context: &fixture.context,
             interaction: &self.interaction,
             interaction_type,
-            args: &[],
+            args,
             has_sent_initial_response: &self.sent,
             framework: poise::FrameworkContext {
                 bot_id: UserId::new(321),
@@ -386,6 +409,36 @@ impl Invocation {
             __non_exhaustive: (),
         }
     }
+}
+
+fn command_by_key<'a>(
+    commands: &'a [poise::Command<Data, Error>],
+    key: CommandKey,
+) -> &'a poise::Command<Data, Error> {
+    leaves(commands)
+        .into_iter()
+        .find(|command| binding(command).key == key)
+        .unwrap()
+}
+
+async fn invoke_voice_slash_fails(
+    fixture: &DiscordFixture,
+    command: &poise::Command<Data, Error>,
+    data: &Data,
+    consent: Option<bool>,
+) -> bool {
+    let invocation = Invocation::voice(command, consent);
+    let args = invocation.interaction.data.options();
+    let options = poise::FrameworkOptions::default();
+    let context = invocation.context_with_args(
+        fixture,
+        command,
+        &options,
+        data,
+        poise::CommandInteractionType::Command,
+        &args,
+    );
+    command.slash_action.unwrap()(context).await.is_err()
 }
 
 async fn check(
@@ -767,6 +820,43 @@ async fn registered_help_guard_defers_privately_before_its_adapter_loads_permiss
         .find(|command| binding(command).key == CommandKey::Help)
         .unwrap();
     assert!(check(&fixture, command, &configured_data(), true, None).await);
+    let requests = fixture.take_requests();
+    assert_deferred_first(&requests, command);
+    assert_eq!(requests.len(), 1);
+}
+
+#[tokio::test]
+async fn registered_voice_join_and_resume_stop_when_acknowledgement_fails() {
+    let fixture = DiscordFixture::new().await;
+    fixture.actor_presence(true);
+    fixture.fail_acknowledgement.store(true, Ordering::SeqCst);
+    let data = configured_data();
+    let commands = crate::application_commands();
+    for key in [CommandKey::VoiceJoin, CommandKey::VoiceResume] {
+        let command = command_by_key(&commands, key);
+        assert!(invoke_voice_slash_fails(&fixture, command, &data, Some(true)).await);
+        let requests = fixture.take_requests();
+        assert_deferred_first(&requests, command);
+        assert_eq!(requests.len(), 1, "{}", command.qualified_name);
+    }
+}
+
+#[tokio::test]
+async fn registered_authorized_voice_leave_closes_pending_media_before_teardown_awaits() {
+    let fixture = DiscordFixture::new().await;
+    fixture.actor_presence(true);
+    let data = configured_data();
+    let runtime = data.voice.as_ref().unwrap();
+    runtime.reserve_start();
+    assert!(runtime.snapshot().await.start_pending);
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::VoiceLeave);
+
+    // The inert fixture deliberately has no Songbird manager. The real adapter
+    // must still perform its synchronous authorized close before that awaited
+    // transition reports the missing manager.
+    assert!(invoke_voice_slash_fails(&fixture, command, &data, None).await);
+    assert!(!runtime.snapshot().await.start_pending);
     let requests = fixture.take_requests();
     assert_deferred_first(&requests, command);
     assert_eq!(requests.len(), 1);

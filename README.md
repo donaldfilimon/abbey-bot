@@ -649,10 +649,12 @@ Discord Go Live video is not
 ingested; stream vision needs a separate consented screenshot source and
 retention policy.
 
-**Every command defers before touching the network.** Discord invalidates an
-interaction token 3 seconds after issuing it, and one cold REST round-trip can
-spend that alone. The deferral is unconditional; a command that defers only
-sometimes is one that races eventually.
+**Every ordinary command defers before touching the network.** Discord
+invalidates an interaction token 3 seconds after issuing it, and one cold REST
+round-trip can spend that alone. The deferral is unconditional. The sole
+exception is an authorized `/voice leave`: it closes the media gate
+synchronously, then defers concurrently with Discord voice teardown. Its guard
+refusals answer directly inside the interaction window.
 
 **Decision logic is separated from Discord.** Persona, profile, permission,
 moderation, server, learning, memory, generation-shaping, platform, and tool
