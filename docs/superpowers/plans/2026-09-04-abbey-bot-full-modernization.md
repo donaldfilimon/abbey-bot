@@ -156,15 +156,17 @@ Task 7 source closure: `0fafed3`; 114 focused provider tests passed, one intenti
 
 **Interfaces:** Produces `ProviderRuntime` and `ProviderConversation`; temporarily retains crate-private legacy accessors.
 
-- [ ] Characterize legacy env precedence and labels before migration.
-- [ ] Make ProviderRuntime own catalog, eligible adapters, router, qualification state, capacity, and safe inspection state.
-- [ ] Scope provider pinning to one conversation and independently track visible output and tool dispatch.
-- [ ] Permit one fallback only before both effects; never fallback after first visible stream edit, tool dispatch, or image submission.
-- [ ] Initially activate only current Anthropic, OpenAI-compatible, and qualified FM routes; detected unsupported adapters remain ineligible.
-- [ ] Keep voice read-only/tool-incapable and vision single-provider.
-- [ ] Rename the FM-only router during migration, remove it after cutover, and remove provider-wide dead-code/import allowances.
-- [ ] Test legacy equivalence, unqualified exclusion, concurrent conversations, tool continuation, fallback effects, vision/voice boundaries, Inspect privacy, tool corpus, and manifest/self-test compatibility.
-- [ ] Commit the reviewed ProviderRuntime slice.
+- [x] Characterize legacy env precedence and labels before migration.
+- [x] Make ProviderRuntime own catalog, eligible adapters, router, qualification state, capacity, and safe inspection state.
+- [x] Scope provider pinning to one conversation and independently track visible output and tool dispatch.
+- [x] Permit one fallback only before both effects; never fallback after first visible stream edit, tool dispatch, or image submission.
+- [x] Initially activate only current Anthropic, OpenAI-compatible, and qualified FM routes; detected unsupported adapters remain ineligible.
+- [x] Keep voice read-only/tool-incapable and vision single-provider.
+- [x] Rename the FM-only router during migration, remove it after cutover, and remove provider-wide dead-code/import allowances.
+- [x] Test legacy equivalence, unqualified exclusion, concurrent conversations, tool continuation, fallback effects, vision/voice boundaries, Inspect privacy, tool corpus, and manifest/self-test compatibility.
+- [x] Commit the reviewed ProviderRuntime slice.
+
+Task 8 source closure: `2a24927` and reviewed fixes `9c09f70`. The full suite passed 1,095 tests with four live tests ignored before the final narrow qualification high-water fix; the final focused requalification regression, all-target Clippy, formatting and source review passed. Runtime delivery effects, typed transport failures, FM execution identity and replay-safe requalification findings are closed. Actual writer/drain shutdown ownership remains Task 9.
 
 ### Task 9: Supervised Service Lifecycle and Bounded Shutdown
 
@@ -233,5 +235,5 @@ Apply the binding 2026-09-06 transaction-context clarification: capture the old 
 - [ ] Update README, roadmap, live protocol, goals/todo, readiness/logging runbook, and mirrored AGENTS.md/CLAUDE.md with claim-honest evidence.
 - [ ] Run focused tests after each movement, then the strict full gate with required sibling WDBX conformance and a fresh external target directory.
 - [ ] Dispatch final whole-branch architecture/security review; fix all Critical/Important findings and record rulings.
-- [ ] Push each reviewed branch, require exact-head Ubuntu/macOS/Windows CI, merge sequentially into `main`, fast-forward canonical main, then remove worktrees and branches.
+- [ ] Follow the current machine integration policy: merge reviewed committed work into canonical `main`, remove this task's worktree and branch, then push from canonical. Require exact-head Ubuntu/macOS/Windows CI and record the final main/push/cleanup evidence. Preserve independently owned worktrees.
 - [ ] Do not perform real launchd, provider, Discord, connector, or voice acceptance without fresh authorization; record them as separate pending layers.

@@ -29,6 +29,7 @@ Invoke-Checked -Executable "python" -Arguments @(
 )
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-mlx-primary.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-publish-provider-qualification.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-protocol.py", "ProtocolTests")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-smoke-mlx-vlm-tool-deltas.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-patch-mlx-vlm-tool-encoding.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-privacy.py")
@@ -44,6 +45,7 @@ Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-wdbx-confor
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-wdbx-conformance.py")
 
 Write-Host "audio-tap installer and Swift gate: skipped (requires POSIX/macOS); Python syntax checked above"
+Write-Host "launchd installer/readiness/status execution: skipped (requires POSIX/macOS); shared schema, Python syntax and privacy checked"
 
 Write-Host "== clippy =="
 Invoke-Checked -Executable "cargo" -Arguments @("clippy", "--all-targets", "--locked", "--", "-D", "warnings")

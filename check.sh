@@ -27,6 +27,11 @@ python3 deploy/check-python-locks.py \
 python3 deploy/test-configure-mlx-primary.py
 python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
+python3 deploy/test-service-protocol.py
+python3 deploy/test-service-installation.py
+python3 deploy/test-service-readiness.py
+python3 deploy/test-service-status.py
+python3 deploy/test-install-launchd.py
 python3 deploy/test-install-audio-tap-launchd.py
 python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
 python3 deploy/test-patch-mlx-vlm-tool-encoding.py
