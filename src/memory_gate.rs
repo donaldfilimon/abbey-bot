@@ -3,6 +3,9 @@
 //! closed and visibly. Every function is a no-op `Ok(None)` when no gate is
 //! configured, which keeps the default deployment byte-identical.
 
+mod turn;
+pub use turn::{Decision, MemoryTurn};
+
 use crate::episode_gate::{GateOutcome, MemoryCandidateRequest, MemoryClass, RetentionClass};
 use crate::memory;
 use crate::runtime::{self, AppState, RememberOutcome};
@@ -13,8 +16,9 @@ pub const MAX_QUEUED: usize = 64;
 
 /// One model-tool memory write waiting for the gate (Donald's choice
 /// 2026-09-06: queue, do not refuse). Nothing is stored until it drains.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct QueuedFact {
+    pub completion: Option<turn::Completion>,
     pub scoped_guild: String,
     pub scoped_user: String,
     /// Already validated by `memory::validated_fact`.
@@ -40,6 +44,7 @@ pub fn enqueue(
     fact: &str,
     supersedes: Option<&str>,
     now: u64,
+    turn: Option<&MemoryTurn>,
 ) -> Result<String, String> {
     let fact = memory::validated_fact(fact).map_err(str::to_owned)?;
     if let Some(reason) = state
@@ -64,6 +69,7 @@ pub fn enqueue(
         );
     }
     queue.push(QueuedFact {
+        completion: turn.map(MemoryTurn::completion),
         scoped_guild: scoped_guild.to_owned(),
         scoped_user: scoped_user.to_owned(),
         fact: fact.clone(),
@@ -81,23 +87,102 @@ pub fn enqueue(
 pub async fn drain(state: &AppState) -> Drained {
     if let Some(registry) = state.service_registry() {
         let Some(owned) = state.owned_state() else {
-            return Drained::default();
+            return cancel_queued(state, None);
         };
         return match registry.spawn_result(crate::service::OperationKind::MemoryDrain, async move {
             drain_owned(&owned).await
         }) {
-            Ok(result) => result.await.unwrap_or_default(),
-            Err(_) => Drained::default(),
+            Ok(result) => match result.await {
+                Ok(drained) => drained,
+                Err(_) => cancel_queued(state, None),
+            },
+            Err(_) => cancel_queued(state, None),
         };
     }
     drain_owned(state).await
+}
+
+/// Cancel facts that have not entered a drain. `turn=None` is the terminal
+/// managed-service admission failure; a specific turn is cancelled after its
+/// original response cannot be delivered. Items already taken by an admitted
+/// drain are absent from this queue and keep their original completion owner.
+pub fn cancel_pending(state: &AppState, turn: &MemoryTurn) -> Drained {
+    cancel_queued(state, Some(turn))
+}
+
+fn cancel_queued(state: &AppState, turn: Option<&MemoryTurn>) -> Drained {
+    let mut queue = AppState::lock(&state.memory_queue);
+    let mut kept = Vec::with_capacity(queue.len());
+    let mut refused = 0;
+    for mut item in std::mem::take(&mut *queue) {
+        let selected = match turn {
+            None => true,
+            Some(turn) => item
+                .completion
+                .as_ref()
+                .is_some_and(|completion| completion.belongs_to(turn)),
+        };
+        if selected {
+            if let Some(completion) = item.completion.take() {
+                completion.finish(Decision::Cancelled);
+            }
+            refused += 1;
+        } else {
+            kept.push(item);
+        }
+    }
+    *queue = kept;
+    Drained {
+        admitted: 0,
+        refused,
+    }
+}
+
+/// Deliver every terminal outcome and record one closed operational failure
+/// per failed response. The decisions are consumed, so observing a delivery
+/// failure cannot re-propose or replay the underlying mutation.
+pub async fn deliver_notices<E, F, Fut>(
+    state: &AppState,
+    component: crate::observability::EventComponent,
+    turn: MemoryTurn,
+    send: F,
+) -> turn::DeliveryReport
+where
+    F: FnMut(Decision) -> Fut,
+    Fut: std::future::Future<Output = Result<(), E>>,
+{
+    let report = turn.deliver(send).await;
+    for _ in 0..report.failed() {
+        observe_delivery_failure(state, component);
+    }
+    if report.attempted() > 0 {
+        tracing::info!(
+            attempted = report.attempted(),
+            failed = report.failed(),
+            "memory decision notifications completed"
+        );
+    }
+    report
+}
+
+/// Record a content-free response failure for the adapter that attempted it.
+pub fn observe_delivery_failure(state: &AppState, component: crate::observability::EventComponent) {
+    tracing::warn!(?component, "response delivery unavailable");
+    if let Some(events) = state.operational_events() {
+        let _ = events.record(
+            component,
+            crate::observability::EventCode::ResponseDelivery,
+            crate::observability::EventOutcome::Failed,
+            Some(crate::observability::OperationalErrorCategory::Unavailable),
+        );
+    }
 }
 
 async fn drain_owned(state: &AppState) -> Drained {
     let queued: Vec<QueuedFact> = std::mem::take(&mut *AppState::lock(&state.memory_queue));
     let mut drained = Drained::default();
     for item in queued {
-        let receipt = match admit_fact(
+        let receipt = match admit_fact_decision(
             state,
             &item.scoped_guild,
             &item.scoped_user,
@@ -107,41 +192,37 @@ async fn drain_owned(state: &AppState) -> Drained {
         .await
         {
             Ok(receipt) => receipt,
-            Err(message) => {
+            Err(decision) => {
+                if let Some(completion) = item.completion {
+                    completion.finish(decision);
+                }
                 drained.refused += 1;
-                tracing::warn!(reason = %message, "episode gate: queued model memory write not admitted; nothing stored");
+                tracing::warn!(
+                    reason = decision.message(),
+                    "episode gate: queued model memory write not admitted; nothing stored"
+                );
                 continue;
             }
         };
         let service = state.memory_service();
-        let outcome = match item.supersedes.as_deref() {
-            Some(old) => service.remember_proposing(
-                &item.scoped_guild,
-                &item.scoped_user,
-                &item.fact,
-                old,
-                item.queued_at,
-            ),
-            None => service.remember(
-                &item.scoped_guild,
-                &item.scoped_user,
-                &item.fact,
-                item.queued_at,
-            ),
+        let outcome = service.remember_admitted(
+            &item.scoped_guild,
+            &item.scoped_user,
+            &item.fact,
+            item.supersedes.as_deref(),
+            item.queued_at,
+            receipt.as_deref(),
+        );
+        let decision = match &outcome {
+            Ok(RememberOutcome::Stored(_)) => Decision::Stored,
+            Ok(RememberOutcome::Proposed { .. }) => Decision::Proposed,
+            _ => Decision::LocalRefused,
         };
+        if let Some(completion) = item.completion {
+            completion.finish(decision);
+        }
         match (&outcome, &receipt) {
-            (
-                Ok(RememberOutcome::Stored(stored) | RememberOutcome::Proposed { stored, .. }),
-                Some(digest_hex),
-            ) => {
-                settle_receipts(
-                    state,
-                    &item.scoped_guild,
-                    &item.scoped_user,
-                    stored,
-                    None,
-                    digest_hex,
-                );
+            (Ok(RememberOutcome::Stored(_) | RememberOutcome::Proposed { .. }), Some(_)) => {
                 drained.admitted += 1;
             }
             (Ok(RememberOutcome::Stored(_) | RememberOutcome::Proposed { .. }), None) => {
@@ -169,12 +250,8 @@ async fn drain_owned(state: &AppState) -> Drained {
 /// free: only the gateway's closed labels ride along.
 fn refusal(outcome: &GateOutcome) -> String {
     match outcome {
-        GateOutcome::Rejected { detail } => {
-            format!("Not stored: the constitutional memory gate refused it ({detail}).")
-        }
-        GateOutcome::Unavailable { detail } => format!(
-            "Not stored: the constitutional memory gate could not be reached ({detail}). Nothing was changed."
-        ),
+        GateOutcome::Rejected { .. } => "Not stored: the constitutional memory gate refused it. Nothing was stored locally.".into(),
+        GateOutcome::Unavailable { .. } => "Not stored locally: admission is unknown because the constitutional memory gate did not return a valid receipt.".into(),
         GateOutcome::Appended { .. } => String::new(),
     }
 }
@@ -191,6 +268,18 @@ pub async fn admit_fact(
     fact: &str,
     replaces: Option<&str>,
 ) -> Result<Option<String>, String> {
+    admit_fact_decision(state, scoped_guild, scoped_user, fact, replaces)
+        .await
+        .map_err(|decision| decision.message().to_owned())
+}
+
+async fn admit_fact_decision(
+    state: &AppState,
+    scoped_guild: &str,
+    scoped_user: &str,
+    fact: &str,
+    replaces: Option<&str>,
+) -> Result<Option<String>, Decision> {
     let Some(gate) = state.gate_for(scoped_guild) else {
         return Ok(None);
     };
@@ -221,7 +310,8 @@ pub async fn admit_fact(
     };
     match gate.record_memory_candidate(request).await {
         GateOutcome::Appended { digest_hex, .. } => Ok(Some(digest_hex)),
-        other => Err(refusal(&other)),
+        GateOutcome::Rejected { .. } => Err(Decision::Rejected),
+        GateOutcome::Unavailable { .. } => Err(Decision::Unknown),
     }
 }
 
@@ -324,6 +414,7 @@ mod tests {
 
     fn scope(state: &AppState) -> ToolScope<'_> {
         ToolScope {
+            memory_turn: None,
             state,
             network: SocialNetwork::Discord,
             scoped_guild: "discord:123456789012345678".into(),
@@ -339,7 +430,9 @@ mod tests {
         let mut state = AppState::in_memory();
         Arc::get_mut(&mut state).unwrap().episode_gate = Some(dead_gate());
         let (g, u) = ("discord:123456789012345678", "discord:42");
+        let turn = MemoryTurn::default();
         let mut host = scope(&state);
+        host.memory_turn = Some(&turn);
         let reply = host.remember_fact("likes compilers", None);
         assert!(reply.starts_with("Queued"), "{reply}");
         assert!(reply.contains("nothing is on record yet"));
@@ -380,6 +473,10 @@ mod tests {
                 .receipt(g, u, "likes compilers")
                 .is_none()
         );
+        assert_eq!(
+            turn.decisions().await,
+            [Decision::Unknown, Decision::Unknown]
+        );
     }
 
     #[tokio::test]
@@ -392,6 +489,7 @@ mod tests {
             fact: "uses rust".into(),
             supersedes: None,
             queued_at: 7,
+            completion: None,
         });
         let drained = drain(&state).await;
         assert_eq!(
@@ -410,14 +508,184 @@ mod tests {
             "no gate, no receipt"
         );
         assert_eq!(
-            enqueue(&state, g, u, "uses rust", None, 8).unwrap_err(),
+            enqueue(&state, g, u, "uses rust", None, 8, None).unwrap_err(),
             "Not queued: already on record."
         );
         assert!(
-            enqueue(&state, g, u, "   ", None, 8).is_err(),
+            enqueue(&state, g, u, "   ", None, 8, None).is_err(),
             "validation still applies"
         );
         assert!(AppState::lock(&state.memory_queue).is_empty());
+    }
+
+    #[tokio::test]
+    async fn periodic_drain_keeps_decisions_with_the_turn_that_enqueued_them() {
+        let state = AppState::in_memory();
+        let stored_turn = MemoryTurn::default();
+        let refused_turn = MemoryTurn::default();
+        state
+            .memory_service()
+            .remember("g", "u", "already held", 1)
+            .expect("seed held fact");
+        AppState::lock(&state.memory_queue).extend([
+            QueuedFact {
+                completion: Some(stored_turn.completion()),
+                scoped_guild: "g".into(),
+                scoped_user: "u".into(),
+                fact: "new fact".into(),
+                supersedes: None,
+                queued_at: 2,
+            },
+            QueuedFact {
+                completion: Some(refused_turn.completion()),
+                scoped_guild: "g".into(),
+                scoped_user: "u".into(),
+                fact: "already held".into(),
+                supersedes: None,
+                queued_at: 3,
+            },
+        ]);
+
+        assert_eq!(
+            drain(&state).await,
+            Drained {
+                admitted: 1,
+                refused: 1
+            }
+        );
+        assert_eq!(stored_turn.decisions().await, [Decision::Stored]);
+        assert_eq!(refused_turn.decisions().await, [Decision::LocalRefused]);
+    }
+
+    #[tokio::test]
+    async fn closed_service_admission_cancels_queued_turn_without_hanging_or_writing() {
+        let state = AppState::in_memory();
+        let mut supervisor = crate::service::ServiceSupervisor::new();
+        supervisor.finish_startup();
+        let _writer = state.attach_service(supervisor.operations());
+        supervisor.begin_draining(
+            crate::service::ShutdownReason::Signal,
+            tokio::time::Instant::now(),
+        );
+        let turn = MemoryTurn::default();
+        AppState::lock(&state.memory_queue).push(QueuedFact {
+            completion: Some(turn.completion()),
+            scoped_guild: "g".into(),
+            scoped_user: "u".into(),
+            fact: "never proposed".into(),
+            supersedes: None,
+            queued_at: 4,
+        });
+
+        assert_eq!(
+            drain(&state).await,
+            Drained {
+                admitted: 0,
+                refused: 1
+            }
+        );
+        let decisions = tokio::time::timeout(std::time::Duration::from_secs(1), turn.decisions())
+            .await
+            .expect("closed admission must terminate the turn");
+        assert_eq!(decisions, [Decision::Cancelled]);
+        assert!(state.memory_service().facts("g", "u").is_empty());
+        assert!(AppState::lock(&state.memory_queue).is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_failed_response_leaves_another_turn_for_its_drain() {
+        let state = AppState::in_memory();
+        let cancelled = MemoryTurn::default();
+        let retained = MemoryTurn::default();
+        AppState::lock(&state.memory_queue).extend([
+            QueuedFact {
+                completion: Some(cancelled.completion()),
+                scoped_guild: "g".into(),
+                scoped_user: "u".into(),
+                fact: "cancel me".into(),
+                supersedes: None,
+                queued_at: 4,
+            },
+            QueuedFact {
+                completion: Some(retained.completion()),
+                scoped_guild: "g".into(),
+                scoped_user: "u".into(),
+                fact: "keep me".into(),
+                supersedes: None,
+                queued_at: 5,
+            },
+        ]);
+
+        assert_eq!(
+            cancel_pending(&state, &cancelled),
+            Drained {
+                admitted: 0,
+                refused: 1
+            }
+        );
+        assert_eq!(cancelled.decisions().await, [Decision::Cancelled]);
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        assert_eq!(
+            drain(&state).await,
+            Drained {
+                admitted: 1,
+                refused: 0
+            }
+        );
+        assert_eq!(retained.decisions().await, [Decision::Stored]);
+        assert_eq!(state.memory_service().facts("g", "u"), ["keep me"]);
+    }
+
+    #[tokio::test]
+    async fn failed_notice_attempts_the_remainder_without_replaying_queued_memory() {
+        let state = AppState::in_memory();
+        AppState::lock(&state.memory_queue).push(QueuedFact {
+            completion: None,
+            scoped_guild: "g".into(),
+            scoped_user: "u".into(),
+            fact: "background fact".into(),
+            supersedes: None,
+            queued_at: 1,
+        });
+        let turn = MemoryTurn::default();
+        turn.completion().finish(Decision::Stored);
+        turn.completion().finish(Decision::Rejected);
+        let mut attempts = Vec::new();
+
+        let report = deliver_notices(
+            &state,
+            crate::observability::EventComponent::Discord,
+            turn,
+            |decision| {
+                attempts.push(decision);
+                std::future::ready(if decision == Decision::Stored {
+                    Err("first notice failed")
+                } else {
+                    Ok(())
+                })
+            },
+        )
+        .await;
+
+        assert_eq!(attempts, [Decision::Stored, Decision::Rejected]);
+        assert_eq!(report.attempted(), 2);
+        assert_eq!(report.failed(), 1);
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        assert!(state.memory_service().facts("g", "u").is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropped_completion_reports_unobserved_without_claiming_no_local_write() {
+        let turn = MemoryTurn::default();
+        drop(turn.completion());
+
+        let decisions = turn.decisions().await;
+        assert_eq!(decisions, [Decision::Unobserved]);
+        assert!(
+            !decisions[0]
+                .message()
+                .contains("Nothing was stored locally")
+        );
     }
 
     /// A dead gate that does not cover this scope must be invisible: the
@@ -432,7 +700,9 @@ mod tests {
         assert!(state.gate_for(g).is_none());
         assert!(state.gate_for("discord:999").is_some());
 
+        let turn = MemoryTurn::default();
         let mut host = scope(&state);
+        host.memory_turn = Some(&turn);
         let reply = host.remember_fact("likes compilers", None);
         assert!(reply.starts_with("Stored"), "{reply}");
         assert_eq!(
@@ -464,5 +734,19 @@ mod tests {
             (0, 0, 0, 0)
         );
         assert_eq!(counters.covered_guilds, Some(1));
+        assert!(
+            turn.decisions().await.is_empty(),
+            "an uncovered scope publishes no gate outcome notice"
+        );
+    }
+    #[test]
+    fn unknown_admission_does_not_claim_no_gateway_change_or_expose_diagnostics() {
+        let message = refusal(&GateOutcome::Unavailable {
+            detail: "private-path/token timed out".into(),
+        });
+        assert!(message.contains("unknown"));
+        assert!(message.contains("locally"));
+        assert!(!message.contains("private-path"));
+        assert!(!message.contains("Nothing was changed"));
     }
 }

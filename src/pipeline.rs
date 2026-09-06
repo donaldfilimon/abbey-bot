@@ -466,6 +466,7 @@ pub async fn handle<O: Outbound + Sync>(
         reputation,
     );
     let reply_to = Some(event.native_message_id.clone());
+    let memory_turn = crate::memory_gate::MemoryTurn::default();
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
         // while this turn waits for its slot. Tools are offered only when
@@ -484,6 +485,7 @@ pub async fn handle<O: Outbound + Sync>(
         });
         if forced {
             let mut host = crate::runtime::ToolScope {
+                memory_turn: Some(&memory_turn),
                 state,
                 network: event.network,
                 scoped_guild: scoped_guild.clone(),
@@ -510,7 +512,8 @@ pub async fn handle<O: Outbound + Sync>(
                     reply_to_native_message_id: reply_to.clone(),
                     ..OutboundMessage::default()
                 };
-                let _ = out.send(&event.native_channel_id, &failure).await;
+                let delivered = out.send(&event.native_channel_id, &failure).await.is_ok();
+                finish_memory_turn(state, out, &event, memory_turn, delivered).await;
             }
             return Outcome::ReplyFailed(e.to_string());
         }
@@ -539,7 +542,10 @@ pub async fn handle<O: Outbound + Sync>(
             };
             match out.send(&event.native_channel_id, &reply).await {
                 Ok(id) => id,
-                Err(e) => return Outcome::ReplyFailed(e),
+                Err(e) => {
+                    finish_memory_turn(state, out, &event, memory_turn, false).await;
+                    return Outcome::ReplyFailed(e);
+                }
             }
         }
     };
@@ -570,11 +576,56 @@ pub async fn handle<O: Outbound + Sync>(
             &mut *stores,
         );
     }
-    // The reply is out; now propose whatever the model queued this turn.
+    finish_memory_turn(state, out, &event, memory_turn, true).await;
+    Outcome::Replied
+}
+
+async fn finish_memory_turn<O: Outbound + Sync>(
+    state: &AppState,
+    out: &O,
+    event: &SocialEvent,
+    memory: crate::memory_gate::MemoryTurn,
+    response_delivered: bool,
+) {
+    if !response_delivered {
+        crate::memory_gate::cancel_pending(state, &memory);
+        // An admitted background drain is already an independent managed
+        // owner. Await its bounded terminal result without cancelling or
+        // replaying it, then record the response failure without content.
+        let _ = memory.decisions().await;
+        crate::memory_gate::observe_delivery_failure(state, event_component(event.network));
+        return;
+    }
     if state.episode_gate.is_some() {
         crate::memory_gate::drain(state).await;
     }
-    Outcome::Replied
+    crate::memory_gate::deliver_notices(
+        state,
+        event_component(event.network),
+        memory,
+        |decision| async move {
+            let notice = OutboundMessage {
+                text: decision.message().into(),
+                reply_to_native_message_id: Some(event.native_message_id.clone()),
+                title: None,
+                accent_color: None,
+            };
+            out.send(&event.native_channel_id, &notice)
+                .await
+                .map(|_| ())
+        },
+    )
+    .await;
+}
+
+const fn event_component(
+    network: crate::platform::SocialNetwork,
+) -> crate::observability::EventComponent {
+    match network {
+        crate::platform::SocialNetwork::Discord => crate::observability::EventComponent::Discord,
+        crate::platform::SocialNetwork::Telegram => crate::observability::EventComponent::Telegram,
+        crate::platform::SocialNetwork::Slack => crate::observability::EventComponent::Slack,
+    }
 }
 
 /// Channel summary + remembered facts + WDBX recollections + standing.

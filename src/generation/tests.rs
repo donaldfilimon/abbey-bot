@@ -57,6 +57,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
 
     let state = AppState::in_memory();
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),
@@ -83,6 +84,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
 fn a_registered_but_unoffered_tool_cannot_reach_the_host() {
     let state = AppState::in_memory();
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),

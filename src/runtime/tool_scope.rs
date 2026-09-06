@@ -22,6 +22,7 @@ impl crate::tools::ToolHost for ToolScope<'_> {
                 fact,
                 supersedes,
                 self.now,
+                self.memory_turn,
             ) {
                 Ok(message) | Err(message) => message,
             };

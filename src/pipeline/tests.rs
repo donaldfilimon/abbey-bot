@@ -124,6 +124,7 @@ async fn discord_telegram_and_slack_share_canonical_persona_tool_memory_and_visi
         // ToolScope. Their results must be network-neutral while every read
         // and mutation stays inside this event's network-prefixed scope.
         let mut host = crate::runtime::ToolScope {
+            memory_turn: None,
             state: &state,
             network,
             scoped_guild: scoped_guild.clone(),
@@ -859,3 +860,6 @@ fn distress_outranks_the_guild_default_and_sticky_state() {
         "text neutral to both layers keeps the sticky persona"
     );
 }
+
+#[path = "tests/memory_outcomes.rs"]
+mod memory_outcomes;

@@ -256,23 +256,52 @@ pub async fn ask(
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
     let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
-    deliver_generated_reply(&ctx.data().state, ctx.say(clamp_message(reply))).await?;
+    let delivery = deliver_generated_reply(
+        &ctx.data().state,
+        reply.memory,
+        ctx.say(clamp_message(reply.text)),
+    )
+    .await;
+    if delivery.is_err() {
+        crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+    }
+    let (_, memory) = delivery?;
+    crate::memory_gate::deliver_notices(
+        &ctx.data().state,
+        crate::observability::EventComponent::Discord,
+        memory,
+        |decision| async move { ctx.say(decision.message()).await.map(|_| ()) },
+    )
+    .await;
     Ok(())
 }
 
-/// Finish delivery before admitting queued model writes. Failed delivery keeps
-/// the queue for the existing periodic persistence path; it cannot claim that
-/// the requested fact was stored. Both interactive generation surfaces use this
-/// boundary, while the pipeline owns its corresponding outbound boundary.
+/// Finish delivery before admitting queued model writes. Failed delivery
+/// cancels only this turn's still-queued writes and waits for any drain that
+/// already owns one; neither path can replay an effect. Both interactive
+/// generation surfaces use this boundary, while the pipeline owns its
+/// corresponding outbound boundary.
 pub(crate) async fn deliver_generated_reply<T, E>(
     state: &AppState,
+    memory: crate::memory_gate::MemoryTurn,
     delivery: impl std::future::Future<Output = Result<T, E>>,
-) -> Result<T, E> {
-    let delivered = delivery.await?;
-    if state.episode_gate.is_some() {
-        crate::memory_gate::drain(state).await;
+) -> Result<(T, crate::memory_gate::MemoryTurn), E> {
+    match delivery.await {
+        Ok(delivered) => {
+            if state.episode_gate.is_some() {
+                crate::memory_gate::drain(state).await;
+            }
+            Ok((delivered, memory))
+        }
+        Err(error) => {
+            crate::memory_gate::cancel_pending(state, &memory);
+            // An already-running drain is absent from the queue and remains
+            // authoritative. Wait for its bounded terminal result before this
+            // turn owner exits; the failed response leaves nowhere to post it.
+            let _ = memory.decisions().await;
+            Err(error)
+        }
     }
-    Ok(delivered)
 }
 
 /// Whether an answered question joins the channel's running transcript.
@@ -305,7 +334,7 @@ async fn answer_question(
     question: &str,
     forced: Option<Persona>,
     commit: Commit,
-) -> String {
+) -> GeneratedReply {
     answer_question_in_scope(
         &ctx.data().state,
         ctx.guild_id().map(|id| id.get()),
@@ -328,6 +357,30 @@ pub(crate) async fn answer_question_in_scope(
     question: &str,
     forced: Option<Persona>,
     commit: Commit,
+) -> GeneratedReply {
+    let memory = crate::memory_gate::MemoryTurn::default();
+    let text = answer_question_with_memory(
+        state, guild, channel, user, question, forced, commit, &memory,
+    )
+    .await;
+    GeneratedReply { text, memory }
+}
+
+pub(crate) struct GeneratedReply {
+    pub text: String,
+    pub memory: crate::memory_gate::MemoryTurn,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn answer_question_with_memory(
+    state: &AppState,
+    guild: Option<u64>,
+    channel: u64,
+    user: u64,
+    question: &str,
+    forced: Option<Persona>,
+    commit: Commit,
+    memory: &crate::memory_gate::MemoryTurn,
 ) -> String {
     let scope = format!("discord:{channel}");
     // Same composition the message pipeline uses, so `/persona ask` and an
@@ -366,6 +419,7 @@ pub(crate) async fn answer_question_in_scope(
                 reputation,
             );
             let mut host = runtime::ToolScope {
+                memory_turn: Some(memory),
                 state,
                 network: crate::platform::SocialNetwork::Discord,
                 scoped_guild: scoped_guild.clone(),
@@ -509,7 +563,23 @@ pub async fn ask_context_menu(
     }
 
     let reply = answer_question(ctx, question, None, Commit::No).await;
-    deliver_generated_reply(&ctx.data().state, ctx.say(clamp_message(reply))).await?;
+    let delivery = deliver_generated_reply(
+        &ctx.data().state,
+        reply.memory,
+        ctx.say(clamp_message(reply.text)),
+    )
+    .await;
+    if delivery.is_err() {
+        crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+    }
+    let (_, memory) = delivery?;
+    crate::memory_gate::deliver_notices(
+        &ctx.data().state,
+        crate::observability::EventComponent::Discord,
+        memory,
+        |decision| async move { ctx.say(decision.message()).await.map(|_| ()) },
+    )
+    .await;
     Ok(())
 }
 

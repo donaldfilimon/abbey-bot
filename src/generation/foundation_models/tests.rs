@@ -115,6 +115,7 @@ fn primary_tool_rejection_is_observed_on_the_next_round() {
 fn dispatched_primary_tool_failure_plans_no_restart_or_duplicate_mutation() {
     let state = AppState::in_memory();
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),
@@ -152,6 +153,7 @@ async fn refusal_is_final_text_and_has_no_side_effect() {
         calls: Vec::new(),
     })]);
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),
@@ -231,6 +233,7 @@ async fn max_round_boundary_dispatches_no_extra_tool() {
     let state = AppState::in_memory();
     let fm = FakeFm::with_responses(calls);
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),
@@ -290,6 +293,7 @@ async fn continuation_failure_never_replays_the_completed_tool() {
         Err(llm::LlmError::backend("plain continuation failed".into())),
     ]);
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),
@@ -374,6 +378,7 @@ async fn ephemeral_tool_rounds_preserve_the_shared_persona_even_on_error() {
             last,
         ]);
         let mut host = crate::runtime::ToolScope {
+            memory_turn: None,
             state: &state,
             network: crate::platform::SocialNetwork::Discord,
             scoped_guild: "discord:1".into(),
@@ -443,6 +448,7 @@ async fn text_only_fm_remains_eligible_without_offering_rejected_tools() {
     })]);
     fm.router.disable_tools(ProviderRoute::FoundationModelsCli);
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:1".into(),

@@ -414,11 +414,29 @@ async fn run_modal(
         crate::commands::Commit::No,
     )
     .await;
-    crate::commands::deliver_generated_reply(
+    let (_, memory) = crate::commands::deliver_generated_reply(
         &data.state,
-        interaction.edit_response(&ctx.http, edit(answer)),
+        answer.memory,
+        interaction.edit_response(&ctx.http, edit(answer.text)),
     )
     .await?;
+    crate::memory_gate::deliver_notices(
+        &data.state,
+        crate::observability::EventComponent::Discord,
+        memory,
+        |decision| async move {
+            interaction
+                .create_followup(
+                    &ctx.http,
+                    serenity::all::CreateInteractionResponseFollowup::new()
+                        .content(decision.message())
+                        .ephemeral(true),
+                )
+                .await
+                .map(|_| ())
+        },
+    )
+    .await;
     Ok(())
 }
 

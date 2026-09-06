@@ -133,6 +133,7 @@ async fn live_memory_path_round_trips_through_a_real_gateway() {
     //    appends, and only then is the fact stored, keyed by its receipt.
     let fact = format!("acceptance run {run} likes compilers");
     let mut host = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: g.into(),

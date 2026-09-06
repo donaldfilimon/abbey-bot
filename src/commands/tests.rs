@@ -1,6 +1,6 @@
 use super::*;
 
-fn queued_command_state() -> std::sync::Arc<AppState> {
+fn queued_command_state(memory: &crate::memory_gate::MemoryTurn) -> std::sync::Arc<AppState> {
     use crate::tools::ToolHost as _;
     let mut state = AppState::in_memory();
     let missing = std::env::temp_dir().join(format!(
@@ -23,6 +23,7 @@ fn queued_command_state() -> std::sync::Arc<AppState> {
             crate::episode_gate::EpisodeGateConfig::from_json(&config.to_string()).unwrap(),
         )));
     let mut host = runtime::ToolScope {
+        memory_turn: Some(memory),
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "discord:123".into(),
@@ -40,9 +41,10 @@ fn queued_command_state() -> std::sync::Arc<AppState> {
 
 #[tokio::test]
 async fn generated_reply_finishes_delivery_before_draining_real_gated_queue() {
-    let state = queued_command_state();
+    let memory = crate::memory_gate::MemoryTurn::default();
+    let state = queued_command_state(&memory);
     let (sent, received) = tokio::sync::oneshot::channel();
-    let completion = deliver_generated_reply(&state, async {
+    let completion = deliver_generated_reply(&state, memory, async {
         received.await.unwrap();
         Ok::<_, ()>("delivered")
     });
@@ -61,7 +63,12 @@ async fn generated_reply_finishes_delivery_before_draining_real_gated_queue() {
             .is_empty()
     );
     sent.send(()).unwrap();
-    assert_eq!(completion.await, Ok("delivered"));
+    let (delivered, memory) = completion.await.expect("delivery succeeds");
+    assert_eq!(delivered, "delivered");
+    assert_eq!(
+        memory.decisions().await,
+        [crate::memory_gate::Decision::Unknown]
+    );
     // The unavailable fake gate refuses: the queue is handled after the
     // reply, but delivering a reply does not imply any fact was stored.
     assert!(AppState::lock(&state.memory_queue).is_empty());
@@ -74,17 +81,42 @@ async fn generated_reply_finishes_delivery_before_draining_real_gated_queue() {
 }
 
 #[tokio::test]
-async fn failed_generated_reply_preserves_queue_and_stores_nothing() {
-    let state = queued_command_state();
-    let result = deliver_generated_reply(&state, async { Err::<(), _>("delivery failed") }).await;
-    assert_eq!(result, Err("delivery failed"));
-    assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+async fn failed_generated_reply_cancels_its_queue_and_stores_nothing() {
+    let memory = crate::memory_gate::MemoryTurn::default();
+    let state = queued_command_state(&memory);
+    let result =
+        deliver_generated_reply(&state, memory, async { Err::<(), _>("delivery failed") }).await;
+    assert!(matches!(result, Err("delivery failed")));
+    assert!(AppState::lock(&state.memory_queue).is_empty());
     assert!(
         state
             .memory_service()
             .facts("discord:123", "discord:42")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn failed_initial_delivery_waits_for_an_already_owned_admission() {
+    let state = AppState::in_memory();
+    let memory = crate::memory_gate::MemoryTurn::default();
+    let completion = memory.completion();
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let worker = tokio::spawn(async move {
+        waiting.await.expect("release accepted admission");
+        completion.finish(crate::memory_gate::Decision::Stored);
+    });
+    let delivery =
+        deliver_generated_reply(&state, memory, async { Err::<(), _>("delivery failed") });
+    tokio::pin!(delivery);
+    tokio::select! {
+        biased;
+        _ = &mut delivery => panic!("an owned admission still controls its terminal outcome"),
+        _ = std::future::ready(()) => {}
+    }
+    release.send(()).expect("worker still waiting");
+    assert!(matches!(delivery.await, Err("delivery failed")));
+    worker.await.expect("worker finished");
 }
 
 #[test]

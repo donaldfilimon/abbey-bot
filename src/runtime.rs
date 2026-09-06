@@ -212,6 +212,7 @@ pub fn voice_queue_secs(text_queue_secs: u64) -> u64 {
 /// `AppState`. Each method takes the locks it needs, briefly, in the
 /// documented order, and returns the short plain string the model reads.
 pub struct ToolScope<'a> {
+    pub memory_turn: Option<&'a crate::memory_gate::MemoryTurn>,
     pub state: &'a AppState,
     /// Network of the conversation. Explicit native ids supplied to tools are
     /// scoped with this value; they must never default to Discord.

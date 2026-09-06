@@ -172,6 +172,7 @@ fn voice_inspect_is_exact_guild_only_and_dm_safe() {
         .voice_inspect
         .publish("discord:g", crate::inspect::VoiceInspectState::Active);
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -239,6 +240,7 @@ fn configured_but_ineligible_fm_routes_publish_no_capabilities() {
 fn unknown_guild_inspect_is_non_provisioning() {
     let state = AppState::in_memory();
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:missing".into(),
@@ -267,6 +269,7 @@ fn durable_guild_inspect_does_not_fill_the_cache() {
         },
     );
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -301,6 +304,7 @@ fn cached_guild_inspect_uses_the_recorded_settings_and_injected_time() {
         }
     }
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -326,6 +330,7 @@ fn all_tool_memory_writes_use_the_scope_timestamp() {
         .remember("discord:g", "discord:u", "uses rust", 1)
         .expect("seed");
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -365,6 +370,7 @@ fn list_facts_isolated_to_the_exact_canonical_subject() {
         .remember("discord:other", "discord:u", "other guild fact", 4)
         .expect("other guild");
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -395,6 +401,7 @@ fn a_model_supersedes_argument_proposes_and_never_deletes() {
         .remember("discord:g", "discord:u", "uses rust", 1)
         .expect("seed");
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -425,6 +432,7 @@ fn a_model_supersedes_argument_proposes_and_never_deletes() {
 fn tool_memory_uses_the_shared_fact_validator() {
     let state = AppState::in_memory();
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Discord,
         scoped_guild: "discord:g".into(),
@@ -467,6 +475,7 @@ fn explicit_reputation_ids_are_scoped_to_the_conversation_network() {
         let user = format!("{}:42", network.as_str());
         AppState::lock(&state.stores).store_reputation(&guild, &user, expected, 1);
         let mut scope = ToolScope {
+            memory_turn: None,
             state: &state,
             network,
             scoped_guild: guild,
@@ -492,6 +501,7 @@ fn conflicting_scoped_reputation_id_cannot_escape_the_current_network() {
     let state = AppState::in_memory();
     AppState::lock(&state.stores).store_reputation("telegram:g", "discord:42", 0.99, 1);
     let mut scope = ToolScope {
+        memory_turn: None,
         state: &state,
         network: SocialNetwork::Telegram,
         scoped_guild: "telegram:g".into(),

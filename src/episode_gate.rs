@@ -751,7 +751,16 @@ fn parse_appended(stdout: &[u8]) -> GateOutcome {
         field("episode_digest"),
         field("sequence"),
     ) {
-        (Some(decision), Some(digest_hex), Some(sequence)) if decision == "appended" => {
+        (Some(decision), Some(digest_hex), Some(sequence))
+            if decision == "appended"
+                && parse_digest(&digest_hex).is_some()
+                && digest_hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                && sequence
+                    .parse::<u64>()
+                    .is_ok_and(|n| n.to_string() == sequence) =>
+        {
             GateOutcome::Appended {
                 digest_hex,
                 sequence,

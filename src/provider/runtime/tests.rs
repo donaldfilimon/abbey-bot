@@ -216,6 +216,7 @@ async fn tool_continuation_is_pinned_and_a_validated_host_effect_cannot_replay()
     Arc::get_mut(&mut state).unwrap().providers = runtime;
     let context = crate::memory::PersonaContext::empty();
     let mut host = crate::runtime::ToolScope {
+        memory_turn: None,
         state: &state,
         network: crate::platform::SocialNetwork::Discord,
         scoped_guild: "guild".into(),

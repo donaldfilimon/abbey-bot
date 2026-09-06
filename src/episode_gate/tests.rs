@@ -317,11 +317,11 @@ fn learning_toggle_proposal_is_bound_to_the_configured_policy() {
 #[test]
 fn classify_reads_only_the_shapes_the_cli_promises() {
     let appended =
-        br#"{"decision":"appended","episode_digest":"ab","sequence":"3","request_id":"r"}"#;
+        br#"{"decision":"appended","episode_digest":"abababababababababababababababababababababababababababababababab","sequence":"3","request_id":"r"}"#;
     assert_eq!(
         classify(Some(0), appended, b""),
         GateOutcome::Appended {
-            digest_hex: "ab".into(),
+            digest_hex: "ab".repeat(32),
             sequence: "3".into(),
         }
     );
@@ -407,7 +407,7 @@ mod with_a_fake_abi {
         let recorded = scratch.0.join("argv");
         // Echo the arguments and the write file's contents, then answer as the CLI does.
         let script = scratch.script(&format!(
-            "printf '%s\\n' \"$@\" > {argv}\ncat \"$4\" >> {argv}\nprintf '%s\\n' '{{\"decision\":\"appended\",\"episode_digest\":\"abcd\",\"sequence\":\"1\"}}'",
+            "printf '%s\\n' \"$@\" > {argv}\ncat \"$4\" >> {argv}\nprintf '%s\\n' '{{\"decision\":\"appended\",\"episode_digest\":\"abababababababababababababababababababababababababababababababab\",\"sequence\":\"1\"}}'",
             argv = recorded.display()
         ));
         let gate = scratch.gate(&script, 5);
@@ -415,7 +415,7 @@ mod with_a_fake_abi {
         assert_eq!(
             outcome,
             GateOutcome::Appended {
-                digest_hex: "abcd".into(),
+                digest_hex: "ab".repeat(32),
                 sequence: "1".into(),
             }
         );
@@ -697,4 +697,26 @@ async fn pre_cancelled_abi_never_reaches_executable_launch() {
             detail: "the abi operation was cancelled during shutdown".into(),
         }
     );
+}
+
+#[test]
+fn malformed_append_receipts_never_authorize_local_memory() {
+    for (digest, sequence) in [
+        ("ab".to_string(), "1"),
+        ("gg".repeat(32), "1"),
+        ("AB".repeat(32), "1"),
+        ("00".repeat(32), "1"),
+        ("ab".repeat(32), "-1"),
+        ("ab".repeat(32), "01"),
+        ("ab".repeat(32), "18446744073709551616"),
+    ] {
+        let json = serde_json::json!({"decision":"appended", "episode_digest":digest, "sequence":sequence});
+        assert!(
+            matches!(
+                classify(Some(0), json.to_string().as_bytes(), b""),
+                GateOutcome::Unavailable { .. }
+            ),
+            "{json}"
+        );
+    }
 }
