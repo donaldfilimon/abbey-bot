@@ -17,6 +17,7 @@ sh -n deploy/install-mlx-vlm-launchd.sh
 sh -n deploy/run-mlx-audio.sh
 sh -n deploy/run-mlx-vlm.sh
 sh -n deploy/install-audio-tap-launchd.sh
+sh -n deploy/install-wdbx-gateway-launchd.sh
 sh -n scripts/check-audio-tap.sh
 python3 scripts/check-python-syntax.py
 python3 deploy/check-python-locks.py \

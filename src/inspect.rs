@@ -210,8 +210,14 @@ fn render_gate(gate: Option<crate::episode_gate::GateCounters>) -> String {
     match gate {
         None => " · gate: off".to_string(),
         Some(counters) => format!(
-            " · gate: appended {} · rejected {} · unavailable {} · ungated forgets {}",
-            counters.appended, counters.rejected, counters.unavailable, counters.ungated_forgets
+            " · gate: {} · appended {} · rejected {} · unavailable {} · ungated forgets {}",
+            counters
+                .covered_guilds
+                .map_or_else(|| "all guilds".to_string(), |n| format!("{n} guild(s)")),
+            counters.appended,
+            counters.rejected,
+            counters.unavailable,
+            counters.ungated_forgets
         ),
     }
 }
@@ -365,11 +371,17 @@ mod tests {
             rejected: 1,
             unavailable: 0,
             ungated_forgets: 2,
+            covered_guilds: None,
         });
         let line = render_runtime(&with_gate);
         assert!(
-            line.ends_with("gate: appended 3 · rejected 1 · unavailable 0 · ungated forgets 2")
+            line.ends_with(
+                "gate: all guilds · appended 3 · rejected 1 · unavailable 0 · ungated forgets 2"
+            ),
+            "{line}"
         );
+        with_gate.gate.as_mut().unwrap().covered_guilds = Some(1);
+        assert!(render_runtime(&with_gate).contains("gate: 1 guild(s) · appended 3"));
     }
 
     #[test]

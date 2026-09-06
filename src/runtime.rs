@@ -322,7 +322,7 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         // the write is proposed and stored by the next drain, and the model is
         // told nothing is on record yet. A supersession stays a proposal the
         // person confirms; the old fact is never removed by the model.
-        if self.state.episode_gate.is_some() {
+        if self.state.gate_for(&self.scoped_guild).is_some() {
             return match crate::memory_gate::enqueue(
                 self.state,
                 &self.scoped_guild,
@@ -780,6 +780,15 @@ impl AppState {
     }
 
     /// The canonical coordinator for plain memory and semantic WDBX recall.
+    /// The episode gate for a scope: `None` when no gate is configured or
+    /// the config's `guilds` list does not cover this scoped guild, in which
+    /// case every memory path behaves exactly as with no gate.
+    pub fn gate_for(&self, scoped_guild: &str) -> Option<&Arc<crate::episode_gate::EpisodeGate>> {
+        self.episode_gate
+            .as_ref()
+            .filter(|gate| gate.covers(scoped_guild))
+    }
+
     pub fn memory_service(&self) -> MemoryService<'_> {
         MemoryService::new(&self.stores, &self.recall)
     }
@@ -862,10 +871,11 @@ impl AppState {
 
     fn persist_all_at(&self, t: u64) -> PersistReport {
         let mut snapshots = self.take_snapshot(t);
-        if self.episode_gate.is_some() {
+        if let Some(gate) = &self.episode_gate {
             let substituted = crate::checkpoint_gate::restrict_to_admitted(
                 &mut snapshots.0,
                 &Self::lock(&self.checkpoints),
+                |guild| gate.covers(guild),
             );
             if !substituted.is_empty() {
                 tracing::warn!(
@@ -888,8 +898,11 @@ impl AppState {
         crate::memory_gate::drain(self).await;
         let t = now();
         let mut snapshots = self.take_snapshot(t);
-        let proposals =
-            crate::checkpoint_gate::plan(&snapshots.0.brains, &Self::lock(&self.checkpoints));
+        let proposals = crate::checkpoint_gate::plan(
+            &snapshots.0.brains,
+            &Self::lock(&self.checkpoints),
+            |guild| gate.covers(guild),
+        );
         let mut outcomes = Vec::with_capacity(proposals.len());
         for proposal in proposals {
             let request = crate::episode_gate::MemoryCandidateRequest {

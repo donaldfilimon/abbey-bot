@@ -133,7 +133,7 @@ pub async fn remember(
             return Ok(());
         }
     };
-    if state.episode_gate.is_some() {
+    if state.gate_for(&g).is_some() {
         match replaces.as_deref() {
             None => {
                 if state
@@ -997,7 +997,7 @@ pub async fn admin_learning(
     // Mirror the request into the constitutional ledger when the operator
     // configured the gate. The toggle above already applied; this never
     // blocks or fails the command, and it logs its own outcome.
-    if let Some(gate) = ctx.data().state.episode_gate.clone() {
+    if let Some(gate) = ctx.data().state.gate_for(&g).cloned() {
         let request = LearningToggleRequest {
             scoped_guild: g,
             scoped_user: scoped_user(ctx.author()),

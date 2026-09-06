@@ -148,6 +148,42 @@ fn config_parses_and_validates() {
 }
 
 #[test]
+fn guild_coverage_is_optional_and_validated() {
+    let everywhere = config();
+    assert!(everywhere.covers("discord:123456789012345678"));
+    assert!(everywhere.covers("discord:dm:42"));
+    assert_eq!(everywhere.coverage(), None);
+
+    let scoped = config_json(&abi_path(), 5).replace(
+        "\"timeout_secs\"",
+        "\"guilds\":[\" discord:123456789012345678 \",\"discord:123456789012345678\"],\"timeout_secs\"",
+    );
+    let scoped = EpisodeGateConfig::from_json(&scoped).unwrap();
+    assert!(scoped.covers("discord:123456789012345678"));
+    assert!(!scoped.covers("discord:999"));
+    assert!(!scoped.covers("discord:dm:42"));
+    assert_eq!(scoped.coverage(), Some(1), "trimmed and deduplicated");
+    assert_eq!(EpisodeGate::new(scoped).counters().covered_guilds, Some(1));
+
+    let empty =
+        config_json(&abi_path(), 5).replace("\"timeout_secs\"", "\"guilds\":[],\"timeout_secs\"");
+    assert!(
+        EpisodeGateConfig::from_json(&empty)
+            .unwrap_err()
+            .contains("guilds must name at least one")
+    );
+    let unmappable = config_json(&abi_path(), 5).replace(
+        "\"timeout_secs\"",
+        "\"guilds\":[\"discord:has space\"],\"timeout_secs\"",
+    );
+    assert!(
+        EpisodeGateConfig::from_json(&unmappable)
+            .unwrap_err()
+            .contains("guilds entries")
+    );
+}
+
+#[test]
 fn endpoint_transport_mirrors_the_abi_cli_rule() {
     let with = |endpoint: &str, ca: bool| {
         let mut text = config_json(&abi_path(), 5).replace("http://127.0.0.1:50051", endpoint);
@@ -645,6 +681,7 @@ fn counters_start_at_zero_and_count_every_outcome() {
             rejected: 2,
             unavailable: 1,
             ungated_forgets: 1,
+            covered_guilds: None,
         }
     );
 }

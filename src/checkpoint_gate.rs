@@ -11,6 +11,10 @@
 //! settings, or the other guilds' brains hostage and never loses a checkpoint
 //! that was already on disk.
 //!
+//! Coverage: `plan` and `restrict_to_admitted` take the gate's `covers`
+//! predicate, so a guild outside the config's `guilds` list is neither
+//! proposed nor substituted; its row persists exactly as with no gate.
+//!
 //! Every function here is pure over plain values; `runtime` does the locking
 //! and the proposing.
 
@@ -76,14 +80,16 @@ pub fn seed(rows: &BTreeMap<String, BrainRow>) -> BTreeMap<String, AdmittedCheck
         .collect()
 }
 
-/// Every guild whose row differs from its last admitted checkpoint. An
-/// unchanged row is not re-proposed: each proposal charges its full payload
-/// against the guild's storage budget.
+/// Every covered guild whose row differs from its last admitted checkpoint.
+/// An unchanged row is not re-proposed: each proposal charges its full
+/// payload against the guild's storage budget.
 pub fn plan(
     rows: &BTreeMap<String, BrainRow>,
     admitted: &BTreeMap<String, AdmittedCheckpoint>,
+    covers: impl Fn(&str) -> bool,
 ) -> Vec<Proposal> {
     rows.iter()
+        .filter(|(guild, _)| covers(guild))
         .filter_map(|(guild, row)| {
             let payload = payload(row);
             let commitment = commitment(&payload);
@@ -133,16 +139,18 @@ pub fn settle(
     settlement
 }
 
-/// The synchronous persist path (shutdown) proposes nothing: every row that
-/// is not the admitted checkpoint is substituted, so an unadmitted checkpoint
-/// never reaches disk. Returns the guilds substituted.
+/// The synchronous persist path (shutdown) proposes nothing: every covered
+/// row that is not the admitted checkpoint is substituted, so an unadmitted
+/// checkpoint never reaches disk. Returns the guilds substituted.
 pub fn restrict_to_admitted(
     stores: &mut Stores,
     admitted: &BTreeMap<String, AdmittedCheckpoint>,
+    covers: impl Fn(&str) -> bool,
 ) -> Vec<String> {
     let changed: Vec<String> = stores
         .brains
         .iter()
+        .filter(|(guild, _)| covers(guild))
         .filter(|(guild, row)| {
             admitted
                 .get(*guild)
@@ -193,14 +201,14 @@ mod tests {
         let loaded = stores_with(&[("g1", row("{\"a\":1}", 1)), ("g2", row("{\"b\":2}", 2))]);
         let mut admitted = seed(&loaded.brains);
         assert!(
-            plan(&loaded.brains, &admitted).is_empty(),
+            plan(&loaded.brains, &admitted, |_| true).is_empty(),
             "seeded rows are admitted"
         );
 
         let mut next = loaded.clone();
         next.brains.insert("g1".into(), row("{\"a\":2}", 3));
         next.brains.insert("g3".into(), row("{\"c\":1}", 1));
-        let proposals = plan(&next.brains, &admitted);
+        let proposals = plan(&next.brains, &admitted, |_| true);
         assert_eq!(
             proposals
                 .iter()
@@ -240,7 +248,7 @@ mod tests {
 
         // The next change supersedes the admitted checkpoint's digest.
         next.brains.insert("g1".into(), row("{\"a\":3}", 4));
-        let again = plan(&next.brains, &admitted);
+        let again = plan(&next.brains, &admitted, |_| true);
         assert_eq!(again.len(), 1);
         assert_eq!(again[0].supersedes, Some([0xab; 32]));
     }
@@ -252,7 +260,7 @@ mod tests {
         let mut next = loaded.clone();
         next.brains.insert("g1".into(), row("{\"a\":2}", 2));
         next.brains.insert("new".into(), row("{\"n\":1}", 1));
-        let proposals = plan(&next.brains, &admitted);
+        let proposals = plan(&next.brains, &admitted, |_| true);
         let outcomes = proposals
             .into_iter()
             .map(|proposal| {
@@ -291,11 +299,46 @@ mod tests {
         next.brains.insert("g1".into(), row("{\"a\":9}", 9));
         next.brains.insert("g2".into(), row("{\"b\":1}", 1));
         next.guilds.insert("g2".into(), Default::default());
-        let substituted = restrict_to_admitted(&mut next, &admitted);
+        let substituted = restrict_to_admitted(&mut next, &admitted, |_| true);
         assert_eq!(substituted, ["g1", "g2"]);
         assert_eq!(next.brains["g1"], row("{\"a\":1}", 1));
         assert!(!next.brains.contains_key("g2"));
         assert!(next.guilds.contains_key("g2"), "only brain rows are gated");
-        assert!(restrict_to_admitted(&mut next, &admitted).is_empty());
+        assert!(restrict_to_admitted(&mut next, &admitted, |_| true).is_empty());
+    }
+
+    #[test]
+    fn an_uncovered_guild_is_neither_proposed_nor_substituted() {
+        let loaded = stores_with(&[("g1", row("{\"a\":1}", 1)), ("g2", row("{\"b\":1}", 1))]);
+        let admitted = seed(&loaded.brains);
+        let mut next = loaded.clone();
+        next.brains.insert("g1".into(), row("{\"a\":2}", 2));
+        next.brains.insert("g2".into(), row("{\"b\":2}", 2));
+        next.brains.insert("g3".into(), row("{\"c\":1}", 1));
+        let covers = |guild: &str| guild == "g1";
+
+        let proposals = plan(&next.brains, &admitted, covers);
+        assert_eq!(
+            proposals
+                .iter()
+                .map(|p| p.guild.as_str())
+                .collect::<Vec<_>>(),
+            ["g1"],
+            "only the covered guild is proposed"
+        );
+
+        let substituted = restrict_to_admitted(&mut next, &admitted, covers);
+        assert_eq!(substituted, ["g1"]);
+        assert_eq!(next.brains["g1"], row("{\"a\":1}", 1));
+        assert_eq!(
+            next.brains["g2"],
+            row("{\"b\":2}", 2),
+            "an uncovered row persists as written"
+        );
+        assert_eq!(
+            next.brains["g3"],
+            row("{\"c\":1}", 1),
+            "an uncovered new row is never dropped"
+        );
     }
 }

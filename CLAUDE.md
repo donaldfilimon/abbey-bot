@@ -82,9 +82,14 @@ pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
 
 `episode_gate.rs` (added 2026-09-06) is the bot's caller of the WDBX v3
 episode gate and is **default-off** (`ABBEY_EPISODE_GATE_CONFIG` unset means
-byte-identical behaviour). It runs the `abi` binary (`abi wdbx episode propose
---json`) with a cleared environment, an owner-only temp write file, a timeout,
-and capped output, and records two things. First, a content-free `proposal`
+byte-identical behaviour). The config's optional `guilds` list is deployment
+scoping (which scoped guild ids this instance proposes for, so one guild can
+go first); `AppState::gate_for(scoped_guild)` is the one place that decides,
+and an uncovered scope is byte-identical to no gate on every path below,
+including checkpoints. It is not a hole in the constitution: the ledger's
+per-guild policy still decides what it admits. It runs the `abi` binary (`abi
+wdbx episode propose --json`) with a cleared environment, an owner-only temp
+write file, a timeout, and capped output, and records two things. First, a content-free `proposal`
 that a guild administrator asked for `/admin learning on|off`; the local toggle
 never waits on it, and approval/execution/terminal events belong to the
 constitutional host, so nothing here claims the ledger authorized the toggle.
@@ -118,7 +123,7 @@ budget after a few changed checkpoints, after which the gate refuses and the
 last admitted row keeps being persisted. Donald's call (2026-09-06): the accounting
 stays; size `storage_budget_bytes` for checkpoint guilds as roughly changed
 checkpoints × checkpoint bytes, within the store's 64 MiB ledger cap, before
-turning the gate on for a chatty guild.
+turning the gate on for a chatty guild. Live acceptance is `src/episode_gate/acceptance.rs`: an `#[ignore]` test that drives the real `abi` binary against a real gateway through the tool host, the queue and drain, the slash-style admit and forget, and the gated checkpoint persist, verifying every receipt with `abi wdbx episode verify` from a separate process and proving one live refusal; run it on purpose with `ABBEY_EPISODE_GATE_ACCEPTANCE_CONFIG=... cargo test acceptance -- --ignored` against a scratch gateway, never the production store (each run charges the acceptance guild's budget forever). Deployment: `deploy/install-wdbx-gateway-launchd.sh` installs the gateway agent (`com.donaldfilimon.abbey-wdbx-gateway`, loopback 50051/50052, store `~/.local/share/abbey-bot/wdbx-gateway`, policy `~/.config/abbey-bot/episode-policy.json`); it must be up before the bot restarts with the gate on, or every covered memory write fails closed (visibly, on `/inspect`'s gate line). Budget rule: the ledger charges every candidate's `payload_bytes` cumulatively and never refunds, the store caps `storage_budget_bytes` at 64 MiB, and a checkpoint is the whole serialized `BrainRow` (about 52 KB for MLAI), so a guild's storage budget is a hard lifetime of roughly 1,290 admitted checkpoints; raise it per guild (Donald's decision 2026-09-06) rather than amending §4.4.
 
 `server/` (added 2026-09-06) is the server-plan engine behind
 `abbey-bot --server-plan PLAN.toml --guild ID [--stage …] [--apply]`. Pure:

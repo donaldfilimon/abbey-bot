@@ -24,6 +24,9 @@
 //!   from the canonical types.
 //! - It is off unless `ABBEY_EPISODE_GATE_CONFIG` names a JSON file. Unset,
 //!   the bot's behaviour is byte-identical to before this module existed.
+//!   The file's optional `guilds` list scopes the gate to named guilds
+//!   (deployment scoping, so one guild can go first); an uncovered scope is
+//!   byte-identical to no gate.
 //!
 //! Privacy: every value that reaches the ledger is content-free by
 //! construction. Principal ids are keyed hashes of scoped ids, never Discord
@@ -31,6 +34,7 @@
 //! The bearer token stays in the file the config names and only the `abi`
 //! process reads it.
 
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -222,6 +226,11 @@ struct RawConfig {
     evidence_level: Option<String>,
     #[serde(default)]
     timeout_secs: Option<u64>,
+    /// Deployment scoping: the scoped guild ids (`discord:<id>`) the gate
+    /// applies to. Absent means every scope, which is how the gate behaved
+    /// before this key existed.
+    #[serde(default)]
+    guilds: Option<Vec<String>>,
 }
 
 /// Validated operator configuration. Holds paths and policy bindings only;
@@ -239,6 +248,12 @@ pub struct EpisodeGateConfig {
     service_principal: String,
     evidence_level: EvidenceLevel,
     timeout_secs: u64,
+    /// `None` covers every scope. Otherwise only these scoped guild ids are
+    /// gated: an uncovered scope behaves exactly as if no gate were
+    /// configured. This is deployment scoping (which guilds this bot
+    /// instance proposes for), not a hole in the constitution: the ledger's
+    /// own per-guild policy still decides what it admits.
+    guilds: Option<BTreeSet<String>>,
 }
 
 impl EpisodeGateConfig {
@@ -333,6 +348,28 @@ impl EpisodeGateConfig {
             Some(value) if (1..=MAX_TIMEOUT_SECS).contains(&value) => value,
             Some(_) => return Err(format!("timeout_secs must be 1-{MAX_TIMEOUT_SECS}")),
         };
+        let guilds = match raw.guilds {
+            None => None,
+            Some(entries) => {
+                let mut covered = BTreeSet::new();
+                for entry in &entries {
+                    let scoped_guild = entry.trim();
+                    if scoped_guild.is_empty() || guild_ref_for(scoped_guild).is_none() {
+                        return Err(
+                            "guilds entries must be scoped guild ids that map to a ledger guild reference (for example discord:123)"
+                                .into(),
+                        );
+                    }
+                    covered.insert(scoped_guild.to_owned());
+                }
+                if covered.is_empty() {
+                    return Err(
+                        "guilds must name at least one scoped guild id or be omitted".into(),
+                    );
+                }
+                Some(covered)
+            }
+        };
         Ok(Self {
             abi_cli,
             endpoint,
@@ -344,6 +381,7 @@ impl EpisodeGateConfig {
             service_principal,
             evidence_level,
             timeout_secs,
+            guilds,
         })
     }
 
@@ -353,6 +391,18 @@ impl EpisodeGateConfig {
 
     pub fn timeout_secs(&self) -> u64 {
         self.timeout_secs
+    }
+
+    /// Whether this scope is gated. Every scope is when `guilds` is absent.
+    pub fn covers(&self, scoped_guild: &str) -> bool {
+        self.guilds
+            .as_ref()
+            .is_none_or(|covered| covered.contains(scoped_guild))
+    }
+
+    /// How many scopes the config names, `None` for "every scope".
+    pub fn coverage(&self) -> Option<usize> {
+        self.guilds.as_ref().map(BTreeSet::len)
     }
 }
 
@@ -615,6 +665,8 @@ pub struct GateCounters {
     /// Local deletions of facts the ledger never admitted (stored before the
     /// gate existed), so no tombstone edge could be proposed.
     pub ungated_forgets: u64,
+    /// Scopes the config names (`guilds`), `None` when every scope is gated.
+    pub covered_guilds: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -680,7 +732,13 @@ impl EpisodeGate {
             rejected: self.rejected.load(Ordering::Relaxed),
             unavailable: self.unavailable.load(Ordering::Relaxed),
             ungated_forgets: self.ungated_forgets.load(Ordering::Relaxed),
+            covered_guilds: self.config.coverage(),
         }
+    }
+
+    /// Whether this scope is gated; see [`EpisodeGateConfig::covers`].
+    pub fn covers(&self, scoped_guild: &str) -> bool {
+        self.config.covers(scoped_guild)
     }
 
     /// A fact the ledger never admitted was deleted locally; visible, not silent.
@@ -949,5 +1007,7 @@ async fn read_capped(mut reader: impl AsyncRead + Unpin, limit: usize) -> Result
     }
 }
 
+#[cfg(test)]
+mod acceptance;
 #[cfg(test)]
 mod tests;

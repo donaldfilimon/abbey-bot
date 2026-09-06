@@ -653,7 +653,43 @@ status: in_progress
   instead of refusing while the gate is configured (`memory_gate::{enqueue, drain}`,
   `AppState.memory_queue`, cap 64, drained after each pipeline reply and before each gated
   persist; a refused item is dropped, not retried; tests cover the dead-gate and no-gate
-  paths). Gate result in the commit; that commit is local until its own yes.
+  paths). Gate green (1011 passed); `ba61202`, pushed on Donald's yes.
+- 2026-09-06 04:2x: **gate scoped to one guild, gateway deployment prepared, memory path
+  accepted live (local commit, not pushed).** The gate config gains an optional `guilds` list
+  (scoped guild ids; absent = every scope) and `AppState::gate_for` is the single decision point:
+  an uncovered scope is byte-identical to no gate on `/remember`, `/forget`, confirm, the model
+  tool, the learning-toggle mirror, and checkpoints (`checkpoint_gate::{plan,restrict_to_admitted}`
+  take the predicate, so the six non-MLAI brain rows are neither proposed nor substituted).
+  `/inspect`'s gate line now says `all guilds` or `N guild(s)`. Live acceptance is
+  `src/episode_gate/acceptance.rs`, an `#[ignore]` test run on purpose against a scratch
+  gateway: real `abi` binary + real `abi-wdbx-gateway` + the real policy file, through the tool
+  host, the queue and drain, slash-style admit with `replaces`, forget, and `persist_all_gated`;
+  every receipt re-verified by `abi wdbx episode verify` from a separate process; one live
+  refusal (a covered scope the policy does not list). Result: 4 records in the scratch ledger
+  (fact 44 B, superseding fact 42 B, tombstone 0 B, experience checkpoint 71 B), counters
+  appended 4 / rejected 1 / unavailable 0; the production store at
+  `~/.local/share/abbey-bot/wdbx-gateway` was opened once by the gateway and answered
+  `found=false` for the MLAI guild, ledger 0 bytes. Deployment files (outside the repo):
+  `~/.config/abbey-bot/{episode-policy.json,episode-gate.json,episode-gate-acceptance.json,
+  episode-gateway-token}` (0600); binaries + both `libabi_*.dylib` shims in
+  `~/.local/libexec/abbey-bot`. In the repo: `deploy/com.donaldfilimon.abbey-wdbx-gateway.plist`
+  and `deploy/install-wdbx-gateway-launchd.sh` (readiness = zero-digest verify answers
+  `found=false`; **syntax-checked only, never executed: its first run is the bootstrap**, and
+  nothing it does before `launchctl bootstrap` touches the bot), `check-launchd-env.sh` names
+  `ABBEY_EPISODE_GATE_CONFIG`. Startup trap, read from `runtime.rs:523`: a gate config the bot
+  cannot validate is a `StartupError`, i.e. a crash loop under `KeepAlive`, so the env line must
+  be the literal absolute path and the file must validate before the restart. Discord auth runs
+  before that validation, so the binary cannot preflight it with a placeholder token (tried:
+  both a good and a broken config die at auth); the preflight is the `#[ignore]` test
+  `preflight_the_gate_config_named_by_the_environment`, which ran green on the production
+  `episode-gate.json` (coverage 1) and red on a broken file. Policy sizing:
+  MLAI `discord-1275617641620443146` token_budget 10,000,000 and storage_budget_bytes 64 MiB
+  (the store's hard cap); acceptance guild 100,000 / 4 MiB. Honest arithmetic: MLAI's row is
+  ~52 KB and learning is on there, so 64 MiB is a lifetime of ~1,290 admitted checkpoints
+  (worst case 288/day = ~4.5 days if the row changes every tick; longer in practice, since an
+  unchanged row is not re-proposed). Not done, by rule: nothing added to the live env file, no
+  launchd bootstrap of the gateway agent, no bot restart; those are the named stop and wait
+  for Donald's yes. Gate green (1014 passed, 3 ignored including the acceptance test).
 - 2026-09-06 03:4x: **memory-candidate adapter landed (amendment step 3 of 3, local commit,
   not pushed).** `episode_gate.rs` transcribes `MemoryClass`/`RetentionClass`/`MemoryCandidate`
   and the `memory_candidate` event (pinned by `tests/fixtures/episode_write_memory_candidate.json`,

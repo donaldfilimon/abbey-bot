@@ -165,9 +165,10 @@ fn refusal(outcome: &GateOutcome) -> String {
 }
 
 /// Propose a `fact` candidate for `fact`, superseding the receipt of
-/// `replaces` when that fact has one. `Ok(None)` means no gate is configured;
-/// `Ok(Some(digest_hex))` is the receipt to key the stored fact by; `Err` is
-/// the message to show, and nothing may be written.
+/// `replaces` when that fact has one. `Ok(None)` means no gate is configured
+/// or this scope is not covered by it; `Ok(Some(digest_hex))` is the receipt
+/// to key the stored fact by; `Err` is the message to show, and nothing may
+/// be written.
 pub async fn admit_fact(
     state: &AppState,
     scoped_guild: &str,
@@ -175,7 +176,7 @@ pub async fn admit_fact(
     fact: &str,
     replaces: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let Some(gate) = state.episode_gate.as_ref() else {
+    let Some(gate) = state.gate_for(scoped_guild) else {
         return Ok(None);
     };
     let service = state.memory_service();
@@ -220,7 +221,7 @@ pub async fn admit_forget(
     scoped_user: &str,
     fact: &str,
 ) -> Result<(), String> {
-    let Some(gate) = state.episode_gate.as_ref() else {
+    let Some(gate) = state.gate_for(scoped_guild) else {
         return Ok(());
     };
     let service = state.memory_service();
@@ -284,8 +285,12 @@ mod tests {
     /// A gate whose `abi` binary does not exist: every proposal is
     /// `Unavailable`, which is the fail-closed path this module promises.
     fn dead_gate() -> Arc<EpisodeGate> {
+        dead_gate_covering(None)
+    }
+
+    fn dead_gate_covering(guilds: Option<&[&str]>) -> Arc<EpisodeGate> {
         let temp = std::env::temp_dir();
-        let json = serde_json::json!({
+        let mut json = serde_json::json!({
             "abi_cli": temp.join("abi-that-does-not-exist").display().to_string(),
             "endpoint": "http://127.0.0.1:50051",
             "token_file": temp.join("abbey-episode-token").display().to_string(),
@@ -293,10 +298,12 @@ mod tests {
             "contract_revision": 2,
             "contract_digest": "01".repeat(32),
             "timeout_secs": 5,
-        })
-        .to_string();
+        });
+        if let Some(guilds) = guilds {
+            json["guilds"] = serde_json::json!(guilds);
+        }
         Arc::new(EpisodeGate::new(
-            EpisodeGateConfig::from_json(&json).unwrap(),
+            EpisodeGateConfig::from_json(&json.to_string()).unwrap(),
         ))
     }
 
@@ -396,5 +403,51 @@ mod tests {
             "validation still applies"
         );
         assert!(AppState::lock(&state.memory_queue).is_empty());
+    }
+
+    /// A dead gate that does not cover this scope must be invisible: the
+    /// model tool stores immediately, the slash paths report "no gate", the
+    /// queue stays empty, and no counter moves.
+    #[tokio::test]
+    async fn an_uncovered_scope_behaves_exactly_as_if_no_gate_were_configured() {
+        let mut state = AppState::in_memory();
+        Arc::get_mut(&mut state).unwrap().episode_gate =
+            Some(dead_gate_covering(Some(&["discord:999"])));
+        let (g, u) = ("discord:123456789012345678", "discord:42");
+        assert!(state.gate_for(g).is_none());
+        assert!(state.gate_for("discord:999").is_some());
+
+        let mut host = scope(&state);
+        let reply = host.remember_fact("likes compilers", None);
+        assert!(reply.starts_with("Stored"), "{reply}");
+        assert_eq!(
+            state.memory_service().facts(g, u),
+            vec!["likes compilers".to_string()]
+        );
+        assert!(AppState::lock(&state.memory_queue).is_empty());
+        assert!(
+            state
+                .memory_service()
+                .receipt(g, u, "likes compilers")
+                .is_none()
+        );
+
+        assert_eq!(
+            admit_fact(&state, g, u, "uses rust", None).await,
+            Ok(None),
+            "no receipt, nothing proposed"
+        );
+        assert_eq!(admit_forget(&state, g, u, "likes compilers").await, Ok(()));
+        let counters = state.episode_gate.as_ref().unwrap().counters();
+        assert_eq!(
+            (
+                counters.appended,
+                counters.rejected,
+                counters.unavailable,
+                counters.ungated_forgets
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(counters.covered_guilds, Some(1));
     }
 }

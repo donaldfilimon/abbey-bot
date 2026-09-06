@@ -64,7 +64,8 @@ for key in \
   ABBEY_VOICE_GUILD_ID \
   ABBEY_VOICE_CHANNEL_ID \
   ABBEY_VOICE_MODE \
-  ABBEY_VOICE_LOCAL_ENDPOINT
+  ABBEY_VOICE_LOCAL_ENDPOINT \
+  ABBEY_EPISODE_GATE_CONFIG
 do
   report "$key" || true
 done
@@ -95,6 +96,9 @@ if ! key_present ABBEY_BOT_LLM_ENDPOINT; then
 fi
 if ! key_present ABBEY_GUILD_ID; then
   echo "note: no ABBEY_GUILD_ID — slash commands register globally (up to an hour)" >&2
+fi
+if key_present ABBEY_EPISODE_GATE_CONFIG; then
+  echo "note: ABBEY_EPISODE_GATE_CONFIG is set — every memory write for the covered guilds needs the WDBX gateway (deploy/install-wdbx-gateway-launchd.sh) up first, or it fails closed" >&2
 fi
 echo "MLX-Audio sidecar is separate: deploy/install-mlx-audio-launchd.sh binds 127.0.0.1:8181 (setuptools 83; webrtcvad patched via importlib.metadata; readiness GET /v1/models)." >&2
 exit "$status"
