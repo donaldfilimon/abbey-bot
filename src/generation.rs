@@ -16,20 +16,8 @@ use crate::memory::PersonaContext;
 use crate::persona::Persona;
 use crate::pipeline::Outbound;
 use crate::platform::OutboundMessage;
-use crate::provider::{ProviderCapabilities, ProviderRoute};
+use crate::provider::{ConversationEffects, ProviderConversation, ProviderId};
 use crate::runtime::AppState;
-
-mod foundation_models;
-
-/// Tool rejection removes the vocabulary, not the provider's text route.
-/// Both generation and help consult the same effective fallback capability.
-pub(crate) fn fm_cli_text_available(fm: Option<&crate::provider::FoundationModels>) -> bool {
-    fm.is_some_and(|fm| {
-        fm.router
-            .candidates(ProviderCapabilities::text())
-            .contains(&ProviderRoute::FoundationModelsCli)
-    })
-}
 
 /// Progressive-reply pacing: post once this many characters have arrived…
 pub const STREAM_FIRST_POST_CHARS: usize = 60;
@@ -61,27 +49,42 @@ pub enum StreamEnd {
 /// ignoring them would make streaming disagree with completed generation. If
 /// the stream fails after a partial message went out, that message is edited
 /// to the honest failure line so a half-answer never stands as if whole.
+#[cfg(test)]
 pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
     transport: &T,
     delivery: &Delivery<'_, O>,
     round: &Round<'_>,
 ) -> Result<StreamEnd, llm::LlmError> {
+    let request =
+        llm::build_stream_request(round.backend, round.system_prompt, round.turns, round.tools);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    stream_received(
+        transport.post_stream(&request, tx),
+        rx,
+        delivery,
+        round.backend.label(),
+        round.persona,
+        round.grounding,
+        &ConversationEffects::default(),
+    )
+    .await
+}
+
+async fn stream_received<O: Outbound + Sync>(
+    stream: impl Future<Output = Result<llm::ModelTurn, llm::LlmError>>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    delivery: &Delivery<'_, O>,
+    provider_label: &'static str,
+    persona: Persona,
+    grounding: &Grounding,
+    effects: &ConversationEffects,
+) -> Result<StreamEnd, llm::LlmError> {
     let Delivery {
         out,
         native_channel_id,
-        reply_to,
+        reply_to: _,
     } = *delivery;
-    let Round {
-        backend,
-        system_prompt,
-        turns,
-        tools,
-        persona,
-        grounding,
-    } = *round;
-    let request = llm::build_stream_request(backend, system_prompt, turns, tools);
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let mut stream = std::pin::pin!(transport.post_stream(&request, tx));
+    let mut stream = std::pin::pin!(stream);
     let started = tokio::time::Instant::now();
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(STREAM_EDIT_EVERY_SECS));
     tick.tick().await;
@@ -92,14 +95,18 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
 
     // Post-or-edit with whatever has arrived, honouring the pacing rules.
     async fn flush<O: Outbound + Sync>(
-        out: &O,
-        channel: &str,
-        reply_to: Option<&str>,
+        delivery: &Delivery<'_, O>,
         text: &str,
         grounding: &Grounding,
         posted: &mut Option<String>,
         last_edited_len: &mut usize,
+        effects: &ConversationEffects,
     ) -> Result<(), String> {
+        let Delivery {
+            out,
+            native_channel_id: channel,
+            reply_to,
+        } = *delivery;
         if text.trim().is_empty() || text.chars().count() == *last_edited_len {
             return Ok(());
         }
@@ -116,6 +123,7 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
             }
             Some(id) => out.edit(channel, id, &visible).await?,
         }
+        effects.mark_visible_output();
         *last_edited_len = text.chars().count();
         Ok(())
     }
@@ -131,14 +139,14 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
                     && (text.chars().count() >= STREAM_FIRST_POST_CHARS
                         || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS);
                 if due {
-                    flush(out, native_channel_id, reply_to, &text, grounding, &mut posted, &mut last_edited_len)
+                    flush(delivery, &text, grounding, &mut posted, &mut last_edited_len, effects)
                         .await
                         .map_err(llm::LlmError::backend)?;
                 }
             }
             _ = tick.tick() => {
                 if posted.is_some() || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS {
-                    flush(out, native_channel_id, reply_to, &text, grounding, &mut posted, &mut last_edited_len)
+                    flush(delivery, &text, grounding, &mut posted, &mut last_edited_len, effects)
                         .await
                         .map_err(llm::LlmError::backend)?;
                 }
@@ -160,7 +168,7 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
                     "backend returned text and tool calls in one streamed turn".into(),
                 );
                 if let Some(id) = &posted {
-                    let failure = ask::render_failure(persona, backend.label(), &error);
+                    let failure = ask::render_failure(persona, provider_label, &error);
                     let _ = out.edit(native_channel_id, id, &failure).await;
                 }
                 return Err(error);
@@ -175,12 +183,13 @@ pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
                 out.edit(native_channel_id, id, &tidy)
                     .await
                     .map_err(llm::LlmError::backend)?;
+                effects.mark_visible_output();
             }
             Ok(StreamEnd::Text(tidy, posted))
         }
         Err(e) => {
             if let Some(id) = &posted {
-                let failure = ask::render_failure(persona, backend.label(), &e);
+                let failure = ask::render_failure(persona, provider_label, &e);
                 let _ = out.edit(native_channel_id, id, &failure).await;
             }
             Err(e)
@@ -226,6 +235,7 @@ impl<O> Clone for Delivery<'_, O> {
 impl<O> Copy for Delivery<'_, O> {}
 
 /// One generation round: what to send the backend.
+#[cfg(test)]
 #[derive(Clone, Copy)]
 pub struct Round<'a> {
     pub backend: &'a llm::Backend,
@@ -332,6 +342,7 @@ impl ToolAccess<'_, '_> {
         &mut self,
         offered: &[crate::tools::ToolSpec],
         calls: &[crate::tools::ToolCall],
+        effects: &ConversationEffects,
     ) -> Result<Vec<crate::tools::ToolResult>, llm::LlmError> {
         if offered.is_empty() && !calls.is_empty() {
             return Err(llm::LlmError::backend(
@@ -351,313 +362,77 @@ impl ToolAccess<'_, '_> {
             Self::Disabled(_) => Err(llm::LlmError::backend("tool access is disabled".into())),
             Self::Enabled(host) => Ok(calls
                 .iter()
-                .map(|call| crate::tools::dispatch(call, &mut **host))
+                .map(|call| {
+                    crate::tools::dispatch(
+                        call,
+                        &mut EffectHost {
+                            host: &mut **host,
+                            effects,
+                        },
+                    )
+                })
                 .collect()),
         }
     }
 }
 
-/// Generate with Abbey's model-callable tool vocabulary and canonical runtime
-/// scope. This is the only public entry point that accepts a live tool host.
-///
-/// The generation loop builds the prompt for the scope's persona,
-/// calls the backend (streamed to `delivery` on the local path, single-shot
-/// otherwise), run any tool calls against `host`, and repeat up to
-/// [`crate::tools::MAX_TOOL_ROUNDS`] times until the model answers in text.
-///
-/// Returns the tidied text, the id of the message already holding it (if the
-/// stream posted it), the persona that ended up answering (tools may switch
-/// it), and the provider label. A backend that rejects tooled requests (HTTP
-/// 4xx) is retried once without tools and only that provider's tool route is
-/// disabled for the process. Cross-provider fallback is allowed only when the
-/// failed attempt could not already have dispatched a tool; the established
-/// Anthropic-to-local order is preserved before Foundation Models.
+/// One runtime conversation spans every tool round and its one pre-effect fallback.
 pub async fn generate_with_tools<O: Outbound + Sync>(
     state: &AppState,
     host: &mut crate::runtime::ToolScope<'_>,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
 ) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
-    let primary_streamed = delivery.is_some()
-        && matches!(
-            state.backend.as_ref(),
-            Some(llm::Backend::OpenAiCompatible { .. })
-        );
-    let primary_tools_possible = state.backend.is_some()
-        && foundation_models::primary_tools_are_available(
-            state.foundation_models.as_ref(),
-            state
-                .tools_enabled
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
-    let primary = match &state.backend {
-        Some(backend) => {
-            generate_with_backend_and_access(
-                state,
-                backend,
-                ToolAccess::Enabled(&mut *host),
-                ask,
-                delivery,
-                None,
-                llm::ResponseStyle::Default,
-            )
-            .await
-        }
-        None => Err(no_backend_error()),
-    };
-    let primary_error = match primary {
-        Ok(answer) => {
-            let label = state
-                .backend
-                .as_ref()
-                .expect("a primary result requires a primary backend")
-                .label();
-            return Ok((answer.0, answer.1, answer.2, label));
-        }
-        Err(error) => error,
-    };
-    let fm_cli_available = fm_cli_text_available(state.foundation_models.as_ref());
-    let routes = foundation_models::fallback_routes(
-        delivery.is_some(),
-        primary_streamed,
-        primary_tools_possible,
-        state.fallback.is_some(),
-        false,
-        fm_cli_available,
-    );
-    let mut last_error = primary_error;
-    for route in routes {
-        match route {
-            foundation_models::FallbackRoute::Local => {
-                let local = state
-                    .fallback
-                    .as_ref()
-                    .expect("the route planner requires an available local fallback");
-                tracing::warn!(error = %last_error, "primary backend failed; trying the configured local endpoint");
-                match generate_with_backend_and_access(
-                    state,
-                    local,
-                    ToolAccess::Enabled(&mut *host),
-                    ask,
-                    delivery,
-                    None,
-                    llm::ResponseStyle::Default,
-                )
-                .await
-                {
-                    Ok(answer) => return Ok((answer.0, answer.1, answer.2, local.label())),
-                    Err(error) => {
-                        last_error = error;
-                        if delivery.is_some() {
-                            return Err(last_error);
-                        }
-                    }
-                }
-            }
-            foundation_models::FallbackRoute::FoundationModelsCli => {
-                let fm = state
-                    .foundation_models
-                    .as_ref()
-                    .expect("the route planner requires an available FM CLI");
-                tracing::warn!(error = %last_error, "configured backends failed; trying explicit Foundation Models CLI fallback");
-                return foundation_models::generate_with_fm_cli_and_access(
-                    state,
-                    fm,
-                    ToolAccess::Enabled(&mut *host),
-                    ask,
-                )
-                .await
-                .map(|answer| (answer.0, answer.1, answer.2, fm.label()));
-            }
-            foundation_models::FallbackRoute::FoundationModelsServer => {
-                unreachable!("tool-capable generation never routes through fm serve")
-            }
-        }
-    }
-    Err(last_error)
+    let mut conversation = state.providers.begin(true, delivery.is_some());
+    generate_conversation(
+        state,
+        &mut conversation,
+        ToolAccess::Enabled(host),
+        ask,
+        delivery,
+        None,
+        llm::ResponseStyle::Default,
+    )
+    .await
 }
-
-/// Generate with Abbey's model-callable tools but without a delivery channel.
-///
-/// This is the non-streaming entry point for callers such as slash commands:
-/// it accepts the canonical live tool scope, but does not expose the internal
-/// uninhabited outbound type or require callers to spell a generic parameter.
 pub async fn generate_with_tools_without_delivery(
     state: &AppState,
     host: &mut crate::runtime::ToolScope<'_>,
     ask: &Ask<'_>,
 ) -> Result<(String, Persona, &'static str), llm::LlmError> {
-    let (text, posted, persona, provider) =
+    let (text, _, persona, label) =
         generate_with_tools::<NoDelivery>(state, host, ask, None).await?;
-    debug_assert!(posted.is_none(), "no-delivery generation cannot post");
-    Ok((text, persona, provider))
+    Ok((text, persona, label))
 }
-
-/// Generate against the configured backend without constructing a tool host
-/// or vocabulary. Persona is explicit because no mutable tool scope exists to
-/// smuggle that state into a read-only turn.
 pub async fn generate_read_only<O: Outbound + Sync>(
     state: &AppState,
     persona: Persona,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
 ) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
-    let primary_streamed = delivery.is_some()
-        && matches!(
-            state.backend.as_ref(),
-            Some(llm::Backend::OpenAiCompatible { .. })
-        );
-    let primary = match &state.backend {
-        Some(backend) => {
-            generate_with_backend_and_access(
-                state,
-                backend,
-                ToolAccess::Disabled(persona),
-                ask,
-                delivery,
-                None,
-                llm::ResponseStyle::Default,
-            )
-            .await
-        }
-        None => Err(no_backend_error()),
-    };
-    let primary_error = match primary {
-        Ok(answer) => {
-            let label = state
-                .backend
-                .as_ref()
-                .expect("a primary result requires a primary backend")
-                .label();
-            return Ok((answer.0, answer.1, answer.2, label));
-        }
-        Err(error) => error,
-    };
-    // `fm serve` defaults to SSE even on an otherwise non-streaming request,
-    // so qualify it only on the delivery path where Abbey explicitly streams.
-    let streamed_text = ProviderCapabilities {
-        text: true,
-        streaming: true,
-        ..ProviderCapabilities::default()
-    };
-    let fm_server_available = delivery.is_some()
-        && state.foundation_models.as_ref().is_some_and(|fm| {
-            fm.router
-                .candidates(streamed_text)
-                .contains(&ProviderRoute::FoundationModelsServer)
-        });
-    let fm_cli_available = fm_cli_text_available(state.foundation_models.as_ref());
-    let routes = foundation_models::fallback_routes(
-        delivery.is_some(),
-        primary_streamed,
-        false,
-        state.fallback.is_some(),
-        fm_server_available,
-        fm_cli_available,
-    );
-    let mut last_error = primary_error;
-    for route in routes {
-        match route {
-            foundation_models::FallbackRoute::Local => {
-                let local = state
-                    .fallback
-                    .as_ref()
-                    .expect("the route planner requires an available local fallback");
-                tracing::warn!(error = %last_error, "primary backend failed; trying the configured local endpoint");
-                match generate_with_backend_and_access(
-                    state,
-                    local,
-                    ToolAccess::Disabled(persona),
-                    ask,
-                    delivery,
-                    None,
-                    llm::ResponseStyle::Default,
-                )
-                .await
-                {
-                    Ok(answer) => return Ok((answer.0, answer.1, answer.2, local.label())),
-                    Err(error) => {
-                        last_error = error;
-                        // The local endpoint streams on delivery paths. Its
-                        // error carries no posted id, so another provider
-                        // could double-post after the visible failure edit.
-                        if delivery.is_some() {
-                            return Err(last_error);
-                        }
-                    }
-                }
-            }
-            foundation_models::FallbackRoute::FoundationModelsServer => {
-                let fm = state
-                    .foundation_models
-                    .as_ref()
-                    .expect("the route planner requires an available FM server");
-                let server = fm
-                    .server_backend()
-                    .expect("the route planner requires an FM server endpoint");
-                tracing::warn!(error = %last_error, "configured backends failed; trying explicit Foundation Models server fallback");
-                match generate_with_backend_and_access(
-                    state,
-                    &server,
-                    ToolAccess::Disabled(persona),
-                    ask,
-                    delivery,
-                    None,
-                    llm::ResponseStyle::Default,
-                )
-                .await
-                {
-                    Ok(answer) => return Ok((answer.0, answer.1, answer.2, fm.label())),
-                    // `stream_reply` may already have posted before failing.
-                    // Never chain its failure into the CLI.
-                    Err(error) => return Err(error),
-                }
-            }
-            foundation_models::FallbackRoute::FoundationModelsCli => {
-                let fm = state
-                    .foundation_models
-                    .as_ref()
-                    .expect("the route planner requires an available FM CLI");
-                tracing::warn!(error = %last_error, "configured backends failed; trying explicit Foundation Models CLI fallback");
-                return foundation_models::generate_with_fm_cli_and_access(
-                    state,
-                    fm,
-                    ToolAccess::Disabled(persona),
-                    ask,
-                )
-                .await
-                .map(|answer| (answer.0, answer.1, answer.2, fm.label()));
-            }
-        }
-    }
-    Err(last_error)
+    let mut conversation = state.providers.begin(false, delivery.is_some());
+    generate_conversation(
+        state,
+        &mut conversation,
+        ToolAccess::Disabled(persona),
+        ask,
+        delivery,
+        None,
+        llm::ResponseStyle::Default,
+    )
+    .await
 }
-
-fn no_backend_error() -> llm::LlmError {
-    llm::LlmError::backend("no generation backend is configured".into())
-}
-
-/// Generate read-only text through an explicitly selected backend, with no
-/// delivery channel and no model-callable tools. The caller must choose the
-/// persona explicitly; no live [`crate::runtime::ToolScope`] is constructed or
-/// exposed, and the tool vocabulary is never allocated.
-///
-/// The voice surface uses this seam to require a loopback backend even when a
-/// remote text provider is configured as the process-wide default. The
-/// optional suffix adds presentation constraints without replacing persona
-/// policy. Its explicit spoken response style skips optional model thinking
-/// only on the measured local Ollama/Gemma deployment; ordinary text and
-/// tool-capable generation retain provider defaults.
 pub async fn generate_without_delivery(
     state: &AppState,
-    backend: &llm::Backend,
+    provider: &ProviderId,
     persona: Persona,
     ask: &Ask<'_>,
     system_suffix: Option<&str>,
 ) -> Result<(String, Persona), llm::LlmError> {
-    let (text, posted, persona) = generate_with_backend_and_access::<NoDelivery>(
+    let mut conversation = state.providers.voice(provider);
+    let (text, _, persona, _) = generate_conversation::<NoDelivery>(
         state,
-        backend,
+        &mut conversation,
         ToolAccess::Disabled(persona),
         ask,
         None,
@@ -665,129 +440,88 @@ pub async fn generate_without_delivery(
         llm::ResponseStyle::Spoken,
     )
     .await?;
-    debug_assert!(posted.is_none(), "no-delivery generation cannot post");
     Ok((text, persona))
 }
-
-async fn generate_with_backend_and_access<O: Outbound + Sync>(
+async fn generate_conversation<O: Outbound + Sync>(
     state: &AppState,
-    backend: &llm::Backend,
+    conversation: &mut ProviderConversation<'_>,
     mut access: ToolAccess<'_, '_>,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
     system_suffix: Option<&str>,
     response_style: llm::ResponseStyle,
-) -> Result<(String, Option<String>, Persona), llm::LlmError> {
-    use std::sync::atomic::Ordering;
-    let scope = ask.scope;
-    // Constructing the vocabulary is intentionally capability-gated. This is
-    // more than an empty slice at dispatch time: disabled voice turns never
-    // allocate or even materialize model-callable tool descriptions.
+) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
     let vocabulary = crate::tools::production_tools_when_enabled(
-        access.is_enabled()
-            && foundation_models::primary_tools_are_available(
-                state.foundation_models.as_ref(),
-                state.tools_enabled.load(Ordering::Relaxed),
-            ),
+        access.is_enabled() && conversation.tools_available(),
     );
-    let mut extra_turns: Vec<llm::ChatTurn> = Vec::new();
-    let mut grounding_results: Vec<crate::tools::ToolResult> = Vec::new();
-    for round in 0..=crate::tools::MAX_TOOL_ROUNDS {
+    let effects = conversation.effects();
+    let mut extra_turns = Vec::new();
+    let mut grounding_results = Vec::new();
+    for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
         let prepared = ask.prepare(state, persona);
-        let system_prompt = match system_suffix {
-            Some(suffix) if !suffix.trim().is_empty() => {
-                format!("{}\n\n{}", prepared.system_prompt, suffix.trim())
-            }
-            _ => prepared.system_prompt.clone(),
+        let system = match system_suffix.filter(|s| !s.trim().is_empty()) {
+            Some(suffix) => format!("{}\n\n{}", prepared.system_prompt, suffix.trim()),
+            None => prepared.system_prompt.clone(),
         };
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
         let grounding = grounding_for_round(&prepared, &grounding_results);
-        let offer = vocabulary.is_some()
-            && round < crate::tools::MAX_TOOL_ROUNDS
-            && foundation_models::primary_tools_are_available(
-                state.foundation_models.as_ref(),
-                state.tools_enabled.load(Ordering::Relaxed),
-            );
-        let tools: &[crate::tools::ToolSpec] = if offer {
+        let tools = if round_index < crate::tools::MAX_TOOL_ROUNDS && conversation.tools_available()
+        {
             vocabulary.as_deref().unwrap_or_default()
         } else {
             &[]
         };
-
-        let round = Round {
-            backend,
-            system_prompt: &system_prompt,
-            turns: &turns,
-            tools,
-            persona,
-            grounding: &grounding,
-        };
-        let turn: RoundOutcome = match (&delivery, backend) {
-            (Some(d), llm::Backend::OpenAiCompatible { .. }) => {
-                match stream_reply(&state.llm, d, &round).await {
-                    Ok(StreamEnd::Text(text, posted)) => Ok((Some(text), posted, Vec::new())),
-                    Ok(StreamEnd::Calls(calls)) => Ok((None, None, calls)),
-                    Err(e) => Err(e),
-                }
+        let (text, posted, calls) = loop {
+            match conversation.reserve().await {
+                Ok(()) => {}
+                Err(error) if conversation.fallback(&error) => continue,
+                Err(error) => return Err(error),
             }
-            _ => llm::chat_turn_with_style(
-                &state.llm,
-                backend,
-                &system_prompt,
-                &turns,
-                tools,
-                response_style,
-            )
-            .await
-            .map(|t| {
-                let is_final = t.calls.is_empty();
-                let text = if t.text.trim().is_empty() {
-                    None
-                } else if is_final {
-                    Some(finalize_reply(persona, &t.text, &grounding))
-                } else {
-                    // Preserve prior tool-round shaping, but do not append
-                    // a user-visible hedge to assistant prose that will
-                    // only be sent back to the model for continuation.
-                    Some(ask::tidy_reply(persona, &t.text))
-                };
-                (text, None, t.calls)
-            }),
-        };
-
-        let (text, posted, calls) = match turn {
-            Ok(v) => v,
-            Err(e) if offer && looks_like_tool_rejection(e.detail()) => {
-                tracing::warn!(error = %e, "backend rejected a tooled request; continuing without tools for this process");
-                if let Some(fm) = &state.foundation_models {
-                    fm.router.disable_tools(ProviderRoute::Primary);
-                } else {
-                    state.tools_enabled.store(false, Ordering::Relaxed);
-                }
-                continue;
+            let label = conversation.label();
+            let result: RoundOutcome = if let Some(ref delivery) = delivery
+                && conversation.streams()
+            {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                let work = conversation.execute(&system, &turns, tools, response_style, Some(tx));
+                stream_received(work, rx, delivery, label, persona, &grounding, &effects)
+                    .await
+                    .map(|end| match end {
+                        StreamEnd::Text(text, posted) => (Some(text), posted, Vec::new()),
+                        StreamEnd::Calls(calls) => (None, None, calls),
+                    })
+            } else {
+                conversation
+                    .execute(&system, &turns, tools, response_style, None)
+                    .await
+                    .map(|turn| {
+                        let text = (!turn.text.trim().is_empty()).then(|| {
+                            if turn.calls.is_empty() {
+                                finalize_reply(persona, &turn.text, &grounding)
+                            } else {
+                                ask::tidy_reply(persona, &turn.text)
+                            }
+                        });
+                        (text, None, turn.calls)
+                    })
+            };
+            match result {
+                Ok(turn) => break turn,
+                Err(error) if conversation.fallback(&error) => continue,
+                Err(error) => return Err(error),
             }
-            Err(e) => return Err(e),
         };
-
         if calls.is_empty() {
-            if let Some(text) = text {
-                return Ok((text, posted, persona));
-            }
-            return Err(llm::LlmError::backend(
-                "the response carried no answer text".into(),
-            ));
+            return text
+                .map(|text| (text, posted, persona, conversation.label()))
+                .ok_or_else(|| {
+                    llm::LlmError::backend("the response carried no answer text".into())
+                });
         }
-        // A model is not an authority boundary. If this request did not offer
-        // tools, unsolicited calls must stop here before they can mutate
-        // memory, WDBX, persona state, or any future capability.
-        let results = access.dispatch(tools, &calls)?;
+        let results = access.dispatch(tools, &calls, &effects)?;
         for call in &calls {
-            // Tool results can contain private recalled facts. Keep operational
-            // evidence (which scoped tool completed) without copying its
-            // payload into the durable process log.
-            tracing::info!(tool = %call.name, scope, "tool call completed");
+            tracing::info!(tool = %call.name, "tool call completed");
         }
         extra_turns.push(llm::ChatTurn::assistant_calls(
             text.unwrap_or_default(),
@@ -802,13 +536,40 @@ async fn generate_with_backend_and_access<O: Outbound + Sync>(
     )))
 }
 
-/// HTTP 4xx on a tooled request is how a backend without tool support says
-/// so (ollama: "does not support tools"; others: 400 on unknown `tools`).
-fn looks_like_tool_rejection(error: &str) -> bool {
-    error.starts_with("HTTP 4")
-        || error
-            .to_ascii_lowercase()
-            .contains("does not support tools")
+/// Mark only validated invocations, immediately before entering the actual host.
+struct EffectHost<'a> {
+    host: &'a mut dyn crate::tools::ToolHost,
+    effects: &'a ConversationEffects,
+}
+impl crate::tools::ToolHost for EffectHost<'_> {
+    fn remember_fact(&mut self, fact: &str, supersedes: Option<&str>) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.remember_fact(fact, supersedes)
+    }
+    fn lookup_reputation(&mut self, user: Option<&str>) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.lookup_reputation(user)
+    }
+    fn recall(&mut self, query: &str) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.recall(query)
+    }
+    fn switch_persona(&mut self, persona: Persona) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.switch_persona(persona)
+    }
+    fn recent_messages(&mut self, limit: usize) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.recent_messages(limit)
+    }
+    fn inspect_status(&mut self, aspect: crate::tools::InspectAspect) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.inspect_status(aspect)
+    }
+    fn list_facts(&mut self) -> String {
+        self.effects.mark_tool_dispatched();
+        self.host.list_facts()
+    }
 }
 
 /// Run `work` while re-broadcasting the typing indicator every 8 s. Discord's

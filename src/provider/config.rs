@@ -50,6 +50,7 @@ pub struct ProviderCredential(String);
 
 impl ProviderCredential {
     #[must_use]
+    #[cfg(test)]
     pub fn expose_secret(&self) -> &str {
         &self.0
     }
@@ -140,10 +141,6 @@ impl fmt::Debug for ProviderConfig {
 }
 
 impl ProviderConfig {
-    pub fn from_env() -> Result<Self, ProviderConfigError> {
-        Self::from_iter(std::env::vars_os())
-    }
-
     /// Parse an injected environment without consulting process-global state.
     /// Unrelated variables, including unrelated secrets, are ignored.
     pub fn from_iter<I, K, V>(variables: I) -> Result<Self, ProviderConfigError>
@@ -234,6 +231,7 @@ impl ProviderConfig {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn provider(&self, id: &ProviderId) -> Option<&ProviderSettings> {
         self.providers.get(id)
     }

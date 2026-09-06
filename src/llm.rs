@@ -27,7 +27,9 @@ mod transport;
 #[allow(unused_imports)]
 pub use dialect::Dialect;
 pub use dialect::build_chat_request_with_tools;
-pub use protocol::{build_chat_request, build_request, extract_text, extract_turn};
+#[cfg(test)]
+pub use protocol::build_request;
+pub use protocol::{build_chat_request, extract_text, extract_turn};
 #[cfg(test)]
 pub use stream::SseAccumulator;
 pub use stream::{StreamTransport, build_stream_request};
@@ -336,6 +338,10 @@ pub struct ModelTurn {
 pub struct LlmError {
     detail: String,
     kind: LlmErrorKind,
+    failure: crate::provider::ProviderFailureKind,
+    retry_after: crate::provider::RetryAfter,
+    unavailable: Option<crate::provider::RouteUnavailableReason>,
+    http_request_rejected: bool,
 }
 
 /// Stable public category for an [`LlmError`]. Provider-controlled detail is
@@ -354,6 +360,10 @@ impl LlmError {
         Self {
             detail,
             kind: LlmErrorKind::Backend,
+            failure: crate::provider::ProviderFailureKind::ResponseSchema,
+            retry_after: crate::provider::RetryAfter::Absent,
+            unavailable: None,
+            http_request_rejected: false,
         }
     }
 
@@ -362,6 +372,10 @@ impl LlmError {
         Self {
             detail: BUSY_ERROR_DETAIL.to_string(),
             kind: LlmErrorKind::Busy,
+            failure: crate::provider::ProviderFailureKind::Busy,
+            retry_after: crate::provider::RetryAfter::Absent,
+            unavailable: None,
+            http_request_rejected: false,
         }
     }
 
@@ -370,7 +384,90 @@ impl LlmError {
         Self {
             detail: detail.into(),
             kind: LlmErrorKind::ResponseBudget,
+            failure: crate::provider::ProviderFailureKind::InvalidRequest,
+            retry_after: crate::provider::RetryAfter::Absent,
+            unavailable: None,
+            http_request_rejected: false,
         }
+    }
+
+    pub(crate) fn classified(
+        detail: impl Into<String>,
+        failure: crate::provider::ProviderFailureKind,
+    ) -> Self {
+        Self {
+            failure,
+            ..Self::backend(detail.into())
+        }
+    }
+
+    pub(crate) fn transport(error: reqwest::Error) -> Self {
+        let failure = if error.is_timeout() {
+            crate::provider::ProviderFailureKind::Timeout
+        } else {
+            crate::provider::ProviderFailureKind::TransportUnavailable
+        };
+        Self::classified("the provider transport failed", failure)
+    }
+
+    pub(crate) fn http(
+        status: reqwest::StatusCode,
+        retry: Option<&reqwest::header::HeaderValue>,
+    ) -> Self {
+        use crate::provider::{ProviderFailureKind as F, RetryAfter};
+        let failure = match status.as_u16() {
+            401 => F::Authentication,
+            403 => F::Authorization,
+            429 => F::RateLimited,
+            500..=599 => F::Http5xx,
+            400 | 422 => F::InvalidRequest,
+            _ => F::Configuration,
+        };
+        let retry_after = match retry {
+            None => RetryAfter::Absent,
+            Some(value) => value.to_str().map_or(RetryAfter::Invalid, |value| {
+                RetryAfter::from_seconds(Some(value))
+            }),
+        };
+        Self {
+            retry_after,
+            http_request_rejected: matches!(status.as_u16(), 400 | 422),
+            ..Self::classified(
+                format!("HTTP {status}: the provider rejected the request"),
+                failure,
+            )
+        }
+    }
+
+    pub(crate) fn with_retry_after(mut self, retry: crate::provider::RetryAfter) -> Self {
+        self.retry_after = retry;
+        self
+    }
+    pub(crate) fn is_tool_rejection(&self) -> bool {
+        self.http_request_rejected && self.retry_after == crate::provider::RetryAfter::Absent
+    }
+
+    pub(crate) fn route_unavailable(reason: crate::provider::RouteUnavailableReason) -> Self {
+        let mut error = if reason == crate::provider::RouteUnavailableReason::Busy {
+            Self::busy()
+        } else {
+            Self::classified(
+                format!("provider route unavailable: {reason:?}"),
+                crate::provider::ProviderFailureKind::InvalidRequest,
+            )
+        };
+        error.unavailable = Some(reason);
+        error
+    }
+
+    pub(crate) const fn provider_failure(&self) -> crate::provider::ProviderFailureKind {
+        self.failure
+    }
+    pub(crate) const fn retry_after(&self) -> crate::provider::RetryAfter {
+        self.retry_after
+    }
+    pub(crate) const fn unavailable(&self) -> Option<crate::provider::RouteUnavailableReason> {
+        self.unavailable
     }
 
     pub const fn kind(&self) -> LlmErrorKind {
@@ -395,6 +492,7 @@ impl std::error::Error for LlmError {}
 /// The whole ask path over any transport: build the request, post it, extract
 /// the text. The command runs this with [`HttpTransport`]; tests run the same
 /// path with [`RecordingTransport`].
+#[cfg(test)]
 pub async fn ask_backend<T: Transport>(
     transport: &T,
     backend: &Backend,

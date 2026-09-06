@@ -1,145 +1,200 @@
-//! Concrete [`TurnAdapter`] implementations for local inference backends.
-//!
-//! Each adapter wraps an existing [`llm::Backend`] and [`llm::HttpTransport`],
-//! translating Abbey's turn vocabulary into the provider-specific HTTP call.
-//! No adapter introduces a second transcript, tool vocabulary, or schema.
-
-use super::domain::{ProviderId, TurnFuture};
-use super::{ProviderCapabilities, TurnAdapter};
-use crate::llm::{self, Backend, ChatTurn, HttpTransport, LlmError, ModelTurn};
+//! Executable adapters. Construction is separate from runtime admission.
+use super::{FoundationModels, ProviderId, TurnAdapter, TurnFuture};
+use crate::llm::{self, Backend, ChatTurn, HttpTransport, StreamTransport};
 use crate::tools::ToolSpec;
 
-/// Adapter for an OpenAI-compatible local server (Ollama, MLX-Audio, etc.).
-///
-/// The adapter holds no credentials: the transport sends the request and the
-/// backend selects the HTTP dialect. Environment isolation happens at the
-/// transport level, not in the adapter.
-pub struct LocalServerAdapter {
-    id: ProviderId,
-    backend: Backend,
-    transport: HttpTransport,
+pub struct HttpAdapter<T = HttpTransport> {
+    pub id: ProviderId,
+    pub backend: Backend,
+    pub transport: T,
+    pub tools_rejected: std::sync::atomic::AtomicBool,
 }
-
-impl LocalServerAdapter {
-    pub fn new(id: ProviderId, backend: Backend, transport: HttpTransport) -> Self {
-        Self {
-            id,
-            backend,
-            transport,
-        }
-    }
-
-    /// Build an adapter from validated endpoint and model settings.
-    pub fn from_endpoint(
-        id: ProviderId,
-        endpoint: String,
-        model: String,
-        transport: HttpTransport,
-    ) -> Self {
-        Self::new(id, Backend::OpenAiCompatible { endpoint, model }, transport)
-    }
-}
-
-impl TurnAdapter for LocalServerAdapter {
+impl<T: llm::Transport + StreamTransport + Send + Sync> TurnAdapter for HttpAdapter<T> {
     fn provider_id(&self) -> &ProviderId {
         &self.id
     }
-
     fn turn<'a>(
         &'a self,
-        system_prompt: &'a str,
+        system: &'a str,
         turns: &'a [ChatTurn],
         tools: &'a [ToolSpec],
         _call_id: &'a str,
     ) -> TurnFuture<'a> {
+        Box::pin(llm::chat_turn(
+            &self.transport,
+            &self.backend,
+            system,
+            turns,
+            tools,
+        ))
+    }
+    fn tools_enabled(&self) -> bool {
+        !self
+            .tools_rejected
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    fn execute<'a>(&'a self, mut request: super::domain::AdapterRequest<'a>) -> TurnFuture<'a> {
         Box::pin(async move {
-            llm::chat_turn(&self.transport, &self.backend, system_prompt, turns, tools).await
+            if !self.tools_enabled() {
+                request.tools = &[];
+            }
+            let result = self.execute_once(request.clone()).await;
+            if !request.tools.is_empty()
+                && result
+                    .as_ref()
+                    .is_err_and(|error| error.is_tool_rejection())
+            {
+                // Typed HTTP rejection happens before deltas or host effects.
+                self.tools_rejected
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                request.tools = &[];
+                self.execute_once(request).await
+            } else {
+                result
+            }
         })
     }
 }
-
-impl std::fmt::Debug for LocalServerAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LocalServerAdapter")
-            .field("id", &self.id)
-            .field("backend", &self.backend)
-            .finish()
-    }
-}
-
-/// Adapter for Apple Foundation Models via the `/usr/bin/fm` CLI.
-///
-/// This delegates to [`super::FoundationModels::cli_turn`] which already
-/// handles schema generation, private file management, and process isolation.
-/// The adapter exists so the adaptive router can treat FM as one more
-/// `TurnAdapter` without special-casing.
-pub struct FmCliAdapter {
-    id: ProviderId,
-    fm: super::FoundationModels,
-}
-
-impl FmCliAdapter {
-    pub fn new(fm: super::FoundationModels) -> Self {
-        Self {
-            id: ProviderId::parse("foundation-models").expect("static provider ID"),
-            fm,
+impl<T: llm::Transport + StreamTransport + Send + Sync> HttpAdapter<T> {
+    async fn execute_once(
+        &self,
+        request: super::domain::AdapterRequest<'_>,
+    ) -> Result<llm::ModelTurn, llm::LlmError> {
+        if let Some(sender) = request.deltas {
+            self.transport
+                .post_stream(
+                    &llm::build_stream_request(
+                        &self.backend,
+                        request.system,
+                        request.turns,
+                        request.tools,
+                    ),
+                    sender,
+                )
+                .await
+        } else {
+            llm::chat_turn_with_style(
+                &self.transport,
+                &self.backend,
+                request.system,
+                request.turns,
+                request.tools,
+                request.style,
+            )
+            .await
         }
     }
 }
 
+pub struct FmCliAdapter {
+    pub id: ProviderId,
+    pub fm: std::sync::Arc<FoundationModels>,
+}
 impl TurnAdapter for FmCliAdapter {
     fn provider_id(&self) -> &ProviderId {
         &self.id
     }
-
     fn turn<'a>(
         &'a self,
-        system_prompt: &'a str,
+        system: &'a str,
         turns: &'a [ChatTurn],
         tools: &'a [ToolSpec],
         call_id: &'a str,
     ) -> TurnFuture<'a> {
-        Box::pin(async move { self.fm.cli_turn(system_prompt, turns, tools, call_id).await })
-    }
-}
-
-impl std::fmt::Debug for FmCliAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FmCliAdapter")
-            .field("id", &self.id)
-            .finish()
+        Box::pin(self.fm.cli_turn(system, turns, tools, call_id))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::domain::ProviderId;
-
-    #[test]
-    fn local_server_adapter_provider_id() {
-        let id = ProviderId::parse("ollama").unwrap();
-        let backend = Backend::OpenAiCompatible {
-            endpoint: "http://127.0.0.1:11434".into(),
-            model: "gemma4:12b".into(),
-        };
-        // We can't create a real transport in tests (no network), but we can
-        // verify the adapter struct is constructible and the provider ID
-        // is correct. The actual TurnAdapter trait requires async.
-        let _ = (id, backend);
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    struct Transport {
+        replies: Mutex<VecDeque<Result<String, llm::LlmError>>>,
+        offered: Mutex<Vec<bool>>,
     }
-
-    #[test]
-    fn fm_cli_adapter_provider_id() {
-        let config = super::super::FmConfig {
-            mode: super::super::FmMode::System,
-            endpoint: None,
-            cli: "/usr/bin/fm".into(),
-            fallback: false,
-            timeout_secs: 30,
+    impl llm::Transport for Transport {
+        async fn post(&self, request: &llm::LlmRequest) -> Result<String, llm::LlmError> {
+            self.offered
+                .lock()
+                .unwrap()
+                .push(request.body.get("tools").is_some());
+            self.replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("bounded requests")
+        }
+    }
+    impl StreamTransport for Transport {
+        async fn post_stream(
+            &self,
+            _: &llm::LlmRequest,
+            _: tokio::sync::mpsc::UnboundedSender<String>,
+        ) -> Result<llm::ModelTurn, llm::LlmError> {
+            panic!("nonstreaming regression must not stream")
+        }
+    }
+    #[tokio::test]
+    async fn http_tool_retry_is_same_adapter_bounded_and_remembered() {
+        let adapter = HttpAdapter {
+            id: ProviderId::parse("primary").unwrap(),
+            backend: Backend::from_values(None, Some("http://127.0.0.1:11434".into()), None)
+                .unwrap(),
+            transport: Transport {
+                replies: Mutex::new(VecDeque::from([
+                    Err(llm::LlmError::http(reqwest::StatusCode::BAD_REQUEST, None)),
+                    Ok(
+                        r#"{"choices":[{"finish_reason":"stop","message":{"content":"first"}}]}"#
+                            .into(),
+                    ),
+                    Ok(
+                        r#"{"choices":[{"finish_reason":"stop","message":{"content":"second"}}]}"#
+                            .into(),
+                    ),
+                ])),
+                offered: Mutex::new(Vec::new()),
+            },
+            tools_rejected: std::sync::atomic::AtomicBool::new(false),
         };
-        let fm = super::super::FoundationModels::new(config, None, true);
-        let adapter = FmCliAdapter::new(fm);
-        assert_eq!(adapter.provider_id().as_str(), "foundation-models");
+        let tools = crate::tools::production_tools();
+        for expected in ["first", "second"] {
+            let result = adapter
+                .execute(super::super::domain::AdapterRequest {
+                    system: "",
+                    turns: &[],
+                    tools: &tools,
+                    call_id: "synthetic",
+                    style: llm::ResponseStyle::Default,
+                    deltas: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.text, expected);
+        }
+        assert_eq!(
+            *adapter.transport.offered.lock().unwrap(),
+            [true, false, false]
+        );
+        assert!(!adapter.tools_enabled());
+    }
+    #[test]
+    fn raw_error_text_and_invalid_retry_metadata_cannot_trigger_compatibility_retry() {
+        assert!(
+            !llm::LlmError::classified(
+                "HTTP 400",
+                crate::provider::ProviderFailureKind::InvalidRequest
+            )
+            .is_tool_rejection()
+        );
+        assert!(
+            !llm::LlmError::http(
+                reqwest::StatusCode::BAD_REQUEST,
+                Some(&reqwest::header::HeaderValue::from_static("0"))
+            )
+            .is_tool_rejection()
+        );
+        assert!(!llm::LlmError::http(reqwest::StatusCode::UNAUTHORIZED, None).is_tool_rejection());
     }
 }

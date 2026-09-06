@@ -644,10 +644,7 @@ pub async fn summarize(
         return Ok(());
     };
     let (system, user) = engine::summarize_prompt(persona, &transcript, count);
-    let outcome = match state.acquire_generation().await {
-        Err(error) => Err(error),
-        Ok(_slot) => state.chat(&system, &[llm::ChatTurn::user(user)]).await,
-    };
+    let outcome = state.chat(&system, &[llm::ChatTurn::user(user)]).await;
     let reply = match outcome {
         Ok((summary, provider_label)) => {
             let summary = ask::tidy_reply(persona, &summary);
@@ -687,7 +684,7 @@ pub async fn see(
 ) -> Result<(), Error> {
     ctx.defer().await?;
     let state = &ctx.data().state;
-    let Some(vision_client) = &state.vision else {
+    let Some(vision_client) = state.vision() else {
         ctx.say("Image understanding is not configured (ABBEY_VISION_ENDPOINT).")
             .await?;
         return Ok(());
@@ -717,13 +714,10 @@ pub async fn see(
     let reply = match (question, state.generation_label()) {
         (Some(q), Some(backend_label)) => {
             let folded = vision::fold_descriptions(&q, &[(image.filename.clone(), description)]);
-            let outcome = match state.acquire_generation().await {
-                Err(error) => Err(error),
-                Ok(_slot) => {
-                    state
-                        .chat(&ask::system_prompt(persona), &[llm::ChatTurn::user(folded)])
-                        .await
-                }
+            let outcome = {
+                state
+                    .chat(&ask::system_prompt(persona), &[llm::ChatTurn::user(folded)])
+                    .await
             };
             match outcome {
                 Ok((a, provider_label)) => {
@@ -749,7 +743,7 @@ pub async fn ocr(
 ) -> Result<(), Error> {
     ctx.defer().await?;
     let state = &ctx.data().state;
-    let Some(vision_client) = &state.vision else {
+    let Some(vision_client) = state.vision() else {
         ctx.say("Image understanding is not configured (ABBEY_VISION_ENDPOINT).")
             .await?;
         return Ok(());
@@ -819,10 +813,14 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             settings.unsolicited_per_hour
         )
     };
-    let backend = state.backend.as_ref().map_or("none", llm::Backend::label);
+    let backend = state.generation_label().unwrap_or("none");
     let text = format!(
         "{interaction_text}\nmessages seen: {seen}\n{brain_line}\npending rewards: {pending}\nbackend: {backend} · vision: {}\n{budget_line}",
-        if state.vision.is_some() { "on" } else { "off" }
+        if state.providers.vision_available() {
+            "on"
+        } else {
+            "off"
+        }
     );
     ctx.say(clamp_message(text)).await?;
     Ok(())
@@ -1172,10 +1170,10 @@ fn dashboard_input(
         )
     };
     let mut capabilities = vec!["memory"];
-    if data.state.backend.is_some() {
+    if data.state.providers.generation_available() {
         capabilities.push("generation");
     }
-    if data.state.vision.is_some() {
+    if data.state.providers.vision_available() {
         capabilities.push("vision");
     }
     if data

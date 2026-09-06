@@ -10,13 +10,6 @@ const TEST_PARENT_FM_CLI: &str = r"C:\Windows\..\Temp\fm.exe";
 #[cfg(not(windows))]
 const TEST_PARENT_FM_CLI: &str = "/usr/../tmp/fm";
 
-fn local() -> Backend {
-    Backend::OpenAiCompatible {
-        endpoint: "http://127.0.0.1:8282".into(),
-        model: "gemma".into(),
-    }
-}
-
 fn config(mode: FmMode) -> FmConfig {
     FmConfig {
         mode,
@@ -35,15 +28,6 @@ fn fm_is_off_and_never_fallback_by_default() {
     );
     let error = FmConfig::from_values(None, None, None, Some("1".into()), None).unwrap_err();
     assert!(error.contains("requires ABBEY_FM_MODE"), "{error}");
-
-    let router = ProviderRouter::new(
-        None,
-        true,
-        Some(ProviderCapabilities::text()),
-        Some(ProviderCapabilities::text_with_tools()),
-        false,
-    );
-    assert!(router.candidates(ProviderCapabilities::text()).is_empty());
 }
 
 #[test]
@@ -97,130 +81,6 @@ fn endpoint_and_executable_fail_closed() {
             "timeout {timeout} must fail closed"
         );
     }
-}
-
-#[test]
-fn routing_requires_the_full_capability_set_and_separate_evidence() {
-    let server = ProviderCapabilities {
-        text: true,
-        streaming: true,
-        vision: true,
-        ..ProviderCapabilities::default()
-    };
-    let cli = ProviderCapabilities::text_with_tools();
-    let router = ProviderRouter::new(Some(&local()), true, Some(server), Some(cli), true);
-    assert_eq!(
-        router.candidates(ProviderCapabilities::text()),
-        [
-            ProviderRoute::Primary,
-            ProviderRoute::FoundationModelsServer,
-            ProviderRoute::FoundationModelsCli,
-        ]
-    );
-    assert_eq!(
-        router.candidates(ProviderCapabilities::text_with_tools()),
-        [ProviderRoute::Primary, ProviderRoute::FoundationModelsCli]
-    );
-    let vision = ProviderCapabilities {
-        text: true,
-        vision: true,
-        ..ProviderCapabilities::default()
-    };
-    assert_eq!(
-        router.candidates(vision),
-        [ProviderRoute::FoundationModelsServer]
-    );
-
-    let fallback_off = ProviderRouter::new(Some(&local()), true, Some(server), Some(cli), false);
-    assert_eq!(
-        fallback_off.candidates(ProviderCapabilities::text()),
-        [ProviderRoute::Primary],
-        "qualified FM routes remain ineligible until fallback is explicitly enabled"
-    );
-    assert!(
-        fallback_off.candidates(vision).is_empty(),
-        "vision cannot silently opt into FM through the text fallback router"
-    );
-}
-
-#[test]
-fn server_can_never_inherit_cli_tools() {
-    let all = ProviderCapabilities {
-        text: true,
-        streaming: true,
-        structured_output: true,
-        tools: true,
-        vision: true,
-        ocr: true,
-    };
-    let router = ProviderRouter::new(None, true, Some(all), Some(all), true);
-    let server = router
-        .effective_capabilities(ProviderRoute::FoundationModelsServer)
-        .unwrap();
-    assert!(!server.tools);
-    assert!(!server.structured_output);
-    router.disable_tools(ProviderRoute::FoundationModelsCli);
-    assert!(
-        !router
-            .effective_capabilities(ProviderRoute::FoundationModelsCli)
-            .unwrap()
-            .tools
-    );
-    assert!(
-        !router
-            .effective_capabilities(ProviderRoute::FoundationModelsServer)
-            .unwrap()
-            .tools
-    );
-}
-
-#[test]
-fn routable_capabilities_apply_fallback_and_dynamic_disablement() {
-    let configured_only = ProviderRouter::new(
-        Some(&local()),
-        true,
-        Some(ProviderCapabilities::text()),
-        Some(ProviderCapabilities::text_with_tools()),
-        false,
-    );
-    assert!(
-        configured_only
-            .effective_capabilities(ProviderRoute::FoundationModelsCli)
-            .is_some()
-    );
-    assert_eq!(
-        configured_only.routable_capabilities(ProviderRoute::Primary),
-        Some(ProviderCapabilities::primary(&local(), true))
-    );
-    assert_eq!(
-        configured_only.routable_capabilities(ProviderRoute::FoundationModelsServer),
-        None
-    );
-    assert_eq!(
-        configured_only.routable_capabilities(ProviderRoute::FoundationModelsCli),
-        None
-    );
-
-    let fallback = ProviderRouter::new(
-        Some(&local()),
-        true,
-        Some(ProviderCapabilities::text()),
-        Some(ProviderCapabilities::text_with_tools()),
-        true,
-    );
-    assert!(
-        fallback
-            .routable_capabilities(ProviderRoute::FoundationModelsCli)
-            .unwrap()
-            .tools
-    );
-    fallback.disable_tools(ProviderRoute::FoundationModelsCli);
-    assert!(
-        !fallback
-            .routable_capabilities(ProviderRoute::FoundationModelsCli)
-            .unwrap()
-            .tools
-    );
 }
 
 #[test]

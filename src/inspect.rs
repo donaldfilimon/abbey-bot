@@ -95,6 +95,7 @@ pub struct RuntimeInspect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderRouteLabel {
     Primary,
+    LocalFallback,
     FoundationModelsServer,
     FoundationModelsCli,
     Vision,
@@ -104,6 +105,7 @@ impl ProviderRouteLabel {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Primary => "primary",
+            Self::LocalFallback => "local-fallback",
             Self::FoundationModelsServer => "foundation-models-server",
             Self::FoundationModelsCli => "foundation-models-cli",
             Self::Vision => "vision",
@@ -129,9 +131,12 @@ impl ProviderProvenance {
 /// Closed, content-free provider view. Ineligible routes have every capability
 /// cleared by construction, so configured-but-unavailable features cannot be
 /// mistaken for effective capability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderRouteInspect {
     route: ProviderRouteLabel,
+    descriptor: Option<crate::provider::ProviderDescriptor>,
+    state: Option<crate::provider::Eligibility>,
+    reason: Option<crate::provider::ProviderFailureKind>,
     routable: bool,
     text: bool,
     tools: bool,
@@ -141,6 +146,18 @@ pub struct ProviderRouteInspect {
 }
 
 impl ProviderRouteInspect {
+    pub(crate) fn with_runtime(
+        mut self,
+        descriptor: crate::provider::ProviderDescriptor,
+        state: crate::provider::Eligibility,
+        reason: Option<crate::provider::ProviderFailureKind>,
+    ) -> Self {
+        self.descriptor = Some(descriptor);
+        self.state = Some(state);
+        self.reason = reason;
+        self
+    }
+
     #[must_use]
     pub const fn new(
         route: ProviderRouteLabel,
@@ -153,6 +170,9 @@ impl ProviderRouteInspect {
     ) -> Self {
         Self {
             route,
+            descriptor: None,
+            state: None,
+            reason: None,
             routable,
             text: routable && text,
             tools: routable && tools,
@@ -210,14 +230,15 @@ pub fn render_provider(providers: &[ProviderRouteInspect]) -> String {
         .iter()
         .map(|provider| {
             format!(
-                "provider {}: routable {} · text {} · tools {} · vision {} · ocr {} · provenance {}",
-                provider.route.as_str(),
+                "provider {}: routable {} · text {} · tools {} · vision {} · ocr {} · provenance {}{}",
+                provider.descriptor.as_ref().map_or(provider.route.as_str(), |descriptor| descriptor.id.as_str()),
                 yes_no(provider.routable),
                 yes_no(provider.text),
                 yes_no(provider.tools),
                 yes_no(provider.vision),
                 yes_no(provider.ocr),
                 provider.provenance.as_str(),
+                provider.descriptor.as_ref().map_or_else(String::new, |descriptor| format!(" · class {} · state {:?} · reason {:?}", descriptor.class.as_str(), provider.state, provider.reason)),
             )
         })
         .collect::<Vec<_>>()

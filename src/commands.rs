@@ -337,26 +337,23 @@ async fn answer_question(
                 now,
                 persona: routed,
             };
-            let outcome = match state.acquire_generation().await {
-                Err(error) => Err(error),
-                Ok(_slot) => {
-                    generation::generate_with_tools_without_delivery(
-                        state,
-                        &mut host,
-                        &generation::Ask {
-                            session_mode: if commit == Commit::Yes {
-                                generation::SessionMode::Shared
-                            } else {
-                                generation::SessionMode::Ephemeral
-                            },
-                            scope: &scope,
-                            context: &context,
-                            user_input: question,
-                            now,
+            let outcome = {
+                generation::generate_with_tools_without_delivery(
+                    state,
+                    &mut host,
+                    &generation::Ask {
+                        session_mode: if commit == Commit::Yes {
+                            generation::SessionMode::Shared
+                        } else {
+                            generation::SessionMode::Ephemeral
                         },
-                    )
-                    .await
-                }
+                        scope: &scope,
+                        context: &context,
+                        user_input: question,
+                        now,
+                    },
+                )
+                .await
             };
             match outcome {
                 Ok((answer, persona, provider_label)) => {

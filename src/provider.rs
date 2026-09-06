@@ -7,13 +7,11 @@
 //! The HTTP server and `fm respond` CLI remain separate capabilities: the
 //! server is text-only here and can never inherit CLI tool capability.
 
-#![allow(dead_code, unused_imports)]
-
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -23,9 +21,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
 mod adapters;
+mod runtime;
+pub use runtime::{ConversationEffects, ProviderConversation, ProviderRuntime};
 mod catalog;
 mod circuit;
 mod config;
+#[cfg(test)]
 mod discovery;
 mod domain;
 mod manifest;
@@ -35,37 +36,29 @@ mod routing;
 #[cfg(test)]
 mod score_fixtures;
 mod scoring;
-pub use adapters::{FmCliAdapter, LocalServerAdapter};
-pub use catalog::{CatalogPolicy, ProviderCatalog};
-pub use circuit::{CircuitPhase, CircuitSnapshot, ProviderFailureKind, RetryAfter};
-pub use config::{ProviderConfig, ProviderConfigError, ProviderCredential, ProviderSettings};
-pub use discovery::{
-    DiscoveryLimits, DiscoveryRequest, DiscoveryResult, ExecutableIdentity, discover,
-};
+
+pub use catalog::ProviderCatalog;
+pub use circuit::{CircuitPhase, ProviderFailureKind, RetryAfter};
+pub use config::ProviderConfig;
 pub use domain::{
     BlockedReason, DetectionState, DiscoveryBoundary, Eligibility, IsolationCapabilities,
-    ProviderClass, ProviderDescriptor, ProviderId, ProviderIdError, ProviderProvenance,
-    TemporaryUnavailableReason, TurnAdapter, TurnFuture,
+    ProviderClass, ProviderDescriptor, ProviderId, ProviderProvenance, TurnAdapter, TurnFuture,
 };
+pub use manifest::ProviderIdentityHashes;
+#[cfg(test)]
 pub use manifest::{
-    DeclaredCapabilities, ManifestDocument, ManifestError, PROVIDER_MANIFEST_VERSION,
-    ProviderIdentityHashes, ProviderManifest, ProviderRecord, QualificationStatus,
-    QualifiedIsolation, publish_v2, read_manifest,
+    DeclaredCapabilities, PROVIDER_MANIFEST_VERSION, ProviderManifest, ProviderRecord,
+    QualifiedIsolation, publish_v2,
 };
 pub use qualification::{
     CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, ProbeStatus, ProviderEvidence,
     ProviderIdentity, QUALIFICATION_VERSION, QualificationReport, QualificationTarget,
-    VerifiedFmCapabilities, fm_identity, fm_manifest_identity, primary_identity, unix_now,
-    verify_fm_manifest,
+    VerifiedFmCapabilities, fm_identity, primary_identity, unix_now, verify_fm_manifest,
 };
 pub use routing::{
-    AdaptiveRouter, ConversationRoute, RouteAdmission, RouteAttempt, RouteDecision,
-    RouteUnavailableReason, RoutingSnapshot,
+    AdaptiveRouter, ConversationRoute, RouteAdmission, RouteAttempt, RouteUnavailableReason,
 };
-pub use scoring::{
-    ExecutionLocality, NormalizedScore, ProviderScoreProfile, QualificationAttempt,
-    QualificationScoreEvidence, RequestClass, ScoreComponents, ScoreProducerPolicy,
-};
+pub use scoring::{ExecutionLocality, RequestClass, ScoreProducerPolicy};
 
 const DEFAULT_FM_CLI: &str = "/usr/bin/fm";
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
@@ -281,111 +274,10 @@ impl ProviderCapabilities {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderRoute {
-    Primary,
-    FoundationModelsServer,
-    FoundationModelsCli,
-}
-
-/// Immutable transport evidence plus provider-local runtime feature state.
-pub struct ProviderRouter {
-    primary: Option<ProviderCapabilities>,
-    fm_server: Option<ProviderCapabilities>,
-    fm_cli: Option<ProviderCapabilities>,
-    fm_fallback: bool,
-    primary_tools_enabled: AtomicBool,
-    fm_cli_tools_enabled: AtomicBool,
-}
-
-impl ProviderRouter {
-    #[must_use]
-    pub fn new(
-        primary_backend: Option<&Backend>,
-        primary_tools_enabled: bool,
-        fm_server: Option<ProviderCapabilities>,
-        fm_cli: Option<ProviderCapabilities>,
-        fm_fallback: bool,
-    ) -> Self {
-        Self {
-            primary: primary_backend
-                .map(|backend| ProviderCapabilities::primary(backend, primary_tools_enabled)),
-            fm_server: fm_server.map(|caps| ProviderCapabilities {
-                structured_output: false,
-                tools: false,
-                ..caps
-            }),
-            fm_cli,
-            fm_fallback,
-            primary_tools_enabled: AtomicBool::new(primary_tools_enabled),
-            fm_cli_tools_enabled: AtomicBool::new(
-                fm_cli.is_some_and(|capabilities| capabilities.tools),
-            ),
-        }
-    }
-
-    #[must_use]
-    pub fn candidates(&self, required: ProviderCapabilities) -> Vec<ProviderRoute> {
-        let mut routes = Vec::with_capacity(3);
-        for route in [
-            ProviderRoute::Primary,
-            ProviderRoute::FoundationModelsServer,
-            ProviderRoute::FoundationModelsCli,
-        ] {
-            if self
-                .routable_capabilities(route)
-                .is_some_and(|capabilities| capabilities.satisfies(required))
-            {
-                routes.push(route);
-            }
-        }
-        routes
-    }
-
-    #[must_use]
-    pub fn effective_capabilities(&self, route: ProviderRoute) -> Option<ProviderCapabilities> {
-        let mut capabilities = match route {
-            ProviderRoute::Primary => self.primary?,
-            ProviderRoute::FoundationModelsServer => self.fm_server?,
-            ProviderRoute::FoundationModelsCli => self.fm_cli?,
-        };
-        let tools_enabled = match route {
-            ProviderRoute::Primary => self.primary_tools_enabled.load(Ordering::Relaxed),
-            ProviderRoute::FoundationModelsCli => self.fm_cli_tools_enabled.load(Ordering::Relaxed),
-            ProviderRoute::FoundationModelsServer => false,
-        };
-        if !tools_enabled {
-            capabilities.tools = false;
-        }
-        Some(capabilities)
-    }
-
-    /// Capabilities that may actually be selected by the current routing
-    /// policy. Unlike [`Self::effective_capabilities`], this also applies the
-    /// explicit Foundation Models fallback boundary.
-    #[must_use]
-    pub fn routable_capabilities(&self, route: ProviderRoute) -> Option<ProviderCapabilities> {
-        if !self.fm_fallback && !matches!(route, ProviderRoute::Primary) {
-            return None;
-        }
-        self.effective_capabilities(route)
-    }
-
-    pub fn disable_tools(&self, route: ProviderRoute) {
-        match route {
-            ProviderRoute::Primary => self.primary_tools_enabled.store(false, Ordering::Relaxed),
-            ProviderRoute::FoundationModelsCli => {
-                self.fm_cli_tools_enabled.store(false, Ordering::Relaxed);
-            }
-            ProviderRoute::FoundationModelsServer => {}
-        }
-    }
-}
-
 pub struct FoundationModels {
     pub config: FmConfig,
-    pub router: ProviderRouter,
+    pub server_capabilities: Option<ProviderCapabilities>,
+    pub cli_capabilities: ProviderCapabilities,
     qualified: bool,
 }
 
@@ -393,25 +285,19 @@ impl FoundationModels {
     #[must_use]
     pub fn new(
         config: FmConfig,
-        primary_backend: Option<&Backend>,
-        primary_tools_enabled: bool,
+        _primary_backend: Option<&Backend>,
+        _primary_tools_enabled: bool,
     ) -> Self {
         let server = config.endpoint.as_ref().map(|_| ProviderCapabilities {
             text: true,
             streaming: true,
             ..ProviderCapabilities::default()
         });
-        let cli = Some(ProviderCapabilities::text_with_tools());
-        let router = ProviderRouter::new(
-            primary_backend,
-            primary_tools_enabled,
-            server,
-            cli,
-            config.fallback,
-        );
+        let cli = ProviderCapabilities::text_with_tools();
         Self {
             config,
-            router,
+            server_capabilities: server,
+            cli_capabilities: cli,
             qualified: false,
         }
     }
@@ -419,20 +305,18 @@ impl FoundationModels {
     #[must_use]
     pub fn new_qualified(
         config: FmConfig,
-        primary_backend: Option<&Backend>,
-        primary_tools_enabled: bool,
+        _primary_backend: Option<&Backend>,
+        _primary_tools_enabled: bool,
         qualified: VerifiedFmCapabilities,
     ) -> Self {
-        let router = ProviderRouter::new(
-            primary_backend,
-            primary_tools_enabled,
-            qualified.server,
-            Some(qualified.cli),
-            config.fallback,
-        );
         Self {
             config,
-            router,
+            server_capabilities: qualified.server.map(|caps| ProviderCapabilities {
+                tools: false,
+                structured_output: false,
+                ..caps
+            }),
+            cli_capabilities: qualified.cli,
             qualified: true,
         }
     }
@@ -574,7 +458,10 @@ impl CliInvocation {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         let mut child = command.spawn().map_err(|error| {
-            LlmError::backend(format!("could not start the configured FM CLI: {error}"))
+            LlmError::classified(
+                format!("could not start the configured FM CLI: {error}"),
+                ProviderFailureKind::ExecutableIdentity,
+            )
         })?;
         let mut stdin = child
             .stdin
@@ -614,7 +501,10 @@ impl CliInvocation {
         match tokio::time::timeout(Duration::from_secs(timeout_secs), operation).await {
             Ok(Ok(output)) => Ok(output),
             Ok(Err(error)) => Err(LlmError::backend(error)),
-            Err(_) => Err(LlmError::backend("the FM CLI timed out".into())),
+            Err(_) => Err(LlmError::classified(
+                "the FM CLI timed out",
+                ProviderFailureKind::Timeout,
+            )),
         }
     }
 }

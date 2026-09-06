@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use crate::provider::{FmImageTask, FoundationModels, ProviderRoute};
+use crate::provider::{FmImageTask, FoundationModels};
 
 use super::{ImageUnderstanding, VisionError, image};
 
@@ -12,10 +12,7 @@ pub struct FmVision {
 
 impl FmVision {
     pub fn new(provider: FoundationModels) -> Result<Self, String> {
-        let capabilities = provider
-            .router
-            .effective_capabilities(ProviderRoute::FoundationModelsCli)
-            .ok_or_else(|| "the FM CLI has no verified capability evidence".to_string())?;
+        let capabilities = provider.cli_capabilities;
         if !(capabilities.vision && capabilities.ocr) {
             return Err(
                 "ABBEY_VISION_PROVIDER=fm requires verified FM vision and OCR capabilities".into(),
@@ -25,11 +22,7 @@ impl FmVision {
     }
 
     async fn ask(&self, task: FmImageTask, bytes: Vec<u8>) -> Result<String, VisionError> {
-        let capabilities = self
-            .provider
-            .router
-            .effective_capabilities(ProviderRoute::FoundationModelsCli)
-            .ok_or_else(|| VisionError::internal("FM vision capability is unavailable"))?;
+        let capabilities = self.provider.cli_capabilities;
         let allowed = match task {
             FmImageTask::Describe | FmImageTask::QualificationShapes => capabilities.vision,
             FmImageTask::ExtractText | FmImageTask::QualificationOcr => capabilities.ocr,
@@ -43,7 +36,7 @@ impl FmVision {
         self.provider
             .image_turn(task, &prepared.bytes, prepared.extension)
             .await
-            .map_err(|_| VisionError::internal("the qualified FM image request failed"))
+            .map_err(VisionError::from_llm)
     }
 }
 

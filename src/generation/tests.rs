@@ -50,7 +50,9 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
         arguments: serde_json::json!({"fact": "private voice statement"}),
     }];
     let mut disabled = ToolAccess::Disabled(Persona::Abbey);
-    let error = disabled.dispatch(&[], &calls).unwrap_err();
+    let error = disabled
+        .dispatch(&[], &calls, &ConversationEffects::default())
+        .unwrap_err();
     assert_eq!(error.detail(), "backend returned unrequested tool calls");
 
     let state = AppState::in_memory();
@@ -65,7 +67,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
     };
     let offered = crate::tools::production_tools();
     let results = ToolAccess::Enabled(&mut host)
-        .dispatch(&offered, &calls)
+        .dispatch(&offered, &calls, &ConversationEffects::default())
         .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].content.starts_with("Stored:"), "{results:?}");
@@ -103,7 +105,11 @@ fn a_registered_but_unoffered_tool_cannot_reach_the_host() {
     ];
 
     let error = ToolAccess::Enabled(&mut host)
-        .dispatch(&crate::tools::abbey_tools(), &calls)
+        .dispatch(
+            &crate::tools::abbey_tools(),
+            &calls,
+            &ConversationEffects::default(),
+        )
         .unwrap_err();
     assert_eq!(
         error.detail(),

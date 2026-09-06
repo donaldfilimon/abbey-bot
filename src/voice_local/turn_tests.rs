@@ -146,9 +146,19 @@ impl Fixture {
         let (driver, driver_disconnect) = watch::channel(false);
         let (cancel, cancelled) = watch::channel(false);
         let playback = Arc::new(Mutex::new(None));
+        let mut state = AppState::in_memory();
+        Arc::get_mut(&mut state)
+            .unwrap()
+            .providers
+            .set_primary(crate::llm::Backend::from_values(
+                None,
+                Some(endpoint),
+                Some("test".into()),
+            ));
+        let backend = state.providers.local_voice_route().unwrap();
         let actor = tokio::spawn(run(LocalSession {
             runtime: Arc::clone(&runtime),
-            state: AppState::in_memory(),
+            state,
             // Each fixture owns its scheduler. On songbird's process-global
             // default scheduler, standalone drivers created and dropped by
             // concurrent tests interfere: a freshly played track's command
@@ -171,8 +181,7 @@ impl Fixture {
             driver_disconnect,
             cancel: cancelled,
             playback: Arc::clone(&playback),
-            backend: crate::llm::Backend::from_values(None, Some(endpoint), Some("test".into()))
-                .unwrap(),
+            backend,
         }));
         Self {
             runtime,

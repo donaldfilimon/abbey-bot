@@ -292,7 +292,7 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
     for qualified in [false, true] {
         for fallback in [false, true] {
             let state = Arc::get_mut(&mut data.state).unwrap();
-            state.foundation_models = Some(if qualified {
+            state.providers.set_fm(Some(if qualified {
                 FoundationModels::new_qualified(
                     config(fallback),
                     None,
@@ -304,7 +304,7 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
                 )
             } else {
                 FoundationModels::new(config(fallback), None, true)
-            });
+            }));
             assert_eq!(
                 runtime_input(&data, InteractionContext::Guild, Some(123))
                     .capabilities
@@ -314,16 +314,18 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
         }
     }
     let state = Arc::get_mut(&mut data.state).unwrap();
-    state.vision = Some(crate::vision::ConfiguredVision::Remote(
-        crate::vision::RemoteVision {
-            config: crate::vision::VisionConfig {
-                base_url: "http://127.0.0.1:1111/v1".into(),
-                model: "hidden-model-canary".into(),
-                api_key: "hidden-credential-canary".into(),
+    state
+        .providers
+        .set_vision(crate::vision::ConfiguredVision::Remote(
+            crate::vision::RemoteVision {
+                config: crate::vision::VisionConfig {
+                    base_url: "http://127.0.0.1:1111/v1".into(),
+                    model: "hidden-model-canary".into(),
+                    api_key: "hidden-credential-canary".into(),
+                },
+                transport: runtime::HttpVisionTransport::default(),
             },
-            transport: runtime::HttpVisionTransport::default(),
-        },
-    ));
+        ));
     runtime::AppState::lock(&state.stores).guilds.insert(
         "discord:123".into(),
         crate::guild::GuildSettings {
@@ -387,11 +389,14 @@ fn voice_projection_requires_exact_guild_and_complete_selected_local_backend() {
             .contains(&Capability::VoiceConfigured)
     );
     assert!(!missing_text.capabilities.contains(&Capability::VoiceLocal));
-    Arc::get_mut(&mut data.state).unwrap().backend = crate::llm::Backend::from_values(
-        None,
-        Some("http://127.0.0.1:11434".into()),
-        Some("test-model".into()),
-    );
+    Arc::get_mut(&mut data.state)
+        .unwrap()
+        .providers
+        .set_primary(crate::llm::Backend::from_values(
+            None,
+            Some("http://127.0.0.1:11434".into()),
+            Some("test-model".into()),
+        ));
     let configured = runtime_input(&data, InteractionContext::Guild, Some(123));
     assert!(configured.capabilities.contains(&Capability::VoiceLocal));
     assert!(!configured.capabilities.contains(&Capability::VoiceOpenAi));

@@ -431,7 +431,10 @@ async fn live_dm_round_trip_against_the_configured_backend() {
         panic!("set ABBEY_BOT_LLM_ENDPOINT (and ABBEY_BOT_LLM_MODEL) to run this");
     };
     let mut state = AppState::in_memory();
-    std::sync::Arc::get_mut(&mut state).unwrap().backend = Some(backend);
+    std::sync::Arc::get_mut(&mut state)
+        .unwrap()
+        .providers
+        .set_primary(Some(backend));
     let out = FakeOut::default();
     let first = handle(
         &state,

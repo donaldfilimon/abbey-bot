@@ -61,41 +61,30 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
         return Err("local Whisper did not preserve an Abbey/Abi/Aviva wake name".into());
     }
 
-    let configured = crate::llm::Backend::from_env();
-    let fallback = matches!(
-        configured.as_ref(),
-        Some(crate::llm::Backend::Anthropic { .. })
-    )
-    .then(|| {
-        crate::llm::Backend::from_values(
-            None,
-            std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
-            std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
-        )
-    })
-    .flatten();
-    let backend = configured
-        .as_ref()
-        .into_iter()
-        .chain(fallback.as_ref())
-        .find(|backend| backend.is_loopback_openai_compatible())
-        .cloned()
-        .ok_or_else(|| {
-            "the voice self-test requires a loopback ABBEY_BOT_LLM_ENDPOINT; it will not send the transcript to a remote text provider"
-                .to_string()
-        })?;
-    // The audition deliberately starts with empty in-memory stores. It does
-    // not load the production state file, WDBX segment, guild settings,
-    // rewards, or conversation sessions merely because ABBEY_DATA_DIR is in
-    // the operator's service environment.
-    let state = AppState::in_memory();
+    let configured = crate::llm::Backend::from_values(
+        None,
+        std::env::var("ABBEY_BOT_LLM_ENDPOINT").ok(),
+        std::env::var("ABBEY_BOT_LLM_MODEL").ok(),
+    );
+    if let Some(backend) = &configured {
+        backend.validate().map_err(|error| error.to_string())?;
+    }
+    let mut state = AppState::in_memory();
+    std::sync::Arc::get_mut(&mut state)
+        .expect("new in-memory state")
+        .providers = crate::provider::ProviderRuntime::legacy(
+        configured,
+        None,
+        None,
+        None,
+        false,
+        1,
+        runtime::DEFAULT_QUEUE_SECS,
+    );
+    let backend = state.providers.local_voice_route().ok_or_else(|| "the voice self-test requires a loopback ABBEY_BOT_LLM_ENDPOINT; it will not send the transcript to a remote text provider".to_string())?;
     let selected_persona = persona::route(&transcript, None).persona;
     let scope = "discord:voice:self-test";
     let context = PersonaContext::empty();
-    let _slot = state
-        .acquire_generation_for_voice()
-        .await
-        .map_err(|error| error.to_string())?;
     let (answer, _) = generation::generate_without_delivery(
         &state,
         &backend,

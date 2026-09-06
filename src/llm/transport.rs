@@ -81,11 +81,20 @@ impl Transport for HttpTransport {
             builder = builder.header(*name, value);
         }
         async move {
-            let response = builder
-                .send()
-                .await
-                .map_err(|e| LlmError::backend(format!("the request failed: {e}")))?;
+            let response = builder.send().await.map_err(LlmError::transport)?;
             let status = response.status();
+            let rejection =
+                LlmError::http(status, response.headers().get(reqwest::header::RETRY_AFTER));
+            if status.is_success()
+                && response
+                    .headers()
+                    .contains_key(reqwest::header::RETRY_AFTER)
+            {
+                return Err(LlmError::classified(
+                    "incompatible provider delay metadata",
+                    crate::provider::ProviderFailureKind::ProtocolDrift,
+                ));
+            }
             let limit = if status.is_success() {
                 MAX_RESPONSE_BYTES
             } else {
@@ -99,9 +108,7 @@ impl Transport for HttpTransport {
                 // context. Drain them under the cap, but never put their bytes
                 // into an error that production callers may log.
                 drop(body);
-                return Err(LlmError::backend(format!(
-                    "HTTP {status}: the provider rejected the request"
-                )));
+                return Err(rejection);
             }
             String::from_utf8(body).map_err(|_| {
                 LlmError::backend("the backend returned response bytes that were not UTF-8".into())

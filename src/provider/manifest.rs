@@ -9,11 +9,14 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::Read as _;
 #[cfg(unix)]
+#[cfg(test)]
 use std::io::Write as _;
 use std::path::Path;
 #[cfg(unix)]
+#[cfg(test)]
 use std::path::PathBuf;
 #[cfg(unix)]
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -31,6 +34,7 @@ pub const MAX_PROVIDER_MANIFEST_BYTES: u64 = 256 * 1024;
 pub const FOUNDATION_MODELS_PROVIDER_ID: &str = "foundation-models";
 
 #[cfg(unix)]
+#[cfg(test)]
 static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +254,7 @@ impl ProviderManifest {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn records(&self) -> &[ProviderRecord] {
         &self.records
     }
@@ -292,6 +297,7 @@ pub enum ManifestDocument {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegacyScoreRoute {
+    #[cfg(test)]
     Primary,
     FmServer,
     FmCli,
@@ -318,6 +324,7 @@ impl ManifestDocument {
             return Err(ManifestError::InvalidQualification);
         }
         let target_matches = match route {
+            #[cfg(test)]
             LegacyScoreRoute::Primary => report.target.includes_primary(),
             LegacyScoreRoute::FmServer | LegacyScoreRoute::FmCli => report.target.includes_fm(),
         };
@@ -346,6 +353,7 @@ impl ManifestDocument {
             }
         }
         let evidence = match route {
+            #[cfg(test)]
             LegacyScoreRoute::Primary => &report.primary,
             LegacyScoreRoute::FmServer => &report.fm_server,
             LegacyScoreRoute::FmCli => &report.fm_cli,
@@ -401,6 +409,7 @@ pub enum ManifestError {
     NotQualified,
     CapabilityMismatch,
     #[cfg(unix)]
+    #[cfg(test)]
     PublishFailed,
 }
 
@@ -446,6 +455,7 @@ impl fmt::Display for ManifestError {
             Self::NotQualified => "provider manifest does not qualify this provider",
             Self::CapabilityMismatch => "provider manifest lacks a required provider capability",
             #[cfg(unix)]
+            #[cfg(test)]
             Self::PublishFailed => "provider manifest publication failed",
         })
     }
@@ -496,6 +506,7 @@ pub fn read_manifest(path: &Path) -> Result<ManifestDocument, ManifestError> {
 /// Canonical writer shared by qualification publication and synthetic fixtures.
 /// Validation happens before atomic publication, so malformed new evidence cannot
 /// silently be serialized as a capability-only compatibility record.
+#[cfg(test)]
 pub fn encode_v2(records: &[ProviderRecord]) -> Result<Vec<u8>, ManifestError> {
     let mut ordered = records.to_vec();
     for record in &mut ordered {
@@ -514,6 +525,7 @@ pub fn encode_v2(records: &[ProviderRecord]) -> Result<Vec<u8>, ManifestError> {
     Ok(encoded)
 }
 
+#[cfg(test)]
 pub fn publish_v2(path: &Path, records: &[ProviderRecord]) -> Result<(), ManifestError> {
     #[cfg(not(unix))]
     {
@@ -685,6 +697,7 @@ fn validate_manifest_filename(path: &Path) -> Result<(), ManifestError> {
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn ensure_state_directory(path: &Path) -> Result<(), ManifestError> {
     use std::os::unix::fs::DirBuilderExt as _;
 
@@ -702,7 +715,10 @@ fn ensure_state_directory(path: &Path) -> Result<(), ManifestError> {
 }
 
 #[cfg(unix)]
-fn validate_state_directory(path: &Path, expected_uid: u32) -> Result<(), ManifestError> {
+pub(super) fn validate_state_directory(
+    path: &Path,
+    expected_uid: u32,
+) -> Result<(), ManifestError> {
     use std::os::unix::fs::MetadataExt as _;
 
     let metadata = std::fs::symlink_metadata(path).map_err(|error| {
@@ -768,6 +784,7 @@ fn validate_manifest_metadata(
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn create_temporary_manifest(parent: &Path) -> Result<(PathBuf, std::fs::File), ManifestError> {
     use std::os::unix::fs::OpenOptionsExt as _;
 
@@ -792,7 +809,7 @@ fn create_temporary_manifest(parent: &Path) -> Result<(PathBuf, std::fs::File), 
 }
 
 #[cfg(unix)]
-fn effective_user_id() -> u32 {
+pub(super) fn effective_user_id() -> u32 {
     unsafe extern "C" {
         fn geteuid() -> u32;
     }
@@ -801,11 +818,13 @@ fn effective_user_id() -> u32 {
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 struct TemporaryFile {
     path: Option<PathBuf>,
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 impl TemporaryFile {
     fn new(path: PathBuf) -> Self {
         Self { path: Some(path) }
@@ -817,6 +836,7 @@ impl TemporaryFile {
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 impl Drop for TemporaryFile {
     fn drop(&mut self) {
         if let Some(path) = self.path.take() {

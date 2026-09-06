@@ -96,6 +96,9 @@ impl AdaptiveRouter {
             ..Self::default()
         }
     }
+    pub fn set_order(&mut self, configured_order: Vec<ProviderId>) {
+        self.configured_order = configured_order;
+    }
     /// Explicit exact-identity requalification is the only replacement/reset path.
     /// The caller must pass profiles produced from already-validated qualification evidence.
     pub fn requalify(

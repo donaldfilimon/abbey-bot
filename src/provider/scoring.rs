@@ -116,6 +116,7 @@ pub struct QualificationScoreEvidence {
 }
 /// A failed/malformed duration makes an attempt unsuccessful even if its checks passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub struct QualificationAttempt {
     pub succeeded: bool,
     pub duration_ms: Option<u64>,
@@ -158,9 +159,11 @@ impl LiveComponent {
         });
         self.count = self.count.saturating_add(1);
     }
+    #[cfg(test)]
     pub const fn count(self) -> u64 {
         self.count
     }
+    #[cfg(test)]
     pub const fn ewma(self) -> Option<NormalizedScore> {
         self.ewma
     }
@@ -195,6 +198,7 @@ impl ProviderScoreProfile {
     pub const fn request_class(&self) -> RequestClass {
         self.request_class
     }
+    #[cfg(test)]
     pub const fn baseline(&self) -> ScoreComponents {
         self.baseline
     }
@@ -236,6 +240,7 @@ impl ScoreProducerPolicy {
             ExecutionLocality::PublicRemote => 0.0,
         })
     }
+    #[cfg(test)]
     pub fn qualify(
         self,
         class: RequestClass,

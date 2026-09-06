@@ -23,14 +23,16 @@ use crate::brain::social::SocialBrain;
 use crate::brain::state::{BotAction, STATE_DIMENSIONS};
 use crate::engine::Engine;
 use crate::guild::{GuildRegistry, ReplyCooldown};
-use crate::llm::{Backend, HttpTransport};
+use crate::llm::Backend;
 use crate::persist::{
     FsPersistenceSink, PersistComponentOutcome, PersistReport, PersistenceSink, Stores,
     persist_canonical, persist_projection,
 };
 use crate::platform::SocialNetwork;
-use crate::provider::{FoundationModels, ProviderCapabilities, ProviderRoute};
-use crate::vision::{ConfiguredVision, VisionError, VisionRequest, VisionTransport};
+#[cfg(test)]
+use crate::provider::FoundationModels;
+use crate::provider::ProviderRuntime;
+use crate::vision::{VisionError, VisionRequest, VisionTransport};
 use crate::wdbx::Recall;
 
 mod memory_service;
@@ -160,19 +162,37 @@ impl VisionTransport for HttpVisionTransport {
             builder = builder.header(name.as_str(), value);
         }
         async move {
-            let response = builder
-                .send()
-                .await
-                .map_err(|e| VisionError::internal(format!("the request failed: {e}")))?;
+            let response = builder.send().await.map_err(|e| {
+                VisionError::classified(
+                    "the vision transport failed",
+                    if e.is_timeout() {
+                        crate::provider::ProviderFailureKind::Timeout
+                    } else {
+                        crate::provider::ProviderFailureKind::TransportUnavailable
+                    },
+                )
+            })?;
             let status = response.status();
+            let rejection = crate::llm::LlmError::http(
+                status,
+                response.headers().get(reqwest::header::RETRY_AFTER),
+            );
+            if status.is_success()
+                && response
+                    .headers()
+                    .contains_key(reqwest::header::RETRY_AFTER)
+            {
+                return Err(VisionError::classified(
+                    "incompatible provider delay metadata",
+                    crate::provider::ProviderFailureKind::ProtocolDrift,
+                ));
+            }
             let body = crate::http_body::read_capped(response, 2 * 1024 * 1024)
                 .await
                 .map_err(|e| VisionError::internal(e.to_string()))?;
             if !status.is_success() {
                 drop(body);
-                return Err(VisionError::internal(format!(
-                    "HTTP {status}: the vision provider rejected the request"
-                )));
+                return Err(VisionError::from_llm(rejection));
             }
             String::from_utf8(body).map_err(|_| {
                 VisionError::internal("the vision provider returned non-UTF-8 response bytes")
@@ -200,34 +220,15 @@ pub struct AppState {
     pub ask_cooldown: Mutex<ReplyCooldown>,
     /// Per-guild hourly budget for unsolicited actions.
     pub budget: Mutex<Budget>,
-    /// Generation slots. A local endpoint (ollama) wedged under concurrent
-    /// requests on 2026-08-19, so the local path defaults to one at a time;
-    /// Anthropic defaults to four. `ABBEY_BOT_LLM_CONCURRENCY` overrides.
-    pub generation: tokio::sync::Semaphore,
-    /// How long a turn waits for a slot before answering "busy".
-    pub queue_secs: u64,
+    pub providers: ProviderRuntime,
     pub recall: Mutex<Recall>,
     pub engine: Mutex<Engine>,
-    pub backend: Option<Backend>,
-    /// The local backend kept as a one-shot fallback when Anthropic is primary
-    /// and `ABBEY_BOT_LLM_ENDPOINT` is also set. `None` otherwise.
-    pub fallback: Option<Backend>,
-    /// Explicit Apple Foundation Models fallback. `None` unless the operator
-    /// selected a mode; its own `fallback` bit still gates every route.
-    pub foundation_models: Option<FoundationModels>,
-    /// `ABBEY_BOT_LLM_TOOLS`: `off` disables tool calling; anything else
-    /// (default `auto`) offers Abbey's tools on mention/DM replies and
-    /// `/persona ask`. Provider-specific runtime rejection state lives in the
-    /// provider router, so one backend cannot disable another backend's tools.
-    pub tools_enabled: std::sync::atomic::AtomicBool,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
     /// the policy is untrained.
     pub quiet: bool,
-    pub llm: HttpTransport,
     /// Shared, timeout-bounded client for Discord attachment downloads.
     pub attachments: reqwest::Client,
-    pub vision: Option<ConfiguredVision<HttpVisionTransport>>,
     pub data_dir: Option<PathBuf>,
     persistence_sink: Arc<dyn PersistenceSink>,
     /// The bot's own user id per platform (`"discord:123"`), filled in at
@@ -277,10 +278,6 @@ pub fn queue_secs_from_value(value: Option<String>) -> u64 {
 pub fn voice_queue_secs(text_queue_secs: u64) -> u64 {
     text_queue_secs.max(DEFAULT_VOICE_QUEUE_SECS)
 }
-
-/// The honest copy when no slot frees up in time.
-#[cfg(test)]
-const BUSY_REPLY: &str = crate::ask::BUSY_REASON;
 
 /// The runtime's [`crate::tools::ToolHost`]: one conversation's scope, over
 /// `AppState`. Each method takes the locks it needs, briefly, in the
@@ -380,11 +377,8 @@ impl crate::tools::ToolHost for ToolScope<'_> {
     fn inspect_status(&mut self, aspect: crate::tools::InspectAspect) -> String {
         let runtime = crate::inspect::RuntimeInspect {
             generation_configured: self.state.generation_label().is_some(),
-            tools_on: self
-                .state
-                .tools_enabled
-                .load(std::sync::atomic::Ordering::Relaxed),
-            vision_on: self.state.vision.is_some(),
+            tools_on: self.state.providers.tools_enabled(),
+            vision_on: self.state.providers.vision_available(),
             quiet: self.state.quiet,
             data: self.state.data_dir.is_some(),
         };
@@ -492,6 +486,51 @@ impl AppState {
         let tools_enabled = !std::env::var("ABBEY_BOT_LLM_TOOLS")
             .is_ok_and(|value| value.trim().eq_ignore_ascii_case("off"));
         let provider_setup = provider_setup::from_env(backend.as_ref(), tools_enabled)?;
+        let mut providers = ProviderRuntime::legacy(
+            backend.clone(),
+            fallback,
+            provider_setup.foundation_models,
+            provider_setup.vision,
+            tools_enabled,
+            concurrency_from_env(backend.as_ref()),
+            queue_secs_from_value(std::env::var("ABBEY_BOT_LLM_QUEUE_SECS").ok()),
+        );
+        let provider_config = crate::provider::ProviderConfig::from_iter(std::env::vars_os())
+            .map_err(|error| StartupError(error.to_string()))?;
+        let block_directory = provider_config
+            .state_dir
+            .clone()
+            .or_else(|| {
+                data_dir
+                    .as_ref()
+                    .map(|directory| directory.join("provider-runtime"))
+            })
+            .or_else(|| {
+                #[cfg(windows)]
+                let home = std::env::var_os("LOCALAPPDATA");
+                #[cfg(not(windows))]
+                let home = std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".local/share").into_os_string());
+                home.map(|home| PathBuf::from(home).join("abbey-bot/provider-runtime"))
+            });
+        if (providers.generation_label().is_some() || providers.vision_available())
+            && block_directory.is_none()
+        {
+            return Err(StartupError(
+                "configured providers require an operational state directory".into(),
+            ));
+        }
+        providers.apply_configuration(provider_config);
+        if let Some(path) = std::env::var_os("ABBEY_FM_CAPABILITY_MANIFEST") {
+            providers
+                .apply_fm_qualification(std::path::Path::new(&path))
+                .map_err(StartupError)?;
+        }
+        if let Some(directory) = block_directory.as_ref() {
+            providers
+                .restore_blocks(directory.join("provider-blocks.json"))
+                .map_err(StartupError)?;
+        }
         let episode_gate = crate::episode_gate::EpisodeGateConfig::from_env()
             .map_err(StartupError)?
             .map(|config| Arc::new(crate::episode_gate::EpisodeGate::new(config)));
@@ -504,18 +543,11 @@ impl AppState {
             cooldown: Mutex::new(ReplyCooldown::new()),
             ask_cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
-            generation: tokio::sync::Semaphore::new(concurrency_from_env(backend.as_ref())),
-            queue_secs: queue_secs_from_value(std::env::var("ABBEY_BOT_LLM_QUEUE_SECS").ok()),
+            providers,
             recall: Mutex::new(recall),
             engine: Mutex::new(Engine::new()),
-            backend,
-            fallback,
-            foundation_models: provider_setup.foundation_models,
-            tools_enabled: std::sync::atomic::AtomicBool::new(tools_enabled),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
-            llm: HttpTransport::default(),
             attachments: attachment_client(),
-            vision: provider_setup.vision,
             data_dir,
             persistence_sink: Arc::new(FsPersistenceSink),
             self_ids: Mutex::new(Vec::new()),
@@ -544,18 +576,11 @@ impl AppState {
             cooldown: Mutex::new(ReplyCooldown::new()),
             ask_cooldown: Mutex::new(ReplyCooldown::new()),
             budget: Mutex::new(Budget::default()),
-            generation: tokio::sync::Semaphore::new(1),
-            queue_secs: DEFAULT_QUEUE_SECS,
+            providers: ProviderRuntime::empty(),
             recall: Mutex::new(Recall::new()),
             engine: Mutex::new(Engine::new()),
-            backend: None,
-            fallback: None,
-            foundation_models: None,
-            tools_enabled: std::sync::atomic::AtomicBool::new(true),
             quiet: false,
-            llm: HttpTransport::default(),
             attachments: attachment_client(),
-            vision: None,
             data_dir,
             persistence_sink,
             self_ids: Mutex::new(Vec::new()),
@@ -564,174 +589,21 @@ impl AppState {
         })
     }
 
-    /// Wait for a generation slot, up to `queue_secs`. `Err` is the
-    /// user-facing reason (already honest copy) — callers render it with
-    /// `ask::render_failure`.
-    pub async fn acquire_generation(
-        &self,
-    ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
-        self.acquire_generation_waiting(Duration::from_secs(self.queue_secs))
-            .await
-    }
-
-    /// Same one-slot semaphore as text, but a longer wait so a concurrent
-    /// Discord reply does not fail-close live voice.
-    pub async fn acquire_generation_for_voice(
-        &self,
-    ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
-        self.acquire_generation_waiting(Duration::from_secs(voice_queue_secs(self.queue_secs)))
-            .await
-    }
-
-    pub(crate) async fn acquire_generation_waiting(
-        &self,
-        timeout: Duration,
-    ) -> Result<tokio::sync::SemaphorePermit<'_>, crate::llm::LlmError> {
-        match tokio::time::timeout(timeout, self.generation.acquire()).await {
-            Ok(Ok(permit)) => Ok(permit),
-            Ok(Err(_)) => Err(crate::llm::LlmError::backend(
-                "the generation queue is closed".into(),
-            )),
-            Err(_) => Err(crate::llm::LlmError::busy()),
-        }
-    }
-
-    /// Multi-turn generation through the primary backend, falling back to the
-    /// local one once when Anthropic is primary and fails. Returns the text
-    /// and the label of the backend that actually answered. The caller holds
-    /// the generation slot.
     pub async fn chat(
         &self,
         system_prompt: &str,
         turns: &[crate::llm::ChatTurn],
     ) -> Result<(String, &'static str), crate::llm::LlmError> {
-        let mut last_error =
-            crate::llm::LlmError::backend("no generation backend is configured".into());
-        if let Some(primary) = &self.backend {
-            match crate::llm::chat_backend(&self.llm, primary, system_prompt, turns).await {
-                Ok(text) => return Ok((text, primary.label())),
-                Err(error) => last_error = error,
-            }
-            if let Some(local) = &self.fallback {
-                tracing::warn!(error = %last_error, "primary backend failed; falling back to the local endpoint");
-                match crate::llm::chat_backend(&self.llm, local, system_prompt, turns).await {
-                    Ok(text) => return Ok((text, local.label())),
-                    Err(error) => last_error = error,
-                }
-            }
-        }
-        let Some(fm) = &self.foundation_models else {
-            return Err(last_error);
-        };
-        if !fm
-            .router
-            .candidates(ProviderCapabilities::text())
-            .contains(&ProviderRoute::FoundationModelsCli)
-        {
-            return Err(last_error);
-        }
-        tracing::warn!(error = %last_error, "configured backends failed; trying explicit Foundation Models CLI fallback");
-        let turn = fm
-            .cli_turn(system_prompt, turns, &[], "fm-runtime-read-only")
-            .await?;
-        Ok((turn.text, fm.label()))
+        self.providers.chat(system_prompt, turns).await
     }
-
-    /// Label for the first configured generation route, used only for honest
-    /// failure/degraded copy before a concrete successful route is known.
     pub fn generation_label(&self) -> Option<&'static str> {
-        self.backend.as_ref().map(Backend::label).or_else(|| {
-            self.foundation_models
-                .as_ref()
-                .filter(|fm| fm.config.fallback)
-                .map(FoundationModels::label)
-        })
+        self.providers.generation_label()
     }
-
-    /// Content-free provider facts for Inspect. A route is listed when it is
-    /// explicitly configured/detected, but its capabilities are cleared unless
-    /// the current router may actually select it.
+    pub fn vision(&self) -> Option<&ProviderRuntime> {
+        self.providers.vision_available().then_some(&self.providers)
+    }
     fn provider_inspect(&self) -> Vec<crate::inspect::ProviderRouteInspect> {
-        use crate::inspect::{ProviderProvenance, ProviderRouteInspect, ProviderRouteLabel};
-
-        let tools_on = self
-            .tools_enabled
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let mut routes = Vec::with_capacity(4);
-
-        if let Some(backend) = &self.backend {
-            let capabilities = self
-                .foundation_models
-                .as_ref()
-                .and_then(|fm| fm.router.routable_capabilities(ProviderRoute::Primary))
-                .or_else(|| {
-                    self.foundation_models
-                        .is_none()
-                        .then(|| ProviderCapabilities::primary(backend, tools_on))
-                });
-            let routable = capabilities.is_some();
-            let capabilities = capabilities.unwrap_or_default();
-            routes.push(ProviderRouteInspect::new(
-                ProviderRouteLabel::Primary,
-                routable,
-                capabilities.text,
-                capabilities.tools && tools_on,
-                capabilities.vision,
-                capabilities.ocr,
-                ProviderProvenance::Configuration,
-            ));
-        }
-
-        if let Some(fm) = &self.foundation_models {
-            let provenance = if fm.is_qualified() {
-                ProviderProvenance::QualifiedManifest
-            } else {
-                ProviderProvenance::Configuration
-            };
-            for (route, label) in [
-                (
-                    ProviderRoute::FoundationModelsServer,
-                    ProviderRouteLabel::FoundationModelsServer,
-                ),
-                (
-                    ProviderRoute::FoundationModelsCli,
-                    ProviderRouteLabel::FoundationModelsCli,
-                ),
-            ] {
-                let Some(configured) = fm.router.effective_capabilities(route) else {
-                    continue;
-                };
-                let routable = fm.router.routable_capabilities(route);
-                let effective = routable.unwrap_or(configured);
-                routes.push(ProviderRouteInspect::new(
-                    label,
-                    routable.is_some(),
-                    effective.text,
-                    effective.tools && tools_on,
-                    effective.vision,
-                    effective.ocr,
-                    provenance,
-                ));
-            }
-        }
-
-        if let Some(vision) = &self.vision {
-            let provenance = match vision {
-                ConfiguredVision::Remote(_) => ProviderProvenance::Configuration,
-                ConfiguredVision::FoundationModels(_) => ProviderProvenance::QualifiedManifest,
-            };
-            routes.push(ProviderRouteInspect::new(
-                ProviderRouteLabel::Vision,
-                true,
-                false,
-                false,
-                true,
-                true,
-                provenance,
-            ));
-        }
-
-        routes
+        self.providers.inspect_snapshot()
     }
 
     /// Lock helper: a poisoned mutex means a panic elsewhere already took the
@@ -848,7 +720,9 @@ impl AppState {
     /// context. One generation at a time, through the usual slot, so it never
     /// starves a live reply. Returns how many channels were summarised.
     pub async fn refresh_summaries(&self) -> usize {
-        let Some(_) = &self.backend else { return 0 };
+        if !self.providers.generation_available() {
+            return 0;
+        }
         let due: Vec<String> = Self::lock(&self.stores).memory.channels_due_for_summary();
         let mut done = 0;
         for scoped_channel in due {
@@ -878,9 +752,6 @@ impl AppState {
             }
             let (system, user) =
                 crate::engine::summarize_prompt(crate::persona::Persona::Abbey, &transcript, count);
-            let Ok(_slot) = self.acquire_generation().await else {
-                break;
-            };
             match self
                 .chat(&system, &[crate::llm::ChatTurn::user(user)])
                 .await
@@ -1049,22 +920,6 @@ mod tests {
         assert_eq!(sink.attempts(), ["canonical", "wdbx"]);
     }
 
-    #[tokio::test]
-    async fn generation_slots_are_bounded_and_time_out_honestly() {
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().queue_secs = 1;
-        let first = state.acquire_generation().await.expect("first slot");
-        let started = std::time::Instant::now();
-        let second = state.acquire_generation().await;
-        assert_eq!(second.unwrap_err().to_string(), BUSY_REPLY);
-        assert!(
-            started.elapsed().as_millis() >= 900,
-            "waited for the queue window"
-        );
-        drop(first);
-        assert!(state.acquire_generation().await.is_ok(), "slot freed");
-    }
-
     #[test]
     fn queue_and_concurrency_parse_with_fallbacks() {
         assert_eq!(queue_secs_from_value(None), DEFAULT_QUEUE_SECS);
@@ -1084,59 +939,6 @@ mod tests {
             DEFAULT_VOICE_QUEUE_SECS
         );
         assert_eq!(voice_queue_secs(240), 240);
-    }
-
-    #[tokio::test]
-    async fn voice_generation_waits_out_a_short_text_busy_window() {
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().queue_secs = 1;
-        assert_eq!(state.generation.available_permits(), 1);
-        let first = state.acquire_generation().await.expect("first slot");
-        assert_eq!(state.generation.available_permits(), 0);
-
-        let waiting = tokio::spawn({
-            let state = std::sync::Arc::clone(&state);
-            async move {
-                let permit = state
-                    .acquire_generation_waiting(Duration::from_secs(3))
-                    .await?;
-                drop(permit);
-                Ok::<_, crate::llm::LlmError>(())
-            }
-        });
-
-        tokio::time::sleep(Duration::from_millis(1200)).await;
-        assert!(
-            !waiting.is_finished(),
-            "voice still waiting after the 1s text busy window"
-        );
-        drop(first);
-        waiting
-            .await
-            .expect("join")
-            .expect("voice acquired after text released the slot");
-        assert_eq!(
-            state.generation.available_permits(),
-            1,
-            "still a single generation slot"
-        );
-    }
-
-    #[tokio::test]
-    async fn voice_generation_still_times_out_if_the_slot_never_frees() {
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().queue_secs = 1;
-        let _first = state.acquire_generation().await.expect("first slot");
-        let started = std::time::Instant::now();
-        let second = state
-            .acquire_generation_waiting(Duration::from_secs(1))
-            .await;
-        assert_eq!(second.unwrap_err().to_string(), BUSY_REPLY);
-        assert!(
-            started.elapsed().as_millis() >= 900,
-            "waited for the voice window"
-        );
-        assert_eq!(state.generation.available_permits(), 0);
     }
 
     #[test]
@@ -1229,17 +1031,18 @@ mod tests {
         let mut state = AppState::in_memory();
         Arc::get_mut(&mut state)
             .expect("unique state")
-            .foundation_models = Some(FoundationModels::new(
-            crate::provider::FmConfig {
-                mode: crate::provider::FmMode::System,
-                endpoint: Some("http://127.0.0.1:8899".into()),
-                cli: PathBuf::from("/usr/bin/fm"),
-                fallback: false,
-                timeout_secs: 30,
-            },
-            None,
-            true,
-        ));
+            .providers
+            .set_fm(Some(FoundationModels::new(
+                crate::provider::FmConfig {
+                    mode: crate::provider::FmMode::System,
+                    endpoint: Some("http://127.0.0.1:8899".into()),
+                    cli: PathBuf::from("/usr/bin/fm"),
+                    fallback: false,
+                    timeout_secs: 30,
+                },
+                None,
+                true,
+            )));
         let rendered = crate::inspect::render_provider(&state.provider_inspect());
 
         assert!(

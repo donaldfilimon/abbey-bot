@@ -52,6 +52,8 @@ pub const MAX_DESCRIBED_IMAGES: usize = 3;
 pub struct VisionError {
     message: String,
     public_message: Option<&'static str>,
+    failure: crate::provider::ProviderFailureKind,
+    retry_after: crate::provider::RetryAfter,
 }
 
 impl VisionError {
@@ -61,6 +63,8 @@ impl VisionError {
         Self {
             message: message.into(),
             public_message: None,
+            failure: crate::provider::ProviderFailureKind::ResponseSchema,
+            retry_after: crate::provider::RetryAfter::Absent,
         }
     }
 
@@ -69,9 +73,34 @@ impl VisionError {
         Self {
             message: message.into(),
             public_message: Some(public_message),
+            failure: crate::provider::ProviderFailureKind::InvalidRequest,
+            retry_after: crate::provider::RetryAfter::Absent,
         }
     }
 
+    pub(crate) const fn provider_failure(&self) -> crate::provider::ProviderFailureKind {
+        self.failure
+    }
+    pub(crate) fn classified(
+        message: impl Into<String>,
+        failure: crate::provider::ProviderFailureKind,
+    ) -> Self {
+        Self {
+            failure,
+            ..Self::internal(message)
+        }
+    }
+
+    pub(crate) fn from_llm(error: crate::llm::LlmError) -> Self {
+        Self {
+            failure: error.provider_failure(),
+            retry_after: error.retry_after(),
+            ..Self::internal("the image provider failed")
+        }
+    }
+    pub(crate) const fn retry_after(&self) -> crate::provider::RetryAfter {
+        self.retry_after
+    }
     /// Safe fixed copy for invalid caller input, if this error has one.
     pub fn public_message(&self) -> Option<&'static str> {
         self.public_message

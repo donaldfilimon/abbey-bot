@@ -2,6 +2,7 @@ use super::dialect::{Dialect, bounded_calls, validate_terminal};
 use super::{Backend, ChatTurn, LlmError, LlmRequest, ModelTurn};
 use serde_json::Value;
 
+#[cfg(test)]
 pub fn build_request(backend: &Backend, system_prompt: &str, question: &str) -> LlmRequest {
     build_chat_request(backend, system_prompt, &[ChatTurn::user(question)])
 }

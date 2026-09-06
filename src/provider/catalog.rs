@@ -10,13 +10,17 @@ use std::fmt;
 
 use super::ProviderCapabilities;
 use super::config::ProviderConfig;
+#[cfg(test)]
 use super::discovery::{
     DiscoveryLimits, DiscoveryRequest, DiscoveryResult, ExecutableIdentity, discover,
 };
+#[cfg(test)]
+use super::domain::ProviderProvenance;
 use super::domain::{
     BlockedReason, DetectionState, Eligibility, IsolationCapabilities, ProviderClass,
-    ProviderDescriptor, ProviderId, ProviderProvenance,
+    ProviderDescriptor, ProviderId,
 };
+#[cfg(test)]
 use super::manifest::{
     ManifestError, ProviderIdentityHashes, ProviderManifest, ProviderRecord, QualificationStatus,
 };
@@ -60,6 +64,7 @@ struct CatalogEntry {
     configured_capabilities: ProviderCapabilities,
     configured_isolation: IsolationCapabilities,
     admission: Eligibility,
+    #[cfg(test)]
     executable: Option<ExecutableIdentity>,
 }
 
@@ -69,7 +74,6 @@ impl fmt::Debug for CatalogEntry {
             .debug_struct("CatalogEntry")
             .field("descriptor", &self.descriptor)
             .field("admission", &self.admission)
-            .field("executable", &self.executable)
             .finish()
     }
 }
@@ -90,9 +94,26 @@ impl ProviderCatalog {
         }
     }
 
+    /// Trusted assembly of an explicitly configured, implemented legacy adapter.
+    /// Qualification is verified by the builder before this boundary.
+    pub(super) fn register_runtime(&mut self, descriptor: ProviderDescriptor) {
+        self.entries.insert(
+            descriptor.id.clone(),
+            CatalogEntry {
+                configured_capabilities: descriptor.declared_capabilities,
+                configured_isolation: descriptor.isolation,
+                admission: descriptor.eligibility,
+                descriptor,
+                #[cfg(test)]
+                executable: None,
+            },
+        );
+    }
+
     /// Discover only provider IDs explicitly selected by
     /// `ABBEY_PROVIDER_DISCOVERY`. Requests for every other ID are registered
     /// as not detected without inspecting or executing their candidates.
+    #[cfg(test)]
     pub async fn discover_configured(
         config: &ProviderConfig,
         requests: impl IntoIterator<Item = DiscoveryRequest>,
@@ -112,6 +133,7 @@ impl ProviderCatalog {
 
     /// Register a bounded discovery result. Duplicate stable IDs are retained
     /// as one explicit ambiguous entry rather than choosing by arrival order.
+    #[cfg(test)]
     pub fn register_discovery(&mut self, discovered: DiscoveryResult) {
         let (mut descriptor, executable) = discovered.into_parts();
         let id = descriptor.id.clone();
@@ -146,6 +168,7 @@ impl ProviderCatalog {
     /// the catalog independently rechecks provider ID, class, detected binary
     /// hash, operator policy, allowlists, and sandbox evidence. Every failure
     /// maps to a fixed content-free blocked reason.
+    #[cfg(test)]
     pub fn apply_manifest(
         &mut self,
         provider_id: &ProviderId,
@@ -167,6 +190,7 @@ impl ProviderCatalog {
 
     /// Adaptive class admission adds score evidence to the existing exact identity gate.
     /// Keeping this separate preserves legacy FM qualification until runtime cutover.
+    #[cfg(test)]
     pub fn qualified_score_profile(
         &self,
         provider_id: &ProviderId,
@@ -187,6 +211,7 @@ impl ProviderCatalog {
             .score_profile(class, locality)
     }
 
+    #[cfg(test)]
     fn apply_manifest_result(
         &mut self,
         provider_id: &ProviderId,
@@ -249,6 +274,7 @@ impl ProviderCatalog {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn executable_identity(&self, provider_id: &ProviderId) -> Option<&ExecutableIdentity> {
         self.entries
             .get(provider_id)
@@ -259,17 +285,20 @@ impl ProviderCatalog {
         self.entries.values().map(|entry| &entry.descriptor)
     }
 
+    #[cfg(test)]
     pub fn routable(&self) -> impl Iterator<Item = &ProviderDescriptor> {
         self.descriptors()
             .filter(|descriptor| descriptor.eligibility.is_routable())
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -285,6 +314,7 @@ impl fmt::Debug for ProviderCatalog {
     }
 }
 
+#[cfg(test)]
 fn reset_to_configured(entry: &mut CatalogEntry) {
     entry.descriptor.declared_capabilities = entry.configured_capabilities;
     entry.descriptor.isolation = entry.configured_isolation;
@@ -298,7 +328,9 @@ fn apply_policy(
 ) -> Eligibility {
     match descriptor.detection {
         DetectionState::NotDetected => return Eligibility::Blocked(BlockedReason::NotDetected),
+        #[cfg(test)]
         DetectionState::Ambiguous => return Eligibility::Blocked(BlockedReason::Ambiguous),
+        #[cfg(test)]
         DetectionState::InvalidConfiguration => {
             return Eligibility::Blocked(BlockedReason::InvalidConfiguration);
         }

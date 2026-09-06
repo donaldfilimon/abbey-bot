@@ -13,14 +13,8 @@ use crate::voice::VoiceMode;
 
 pub(super) fn select_local_backend(
     state: &crate::runtime::AppState,
-) -> Result<crate::llm::Backend, String> {
-    state
-        .backend
-        .as_ref()
-        .into_iter()
-        .chain(state.fallback.as_ref())
-        .find(|backend| backend.is_loopback_openai_compatible())
-        .cloned()
+) -> Result<crate::provider::ProviderId, String> {
+    state.providers.local_voice_route()
         .ok_or_else(|| {
             "Local voice requires a loopback ABBEY_BOT_LLM_ENDPOINT; it will not send transcripts to a remote text provider.".into()
         })

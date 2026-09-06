@@ -289,12 +289,7 @@ async fn main() -> Result<(), Error> {
     let voice_is_local = voice_runtime
         .as_ref()
         .is_some_and(|runtime| runtime.config.mode() == voice::VoiceMode::Local);
-    let has_loopback_llm = state
-        .backend
-        .as_ref()
-        .into_iter()
-        .chain(state.fallback.as_ref())
-        .any(|backend| backend.is_loopback_openai_compatible());
+    let has_loopback_llm = state.providers.local_voice_route().is_some();
     if let Some(warning) = env_presence.local_voice_llm_gap(voice_is_local, has_loopback_llm) {
         tracing::warn!("{warning}");
     }
@@ -303,7 +298,7 @@ async fn main() -> Result<(), Error> {
             "ABBEY_VOICE_LOCAL_ENDPOINT unset — local speech defaults to http://127.0.0.1:8181"
         );
     }
-    if let Some(fm) = &state.foundation_models {
+    if let Some(fm) = state.providers.foundation_models() {
         tracing::info!(
             mode = fm.config.mode.as_str(),
             fallback = fm.config.fallback,

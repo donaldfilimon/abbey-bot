@@ -161,7 +161,9 @@ impl ProviderClass {
 pub enum DetectionState {
     NotDetected,
     Detected,
+    #[cfg(test)]
     Ambiguous,
+    #[cfg(test)]
     InvalidConfiguration,
 }
 
@@ -170,9 +172,12 @@ pub enum DetectionState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryBoundary {
     Unconfigured,
+    #[cfg(test)]
     ExactBinary,
     ExactEndpoint,
+    #[cfg(test)]
     ExactBinaryAndEndpoint,
+    #[cfg(test)]
     OsManaged,
 }
 
@@ -189,7 +194,9 @@ pub enum TemporaryUnavailableReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockedReason {
     NotDetected,
+    #[cfg(test)]
     Ambiguous,
+    #[cfg(test)]
     InvalidConfiguration,
     OperatorDisabled,
     CloudNotAllowed,
@@ -267,12 +274,34 @@ impl ProviderDescriptor {
 /// Object-safe future returned by [`TurnAdapter`].
 pub type TurnFuture<'a> = Pin<Box<dyn Future<Output = Result<ModelTurn, LlmError>> + Send + 'a>>;
 
+#[derive(Clone)]
+pub struct AdapterRequest<'a> {
+    pub system: &'a str,
+    pub turns: &'a [ChatTurn],
+    pub tools: &'a [ToolSpec],
+    pub call_id: &'a str,
+    pub style: crate::llm::ResponseStyle,
+    pub deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+}
+
 /// One asynchronous provider turn expressed in Abbey's existing vocabulary.
 ///
 /// Returning a boxed future keeps the interface object-safe on every supported
 /// compiler without introducing a second async-trait dependency.
 pub trait TurnAdapter: Send + Sync {
     fn provider_id(&self) -> &ProviderId;
+    fn tools_enabled(&self) -> bool {
+        true
+    }
+
+    fn execute<'a>(&'a self, request: AdapterRequest<'a>) -> TurnFuture<'a> {
+        self.turn(
+            request.system,
+            request.turns,
+            request.tools,
+            request.call_id,
+        )
+    }
 
     fn turn<'a>(
         &'a self,

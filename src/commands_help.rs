@@ -144,13 +144,7 @@ pub fn runtime_input(
     guild: Option<u64>,
 ) -> EligibilityInput {
     let mut input = EligibilityInput::new(context);
-    let generation = data.state.backend.is_some()
-        || data
-            .state
-            .foundation_models
-            .as_ref()
-            .filter(|fm| fm.is_qualified())
-            .is_some_and(|fm| crate::generation::fm_cli_text_available(Some(fm)));
+    let generation = data.state.providers.generation_available();
     if generation {
         input.capabilities.push(Capability::Generation);
     }
@@ -160,7 +154,7 @@ pub fn runtime_input(
             .get(&format!("discord:{guild}"))
             .is_none_or(|settings| settings.vision_enabled)
     });
-    if vision_allowed && data.state.vision.is_some() {
+    if vision_allowed && data.state.providers.vision_available() {
         input.capabilities.push(Capability::Vision);
     }
     if let Some(voice) = data
@@ -169,13 +163,7 @@ pub fn runtime_input(
         .filter(|voice| guild == Some(voice.config.guild_id))
     {
         input.capabilities.push(Capability::VoiceConfigured);
-        let local_text = data
-            .state
-            .backend
-            .as_ref()
-            .into_iter()
-            .chain(data.state.fallback.as_ref())
-            .any(|backend| backend.is_loopback_openai_compatible());
+        let local_text = data.state.providers.local_voice_route().is_some();
         if voice
             .config
             .backend_for(crate::voice::VoiceMode::Local)

@@ -470,7 +470,6 @@ pub async fn handle<O: Outbound + Sync>(
         // One local generation at a time; the typing indicator keeps going
         // while this turn waits for its slot. Tools are offered only when
         // someone addressed Abbey — budgeted policy replies stay single-shot.
-        let _slot = state.acquire_generation().await?;
         let ask = Ask {
             session_mode: crate::generation::SessionMode::Shared,
             scope: &scoped_channel,
@@ -603,7 +602,7 @@ async fn enrich_with_vision<O: Outbound + Sync>(
     text: &str,
     attachments: &[RemoteAttachment],
 ) -> String {
-    let Some(vision_client) = &state.vision else {
+    let Some(vision_client) = state.vision() else {
         return text.to_string();
     };
     if !settings.vision_enabled {
@@ -633,18 +632,18 @@ async fn welcome<O: Outbound + Sync>(
 ) -> Outcome {
     // Welcomes are generated, never templated: with no backend there is
     // nothing honest to say, so Abbey stays quiet.
-    let Some(backend) = &state.backend else {
+    let Some(_) = state.generation_label() else {
         return Outcome::Ignored("welcome needs a backend");
     };
     if native_channel_id.is_empty() {
         return Outcome::Ignored("welcome has no channel");
     }
     let system = engine::welcome_prompt(display_name);
-    let Ok(_slot) = state.acquire_generation().await else {
-        return Outcome::Ignored("welcome skipped: model busy");
-    };
-    let text = match llm::ask_backend(&state.llm, backend, &system, "Say hello.").await {
-        Ok(t) => ask::tidy_reply(Persona::Abi, &t),
+    let text = match state
+        .chat(&system, &[llm::ChatTurn::user("Say hello.")])
+        .await
+    {
+        Ok((t, _)) => ask::tidy_reply(Persona::Abi, &t),
         Err(e) => return Outcome::ReplyFailed(e.to_string()),
     };
     match out

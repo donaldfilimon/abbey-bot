@@ -635,29 +635,33 @@ fn configured_data_at(address: Option<std::net::SocketAddr>) -> Data {
         || "http://127.0.0.1:1".into(),
         |address| format!("http://{address}"),
     );
-    state.backend = Some(crate::llm::Backend::OpenAiCompatible {
-        endpoint: fixture_endpoint.clone(),
-        model: "fixture".into(),
-    });
+    state
+        .providers
+        .set_primary(Some(crate::llm::Backend::OpenAiCompatible {
+            endpoint: fixture_endpoint.clone(),
+            model: "fixture".into(),
+        }));
     if address.is_some() {
         state.attachments = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap();
     }
-    state.vision = Some(crate::vision::ConfiguredVision::Remote(
-        crate::vision::RemoteVision {
-            config: crate::vision::VisionConfig {
-                base_url: address.map_or_else(
-                    || "http://127.0.0.1:1/v1".into(),
-                    |a| format!("http://{a}/v1"),
-                ),
-                model: "fixture".into(),
-                api_key: String::new(),
+    state
+        .providers
+        .set_vision(crate::vision::ConfiguredVision::Remote(
+            crate::vision::RemoteVision {
+                config: crate::vision::VisionConfig {
+                    base_url: address.map_or_else(
+                        || "http://127.0.0.1:1/v1".into(),
+                        |a| format!("http://{a}/v1"),
+                    ),
+                    model: "fixture".into(),
+                    api_key: String::new(),
+                },
+                transport: runtime::HttpVisionTransport::default(),
             },
-            transport: runtime::HttpVisionTransport::default(),
-        },
-    ));
+        ));
     data.voice = Some(Arc::new(crate::voice_session::VoiceRuntime::new(
         crate::voice::VoiceConfig::selected_only(
             GUILD,
@@ -1077,8 +1081,10 @@ async fn registered_ordinary_guards_deny_missing_capabilities() {
         let mut data = configured_data();
         let state = Arc::get_mut(&mut data.state).unwrap();
         match binding(command).eligibility.condition {
-            ConditionId::C1 | ConditionId::C5 | ConditionId::C6 => state.backend = None,
-            ConditionId::C2 | ConditionId::C3 => state.vision = None,
+            ConditionId::C1 | ConditionId::C5 | ConditionId::C6 => {
+                state.providers.set_primary(None)
+            }
+            ConditionId::C2 | ConditionId::C3 => state.providers.clear_vision(),
             ConditionId::C4 => data.voice = None,
             other => panic!("uncovered condition: {other:?}"),
         }

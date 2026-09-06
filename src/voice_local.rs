@@ -49,7 +49,7 @@ pub struct LocalSession {
     pub driver_disconnect: watch::Receiver<bool>,
     pub cancel: watch::Receiver<bool>,
     pub playback: SharedPlayback,
-    pub backend: crate::llm::Backend,
+    pub backend: crate::provider::ProviderId,
 }
 
 #[derive(Default)]
@@ -631,7 +631,7 @@ struct TurnWork {
     runtime: Arc<VoiceRuntime>,
     client: MlxAudioClient,
     state: Arc<AppState>,
-    backend: crate::llm::Backend,
+    backend: crate::provider::ProviderId,
     guild_id: u64,
     channel_id: u64,
     consent_epoch: u64,
@@ -788,35 +788,20 @@ async fn generate_turn(work: TurnWork, transcript: String, safely_attributed: bo
     } else {
         PersonaContext::empty()
     };
-    let queue_started = Instant::now();
-    let generation = match work.state.acquire_generation_for_voice().await {
-        Err(error) => Err(error),
-        Ok(_slot) => {
-            let queue_seconds = queue_started.elapsed().as_secs_f64();
-            let generation_started = Instant::now();
-            let result = generation::generate_without_delivery(
-                &work.state,
-                &work.backend,
-                persona,
-                &generation::Ask {
-                    session_mode: crate::generation::SessionMode::Shared,
-                    scope: &scope,
-                    context: &context,
-                    user_input: &transcript,
-                    now: runtime::now(),
-                },
-                Some(VOICE_SYSTEM_SUFFIX),
-            )
-            .await;
-            tracing::info!(
-                turn = work.turn,
-                queue_seconds,
-                generation_seconds = generation_started.elapsed().as_secs_f64(),
-                "local voice generation finished"
-            );
-            result
-        }
-    };
+    let generation = generation::generate_without_delivery(
+        &work.state,
+        &work.backend,
+        persona,
+        &generation::Ask {
+            session_mode: crate::generation::SessionMode::Shared,
+            scope: &scope,
+            context: &context,
+            user_input: &transcript,
+            now: runtime::now(),
+        },
+        Some(VOICE_SYSTEM_SUFFIX),
+    )
+    .await;
     let (answer, _) = match generation {
         Ok(answer) => answer,
         Err(error) => {

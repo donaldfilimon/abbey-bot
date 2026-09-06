@@ -72,7 +72,7 @@ async fn private_reply(ctx: Context<'_>, content: &str) -> Result<(), Error> {
 pub async fn describe_image(ctx: Context<'_>, message: Message) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let Some(vision_client) = &state.vision else {
+    let Some(vision_client) = state.vision() else {
         private_reply(
             ctx,
             "Image understanding is not configured (ABBEY_VISION_ENDPOINT).",
@@ -99,7 +99,7 @@ pub async fn describe_image(ctx: Context<'_>, message: Message) -> Result<(), Er
 pub async fn read_image_text(ctx: Context<'_>, message: Message) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let Some(vision_client) = &state.vision else {
+    let Some(vision_client) = state.vision() else {
         private_reply(
             ctx,
             "Image understanding is not configured (ABBEY_VISION_ENDPOINT).",

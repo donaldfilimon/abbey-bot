@@ -320,19 +320,26 @@ impl StreamTransport for HttpTransport {
         async move {
             use futures_util::StreamExt as _;
 
-            let response = builder
-                .send()
-                .await
-                .map_err(|error| LlmError::backend(format!("the request failed: {error}")))?;
+            let response = builder.send().await.map_err(LlmError::transport)?;
             let status = response.status();
+            let rejection =
+                LlmError::http(status, response.headers().get(reqwest::header::RETRY_AFTER));
+            if status.is_success()
+                && response
+                    .headers()
+                    .contains_key(reqwest::header::RETRY_AFTER)
+            {
+                return Err(LlmError::classified(
+                    "incompatible provider delay metadata",
+                    crate::provider::ProviderFailureKind::ProtocolDrift,
+                ));
+            }
             if !status.is_success() {
                 let body = crate::http_body::read_capped(response, MAX_ERROR_RESPONSE_BYTES)
                     .await
                     .map_err(|error| LlmError::backend(format!("HTTP {status}: {error}")))?;
                 drop(body);
-                return Err(LlmError::backend(format!(
-                    "HTTP {status}: the provider rejected the streaming request"
-                )));
+                return Err(rejection);
             }
 
             let mut stream = response.bytes_stream();
@@ -340,9 +347,7 @@ impl StreamTransport for HttpTransport {
             let mut full = String::new();
             let mut received = 0usize;
             while let Some(chunk) = stream.next().await {
-                let bytes = chunk.map_err(|error| {
-                    LlmError::backend(format!("reading the stream failed: {error}"))
-                })?;
+                let bytes = chunk.map_err(LlmError::transport)?;
                 received = received.checked_add(bytes.len()).ok_or_else(|| {
                     LlmError::backend("the backend stream exceeded its response limit".into())
                 })?;
