@@ -673,11 +673,16 @@ status: in_progress
   the live MLAI guild as the bot (33 additive changes, no blockers after renaming the
   colliding interest role to "Personas"). Two live findings fixed here: the `@me` guild-member
   route is user-token only, and `NEVER_FOR_EVERYONE` listed a name serenity never emits.
-- Honest scope: **nothing has been applied to any guild.** `--apply` is built and tested only
-  against the fake guild; it needs a further explicit yes from Donald, and the proposal's
-  Stage 0 export must happen first. Role permissions, role order, Community settings,
-  onboarding, AutoMod, and every deletion remain human steps by design. Forum tags and
-  slowmode are creation-time only (not diffed afterwards).
+- 2026-09-06 03:1x: **`--stage additive` was applied to the live MLAI guild** on Donald's explicit
+  yes (Stage 0 history export waived by him): 33/33 applied, 0 failed, exit 0, the engine's
+  verification re-diff empty, and an independent post-apply dry run `changes (0)`; guild
+  21 roles / 28 channels -> 31 / 51, nothing pre-existing touched. Transcript in
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-apply-additive-2026-09-06.txt`. A reveal
+  dry run afterwards shows 55 changes and no blockers; **reveal has not run** and needs its
+  own yes after the 7 manual steps (role permissions and order) that sit between the stages.
+- Honest scope: only the additive stage has ever run against a real guild. Role permissions,
+  role order, Community settings, onboarding, AutoMod, and every deletion remain human steps
+  by design. Forum tags and slowmode are creation-time only (not diffed afterwards).
 - 2026-09-06 03:0x: `233b2df` fixed a reveal non-idempotence the advisor caught (a plan with no
   topic kept emitting an empty edit for a channel that had one, so `--apply` could never
   verify clean on the topic-less archetype plans). The three commits `dac71a7`, `f74bb7a`,
