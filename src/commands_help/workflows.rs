@@ -110,14 +110,6 @@ fn edit(body: String) -> EditInteractionResponse {
         .allowed_mentions(crate::gateway::no_mentions())
 }
 
-fn delivery_failed(data: &Data) {
-    crate::startup::command_errors::record_failure(
-        &data.state,
-        crate::observability::EventCode::ResponseDelivery,
-        crate::observability::OperationalErrorCategory::Unavailable,
-    );
-}
-
 async fn reject_component(
     ctx: &serenity::all::Context,
     interaction: &ComponentInteraction,
@@ -137,7 +129,7 @@ async fn reject_component(
         .await
         .is_err()
     {
-        delivery_failed(data);
+        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
     }
 }
 
@@ -190,7 +182,7 @@ pub(super) async fn dispatch_component(
             .await
             .is_err()
         {
-            delivery_failed(data);
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
         }
         return true;
     }
@@ -201,16 +193,16 @@ pub(super) async fn dispatch_component(
         },
         || async {
             if run_component(ctx, interaction, data, session).await.is_err() {
-                delivery_failed(data);
+                crate::gateway::interaction_outcomes::delivery_failed(&data.state);
                 // Retry only the explanatory response; never re-run a domain operation.
                 let response = interaction.edit_response(&ctx.http, edit("The task could not finish delivering its result. Open `/help` and refresh the current state before retrying.".into())).await;
-                let _ = crate::startup::command_errors::delivery_result(&data.state, response);
+                if response.is_err() { crate::gateway::interaction_outcomes::delivery_failed(&data.state); }
             }
             Ok(())
         },
     ).await;
     if result.is_err() {
-        delivery_failed(data);
+        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
     }
     true
 }
@@ -333,7 +325,7 @@ pub async fn dispatch_modal(
     )
     .await;
     if result.is_err() {
-        delivery_failed(data);
+        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
     }
     true
 }

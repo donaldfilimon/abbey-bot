@@ -7,10 +7,14 @@ fn guided_button_payloads_follow_eligibility_and_keep_the_original_expiry() {
         for bits in 0..4 {
             let mut input = EligibilityInput::new(context);
             if bits & 1 != 0 {
-                input.capabilities.push(Capability::Generation);
+                input
+                    .readiness
+                    .insert(Capability::Generation, CapabilityReadiness::Ready);
             }
             if bits & 2 != 0 {
-                input.capabilities.push(Capability::Vision);
+                input
+                    .readiness
+                    .insert(Capability::Vision, CapabilityReadiness::Ready);
             }
             for section in HelpSection::ALL {
                 let session = help_center::HelpSession::new(u64::MAX, 1000, section).unwrap();
@@ -202,7 +206,10 @@ fn real_registered_guard_special_cases_use_the_evaluator() {
             let mut input = EligibilityInput::new(InteractionContext::Guild);
             input.caller_present_in_voice = Some(present);
             input.permissions = permissions_input(permissions.unwrap_or_default());
-            input.capabilities = vec![Capability::VoiceConfigured];
+            input.readiness = [Capability::VoiceConfigured]
+                .into_iter()
+                .map(|capability| (capability, CapabilityReadiness::Ready))
+                .collect();
             assert_eq!(
                 leave_allowed(present, permissions),
                 catalog::eligible(
@@ -243,13 +250,16 @@ fn help_is_bounded_and_does_not_expose_hidden_voice_channels_or_mentions() {
     input.follow_up_absent = Some(true);
     input.caller_present_in_voice = Some(true);
     input.selected_voice_mode = SelectedVoiceMode::Local;
-    input.capabilities = vec![
+    input.readiness = [
         Capability::Generation,
         Capability::Vision,
         Capability::VoiceConfigured,
         Capability::VoiceLocal,
         Capability::VoiceOpenAi,
-    ];
+    ]
+    .into_iter()
+    .map(|capability| (capability, CapabilityReadiness::Ready))
+    .collect();
     for section in HelpSection::ALL {
         let raw = catalog::render_help(section, &input);
         // Do not merely rely on clamping to accidentally drop an eligible leaf.
@@ -285,7 +295,12 @@ fn runtime_projection_observes_configuration_guild_opt_out_and_scope() {
         voice: None,
     };
     let absent = runtime_input(&data, InteractionContext::Guild, Some(123));
-    assert!(absent.capabilities.is_empty());
+    assert!(
+        absent
+            .readiness
+            .values()
+            .all(|state| *state != CapabilityReadiness::Ready)
+    );
     assert_eq!(absent.selected_voice_mode, SelectedVoiceMode::Off);
 }
 
@@ -324,8 +339,9 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
             }));
             assert_eq!(
                 runtime_input(&data, InteractionContext::Guild, Some(123))
-                    .capabilities
-                    .contains(&Capability::Generation),
+                    .readiness
+                    .get(&Capability::Generation)
+                    .is_some_and(|state| *state == CapabilityReadiness::Ready),
                 qualified && fallback
             );
         }
@@ -353,13 +369,15 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
     assert!(!runtime_input(&data, InteractionContext::Guild, Some(123)).vision_allowed);
     assert!(
         runtime_input(&data, InteractionContext::Guild, Some(456))
-            .capabilities
-            .contains(&Capability::Vision)
+            .readiness
+            .get(&Capability::Vision)
+            .is_some_and(|state| *state == CapabilityReadiness::Ready)
     );
     assert!(
         runtime_input(&data, InteractionContext::BotDm, None)
-            .capabilities
-            .contains(&Capability::Vision)
+            .readiness
+            .get(&Capability::Vision)
+            .is_some_and(|state| *state == CapabilityReadiness::Ready)
     );
     assert!(
         !format!(
@@ -387,21 +405,29 @@ fn voice_projection_requires_exact_guild_and_complete_selected_local_backend() {
     };
     assert!(
         runtime_input(&data, InteractionContext::Guild, Some(999))
-            .capabilities
-            .is_empty()
+            .readiness
+            .values()
+            .all(|state| *state != CapabilityReadiness::Ready)
     );
     assert!(
         runtime_input(&data, InteractionContext::BotDm, None)
-            .capabilities
-            .is_empty()
+            .readiness
+            .values()
+            .all(|state| *state != CapabilityReadiness::Ready)
     );
     let missing_text = runtime_input(&data, InteractionContext::Guild, Some(123));
     assert!(
         missing_text
-            .capabilities
-            .contains(&Capability::VoiceConfigured)
+            .readiness
+            .get(&Capability::VoiceConfigured)
+            .is_some_and(|state| *state == CapabilityReadiness::Ready)
     );
-    assert!(!missing_text.capabilities.contains(&Capability::VoiceLocal));
+    assert!(
+        !missing_text
+            .readiness
+            .get(&Capability::VoiceLocal)
+            .is_some_and(|state| *state == CapabilityReadiness::Ready)
+    );
     Arc::get_mut(&mut data.state)
         .unwrap()
         .providers
@@ -411,8 +437,18 @@ fn voice_projection_requires_exact_guild_and_complete_selected_local_backend() {
             Some("test-model".into()),
         ));
     let configured = runtime_input(&data, InteractionContext::Guild, Some(123));
-    assert!(configured.capabilities.contains(&Capability::VoiceLocal));
-    assert!(!configured.capabilities.contains(&Capability::VoiceOpenAi));
+    assert!(
+        configured
+            .readiness
+            .get(&Capability::VoiceLocal)
+            .is_some_and(|state| *state == CapabilityReadiness::Ready)
+    );
+    assert!(
+        !configured
+            .readiness
+            .get(&Capability::VoiceOpenAi)
+            .is_some_and(|state| *state == CapabilityReadiness::Ready)
+    );
     assert_eq!(configured.selected_voice_mode, SelectedVoiceMode::Local);
     data.voice
         .as_ref()
@@ -420,11 +456,14 @@ fn voice_projection_requires_exact_guild_and_complete_selected_local_backend() {
         .set_effective_mode(crate::voice::VoiceMode::Disabled);
     let disabled = runtime_input(&data, InteractionContext::Guild, Some(123));
     assert_eq!(disabled.selected_voice_mode, SelectedVoiceMode::Off);
-    assert!(!catalog::condition_allows(
-        catalog::ConditionId::C5.rule(),
-        &disabled,
-        EvaluationMode::Invocation
-    ));
+    assert!(
+        catalog::condition_decision(
+            catalog::ConditionId::C5.rule(),
+            &disabled,
+            EvaluationMode::Invocation
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -461,7 +500,7 @@ async fn registered_ordinary_guard_seam_acknowledges_before_lookup_and_evaluates
                 input.self_subject = Some(true);
                 input.caller_present_in_voice = Some(true);
                 input.selected_voice_mode = SelectedVoiceMode::Local;
-                input.capabilities = vec![
+                input.readiness = [
                     Capability::Generation,
                     Capability::ToolGeneration,
                     Capability::Ocr,
@@ -469,7 +508,10 @@ async fn registered_ordinary_guard_seam_acknowledges_before_lookup_and_evaluates
                     Capability::VoiceConfigured,
                     Capability::VoiceLocal,
                     Capability::VoiceOpenAi,
-                ];
+                ]
+                .into_iter()
+                .map(|capability| (capability, CapabilityReadiness::Ready))
+                .collect();
                 input.follow_up_absent = Some(true);
                 input.action_target_resolved = true;
                 input.hierarchy_allows_action = Some(true);

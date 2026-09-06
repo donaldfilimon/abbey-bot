@@ -392,11 +392,7 @@ pub async fn dispatch_admin_component(
     .await;
     let (mut session, action, current) = match preparation {
         Err(_) => {
-            crate::startup::command_errors::record_failure(
-                &data.state,
-                crate::observability::EventCode::ResponseDelivery,
-                crate::observability::OperationalErrorCategory::Unavailable,
-            );
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
             return true;
         }
         Ok(AdminPreparation::Rejected(error)) => {
@@ -541,7 +537,9 @@ pub async fn dispatch_admin_component(
                         .allowed_mentions(crate::gateway::no_mentions()),
                 )
                 .await;
-            let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
+            if delivery.is_err() {
+                crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+            }
             return true;
         }
         AdminEffect::None => result = Some("That setting already has the requested value.".into()),
@@ -584,7 +582,9 @@ async fn edit_admin(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
+    if delivery.is_err() {
+        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    }
 }
 
 #[cfg(test)]
@@ -665,8 +665,10 @@ mod outcome_tests {
             settings.unsolicited = true;
             mutations += 1;
         });
-        let failure =
-            crate::startup::command_errors::delivery_result(&data.state, Err::<(), _>("transport"));
+        let failure = Err::<(), _>("transport");
+        if failure.is_err() {
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        }
         assert_eq!(failure, Err("transport"));
         assert_eq!(mutations, 1);
         assert!(dashboard_settings(&data.state, 7).unsolicited);

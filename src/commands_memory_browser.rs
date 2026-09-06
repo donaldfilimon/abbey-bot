@@ -217,7 +217,7 @@ pub async fn dispatch(
     .await;
     let (body, controls) = match preparation {
         Err(_) => {
-            let _ = crate::startup::command_errors::delivery_result(&data.state, Err::<(), _>(()));
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
             return true;
         }
         Ok(Preparation::Rejected(message)) => (message.to_string(), Vec::new()),
@@ -238,7 +238,9 @@ pub async fn dispatch(
                 .components(controls),
         )
         .await;
-    let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
+    if delivery.is_err() {
+        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    }
     true
 }
 

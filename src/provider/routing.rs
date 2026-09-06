@@ -78,6 +78,20 @@ struct ProviderState {
     circuit: Circuit,
     admission: RouteAdmission,
 }
+impl ProviderState {
+    fn assess(
+        &self,
+        class: RequestClass,
+        now_ms: u64,
+        admission: RouteAdmission,
+    ) -> Result<(), RouteUnavailableReason> {
+        admission.check()?;
+        if !self.profiles.contains_key(&class) {
+            return Err(RouteUnavailableReason::CapabilityUnavailable);
+        }
+        self.circuit.availability(now_ms).map_err(circuit_reason)
+    }
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoutingSnapshot {
     pub provider_id: ProviderId,
@@ -166,6 +180,19 @@ impl AdaptiveRouter {
             })
             .collect()
     }
+    /// Inspect the same hard gates as selection without changing admission or reserving a probe.
+    pub fn assess(
+        &self,
+        id: &ProviderId,
+        class: RequestClass,
+        now_ms: u64,
+        admission: RouteAdmission,
+    ) -> Result<(), RouteUnavailableReason> {
+        self.providers
+            .get(id)
+            .ok_or(RouteUnavailableReason::NoConfiguredProvider)?
+            .assess(class, now_ms, admission)
+    }
     /// A supplied conversation selection is still subjected to every hard gate.
     pub fn select(
         &mut self,
@@ -180,17 +207,7 @@ impl AdaptiveRouter {
             if excluded.contains(id) || pinned.is_some_and(|pin| pin != id) {
                 continue;
             }
-            let eligibility = state
-                .admission
-                .check()
-                .and_then(|()| {
-                    if state.profiles.contains_key(&class) {
-                        Ok(())
-                    } else {
-                        Err(RouteUnavailableReason::CapabilityUnavailable)
-                    }
-                })
-                .and_then(|()| state.circuit.availability(now_ms).map_err(circuit_reason));
+            let eligibility = state.assess(class, now_ms, state.admission);
             if let Err(reason) = eligibility {
                 failures.insert(reason);
                 continue;

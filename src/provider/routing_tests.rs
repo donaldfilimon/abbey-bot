@@ -105,6 +105,13 @@ fn every_hard_gate_excludes_a_sole_or_pinned_candidate_before_scoring() {
         for pinned in [None, Some(id("a"))] {
             let mut r = AdaptiveRouter::new(vec![]);
             add(&mut r, "a", e);
+            let before = r.snapshot();
+            assert_eq!(
+                r.assess(&id("a"), e.request_class, 0, admission),
+                Err(reason)
+            );
+            assert_eq!(r.snapshot(), before, "assessment cannot mutate the circuit");
+            assert_eq!(r.providers[&id("a")].admission, RouteAdmission::QUALIFIED);
             r.set_admission(&id("a"), admission);
             assert_eq!(
                 r.select(e.request_class, 0, pinned.as_ref(), &BTreeSet::new())
@@ -134,6 +141,10 @@ fn open_blocked_and_half_open_capacity_are_exclusions_even_when_pinned() {
         } else {
             RouteUnavailableReason::BlockedPendingRequalification
         };
+        assert_eq!(
+            r.assess(&id("a"), e.request_class, 0, RouteAdmission::QUALIFIED),
+            Err(reason)
+        );
         for pin in [None, Some(id("a"))] {
             assert_eq!(
                 r.select(e.request_class, 0, pin.as_ref(), &BTreeSet::new())
@@ -142,9 +153,23 @@ fn open_blocked_and_half_open_capacity_are_exclusions_even_when_pinned() {
             );
         }
         if failure.is_transient() {
+            let before = r.snapshot();
+            assert_eq!(
+                r.assess(&id("a"), e.request_class, 60000, RouteAdmission::QUALIFIED),
+                Ok(())
+            );
+            assert_eq!(
+                r.snapshot(),
+                before,
+                "inspection cannot reserve the half-open probe"
+            );
             let (_, probe) = r
                 .select(e.request_class, 60000, None, &BTreeSet::new())
                 .unwrap();
+            assert_eq!(
+                r.assess(&id("a"), e.request_class, 60000, RouteAdmission::QUALIFIED),
+                Err(RouteUnavailableReason::Busy)
+            );
             assert_eq!(
                 r.select(e.request_class, 60000, None, &BTreeSet::new())
                     .unwrap_err(),
@@ -436,5 +461,34 @@ fn shared_rejected_class_evidence_cannot_route_through_declared_capabilities() {
                 .unwrap_err(),
             RouteUnavailableReason::CapabilityUnavailable
         );
+    }
+}
+
+#[test]
+fn assessment_and_selection_share_qualification_for_every_request_class() {
+    for case in fixtures().profiles {
+        let mut router = AdaptiveRouter::new(vec![]);
+        add(&mut router, "a", &case.evidence);
+        for class in [
+            RequestClass::TextReadOnly,
+            RequestClass::TextWithTools,
+            RequestClass::VisionDescribe,
+            RequestClass::VisionOcr,
+        ] {
+            let before = router.snapshot();
+            let assessment = router.assess(&id("a"), class, 0, RouteAdmission::QUALIFIED);
+            assert_eq!(router.snapshot(), before);
+            let selected = router.select(class, 0, None, &BTreeSet::new());
+            assert_eq!(assessment, selected.as_ref().map(|_| ()).map_err(|e| *e));
+            if let Ok((_, attempt)) = selected {
+                router.complete(
+                    attempt,
+                    ProviderFailureKind::Cancelled,
+                    RetryAfter::Absent,
+                    None,
+                    0,
+                );
+            }
+        }
     }
 }

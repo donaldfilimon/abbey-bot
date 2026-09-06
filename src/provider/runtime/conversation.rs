@@ -59,29 +59,16 @@ impl ProviderConversation<'_> {
                         .catalog
                         .descriptor(id)
                         .expect("registered descriptor");
-                    let supported_adapter = match self.class {
-                        RequestClass::VisionDescribe | RequestClass::VisionOcr => {
-                            entry.image.is_some()
-                        }
-                        _ => entry.adapter.is_some(),
-                    };
-                    let allowed = supported_adapter
-                        && self.class.supported_by(descriptor.declared_capabilities)
-                        && (!entry.stream_only
-                            || (self.streaming && self.class == RequestClass::TextReadOnly));
-                    let capacity = entry.slots.available_permits() > 0;
-                    let budget_available = !state.blocks.failed();
-                    state.router.set_admission(
-                        id,
-                        RouteAdmission {
-                            configured: entry.adapter.is_some() || entry.image.is_some(),
-                            identity_current: descriptor.eligibility.is_routable(),
-                            capability_allowed: allowed,
-                            policy_allowed: !self.local || entry.local_voice,
-                            budget_available,
-                            capacity_available: capacity,
-                        },
+                    let admission = entry.admission(
+                        descriptor,
+                        self.class,
+                        self.streaming,
+                        self.local,
+                        !state.blocks.failed(),
                     );
+                    let capacity = admission.capacity_available;
+                    let allowed = admission.capability_allowed;
+                    state.router.set_admission(id, admission);
                     if !capacity
                         && allowed
                         && descriptor.eligibility.is_routable()

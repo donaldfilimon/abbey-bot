@@ -16,7 +16,7 @@ fn guided_sections_preserve_every_eligible_entry_and_visibility_before_clamping(
                 input.permissions = permission.into_iter().collect();
                 input.caller_present_in_voice = Some(true);
                 input.selected_voice_mode = SelectedVoiceMode::Local;
-                input.capabilities = [
+                input.readiness = [
                     Capability::Generation,
                     Capability::Vision,
                     Capability::VoiceConfigured,
@@ -25,7 +25,9 @@ fn guided_sections_preserve_every_eligible_entry_and_visibility_before_clamping(
                 ]
                 .into_iter()
                 .enumerate()
-                .filter_map(|(index, cap)| (bits & (1 << index) != 0).then_some(cap))
+                .filter_map(|(index, cap)| {
+                    (bits & (1 << index) != 0).then_some((cap, CapabilityReadiness::Ready))
+                })
                 .collect();
                 for section in HelpSection::ALL {
                     let rendered = render_help(section, &input);
@@ -84,7 +86,10 @@ fn guided_sections_preserve_every_eligible_entry_and_visibility_before_clamping(
 #[test]
 fn representative_guided_output_is_readable() {
     let mut input = member();
-    input.capabilities = vec![Capability::Generation, Capability::Vision];
+    input.readiness = [Capability::Generation, Capability::Vision]
+        .into_iter()
+        .map(|capability| (capability, CapabilityReadiness::Ready))
+        .collect();
     for section in [HelpSection::Start, HelpSection::Memory, HelpSection::Images] {
         let rendered = render_help(section, &input);
         match section {
@@ -181,7 +186,7 @@ fn capability_input_and_selected_mode_matrices_are_exact() {
         ] {
             for absent in [None, Some(false), Some(true)] {
                 let mut input = member();
-                input.capabilities = [
+                input.readiness = [
                     Capability::Generation,
                     Capability::Vision,
                     Capability::VoiceConfigured,
@@ -190,7 +195,9 @@ fn capability_input_and_selected_mode_matrices_are_exact() {
                 ]
                 .into_iter()
                 .enumerate()
-                .filter_map(|(index, capability)| (bits & (1 << index) != 0).then_some(capability))
+                .filter_map(|(index, capability)| {
+                    (bits & (1 << index) != 0).then_some((capability, CapabilityReadiness::Ready))
+                })
                 .collect();
                 input.selected_voice_mode = selected;
                 input.follow_up_absent = absent;
@@ -340,7 +347,10 @@ fn catalog_identity_policy_and_description_data_are_valid() {
 #[test]
 fn completed_voice_and_admin_features_are_advertised_by_current_policy() {
     let mut input = member();
-    input.capabilities = vec![Capability::VoiceConfigured, Capability::VoiceLocal];
+    input.readiness = [Capability::VoiceConfigured, Capability::VoiceLocal]
+        .into_iter()
+        .map(|capability| (capability, CapabilityReadiness::Ready))
+        .collect();
     input.selected_voice_mode = SelectedVoiceMode::Local;
     assert!(planned_commands().is_empty());
     assert!(eligible(
@@ -394,7 +404,10 @@ fn music_commands_require_management_and_presence_without_inference_capability()
                     vec![]
                 };
                 input.caller_present_in_voice = Some(present);
-                input.capabilities = vec![Capability::VoiceConfigured];
+                input.readiness = [Capability::VoiceConfigured]
+                    .into_iter()
+                    .map(|capability| (capability, CapabilityReadiness::Ready))
+                    .collect();
                 assert_eq!(
                     eligible(spec, &input, EvaluationMode::Invocation),
                     manager && present
@@ -420,7 +433,10 @@ fn unconfigured_status_remains_executable_and_unavailable_help_remains_visible()
 #[test]
 fn availability_distinguishes_exact_operations_and_policy() {
     let mut input = member();
-    input.capabilities = vec![Capability::Generation, Capability::Ocr];
+    input.readiness = [Capability::Generation, Capability::Ocr]
+        .into_iter()
+        .map(|capability| (capability, CapabilityReadiness::Ready))
+        .collect();
     assert_eq!(
         availability(command(CommandKey::Summarize), &input),
         Availability::Ready
@@ -442,14 +458,18 @@ fn availability_distinguishes_exact_operations_and_policy() {
         availability(command(CommandKey::Ocr), &input),
         Availability::Blocked(Blocker::VisionPolicy)
     );
-    input
-        .provider_blockers
-        .push((Capability::ToolGeneration, Blocker::Busy));
+    input.readiness.insert(
+        Capability::ToolGeneration,
+        CapabilityReadiness::Blocked(Blocker::Busy),
+    );
     assert_eq!(
         availability(command(CommandKey::PersonaAsk), &input).message(),
         "The provider is busy. Wait briefly and try again."
     );
-    input.provider_blockers[0].1 = Blocker::Unknown;
+    input.readiness.insert(
+        Capability::ToolGeneration,
+        CapabilityReadiness::Blocked(Blocker::Unknown),
+    );
     assert!(
         availability(command(CommandKey::PersonaAsk), &input)
             .message()
@@ -474,15 +494,224 @@ fn availability_distinguishes_exact_operations_and_policy() {
 #[test]
 fn image_followup_requires_read_only_generation_and_names_that_blocker() {
     let mut input = member();
-    input.capabilities = vec![Capability::Vision];
+    input.readiness = [Capability::Vision]
+        .into_iter()
+        .map(|capability| (capability, CapabilityReadiness::Ready))
+        .collect();
     input.follow_up_absent = Some(false);
     assert_eq!(
         availability(command(CommandKey::See), &input),
         Availability::Blocked(Blocker::Generation)
     );
-    input.capabilities.push(Capability::Generation);
+    input
+        .readiness
+        .insert(Capability::Generation, CapabilityReadiness::Ready);
     assert_eq!(
         availability(command(CommandKey::See), &input),
         Availability::Ready
     );
+}
+
+#[test]
+fn display_section_cannot_change_guild_vision_policy() {
+    let mut input = member();
+    input.readiness = [Capability::Vision, Capability::Ocr]
+        .into_iter()
+        .map(|capability| (capability, CapabilityReadiness::Ready))
+        .collect();
+    input.vision_allowed = false;
+    for key in [
+        CommandKey::See,
+        CommandKey::DescribeImage,
+        CommandKey::Ocr,
+        CommandKey::ReadImage,
+    ] {
+        for section in HelpSection::ALL {
+            let spec = CommandSpec {
+                section,
+                ..*command(key)
+            };
+            assert_eq!(
+                availability(&spec, &input),
+                Availability::Blocked(Blocker::VisionPolicy)
+            );
+        }
+    }
+    let unrelated = CommandSpec {
+        section: HelpSection::Images,
+        ..*command(CommandKey::Help)
+    };
+    assert_eq!(availability(&unrelated, &input), Availability::Ready);
+}
+
+#[test]
+fn each_capability_has_one_replaceable_readiness_observation() {
+    let mut input = member();
+    input
+        .readiness
+        .insert(Capability::ToolGeneration, CapabilityReadiness::Ready);
+    assert_eq!(
+        availability(command(CommandKey::PersonaAsk), &input),
+        Availability::Ready
+    );
+    input.readiness.insert(
+        Capability::ToolGeneration,
+        CapabilityReadiness::Blocked(Blocker::Busy),
+    );
+    assert_eq!(input.readiness.len(), 1);
+    assert_eq!(
+        availability(command(CommandKey::PersonaAsk), &input),
+        Availability::Blocked(Blocker::Busy)
+    );
+    input
+        .readiness
+        .insert(Capability::ToolGeneration, CapabilityReadiness::Ready);
+    assert_eq!(input.readiness.len(), 1);
+    assert_eq!(
+        availability(command(CommandKey::PersonaAsk), &input),
+        Availability::Ready
+    );
+}
+
+#[test]
+fn typed_decisions_retain_empty_and_depth_guards() {
+    let input = member();
+    for rule in [ConditionRule::All(&[]), ConditionRule::Any(&[])] {
+        assert!(condition_decision(rule, &input, EvaluationMode::Invocation).is_err());
+    }
+    for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
+        assert!(access_decision(rule, &input).is_err());
+    }
+    let mut access = AccessRule::Allow;
+    let mut condition = ConditionRule::Always;
+    for _ in 0..32 {
+        access = AccessRule::All(Box::leak(Box::new([access])));
+        condition = ConditionRule::All(Box::leak(Box::new([condition])));
+    }
+    assert!(access_decision(access, &input).is_ok());
+    assert!(condition_decision(condition, &input, EvaluationMode::Invocation).is_ok());
+    access = AccessRule::Any(Box::leak(Box::new([access])));
+    condition = ConditionRule::Any(Box::leak(Box::new([condition])));
+    assert!(access_decision(access, &input).is_err());
+    assert!(condition_decision(condition, &input, EvaluationMode::Invocation).is_err());
+}
+
+#[test]
+fn registered_invocation_and_discovery_match_independent_requirement_tables() {
+    let capabilities = [
+        Capability::Generation,
+        Capability::ToolGeneration,
+        Capability::Vision,
+        Capability::Ocr,
+        Capability::VoiceConfigured,
+        Capability::VoiceLocal,
+        Capability::VoiceOpenAi,
+    ];
+    for bits in 0..128 {
+        for scenario in 0..24 {
+            let mut input = member();
+            input.context = if scenario % 2 == 0 {
+                InteractionContext::Guild
+            } else {
+                InteractionContext::BotDm
+            };
+            let grant = [
+                None,
+                Some(DiscordPermission::ManageMessages),
+                Some(DiscordPermission::ManageServer),
+                Some(DiscordPermission::Administrator),
+                Some(DiscordPermission::ModerateMembers),
+                Some(DiscordPermission::ManageWebhooks),
+            ][scenario % 6];
+            input.permissions = grant.into_iter().collect();
+            input.self_subject = Some(scenario % 3 == 0);
+            input.caller_present_in_voice = Some(scenario % 4 < 2);
+            input.application_owner = scenario % 5 == 0;
+            input.follow_up_absent = Some(scenario % 3 == 1);
+            input.vision_allowed = scenario % 4 != 0;
+            input.action_target_resolved = scenario % 3 != 0;
+            input.hierarchy_allows_action = Some(scenario % 3 == 1);
+            input.selected_voice_mode = [
+                SelectedVoiceMode::Off,
+                SelectedVoiceMode::Local,
+                SelectedVoiceMode::OpenAi,
+            ][scenario % 3];
+            input.readiness = capabilities
+                .into_iter()
+                .enumerate()
+                .map(|(index, capability)| {
+                    (
+                        capability,
+                        if bits & (1 << index) != 0 {
+                            CapabilityReadiness::Ready
+                        } else {
+                            CapabilityReadiness::Blocked(Blocker::Busy)
+                        },
+                    )
+                })
+                .collect();
+            let has = |index| bits & (1 << index) != 0;
+            let permission =
+                |p| grant == Some(p) || grant == Some(DiscordPermission::Administrator);
+            let own = input.self_subject == Some(true);
+            let present = input.caller_present_in_voice == Some(true);
+            for spec in registered_commands() {
+                let access = match spec.eligibility.access {
+                    AccessId::A0 => true,
+                    AccessId::A1 => {
+                        own || permission(DiscordPermission::ManageMessages)
+                            || permission(DiscordPermission::ManageServer)
+                    }
+                    AccessId::A2 => permission(DiscordPermission::ModerateMembers),
+                    AccessId::A3 => permission(DiscordPermission::ManageWebhooks),
+                    AccessId::A4 => permission(DiscordPermission::ManageServer),
+                    AccessId::A5 => permission(DiscordPermission::ManageServer) && present,
+                    AccessId::A6 => permission(DiscordPermission::ManageServer) || present,
+                    AccessId::A7 => {
+                        input.application_owner || permission(DiscordPermission::Administrator)
+                    }
+                } && spec.registration.contexts.contains(&input.context)
+                    && !(input.context == InteractionContext::BotDm
+                        && spec.eligibility.access == AccessId::A1
+                        && !own);
+                let condition = match spec.eligibility.condition {
+                    ConditionId::C0 => true,
+                    ConditionId::C1 => has(0),
+                    ConditionId::C2 => input.vision_allowed && has(2),
+                    ConditionId::C3 => {
+                        input.vision_allowed
+                            && has(2)
+                            && (input.follow_up_absent == Some(true) || has(0))
+                    }
+                    ConditionId::C4 => has(4),
+                    ConditionId::C5 => {
+                        has(4)
+                            && match input.selected_voice_mode {
+                                SelectedVoiceMode::Off => false,
+                                SelectedVoiceMode::Local => has(5),
+                                SelectedVoiceMode::OpenAi => has(6),
+                            }
+                    }
+                    ConditionId::C6 => has(4) && has(5),
+                    ConditionId::C7 => {
+                        input.action_target_resolved && input.hierarchy_allows_action == Some(true)
+                    }
+                    ConditionId::C8 => has(1),
+                    ConditionId::C9 => input.vision_allowed && has(3),
+                };
+                assert_eq!(
+                    eligible(spec, &input, EvaluationMode::Invocation),
+                    access && condition,
+                    "{:?} {bits} {scenario}",
+                    spec.key
+                );
+                assert_eq!(
+                    eligible(spec, &input, EvaluationMode::Discoverability),
+                    access,
+                    "{:?} {bits} {scenario}",
+                    spec.key
+                );
+            }
+        }
+    }
 }

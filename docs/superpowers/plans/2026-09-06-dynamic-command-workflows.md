@@ -72,3 +72,14 @@ Owner: coordinator, with independent reviewer.
 - Focused evidence: dashboard outcome tests 2 pass, stream-only reservation/readiness regression 1 pass, missing executable adapter regression 1 pass, framework errors 2 pass, admin dashboard 5 pass, voice guidance 4 pass; operational capability appendix standalone tests 3 pass. Workflow integration checks are still being collected.
 - Other concurrent work produced and pushed checkpoint commits `c2d92f3` and `e449362` before this implementation's verification finished. These checkpoints are preserved and are not final release evidence.
 - Release ownership: Donald's separate **Initialize Abbey bot** task (`01a07694-e195-73e2-a1ef-d4bbd5ee6d5c`) owns the final strict aggregate gate, hosted CI, installation, installed-artifact qualification and evidence reconciliation after this task hands over a stable correction commit. Its deploy files, command-registration export test and live-test protocol are outside this implementation commit.
+
+## Strict maintainability corrections (September 6, 08:37 EDT review)
+
+Release task requested implementation of three review findings before candidate handoff.
+
+- [x] Share provider admission and router hard-gate assessment between readiness and reservation; provider suite 137 pass, zero fail, one ignored. Independent provider re-review approved.
+- [x] Move shared delivery observation to `gateway::interaction_outcomes`; keep framework translation at startup. Independent source re-review approved; integrated test remains pending.
+- [ ] Replace duplicate catalog condition interpretation with typed canonical decisions and one capability readiness map; express vision policy in conditions, independent of help grouping.
+- [ ] Complete integrated Rust tests, warnings-denied Clippy and independent catalog re-review, then hand stable source to the release task.
+
+Earlier final workflow results recovered after interruption: 61 help tests passed and all-target Clippy exited zero. These predate the strict corrections and do not replace their fresh integration checks.

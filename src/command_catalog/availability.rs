@@ -95,45 +95,6 @@ impl Blocker {
         }
     }
 }
-fn missing(capability: Capability, input: &EligibilityInput) -> Blocker {
-    input
-        .provider_blockers
-        .iter()
-        .find_map(|(cap, reason)| (*cap == capability).then_some(*reason))
-        .unwrap_or(match capability {
-            Capability::Generation | Capability::ToolGeneration => Blocker::Generation,
-            Capability::Vision => Blocker::Vision,
-            Capability::Ocr => Blocker::Ocr,
-            Capability::VoiceConfigured => Blocker::VoiceSetup,
-            Capability::VoiceLocal | Capability::VoiceOpenAi => Blocker::VoiceMode,
-        })
-}
-fn condition_blocker(rule: ConditionRule, input: &EligibilityInput) -> Option<Blocker> {
-    if condition_allows(rule, input, EvaluationMode::Invocation) {
-        return None;
-    }
-    Some(match rule {
-        ConditionRule::Available(capability) => missing(capability, input),
-        ConditionRule::SelectedVoiceModeReady => Blocker::VoiceMode,
-        ConditionRule::HierarchyAllowsAction if input.action_target_resolved => Blocker::Hierarchy,
-        ConditionRule::HierarchyAllowsAction | ConditionRule::Input(_) => Blocker::Target,
-        ConditionRule::All(rules) => rules
-            .iter()
-            .find_map(|rule| condition_blocker(*rule, input))
-            .unwrap_or(Blocker::Unavailable),
-        ConditionRule::Any(rules) => rules
-            .iter()
-            .filter(|rule| !matches!(rule, ConditionRule::Input(_)))
-            .chain(
-                rules
-                    .iter()
-                    .filter(|rule| matches!(rule, ConditionRule::Input(_))),
-            )
-            .find_map(|rule| condition_blocker(*rule, input))
-            .unwrap_or(Blocker::Unavailable),
-        ConditionRule::Always => return None,
-    })
-}
 pub fn availability(spec: &CommandSpec, input: &EligibilityInput) -> Availability {
     if !spec.registration.contexts.contains(&input.context) {
         return Availability::AccessBlocked(Blocker::Context);
@@ -144,21 +105,35 @@ pub fn availability(spec: &CommandSpec, input: &EligibilityInput) -> Availabilit
     {
         return Availability::AccessBlocked(Blocker::Subject);
     }
-    if !access_allows(spec.eligibility.access.rule(), input) {
-        // Distinguish missing presence only when permissions would otherwise allow access.
-        let mut present = input.clone();
-        present.caller_present_in_voice = Some(true);
-        return Availability::AccessBlocked(
-            if access_allows(spec.eligibility.access.rule(), &present) {
-                Blocker::VoicePresence
-            } else {
-                Blocker::Permission
-            },
+    if let Err(reason) = access_decision(spec.eligibility.access.rule(), input) {
+        return Availability::AccessBlocked(reason);
+    }
+    // Exhaustive status handling keeps future implementation states from
+    // implicitly becoming executable when they enter the catalog.
+    match spec.status {
+        ImplementationStatus::Registered => condition_decision(
+            spec.eligibility.condition.rule(),
+            input,
+            EvaluationMode::Invocation,
+        )
+        .map_or_else(Availability::Blocked, |()| Availability::Ready),
+    }
+}
+
+#[cfg(test)]
+mod strict_tests {
+    use super::*;
+
+    #[test]
+    fn nested_alternatives_prefer_operational_recovery_over_missing_input() {
+        let input = EligibilityInput::new(InteractionContext::Guild);
+        let rule = ConditionRule::Any(&[
+            ConditionRule::All(&[ConditionRule::Input(InputPredicate::ActionTargetResolved)]),
+            ConditionRule::Available(Capability::Generation),
+        ]);
+        assert_eq!(
+            condition_decision(rule, &input, EvaluationMode::Invocation),
+            Err(Blocker::Generation)
         );
     }
-    if spec.section == HelpSection::Images && !input.vision_allowed {
-        return Availability::Blocked(Blocker::VisionPolicy);
-    }
-    condition_blocker(spec.eligibility.condition.rule(), input)
-        .map_or(Availability::Ready, Availability::Blocked)
 }

@@ -85,6 +85,31 @@ struct Entry {
     qualification_generation: Option<u64>,
     qualification_completed_unix_secs: Option<u64>,
 }
+impl Entry {
+    fn admission(
+        &self,
+        descriptor: &ProviderDescriptor,
+        class: RequestClass,
+        streaming: bool,
+        local: bool,
+        budget_available: bool,
+    ) -> RouteAdmission {
+        let supported_adapter = match class {
+            RequestClass::VisionDescribe | RequestClass::VisionOcr => self.image.is_some(),
+            _ => self.adapter.is_some(),
+        };
+        RouteAdmission {
+            configured: self.adapter.is_some() || self.image.is_some(),
+            identity_current: descriptor.eligibility.is_routable(),
+            capability_allowed: supported_adapter
+                && class.supported_by(descriptor.declared_capabilities)
+                && (!self.stream_only || (streaming && class == RequestClass::TextReadOnly)),
+            policy_allowed: !local || self.local_voice,
+            budget_available,
+            capacity_available: self.slots.available_permits() > 0,
+        }
+    }
+}
 struct OperationalState {
     router: AdaptiveRouter,
     blocks: BlockStore,
@@ -622,56 +647,21 @@ impl ProviderRuntime {
         class: RequestClass,
         streaming: bool,
     ) -> Result<(), RouteUnavailableReason> {
-        let supports_execution = |entry: &Entry| {
-            let adapter = match class {
-                RequestClass::VisionDescribe | RequestClass::VisionOcr => entry.image.is_some(),
-                _ => entry.adapter.is_some(),
-            };
-            adapter && (!entry.stream_only || (streaming && class == RequestClass::TextReadOnly))
-        };
-        let blocked = lock(&self.state).blocks.failed();
-        let mut busy = false;
-        if !blocked {
-            for id in &self.order {
-                let entry = &self.entries[id];
-                if supports_execution(entry) && self.eligible(id, class) {
-                    if entry.slots.available_permits() > 0 {
-                        return Ok(());
-                    }
-                    busy = true;
-                }
-            }
-        }
-        if busy {
-            return Err(RouteUnavailableReason::Busy);
-        }
-        if self.order.is_empty() {
-            return Err(RouteUnavailableReason::NoConfiguredProvider);
-        }
         let state = lock(&self.state);
-        let snapshots = state.router.snapshot();
-        let mut reason = RouteUnavailableReason::CapabilityUnavailable;
+        let now = self.clock.now_ms();
+        let mut reason = RouteUnavailableReason::NoConfiguredProvider;
         for id in &self.order {
-            let Some(descriptor) = self.catalog.descriptor(id) else {
-                continue;
-            };
-            if !supports_execution(&self.entries[id])
-                || !class.supported_by(descriptor.declared_capabilities)
-            {
-                continue;
-            }
-            if !descriptor.eligibility.is_routable() || state.router.profile(id, class).is_none() {
-                reason = reason.max(RouteUnavailableReason::BlockedPendingRequalification);
-            } else if state.blocks.failed() {
-                reason = reason.max(RouteUnavailableReason::BudgetExhausted);
-            } else if let Some(snapshot) = snapshots.iter().find(|entry| &entry.provider_id == id) {
-                reason = reason.max(match snapshot.circuit.phase {
-                    CircuitPhase::Blocked => RouteUnavailableReason::BlockedPendingRequalification,
-                    CircuitPhase::HalfOpen if snapshot.circuit.probe_reserved => {
-                        RouteUnavailableReason::Busy
-                    }
-                    _ => RouteUnavailableReason::AllOpen,
-                });
+            let descriptor = self.catalog.descriptor(id).expect("registered descriptor");
+            let admission = self.entries[id].admission(
+                descriptor,
+                class,
+                streaming,
+                false,
+                !state.blocks.failed(),
+            );
+            match state.router.assess(id, class, now, admission) {
+                Ok(()) => return Ok(()),
+                Err(error) => reason = reason.max(error),
             }
         }
         Err(reason)
@@ -697,22 +687,21 @@ impl ProviderRuntime {
     }
     fn eligible(&self, id: &ProviderId, class: RequestClass) -> bool {
         let state = lock(&self.state);
-        self.catalog.descriptor(id).is_some_and(|d| {
-            d.eligibility.is_routable() && class.supported_by(d.declared_capabilities)
-        }) && state.router.profile(id, class).is_some()
-            && state
+        self.catalog.descriptor(id).is_some_and(|descriptor| {
+            state
                 .router
-                .snapshot()
-                .iter()
-                .find(|s| &s.provider_id == id)
-                .is_some_and(|s| {
-                    matches!(s.circuit.phase, CircuitPhase::Closed)
-                        || (s.circuit.phase == CircuitPhase::HalfOpen && !s.circuit.probe_reserved)
-                        || (s.circuit.phase == CircuitPhase::Open
-                            && s.circuit
-                                .open_until_ms
-                                .is_some_and(|until| self.clock.now_ms() >= until))
-                })
+                .assess(
+                    id,
+                    class,
+                    self.clock.now_ms(),
+                    RouteAdmission {
+                        identity_current: descriptor.eligibility.is_routable(),
+                        capability_allowed: class.supported_by(descriptor.declared_capabilities),
+                        ..RouteAdmission::QUALIFIED
+                    },
+                )
+                .is_ok()
+        })
     }
     pub fn foundation_models(&self) -> Option<&FoundationModels> {
         self.fm.as_deref()

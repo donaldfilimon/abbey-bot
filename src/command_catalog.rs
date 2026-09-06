@@ -2,10 +2,12 @@
 
 mod availability;
 mod data;
+mod decisions;
 pub use availability::{Availability, Blocker, availability};
 #[cfg(test)]
 use data::BOTH;
 use data::{PLANNED, REGISTERED};
+pub use decisions::{access_decision, condition_decision};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandKey {
@@ -90,7 +92,7 @@ pub enum AccessRule {
     All(&'static [Self]),
     Any(&'static [Self]),
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Capability {
     Generation,
     ToolGeneration,
@@ -109,6 +111,7 @@ pub enum InputPredicate {
 pub enum ConditionRule {
     Always,
     Available(Capability),
+    GuildVisionAllowed,
     Input(InputPredicate),
     SelectedVoiceModeReady,
     HierarchyAllowsAction,
@@ -167,8 +170,9 @@ impl ConditionId {
         match self {
             Self::C0 => Always,
             Self::C1 => Available(Generation),
-            Self::C2 => Available(Vision),
+            Self::C2 => All(&[GuildVisionAllowed, Available(Vision)]),
             Self::C3 => All(&[
+                GuildVisionAllowed,
                 Available(Vision),
                 Any(&[Input(InputPredicate::FollowUpAbsent), Available(Generation)]),
             ]),
@@ -177,7 +181,7 @@ impl ConditionId {
             Self::C6 => All(&[Available(VoiceConfigured), Available(VoiceLocal)]),
             Self::C7 => HierarchyAllowsAction,
             Self::C8 => Available(ToolGeneration),
-            Self::C9 => Available(Ocr),
+            Self::C9 => All(&[GuildVisionAllowed, Available(Ocr)]),
         }
     }
 }
@@ -278,6 +282,12 @@ pub enum SelectedVoiceMode {
     Local,
     OpenAi,
 }
+/// Exactly one current observation per capability; absence means unconfigured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityReadiness {
+    Ready,
+    Blocked(Blocker),
+}
 #[derive(Debug, Clone)]
 pub struct EligibilityInput {
     pub context: InteractionContext,
@@ -286,8 +296,7 @@ pub struct EligibilityInput {
     pub application_owner: bool,
     pub caller_present_in_voice: Option<bool>,
     pub selected_voice_mode: SelectedVoiceMode,
-    pub capabilities: Vec<Capability>,
-    pub provider_blockers: Vec<(Capability, Blocker)>,
+    pub readiness: std::collections::BTreeMap<Capability, CapabilityReadiness>,
     pub vision_allowed: bool,
     pub follow_up_absent: Option<bool>,
     pub action_target_resolved: bool,
@@ -302,8 +311,7 @@ impl EligibilityInput {
             application_owner: false,
             caller_present_in_voice: None,
             selected_voice_mode: SelectedVoiceMode::Off,
-            capabilities: Vec::new(),
-            provider_blockers: Vec::new(),
+            readiness: std::collections::BTreeMap::new(),
             vision_allowed: true,
             follow_up_absent: None,
             action_target_resolved: false,
@@ -317,86 +325,11 @@ pub enum EvaluationMode {
     Discoverability,
 }
 pub fn access_allows(rule: AccessRule, input: &EligibilityInput) -> bool {
-    fn evaluate(rule: AccessRule, input: &EligibilityInput, depth: usize) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        match rule {
-            AccessRule::Allow => true,
-            AccessRule::Permission(permission) => {
-                input.permissions.contains(&permission)
-                    || input
-                        .permissions
-                        .contains(&DiscordPermission::Administrator)
-            }
-            AccessRule::SelfSubject => input.self_subject == Some(true),
-            AccessRule::ApplicationOwner => input.application_owner,
-            AccessRule::CallerPresentInVoice => input.caller_present_in_voice == Some(true),
-            AccessRule::All(rules) => {
-                !rules.is_empty() && rules.iter().all(|rule| evaluate(*rule, input, depth + 1))
-            }
-            AccessRule::Any(rules) => {
-                !rules.is_empty() && rules.iter().any(|rule| evaluate(*rule, input, depth + 1))
-            }
-        }
-    }
-    evaluate(rule, input, 0)
+    access_decision(rule, input).is_ok()
 }
-pub fn condition_allows(
-    rule: ConditionRule,
-    input: &EligibilityInput,
-    mode: EvaluationMode,
-) -> bool {
-    fn evaluate(
-        rule: ConditionRule,
-        input: &EligibilityInput,
-        mode: EvaluationMode,
-        depth: usize,
-    ) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        match rule {
-            ConditionRule::Always => true,
-            ConditionRule::Available(capability) => input.capabilities.contains(&capability),
-            ConditionRule::Input(InputPredicate::FollowUpAbsent) => {
-                input.follow_up_absent == Some(true)
-            }
-            ConditionRule::Input(InputPredicate::ActionTargetResolved) => {
-                input.action_target_resolved
-            }
-            ConditionRule::SelectedVoiceModeReady => match input.selected_voice_mode {
-                SelectedVoiceMode::Off => false,
-                SelectedVoiceMode::Local => input.capabilities.contains(&Capability::VoiceLocal),
-                SelectedVoiceMode::OpenAi => input.capabilities.contains(&Capability::VoiceOpenAi),
-            },
-            ConditionRule::HierarchyAllowsAction => {
-                if mode == EvaluationMode::Discoverability && !input.action_target_resolved {
-                    true
-                } else {
-                    evaluate(
-                        ConditionRule::Input(InputPredicate::ActionTargetResolved),
-                        input,
-                        mode,
-                        depth + 1,
-                    ) && input.hierarchy_allows_action == Some(true)
-                }
-            }
-            ConditionRule::All(rules) => {
-                !rules.is_empty()
-                    && rules
-                        .iter()
-                        .all(|rule| evaluate(*rule, input, mode, depth + 1))
-            }
-            ConditionRule::Any(rules) => {
-                !rules.is_empty()
-                    && rules
-                        .iter()
-                        .any(|rule| evaluate(*rule, input, mode, depth + 1))
-            }
-        }
-    }
-    evaluate(rule, input, mode, 0)
+#[cfg(test)]
+fn condition_allows(rule: ConditionRule, input: &EligibilityInput, mode: EvaluationMode) -> bool {
+    condition_decision(rule, input, mode).is_ok()
 }
 pub fn eligible(spec: &CommandSpec, input: &EligibilityInput, mode: EvaluationMode) -> bool {
     let result = availability(spec, input);

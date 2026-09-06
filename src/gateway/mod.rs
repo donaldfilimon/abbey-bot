@@ -1,6 +1,7 @@
 //! Gateway trinity — exports, validated connector configuration, and wiring.
 
 pub mod discord;
+pub(crate) mod interaction_outcomes;
 pub mod shared;
 pub mod slack;
 pub mod telegram;

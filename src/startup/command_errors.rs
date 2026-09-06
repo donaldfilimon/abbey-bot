@@ -1,5 +1,6 @@
-//! Fixed recovery responses and content-free command/transport evidence.
-use crate::observability::{EventCode, EventComponent, EventOutcome, OperationalErrorCategory};
+//! Poise framework translation into fixed recovery guidance.
+use crate::gateway::interaction_outcomes::{delivery_failed, record_failure};
+use crate::observability::{EventCode, OperationalErrorCategory};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Guidance {
@@ -31,37 +32,6 @@ impl Guidance {
             }
         }
     }
-}
-
-pub(crate) fn record_failure(
-    state: &crate::runtime::AppState,
-    code: EventCode,
-    category: OperationalErrorCategory,
-) {
-    tracing::warn!(?code, ?category, "interaction outcome unavailable");
-    if let Some(events) = state.operational_events() {
-        let _ = events.record(
-            EventComponent::Discord,
-            code,
-            EventOutcome::Failed,
-            Some(category),
-        );
-    }
-}
-
-/// Delivery is observed after the operation; it never receives or replays a mutation.
-pub(crate) fn delivery_result<T, E>(
-    state: &crate::runtime::AppState,
-    result: Result<T, E>,
-) -> Result<T, E> {
-    if result.is_err() {
-        record_failure(
-            state,
-            EventCode::ResponseDelivery,
-            OperationalErrorCategory::Unavailable,
-        );
-    }
-    result
 }
 
 pub(super) async fn handle(error: poise::FrameworkError<'_, crate::Data, crate::Error>) {
@@ -104,7 +74,9 @@ pub(super) async fn handle(error: poise::FrameworkError<'_, crate::Data, crate::
                     .allowed_mentions(crate::gateway::no_mentions()),
             )
             .await;
-        let _ = delivery_result(&ctx.data().state, response);
+        if response.is_err() {
+            delivery_failed(&ctx.data().state);
+        }
     } else if let F::UnknownInteraction {
         ctx,
         interaction,
@@ -126,7 +98,9 @@ pub(super) async fn handle(error: poise::FrameworkError<'_, crate::Data, crate::
                 ),
             )
             .await;
-        let _ = delivery_result(&framework.user_data.state, response);
+        if response.is_err() {
+            delivery_failed(&framework.user_data.state);
+        }
     } else if let F::EventHandler { framework, .. }
     | F::NonCommandMessage { framework, .. }
     | F::UnknownCommand { framework, .. } = &error
@@ -166,16 +140,5 @@ mod tests {
                 .message()
                 .contains("already have taken effect")
         );
-    }
-
-    #[test]
-    fn failed_delivery_preserves_completed_mutation_without_replaying_it() {
-        let state = crate::runtime::AppState::in_memory();
-        let mut mutations = 0;
-        mutations += 1;
-        let result = delivery_result(&state, Err::<(), _>("delivery unavailable"));
-        assert!(result.is_err());
-        assert_eq!(mutations, 1);
-        assert!(delivery_result(&state, Ok::<_, ()>(42)).is_ok());
     }
 }

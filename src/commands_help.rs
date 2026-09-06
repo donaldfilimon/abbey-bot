@@ -2,8 +2,8 @@
 pub mod workflows;
 use crate::{Context, Data, Error, command_catalog as catalog, help_center, runtime};
 use catalog::{
-    Capability, CommandKey, DiscordPermission, EligibilityInput, EvaluationMode, HelpSection,
-    InteractionContext, SelectedVoiceMode,
+    Capability, CapabilityReadiness, CommandKey, DiscordPermission, EligibilityInput,
+    EvaluationMode, HelpSection, InteractionContext, SelectedVoiceMode,
 };
 use serenity::all::{
     CommandDataOption, CommandDataOptionValue, ComponentInteraction, ComponentInteractionDataKind,
@@ -164,8 +164,8 @@ pub fn runtime_input(
         (Capability::Vision, RequestClass::VisionDescribe),
         (Capability::Ocr, RequestClass::VisionOcr),
     ] {
-        match data.state.providers.request_readiness(class) {
-            Ok(()) => input.capabilities.push(capability),
+        let readiness = match data.state.providers.request_readiness(class) {
+            Ok(()) => CapabilityReadiness::Ready,
             Err(reason) => {
                 let blocker = match reason {
                     RouteUnavailableReason::NoConfiguredProvider
@@ -180,16 +180,19 @@ pub fn runtime_input(
                     RouteUnavailableReason::Busy => catalog::Blocker::Busy,
                     _ => catalog::Blocker::Unavailable,
                 };
-                input.provider_blockers.push((capability, blocker));
+                CapabilityReadiness::Blocked(blocker)
             }
-        }
+        };
+        input.readiness.insert(capability, readiness);
     }
     if let Some(voice) = data
         .voice
         .as_ref()
         .filter(|voice| guild == Some(voice.config.guild_id))
     {
-        input.capabilities.push(Capability::VoiceConfigured);
+        input
+            .readiness
+            .insert(Capability::VoiceConfigured, CapabilityReadiness::Ready);
         let local_text = data.state.providers.local_voice_route().is_some();
         if voice
             .config
@@ -197,14 +200,18 @@ pub fn runtime_input(
             .is_some()
             && local_text
         {
-            input.capabilities.push(Capability::VoiceLocal);
+            input
+                .readiness
+                .insert(Capability::VoiceLocal, CapabilityReadiness::Ready);
         }
         if voice
             .config
             .backend_for(crate::voice::VoiceMode::OpenAi)
             .is_some()
         {
-            input.capabilities.push(Capability::VoiceOpenAi);
+            input
+                .readiness
+                .insert(Capability::VoiceOpenAi, CapabilityReadiness::Ready);
         }
         input.selected_voice_mode = match voice.effective_mode() {
             crate::voice::VoiceMode::Disabled => SelectedVoiceMode::Off,
@@ -455,7 +462,9 @@ pub fn leave_allowed(present: bool, permissions: Option<Permissions>) -> bool {
     input.caller_present_in_voice = Some(present);
     input.permissions = permissions_input(permissions.unwrap_or_default());
     // The synchronous adapter calls this only after resolving its exact runtime.
-    input.capabilities.push(Capability::VoiceConfigured);
+    input
+        .readiness
+        .insert(Capability::VoiceConfigured, CapabilityReadiness::Ready);
     catalog::eligible(
         catalog::command(CommandKey::VoiceLeave),
         &input,
@@ -672,11 +681,7 @@ pub async fn dispatch_component(
     .await;
     let (body, rows) = match preparation {
         Err(_) => {
-            crate::startup::command_errors::record_failure(
-                &data.state,
-                crate::observability::EventCode::ResponseDelivery,
-                crate::observability::OperationalErrorCategory::Unavailable,
-            );
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
             return true;
         }
         Ok(HelpPreparation::Rejected(error)) => (error.message().to_string(), Vec::new()),
@@ -704,7 +709,9 @@ pub async fn dispatch_component(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
+    if delivery.is_err() {
+        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    }
     true
 }
 
