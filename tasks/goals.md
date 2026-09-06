@@ -654,6 +654,19 @@ status: in_progress
   `AppState.memory_queue`, cap 64, drained after each pipeline reply and before each gated
   persist; a refused item is dropped, not retried; tests cover the dead-gate and no-gate
   paths). Gate green (1011 passed); `ba61202`, pushed on Donald's yes.
+- 2026-09-06 04:3x: **GATE ON FOR MLAI, LIVE.** On Donald's four yeses: (1) the gateway agent was
+  bootstrapped by the installer's first execution (`com.donaldfilimon.abbey-wdbx-gateway`, pid
+  10660, loopback 50051, store `~/.local/share/abbey-bot/wdbx-gateway`, readiness verify answered
+  `found=false`); (2) `ABBEY_EPISODE_GATE_CONFIG=/Users/donaldfilimon/.config/abbey-bot/episode-gate.json`
+  appended to the live env file (backup `env.before-episode-gate-20260906-043018`, names-only
+  checker green) and the bot restarted with `launchctl kickstart -k` at 04:30:24 EDT: the old
+  process (95630) persisted twice on SIGTERM (`overall="complete"`), the new one (11750) accepted
+  the credential, registered commands, and connected, and its environment carries the key (read by
+  `ps -E` as the single `ABBEY_EPISODE_GATE_CONFIG=` assignment; the startup env-presence log line
+  reports a fixed voice/LLM key set and does not mention it); (3) budget kept at 64 MiB,
+  watched on `/inspect`; (4) `6bf3252` pushed (`ba61202..6bf3252`). Proof of the gate in effect
+  awaits the first *changed* MLAI checkpoint or memory write (unchanged rows are not proposed);
+  the production ledger was 0 bytes at restart. This ledger entry is a docs-only local commit.
 - 2026-09-06 04:2x: **gate scoped to one guild, gateway deployment prepared, memory path
   accepted live (local commit, not pushed).** The gate config gains an optional `guilds` list
   (scoped guild ids; absent = every scope) and `AppState::gate_for` is the single decision point:
