@@ -793,6 +793,7 @@ status: done
 
 
 ## 2026-09-06 full modernization integration
+status: in_progress
 
 Historical modernization checkpoint; its results belong to `ff5d594`. The reviewed
 source implements guided help and private full-fact browsing, scoped statistics
