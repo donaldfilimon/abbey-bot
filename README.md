@@ -30,10 +30,11 @@ unconfigured and active status includes wake-name and stop guidance. The existin
 slash commands, seven model tools, persistence formats and consent semantics are
 preserved.
 
-The implementation handoff is `5724bf6`. Its integrated Rust suite passed 1,222
-tests with zero failures and five intentional ignores (four live tests and one
-operator-only command-payload exporter). After the final two catalog lint fixes,
-the affected 18-test catalog suite and warnings-denied all-target Clippy passed.
+The implementation handoff is `5724bf6`. Before the final two catalog lint fixes,
+the integrated Rust suite passed 1,222 tests with zero failures and five
+intentional ignores (four live tests and one operator-only command-payload
+exporter). The handoff source then passed the affected 18-test catalog suite and
+warnings-denied all-target Clippy.
 Independent behavioral and structural reviews approved the workflow corrections.
 These implementation checks are distinct from the aggregate release gate.
 
