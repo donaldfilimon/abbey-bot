@@ -152,9 +152,16 @@ fn endpoint_transport_mirrors_the_abi_cli_rule() {
     let with = |endpoint: &str, ca: bool| {
         let mut text = config_json(&abi_path(), 5).replace("http://127.0.0.1:50051", endpoint);
         if ca {
+            let ca_cert = serde_json::to_string(
+                &std::env::temp_dir()
+                    .join("gateway-ca.pem")
+                    .display()
+                    .to_string(),
+            )
+            .unwrap();
             text = text.replace(
                 "\"timeout_secs\"",
-                "\"ca_cert\":\"/etc/ssl/gateway-ca.pem\",\"timeout_secs\"",
+                &format!("\"ca_cert\":{ca_cert},\"timeout_secs\""),
             );
         }
         EpisodeGateConfig::from_json(&text)
