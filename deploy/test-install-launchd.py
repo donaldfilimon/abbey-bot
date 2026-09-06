@@ -145,6 +145,29 @@ class Fake:
         return 0
 '''
 
+_ORIGINAL_TEMPDIR = None
+_PRIVATE_SCRATCH_PARENT = None
+
+
+def setUpModule():
+    global _ORIGINAL_TEMPDIR, _PRIVATE_SCRATCH_PARENT
+    home = Path.home().resolve()
+    info = home.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise RuntimeError('test home is not a trusted private parent')
+    _ORIGINAL_TEMPDIR = tempfile.tempdir
+    _PRIVATE_SCRATCH_PARENT = Path(tempfile.mkdtemp(prefix='.abbey-install-tests-', dir=home))
+    _PRIVATE_SCRATCH_PARENT.chmod(0o700)
+    tempfile.tempdir = str(_PRIVATE_SCRATCH_PARENT)
+
+
+def tearDownModule():
+    global _PRIVATE_SCRATCH_PARENT
+    tempfile.tempdir = _ORIGINAL_TEMPDIR
+    if _PRIVATE_SCRATCH_PARENT is not None:
+        shutil.rmtree(_PRIVATE_SCRATCH_PARENT)
+        _PRIVATE_SCRATCH_PARENT = None
+
 
 class Harness:
     def __init__(self, temporary, scenario='success', prior=False, rollback='success'):
