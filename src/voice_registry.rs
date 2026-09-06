@@ -373,6 +373,9 @@ fn consent_directory(state: &State, guild: u64) -> Result<Option<PathBuf>, &'sta
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), &'static str> {
+    // `mut` is consumed only by the unix `mode` call below; off unix the
+    // builder is used as-is and the binding is legitimately immutable.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
