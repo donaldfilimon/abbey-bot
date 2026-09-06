@@ -105,13 +105,15 @@ typed voice-mode choices also remain Task 6 work.
 
 **Interfaces:** Produces one reusable self-or-moderator memory authorization function, one memory-card renderer, and one shared resolved-attachment selector.
 
-- [ ] Make `/reputation` ephemeral, self-defaulting, DM-capable for self, and cross-member gated by Manage Messages, Manage Server, or Administrator.
-- [ ] Add guild-only ephemeral USER menu `Abbey: memory`, sharing `/recall` authorization and rendering.
-- [ ] Add ephemeral MESSAGE menus `Abbey: describe image` and `Abbey: read image text` for guild and bot-DM contexts.
-- [ ] Select the first real supported attachment deterministically; never fetch embeds, stickers, message URLs, or arbitrary remote links.
-- [ ] Reuse `/see` and `/ocr` bounded fetching/decoding/provider/rendering paths; do not commit context-menu work to transcript, memory, reward, or learning state.
-- [ ] Test authorization, DM isolation, all four image formats, misleading MIME/extension, multiple attachments, size/decoder/provider failures, clamping, ephemerality, and mention suppression.
-- [ ] Commit the reviewed privacy/menu slice.
+- [x] Make `/reputation` ephemeral, self-defaulting, DM-capable for self, and cross-member gated by Manage Messages, Manage Server, or Administrator.
+- [x] Add guild-only ephemeral USER menu `Abbey: memory`, sharing `/recall` authorization and rendering.
+- [x] Add ephemeral MESSAGE menus `Abbey: describe image` and `Abbey: read image text` for guild and bot-DM contexts.
+- [x] Select the first real supported attachment deterministically; never fetch embeds, stickers, message URLs, or arbitrary remote links.
+- [x] Reuse `/see` and `/ocr` bounded fetching/decoding/provider/rendering paths; do not commit context-menu work to transcript, memory, reward, or learning state.
+- [x] Test authorization, DM isolation, all four image formats, misleading MIME/extension, multiple attachments, size/decoder/provider failures, clamping, ephemerality, and mention suppression.
+- [x] Commit the reviewed privacy/menu slice.
+
+Task 5 source closure: `4045ab1`; shared memory card, three private menus, decoded attachment selection, real registered-action privacy/state tests, final all-target Clippy, and independent review passed. Live command propagation remains separate.
 
 ### Task 6: Member Voice UX and Classic Admin Dashboard
 

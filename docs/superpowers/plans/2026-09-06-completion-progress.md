@@ -4,7 +4,7 @@ This record tracks the request to finish the server-plan implementation, command
 
 ## Checkout and delivery
 
-The canonical Rust checkout is `~/dev/active/abbey-bot`. Another session committed and continued editing the server-plan engine while this session inspected it. This work therefore uses `codex/completion-20260906` in the sibling `abbey-bot-wt-completion-20260906`, based on `dac71a7`. Changes must be reconciled with canonical main before integration. This session's worktree and branch must be removed after integration and before push/closeout under the machine policy.
+The canonical Rust checkout is `~/dev/active/abbey-bot`. Another session committed and continued editing the server-plan engine while this session inspected it. This work therefore uses `codex/completion-20260906` in the sibling `abbey-bot-wt-completion-20260906`, based on `dac71a7`. Canonical `95d907f` was merged into the isolated branch as `149f157`; topic-preservation semantics were reconciled in `97c999b` and are under focused review. Final changes must still be integrated into canonical main. This session's worktree and branch must be removed after integration and before push/closeout under the machine policy.
 
 The older `codex/command-center-20260904` branch is already an ancestor of main. Its uncommitted earlier catalog/help implementation remains preserved in its separately owned worktree. Current main supersedes its product behavior; restoring those old files would regress later changes. There is no reason to merge its committed history again.
 
@@ -22,12 +22,12 @@ The ignored local records are `.superpowers/baseline-strict-gate.log` and `.supe
 
 | Area | Current evidence | Remaining work |
 |---|---|---|
-| Server-plan engine | 61 original tests passed; `f5537eb` fixes blocker-only verification and missing topic clears, with 63 focused server tests | Adapter JSON pinned in `47e9f27`, independent review approved; reconcile concurrent canonical changes and validate delivery |
+| Server-plan engine | Canonical bot-member/blueprint fixes merged at `149f157`; `97c999b` preserves omitted topics and creates forum tags atomically; 68 server tests and all-target Clippy pass | Focused review and final integrated delivery validation |
 | Task 1 specifications | All three approved design documents present and read | Preserve as binding requirements |
 | Task 2 persistence | Existing `d000b41` / `2c8fee7` implementation and full-gate evidence cover truth table, canonical-before-projection ordering, atomic failure handling and reporting | Preserve authority during lifecycle/observability work |
 | Task 3 compatibility | Existing acknowledgement, Entry Point, backend, tool, manifest, state and CLI tests pass | Closed by `5b06446` / `b002bd6`: controlled actual adapter ordering, literal consent fixture and README correction; focused tests, all-targets Clippy and independent review pass |
 | Task 4 catalog/help | Existing `e39e13c` delivery, current parity and dispatch tests pass | Preserve during new surface registration |
-| Task 5 memory/image menus | Private self-defaulting reputation already implemented | Shared card, memory USER menu, two image MESSAGE menus, bounded attachment selection and acceptance tests |
+| Task 5 memory/image menus | `4045ab1` implements shared card, memory USER menu, two image MESSAGE menus, bounded decoded attachment selection and registered-action privacy/state tests; independent review approved | Final integrated gate and live registration/interaction acceptance remain separate |
 | Task 6 voice/admin UX | Catalog placeholders only | Member voice allowlist, manager diagnostics, typed mode and classic dashboard with current authorization and explicit reset confirmation |
 | Task 7 router | Older pure router exists | Implement binding normalized scoring, full circuit/Retry-After table and conversation-local fallback semantics |
 | Task 8 provider runtime | Legacy production paths still separate | One runtime authority and conversation effect tracking, preserving legacy compatibility |
@@ -40,6 +40,7 @@ WDBX episode integration remains proposal-only and default-off. Approval/executi
 
 ## Decisions
 
+- Canonical `233b2df` deliberately treats omitted topics as unmanaged. Preserve a moderator's topic and re-parent safely; do not clear it merely because the plan omitted it.
 - Preserve current implementations where evidence meets the approved contract; unchecked historical boxes do not justify duplicating working code.
 - Follow the newer machine integration policy where the older implementation plan's branch/push sequence conflicts with it. Preserve independently owned worktrees.
 - Use the 2026-09-04 provider specification over superseded router scoring/stickiness details.
@@ -48,3 +49,5 @@ WDBX episode integration remains proposal-only and default-off. Approval/executi
 ## Test artifact ownership
 
 A concurrent checkout wrote into the initially reused Cargo target directory. Task 3 therefore forced a rebuild and verified the expected worktree test binary and exact new test counts. Subsequent work uses this isolated checkout's own target directory. The final gate still requires a fresh external target; no shared cached binary may substitute for exact-source evidence.
+
+Task 5 validation: the full locked Rust suite passed 1,015 tests with two ignored before the final two registered-action fixtures were added. Those two fixtures and final all-targets Clippy passed afterward. This is not a claim that the full integrated suite has run at the new merged head.
