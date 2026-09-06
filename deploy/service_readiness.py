@@ -12,7 +12,7 @@ import subprocess
 import time
 
 from service_protocol import (MAX_PID, MAX_TIME, Failure, ProtocolError,
-                              read_optional_private, process_exists, validate_ready)
+                              read_optional_private, process_exists, validate_ready, fresh)
 
 BUDGET_NS = 30_000_000_000
 STABILITY_NS = 5_000_000_000
@@ -182,6 +182,7 @@ def parse_pid_record(raw, uid):
 def launchd_pid(deadline_ns, *, monotonic=time.monotonic_ns, uid=None):
     owner = os.getuid() if uid is None else uid
     # Reserve cleanup time inside the caller's allowance; bound each query too.
+    deadline_ns = min(deadline_ns, monotonic() + 2_000_000_000)
     query_deadline = min(deadline_ns - 250_000_000, monotonic() + 1_000_000_000)
     if query_deadline <= monotonic():
         raise ReadinessError(FailureCode.TIMEOUT)
@@ -223,6 +224,8 @@ def launchd_pid(deadline_ns, *, monotonic=time.monotonic_ns, uid=None):
                     raise ReadinessError(FailureCode.CLEANUP) from None
             if child.stdout is not None:
                 child.stdout.close()
+        if monotonic() > deadline_ns:
+            raise ReadinessError(FailureCode.TIMEOUT)
 
 
 def wait_ready(context, expected_pid, expected_sha256, *, entry_ns,
@@ -261,6 +264,15 @@ def wait_ready(context, expected_pid, expected_sha256, *, entry_ns,
             validation_error = error.category
         if current_pid(deadline) != expected_pid:
             raise ReadinessError(FailureCode.IDENTITY)
+        try:
+            final_present = alive(expected_pid)
+        except OSError:
+            final_present = False
+        if final_present is not True:
+            raise ReadinessError(FailureCode.DOCUMENT)
+        if validation_error is None and not fresh(document['published_at_unix_ms'],
+                                                  context.transaction_start_ms, wall_ms()):
+            validation_error = Failure.STALE
         if validation_error is not None:
             if first is not None or validation_error not in (Failure.NOT_READY, Failure.STALE):
                 raise ReadinessError(FailureCode.DOCUMENT) from None

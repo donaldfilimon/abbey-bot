@@ -167,7 +167,7 @@ class Tests(unittest.TestCase):
         self.run_wait(reader)
         self.assertEqual(self.clock.ns, r.STABILITY_NS)
         self.assertEqual(self.pid.call_count, 42)
-        self.assertEqual(self.alive.call_count, 21)
+        self.assertEqual(self.alive.call_count, 42)
         self.assertTrue(all(s <= .25 for s in self.clock.sleeps))
 
     def test_pre_ready_wait_consumes_same_budget(self):
@@ -188,7 +188,7 @@ class Tests(unittest.TestCase):
 
     def test_liveness_and_two_identity_samples_also_cover_starting(self):
         self.run_wait(lambda: None if self.clock.ns < 1_000_000_000 else document(self.clock))
-        self.assertEqual(self.pid.call_count, self.alive.call_count * 2)
+        self.assertEqual(self.pid.call_count, self.alive.call_count)
         self.assertEqual(self.clock.ns, 6_000_000_000)
 
     def test_expired_context_never_reads(self):
@@ -214,6 +214,22 @@ class Tests(unittest.TestCase):
         self.alive.return_value = True
         self.pid.side_effect = [4242, 4243]
         self.fails(self.run_wait, r.FailureCode.IDENTITY)
+
+    def test_trailing_identity_query_cannot_age_final_sample_into_false_success(self):
+        self.context = r.TransactionContext(0, r.BUDGET_NS, ())
+        calls = 0
+        def current_pid(_deadline):
+            nonlocal calls
+            calls += 1
+            if calls == 42:
+                self.clock.ns += 2_000_000
+            return 4242
+        self.pid = current_pid
+        def reader():
+            changes = {'published_at_unix_ms': self.clock.wall() - 29999} if self.clock.ns >= r.STABILITY_NS else {}
+            return document(self.clock, **changes)
+        self.fails(lambda: self.run_wait(reader), r.FailureCode.DOCUMENT)
+        self.assertEqual(self.clock.ns, r.STABILITY_NS + 2_000_000)
 
     def test_slow_validation_cannot_pass_after_deadline(self):
         def reader():
@@ -248,6 +264,7 @@ class Tests(unittest.TestCase):
             self.fails(lambda: r.launchd_pid(r.BUDGET_NS, monotonic=lambda: 0, uid=501), r.FailureCode.TIMEOUT)
             child.kill.assert_called_once()
             child.wait.assert_called_once()
+            self.assertLessEqual(child.wait.call_args.kwargs["timeout"], 2)
 
     def test_failed_child_cleanup_retains_owner_and_never_reports_success(self):
         child = Mock()
