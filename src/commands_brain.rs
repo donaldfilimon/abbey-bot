@@ -24,6 +24,7 @@ use crate::episode_gate::LearningToggleRequest;
 use crate::guild::{self, GuildSettings};
 use crate::llm;
 use crate::memory;
+use crate::memory_gate;
 use crate::persist::{PersistReport, render_component_outcome};
 use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
@@ -138,6 +139,52 @@ pub async fn remember(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
+    // With the episode gate configured the write is proposed first and
+    // happens only on `appended` (amendment 2026-09-06). The local
+    // preconditions are checked read-only before proposing, so no candidate
+    // is admitted for a write that would not happen anyway.
+    let fact = match memory::validated_fact(&fact) {
+        Ok(fact) => fact,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
+    if state.gate_for(&g).is_some() {
+        match replaces.as_deref() {
+            None => {
+                if state
+                    .memory_service()
+                    .remember_blocked(&g, &u, &fact)
+                    .is_some()
+                {
+                    ctx.say("Already on record (or the fact list is full).")
+                        .await?;
+                    return Ok(());
+                }
+            }
+            Some(old) => match state.memory_service().resolve_fact(&g, &u, old) {
+                None => {
+                    ctx.say("No remembered fact matches what you asked to replace.")
+                        .await?;
+                    return Ok(());
+                }
+                Some(selected) if selected == fact => {
+                    ctx.say("Already on record (or the fact list is full).")
+                        .await?;
+                    return Ok(());
+                }
+                Some(_) => {}
+            },
+        }
+    }
+    let receipt = match memory_gate::admit_fact(state, &g, &u, &fact, replaces.as_deref()).await {
+        Ok(receipt) => receipt,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
     // `replaces` is an explicit human signal, so it is authoritative and needs
     // no confirmation step. Without it nothing is ever removed here.
     let outcome = match replaces.as_deref() {
@@ -148,6 +195,20 @@ pub async fn remember(
             .memory_service()
             .remember(&g, &u, &fact, runtime::now()),
     };
+    if let Some(digest_hex) = &receipt {
+        match &outcome {
+            Ok(runtime::RememberOutcome::Stored(stored)) => {
+                memory_gate::settle_receipts(state, &g, &u, stored, None, digest_hex);
+            }
+            Ok(runtime::RememberOutcome::Superseded { stored, removed }) => {
+                memory_gate::settle_receipts(state, &g, &u, stored, Some(removed), digest_hex);
+            }
+            // Admitted, but the local store refused after all (a concurrent
+            // write). The candidate stands in the ledger with nothing behind
+            // it; the log is the record.
+            _ => tracing::warn!("episode gate: admitted fact candidate stored nothing locally"),
+        }
+    }
     let reply = match outcome {
         Ok(runtime::RememberOutcome::Stored(fact)) => {
             format!("Stored about <@{}>: {fact}", subject.id.get())
@@ -202,7 +263,18 @@ pub async fn forget(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let removed = state.memory_service().forget(&g, &u, &fact);
+    let Some(selected) = state.memory_service().resolve_fact(&g, &u, &fact) else {
+        ctx.say("Nothing by that wording was on record.").await?;
+        return Ok(());
+    };
+    if let Err(message) = memory_gate::admit_forget(state, &g, &u, &selected).await {
+        ctx.say(message).await?;
+        return Ok(());
+    }
+    let removed = state.memory_service().forget(&g, &u, &selected);
+    if removed {
+        memory_gate::drop_receipt(state, &g, &u, &selected);
+    }
     ctx.say(if removed {
         "Forgotten."
     } else {
@@ -324,6 +396,31 @@ fn pending_action_rows(
         .collect()
 }
 
+/// Confirm a proposed supersession behind the episode gate. A tombstone is
+/// proposed only when the confirm would actually remove the old fact (a
+/// pending entry names it and both facts are still held); otherwise
+/// `confirm_supersession` reports its own non-removing outcome and nothing is
+/// proposed. The receipt is dropped only after the fact is gone.
+async fn gated_confirm(
+    state: &runtime::AppState,
+    scoped_guild: &str,
+    scoped_user: &str,
+    old_fact: &str,
+) -> String {
+    let service = state.memory_service();
+    if service.confirm_would_remove(scoped_guild, scoped_user, old_fact)
+        && let Err(message) =
+            memory_gate::admit_forget(state, scoped_guild, scoped_user, old_fact).await
+    {
+        return message;
+    }
+    let outcome = service.confirm_supersession(scoped_guild, scoped_user, old_fact);
+    if matches!(outcome, runtime::SupersessionOutcome::Confirmed(_)) {
+        memory_gate::drop_receipt(state, scoped_guild, scoped_user, old_fact);
+    }
+    format_confirm_outcome(outcome)
+}
+
 fn format_confirm_outcome(outcome: runtime::SupersessionOutcome) -> String {
     match outcome {
         runtime::SupersessionOutcome::Confirmed(removed) => format!("Removed: {removed}"),
@@ -388,9 +485,9 @@ async fn run_pending_component_session(
             Some(entry) => {
                 let old_fact = entry.old_fact.clone();
                 match action {
-                    PendingButtonAction::Confirm => format_confirm_outcome(
-                        memory.confirm_supersession(&guild_key, &user_key, &old_fact),
-                    ),
+                    PendingButtonAction::Confirm => {
+                        gated_confirm(&ctx.data().state, &guild_key, &user_key, &old_fact).await
+                    }
                     PendingButtonAction::Dismiss => {
                         if memory.dismiss_supersession(&guild_key, &user_key, &old_fact) {
                             "Dismissed. Both facts are kept.".to_string()
@@ -509,12 +606,7 @@ pub async fn pending_confirm(
         return Ok(());
     }
     let u = scoped_user(subject);
-    let reply = format_confirm_outcome(
-        ctx.data()
-            .state
-            .memory_service()
-            .confirm_supersession(&g, &u, &old_fact),
-    );
+    let reply = gated_confirm(&ctx.data().state, &g, &u, &old_fact).await;
     ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
@@ -916,7 +1008,7 @@ pub async fn admin_learning(
     // Mirror the request into the constitutional ledger when the operator
     // configured the gate. The toggle above already applied; this never
     // blocks or fails the command, and it logs its own outcome.
-    if let Some(gate) = ctx.data().state.episode_gate.clone() {
+    if let Some(gate) = ctx.data().state.gate_for(&g).cloned() {
         let request = LearningToggleRequest {
             scoped_guild: g,
             scoped_user: scoped_user(ctx.author()),
@@ -1070,7 +1162,7 @@ fn render_admin_flush(report: &PersistReport) -> String {
 pub async fn admin_flush(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let report = state.persist_all();
+    let report = state.persist_all_gated().await;
     ctx.say(clamp_message(render_admin_flush(&report))).await?;
     Ok(())
 }

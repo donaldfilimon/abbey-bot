@@ -570,6 +570,10 @@ pub async fn handle<O: Outbound + Sync>(
             &mut *stores,
         );
     }
+    // The reply is out; now propose whatever the model queued this turn.
+    if state.episode_gate.is_some() {
+        crate::memory_gate::drain(state).await;
+    }
     Outcome::Replied
 }
 

@@ -322,6 +322,70 @@ impl<'a> MemoryService<'a> {
     /// Remove one exact or whitespace-normalized fact from both stores under a
     /// single lock boundary. This also removes duplicate WDBX records left by
     /// older write paths.
+    /// The exact stored fact a `/forget` or `replaces` request names, if any.
+    /// Read-only: lets a caller propose a ledger edge before deleting.
+    pub fn resolve_fact(&self, guild: &str, user: &str, requested: &str) -> Option<String> {
+        let stores = AppState::lock(self.stores);
+        fact_for_deletion(stores.memory.facts(guild, user), requested)
+    }
+
+    /// Read-only precondition for a gated `remember`: `Some(reason)` when the
+    /// local store would refuse the fact anyway (already held, or at the cap),
+    /// so no candidate is proposed for a write that would not happen.
+    pub fn remember_blocked(&self, guild: &str, user: &str, fact: &str) -> Option<&'static str> {
+        let stores = AppState::lock(self.stores);
+        let facts = stores.memory.facts(guild, user);
+        if facts.iter().any(|held| held == fact) {
+            Some("already on record")
+        } else if facts.len() >= memory::MAX_FACTS {
+            Some("the fact list is full")
+        } else {
+            None
+        }
+    }
+
+    /// Read-only precondition for a gated `/pending confirm`: true only when a
+    /// proposal names `old_fact` and both it and its replacement are still
+    /// stored, i.e. when `confirm_supersession` would actually remove
+    /// something. Otherwise no tombstone may be proposed for it.
+    pub fn confirm_would_remove(&self, guild: &str, user: &str, old_fact: &str) -> bool {
+        let stores = AppState::lock(self.stores);
+        let facts = stores.memory.facts(guild, user);
+        stores
+            .memory
+            .pending_supersessions(guild, user)
+            .iter()
+            .any(|pending| {
+                pending.old_fact == old_fact
+                    && facts.iter().any(|held| held == old_fact)
+                    && facts.iter().any(|held| held == &pending.new_fact)
+            })
+    }
+
+    fn receipt_key(guild: &str, user: &str, fact: &str) -> String {
+        format!("{guild}\u{1f}{user}\u{1f}{fact}")
+    }
+
+    /// The ledger receipt (episode digest, hex) recorded for a fact, if any.
+    pub fn receipt(&self, guild: &str, user: &str, fact: &str) -> Option<String> {
+        AppState::lock(self.stores)
+            .memory_receipts
+            .get(&Self::receipt_key(guild, user, fact))
+            .cloned()
+    }
+
+    pub fn record_receipt(&self, guild: &str, user: &str, fact: &str, digest_hex: &str) {
+        AppState::lock(self.stores)
+            .memory_receipts
+            .insert(Self::receipt_key(guild, user, fact), digest_hex.to_owned());
+    }
+
+    pub fn take_receipt(&self, guild: &str, user: &str, fact: &str) -> Option<String> {
+        AppState::lock(self.stores)
+            .memory_receipts
+            .remove(&Self::receipt_key(guild, user, fact))
+    }
+
     pub fn forget(&self, guild: &str, user: &str, requested: &str) -> bool {
         let mut stores = AppState::lock(self.stores);
         let Some(selected) = fact_for_deletion(stores.memory.facts(guild, user), requested) else {

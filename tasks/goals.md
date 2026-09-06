@@ -645,6 +645,81 @@ status: in_progress
   `ABI_WDBX_PATH`): `decision=appended`, nothing under `~/.abi` touched, and the replay refused
   with `AlreadyExists: episode_replay`. The bot's own runner is proven only against fake
   scripts, and no gateway is deployed.
+- 2026-09-06 04:0x: **pushed** (`dbe4b88..a7b39fb` on `origin/main`, Donald's yes; `a7b39fb`
+  fixed three ordering gaps found in review: tombstones are proposed only for a confirm that
+  will remove, `replaces` is resolved before proposing, receipts are dropped after the local
+  delete). Then, on Donald's two calls: the cumulative payload charge stays and checkpoint
+  guilds get sized budgets (AGENTS.md), and the model's `remember_fact` tool now **queues**
+  instead of refusing while the gate is configured (`memory_gate::{enqueue, drain}`,
+  `AppState.memory_queue`, cap 64, drained after each pipeline reply and before each gated
+  persist; a refused item is dropped, not retried; tests cover the dead-gate and no-gate
+  paths). Gate green (1011 passed); `ba61202`, pushed on Donald's yes.
+- 2026-09-06 04:3x: **GATE ON FOR MLAI, LIVE.** On Donald's four yeses: (1) the gateway agent was
+  bootstrapped by the installer's first execution (`com.donaldfilimon.abbey-wdbx-gateway`, pid
+  10660, loopback 50051, store `~/.local/share/abbey-bot/wdbx-gateway`, readiness verify answered
+  `found=false`); (2) `ABBEY_EPISODE_GATE_CONFIG=/Users/donaldfilimon/.config/abbey-bot/episode-gate.json`
+  appended to the live env file (backup `env.before-episode-gate-20260906-043018`, names-only
+  checker green) and the bot restarted with `launchctl kickstart -k` at 04:30:24 EDT: the old
+  process (95630) persisted twice on SIGTERM (`overall="complete"`), the new one (11750) accepted
+  the credential, registered commands, and connected, and its environment carries the key (read by
+  `ps -E` as the single `ABBEY_EPISODE_GATE_CONFIG=` assignment; the startup env-presence log line
+  reports a fixed voice/LLM key set and does not mention it); (3) budget kept at 64 MiB,
+  watched on `/inspect`; (4) `6bf3252` pushed (`ba61202..6bf3252`). Proof of the gate in effect
+  awaits the first *changed* MLAI checkpoint or memory write (unchanged rows are not proposed);
+  the production ledger was 0 bytes at restart. This ledger entry is a docs-only local commit.
+- 2026-09-06 04:2x: **gate scoped to one guild, gateway deployment prepared, memory path
+  accepted live (local commit, not pushed).** The gate config gains an optional `guilds` list
+  (scoped guild ids; absent = every scope) and `AppState::gate_for` is the single decision point:
+  an uncovered scope is byte-identical to no gate on `/remember`, `/forget`, confirm, the model
+  tool, the learning-toggle mirror, and checkpoints (`checkpoint_gate::{plan,restrict_to_admitted}`
+  take the predicate, so the six non-MLAI brain rows are neither proposed nor substituted).
+  `/inspect`'s gate line now says `all guilds` or `N guild(s)`. Live acceptance is
+  `src/episode_gate/acceptance.rs`, an `#[ignore]` test run on purpose against a scratch
+  gateway: real `abi` binary + real `abi-wdbx-gateway` + the real policy file, through the tool
+  host, the queue and drain, slash-style admit with `replaces`, forget, and `persist_all_gated`;
+  every receipt re-verified by `abi wdbx episode verify` from a separate process; one live
+  refusal (a covered scope the policy does not list). Result: 4 records in the scratch ledger
+  (fact 44 B, superseding fact 42 B, tombstone 0 B, experience checkpoint 71 B), counters
+  appended 4 / rejected 1 / unavailable 0; the production store at
+  `~/.local/share/abbey-bot/wdbx-gateway` was opened once by the gateway and answered
+  `found=false` for the MLAI guild, ledger 0 bytes. Deployment files (outside the repo):
+  `~/.config/abbey-bot/{episode-policy.json,episode-gate.json,episode-gate-acceptance.json,
+  episode-gateway-token}` (0600); binaries + both `libabi_*.dylib` shims in
+  `~/.local/libexec/abbey-bot`. In the repo: `deploy/com.donaldfilimon.abbey-wdbx-gateway.plist`
+  and `deploy/install-wdbx-gateway-launchd.sh` (readiness = zero-digest verify answers
+  `found=false`; **syntax-checked only, never executed: its first run is the bootstrap**, and
+  nothing it does before `launchctl bootstrap` touches the bot), `check-launchd-env.sh` names
+  `ABBEY_EPISODE_GATE_CONFIG`. Startup trap, read from `runtime.rs:523`: a gate config the bot
+  cannot validate is a `StartupError`, i.e. a crash loop under `KeepAlive`, so the env line must
+  be the literal absolute path and the file must validate before the restart. Discord auth runs
+  before that validation, so the binary cannot preflight it with a placeholder token (tried:
+  both a good and a broken config die at auth); the preflight is the `#[ignore]` test
+  `preflight_the_gate_config_named_by_the_environment`, which ran green on the production
+  `episode-gate.json` (coverage 1) and red on a broken file. Policy sizing:
+  MLAI `discord-1275617641620443146` token_budget 10,000,000 and storage_budget_bytes 64 MiB
+  (the store's hard cap); acceptance guild 100,000 / 4 MiB. Honest arithmetic: MLAI's row is
+  ~52 KB and learning is on there, so 64 MiB is a lifetime of ~1,290 admitted checkpoints
+  (worst case 288/day = ~4.5 days if the row changes every tick; longer in practice, since an
+  unchanged row is not re-proposed). Not done, by rule: nothing added to the live env file, no
+  launchd bootstrap of the gateway agent, no bot restart; those are the named stop and wait
+  for Donald's yes. Gate green (1014 passed, 3 ignored including the acceptance test).
+- 2026-09-06 03:4x: **memory-candidate adapter landed (amendment step 3 of 3, local commit,
+  not pushed).** `episode_gate.rs` transcribes `MemoryClass`/`RetentionClass`/`MemoryCandidate`
+  and the `memory_candidate` event (pinned by `tests/fixtures/episode_write_memory_candidate.json`,
+  copied byte-for-byte from wdbx's golden), builds candidates with `memory_candidate_write`
+  (SHA-256 over the payload, never the payload), and counts appended/rejected/unavailable/
+  ungated-forgets for `/inspect`. `memory_gate.rs`: `/remember`, `/forget`, `/pending confirm`
+  propose before writing and write only on `appended`; receipts in `Stores.memory_receipts`
+  (`#[serde(default)]`, old state files still load). The model's `remember_fact` tool refuses
+  while the gate is configured (sync host cannot propose). `checkpoint_gate.rs`: per-guild
+  `BrainRow` proposed as an `experience` candidate once per changed persist, superseding the
+  last admitted digest; refused rows are substituted by the last admitted (or pre-gate
+  on-disk) row; the sync shutdown persist writes only admitted rows. Default-off path is
+  byte-identical. Not done: no end-to-end test against a live gateway from this repo (the
+  gate is exercised through fixtures and pure functions; the abi CLI test covers the wire),
+  and `operational` retention emits no `forgets` on checkpoint replacement (the supersede
+  chain is the lifecycle). Budget trap named in AGENTS.md: payload bytes are charged
+  cumulatively and never refunded.
 - **OWNED MISTAKE, 2026-09-06 03:1x:** the direct push of `f3c0ba8` turned the Windows gate red
   (5 `episode_gate` unit tests): the tests hardcoded POSIX absolute paths, which are relative on
   Windows, and built JSON by string formatting, so a Windows temp path's backslashes made the
@@ -657,7 +732,25 @@ status: in_progress
   because the gate's vocabulary is operation lifecycle, not memory vectors.
 
 ## Build the MLAI server from a plan file (`--server-plan`)
-status: in_progress
+status: done
+- 2026-09-06 04:36: **OVERWRITES STAGE APPLIED, blueprint fully applied; goal closed.** Dry runs of
+  all eight categories: six already `changes (0)`, BUILD LOG and PRODUCTS one change each (deny
+  @everyone View Channel on #ci-and-deploys and #ops-console). Applied on Donald's yes, one run
+  per category, each `verified: 1 change(s) applied`, each followed by an independent
+  `changes (0)` dry run. Every stage of `blueprints/mlai-community.toml` (additive 03:06, reveal
+  04:33, overwrites 04:36) now matches the live guild. Transcripts (0600) in
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-{dry-run,apply}-overwrites-*-2026-09-06.txt`.
+  Residual, by design and unchanged: the engine's review notes (existing-role permission diffs
+  incl. @everyone missing Send Polls, and role order) are hand decisions the engine never makes
+  (`diff::Change` has no permission edit); they are Donald's, not a gap in this goal.
+- 2026-09-06 04:33: **STAGE REVEAL APPLIED to the live MLAI guild** on Donald's "confirm all".
+  Fresh dry run first (`changes (52)`, 0 blockers, no deletes: overwrite sets/clears, role
+  hoist/colour edits, topic edits, one forum and one announcement edit), then `--apply`:
+  `verified: 52 change(s) applied; the guild now matches stage reveal of the plan.` An
+  independent dry run afterwards reports `changes (0)`. Transcripts (0600, outside the repo):
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-{dry-run-reveal-2026-09-06-0433,apply-reveal-2026-09-06,dry-run-reveal-after-2026-09-06}.txt`.
+  Review notes the engine leaves by design (role permission diffs, role order) are unchanged.
+  Remaining stage: overwrites (per category, `--category`).
 - 2026-09-06: `server/{plan,observe,diff,apply,discord,run}` + `blueprints/mlai-community.toml`
   land the engine the 2026-09-04 design asked for, with the boundary moved into the type
   system: `diff::Change` has no delete variant and no role-permission edit (a test enumerates
@@ -673,12 +766,17 @@ status: in_progress
   the live MLAI guild as the bot (33 additive changes, no blockers after renaming the
   colliding interest role to "Personas"). Two live findings fixed here: the `@me` guild-member
   route is user-token only, and `NEVER_FOR_EVERYONE` listed a name serenity never emits.
-- Honest scope: **nothing has been applied to any guild.** `--apply` is built and tested only
-  against the fake guild; it needs a further explicit yes from Donald, and the proposal's
-  Stage 0 export must happen first. Role permissions, role order, Community settings,
-  onboarding, AutoMod, and every deletion remain human steps by design. Forum tags and
-  slowmode are creation-time only (not diffed afterwards).
-- 2026-09-06 03:3x: `233b2df` fixed a reveal non-idempotence the advisor caught (a plan with no
+- 2026-09-06 03:1x: **`--stage additive` was applied to the live MLAI guild** on Donald's explicit
+  yes (Stage 0 history export waived by him): 33/33 applied, 0 failed, exit 0, the engine's
+  verification re-diff empty, and an independent post-apply dry run `changes (0)`; guild
+  21 roles / 28 channels -> 31 / 51, nothing pre-existing touched. Transcript in
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-apply-additive-2026-09-06.txt`. A reveal
+  dry run afterwards shows 55 changes and no blockers; **reveal has not run** and needs its
+  own yes after the 7 manual steps (role permissions and order) that sit between the stages.
+- Honest scope: only the additive stage has ever run against a real guild. Role permissions,
+  role order, Community settings, onboarding, AutoMod, and every deletion remain human steps
+  by design. Forum tags and slowmode are creation-time only (not diffed afterwards).
+- 2026-09-06 03:0x: `233b2df` fixed a reveal non-idempotence the advisor caught (a plan with no
   topic kept emitting an empty edit for a channel that had one, so `--apply` could never
   verify clean on the topic-less archetype plans). The three commits `dac71a7`, `f74bb7a`,
   `233b2df` are local only, not pushed.

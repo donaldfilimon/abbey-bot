@@ -10,6 +10,7 @@
 //! Nothing here imports serenity or poise either; the Discord and Telegram
 //! shells hand events in ([`crate::pipeline`]) and read state out.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -242,6 +243,14 @@ pub struct AppState {
     /// `ABBEY_EPISODE_GATE_CONFIG`: the constitutional episode gate client.
     /// `None` (the default) means no ledger write is ever attempted.
     pub episode_gate: Option<Arc<crate::episode_gate::EpisodeGate>>,
+    /// The last brain checkpoint the ledger admitted per guild (or the row
+    /// loaded before the gate existed). Only consulted when `episode_gate` is
+    /// configured; see `checkpoint_gate`.
+    pub checkpoints: Mutex<BTreeMap<String, crate::checkpoint_gate::AdmittedCheckpoint>>,
+    /// Model-tool memory writes waiting for the episode gate; drained after
+    /// each tool turn and before each gated persist. Empty unless a gate is
+    /// configured.
+    pub memory_queue: Mutex<Vec<crate::memory_gate::QueuedFact>>,
 }
 
 /// Default wait for a generation slot before answering "busy".
@@ -304,6 +313,24 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         // proposal; the old fact survives until a human confirms. There is no
         // model-callable path to `remember_replacing` — a model must not be
         // able to confirm its own contested claim.
+        // With the episode gate configured every memory write is proposed to
+        // the ledger first, and this trait is synchronous, so the model path
+        // cannot propose here. It queues instead (Donald's choice 2026-09-06):
+        // the write is proposed and stored by the next drain, and the model is
+        // told nothing is on record yet. A supersession stays a proposal the
+        // person confirms; the old fact is never removed by the model.
+        if self.state.gate_for(&self.scoped_guild).is_some() {
+            return match crate::memory_gate::enqueue(
+                self.state,
+                &self.scoped_guild,
+                &self.scoped_user,
+                fact,
+                supersedes,
+                self.now,
+            ) {
+                Ok(message) | Err(message) => message,
+            };
+        }
         let service = self.state.memory_service();
         let outcome = match supersedes {
             Some(old) => service.remember_proposing(
@@ -381,6 +408,7 @@ impl crate::tools::ToolHost for ToolScope<'_> {
             vision_on: self.state.providers.vision_available(),
             quiet: self.state.quiet,
             data: self.state.data_dir.is_some(),
+            gate: self.state.episode_gate.as_ref().map(|gate| gate.counters()),
         };
         let guild_line = if matches!(
             aspect,
@@ -534,6 +562,12 @@ impl AppState {
         let episode_gate = crate::episode_gate::EpisodeGateConfig::from_env()
             .map_err(StartupError)?
             .map(|config| Arc::new(crate::episode_gate::EpisodeGate::new(config)));
+        // Rows already on disk are never dropped by a gate decision.
+        let checkpoints = if episode_gate.is_some() {
+            crate::checkpoint_gate::seed(&stores.brains)
+        } else {
+            BTreeMap::new()
+        };
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -553,6 +587,8 @@ impl AppState {
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
             episode_gate,
+            checkpoints: Mutex::new(checkpoints),
+            memory_queue: Mutex::new(Vec::new()),
         }))
     }
 
@@ -586,6 +622,8 @@ impl AppState {
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
             episode_gate: None,
+            checkpoints: Mutex::new(BTreeMap::new()),
+            memory_queue: Mutex::new(Vec::new()),
         })
     }
 
@@ -614,6 +652,15 @@ impl AppState {
     }
 
     /// The canonical coordinator for plain memory and semantic WDBX recall.
+    /// The episode gate for a scope: `None` when no gate is configured or
+    /// the config's `guilds` list does not cover this scoped guild, in which
+    /// case every memory path behaves exactly as with no gate.
+    pub fn gate_for(&self, scoped_guild: &str) -> Option<&Arc<crate::episode_gate::EpisodeGate>> {
+        self.episode_gate
+            .as_ref()
+            .filter(|gate| gate.covers(scoped_guild))
+    }
+
     pub fn memory_service(&self) -> MemoryService<'_> {
         MemoryService::new(&self.stores, &self.recall)
     }
@@ -685,17 +732,90 @@ impl AppState {
     /// Snapshot every brain, flush reputation, evict idle sessions, and report
     /// exactly what reached each durable authority. A failed persist does not
     /// take the gateway down, but it is never represented as success.
+    ///
+    /// Synchronous, so it proposes nothing: with the episode gate configured
+    /// a brain row that the ledger has not admitted is replaced on disk by
+    /// the last admitted one (`checkpoint_gate::restrict_to_admitted`). The
+    /// scheduled task and `/admin flush` use [`Self::persist_all_gated`].
     pub fn persist_all(&self) -> PersistReport {
         self.persist_all_at(now())
     }
 
     fn persist_all_at(&self, t: u64) -> PersistReport {
+        let mut snapshots = self.take_snapshot(t);
+        if let Some(gate) = &self.episode_gate {
+            let substituted = crate::checkpoint_gate::restrict_to_admitted(
+                &mut snapshots.0,
+                &Self::lock(&self.checkpoints),
+                |guild| gate.covers(guild),
+            );
+            if !substituted.is_empty() {
+                tracing::warn!(
+                    guilds = substituted.len(),
+                    "persist: brain checkpoints not yet admitted by the episode gate were not written; last admitted rows kept"
+                );
+            }
+        }
+        self.persist_snapshot(snapshots)
+    }
+
+    /// Propose every changed brain checkpoint to the episode gate as an
+    /// `experience` memory candidate (one per guild, superseding the last
+    /// admitted one), then persist with refused checkpoints substituted. With
+    /// no gate configured this is exactly [`Self::persist_all`].
+    pub async fn persist_all_gated(&self) -> PersistReport {
+        let Some(gate) = self.episode_gate.clone() else {
+            return self.persist_all();
+        };
+        crate::memory_gate::drain(self).await;
+        let t = now();
+        let mut snapshots = self.take_snapshot(t);
+        let proposals = crate::checkpoint_gate::plan(
+            &snapshots.0.brains,
+            &Self::lock(&self.checkpoints),
+            |guild| gate.covers(guild),
+        );
+        let mut outcomes = Vec::with_capacity(proposals.len());
+        for proposal in proposals {
+            let request = crate::episode_gate::MemoryCandidateRequest {
+                scoped_guild: proposal.guild.clone(),
+                class: crate::episode_gate::MemoryClass::Experience,
+                retention: crate::episode_gate::RetentionClass::Operational,
+                payload: proposal.payload.clone(),
+                member_scoped: false,
+                supersedes: proposal.supersedes,
+                forgets: None,
+                now: t,
+                nonce: gate.next_nonce(),
+            };
+            let outcome = gate.record_memory_candidate(request).await;
+            outcomes.push((proposal, outcome));
+        }
+        let settlement = crate::checkpoint_gate::settle(
+            &mut snapshots.0,
+            &mut Self::lock(&self.checkpoints),
+            outcomes,
+        );
+        if !settlement.refused.is_empty() {
+            tracing::warn!(
+                refused = settlement.refused.len(),
+                admitted = settlement.admitted.len(),
+                "persist: brain checkpoints not admitted by the episode gate; last admitted rows persisted instead"
+            );
+        }
+        self.persist_snapshot(snapshots)
+    }
+
+    fn take_snapshot(&self, t: u64) -> (Stores, Recall) {
         Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
-        let snapshots = self.memory_service().consistent_snapshot_after(|stores| {
+        self.memory_service().consistent_snapshot_after(|stores| {
             Self::lock(&self.brains).persist_all(stores, t);
             Self::lock(&self.social).flush(stores);
             stores.pending_rewards = Self::lock(&self.rewards).export_pending();
-        });
+        })
+    }
+
+    fn persist_snapshot(&self, snapshots: (Stores, Recall)) -> PersistReport {
         let Some(dir) = &self.data_dir else {
             return PersistReport::memory_only();
         };
@@ -797,7 +917,7 @@ impl AppState {
             tick.tick().await;
             loop {
                 tick.tick().await;
-                let report = persistence_state.persist_all();
+                let report = persistence_state.persist_all_gated().await;
                 crate::persist::log_report("scheduled", &report);
             }
         });
