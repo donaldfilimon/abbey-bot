@@ -246,6 +246,10 @@ pub struct AppState {
     /// loaded before the gate existed). Only consulted when `episode_gate` is
     /// configured; see `checkpoint_gate`.
     pub checkpoints: Mutex<BTreeMap<String, crate::checkpoint_gate::AdmittedCheckpoint>>,
+    /// Model-tool memory writes waiting for the episode gate; drained after
+    /// each tool turn and before each gated persist. Empty unless a gate is
+    /// configured.
+    pub memory_queue: Mutex<Vec<crate::memory_gate::QueuedFact>>,
 }
 
 /// Default wait for a generation slot before answering "busy".
@@ -314,10 +318,21 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         // able to confirm its own contested claim.
         // With the episode gate configured every memory write is proposed to
         // the ledger first, and this trait is synchronous, so the model path
-        // cannot propose. Refusing is the safe direction (a memory that was
-        // never admitted); the person's own `/remember` still works.
+        // cannot propose here. It queues instead (Donald's choice 2026-09-06):
+        // the write is proposed and stored by the next drain, and the model is
+        // told nothing is on record yet. A supersession stays a proposal the
+        // person confirms; the old fact is never removed by the model.
         if self.state.episode_gate.is_some() {
-            return "Not stored: memory writes here go through the constitutional gate, which only the person's /remember command can propose. Ask them to run /remember.".to_string();
+            return match crate::memory_gate::enqueue(
+                self.state,
+                &self.scoped_guild,
+                &self.scoped_user,
+                fact,
+                supersedes,
+                self.now,
+            ) {
+                Ok(message) | Err(message) => message,
+            };
         }
         let service = self.state.memory_service();
         let outcome = match supersedes {
@@ -541,6 +556,7 @@ impl AppState {
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
             episode_gate,
             checkpoints: Mutex::new(checkpoints),
+            memory_queue: Mutex::new(Vec::new()),
         }))
     }
 
@@ -582,6 +598,7 @@ impl AppState {
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
             episode_gate: None,
             checkpoints: Mutex::new(BTreeMap::new()),
+            memory_queue: Mutex::new(Vec::new()),
         })
     }
 
@@ -868,6 +885,7 @@ impl AppState {
         let Some(gate) = self.episode_gate.clone() else {
             return self.persist_all();
         };
+        crate::memory_gate::drain(self).await;
         let t = now();
         let mut snapshots = self.take_snapshot(t);
         let proposals =

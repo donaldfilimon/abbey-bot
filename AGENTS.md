@@ -92,8 +92,10 @@ Second, since the memory-candidate amendment (2026-09-06; `memory_gate.rs`,
 `checkpoint_gate.rs`), `memory_candidate` events for every memory write:
 `/remember`, `/forget`, and `/pending confirm` propose first and write locally
 only on `appended` (a refusal or an unreachable gate stores nothing and tells
-the person); the model's `remember_fact` tool refuses to store while the gate
-is configured, because the tool host is synchronous and cannot propose; and
+the person); the model's `remember_fact` tool queues the write while the gate
+is configured (the tool host is synchronous and cannot propose; the queue is
+drained after the turn's reply and before every gated persist, the model is
+told nothing is on record yet, and a refused item is dropped, not retried); and
 each guild's DQN checkpoint (`BrainRow`) is proposed as an `experience`
 candidate once per changed persist, superseding the last admitted one, on the
 scheduled and `/admin flush` paths (`persist_all_gated`). The synchronous
@@ -113,8 +115,10 @@ admits only `[a-z0-9_.-]`. Known consequence of the store's accounting: every
 candidate's `payload_bytes` is charged against the guild's storage budget and a
 superseded checkpoint is never refunded, so a large brain row exhausts a small
 budget after a few changed checkpoints, after which the gate refuses and the
-last admitted row keeps being persisted; size the budget (or amend the
-accounting) before turning the gate on for a chatty guild.
+last admitted row keeps being persisted. Donald's call (2026-09-06): the accounting
+stays; size `storage_budget_bytes` for checkpoint guilds as roughly changed
+checkpoints × checkpoint bytes, within the store's 64 MiB ledger cap, before
+turning the gate on for a chatty guild.
 
 `server/` (added 2026-09-06) is the server-plan engine behind
 `abbey-bot --server-plan PLAN.toml --guild ID [--stage …] [--apply]`. Pure:

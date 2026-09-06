@@ -4,7 +4,151 @@
 //! configured, which keeps the default deployment byte-identical.
 
 use crate::episode_gate::{GateOutcome, MemoryCandidateRequest, MemoryClass, RetentionClass};
-use crate::runtime::{self, AppState};
+use crate::memory;
+use crate::runtime::{self, AppState, RememberOutcome};
+
+/// Queued model-tool writes per process. The tool host is synchronous and
+/// cannot propose, so it queues; a full queue refuses rather than grows.
+pub const MAX_QUEUED: usize = 64;
+
+/// One model-tool memory write waiting for the gate (Donald's choice
+/// 2026-09-06: queue, do not refuse). Nothing is stored until it drains.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueuedFact {
+    pub scoped_guild: String,
+    pub scoped_user: String,
+    /// Already validated by `memory::validated_fact`.
+    pub fact: String,
+    /// A model-proposed supersession; the old fact is never removed here.
+    pub supersedes: Option<String>,
+    pub queued_at: u64,
+}
+
+/// What one drain did, for logs and tests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Drained {
+    pub admitted: usize,
+    pub refused: usize,
+}
+
+/// Queue a model-tool write for the next drain. `Err` is the message to give
+/// the model; nothing is stored either way.
+pub fn enqueue(
+    state: &AppState,
+    scoped_guild: &str,
+    scoped_user: &str,
+    fact: &str,
+    supersedes: Option<&str>,
+    now: u64,
+) -> Result<String, String> {
+    let fact = memory::validated_fact(fact).map_err(str::to_owned)?;
+    if let Some(reason) = state
+        .memory_service()
+        .remember_blocked(scoped_guild, scoped_user, &fact)
+    {
+        return Err(format!("Not queued: {reason}."));
+    }
+    let mut queue = AppState::lock(&state.memory_queue);
+    if queue.iter().any(|queued| {
+        queued.scoped_guild == scoped_guild
+            && queued.scoped_user == scoped_user
+            && queued.fact == fact
+    }) {
+        return Err(
+            "Already queued for the constitutional memory gate; nothing is on record yet.".into(),
+        );
+    }
+    if queue.len() >= MAX_QUEUED {
+        return Err(
+            "Not queued: the memory gate queue is full; ask the person to run /remember.".into(),
+        );
+    }
+    queue.push(QueuedFact {
+        scoped_guild: scoped_guild.to_owned(),
+        scoped_user: scoped_user.to_owned(),
+        fact: fact.clone(),
+        supersedes: supersedes.map(str::to_owned),
+        queued_at: now,
+    });
+    Ok(format!(
+        "Queued for the constitutional memory gate: {fact}. It is stored only once the gate admits it; nothing is on record yet."
+    ))
+}
+
+/// Propose every queued write and store the admitted ones. Refusals are
+/// logged and counted by the gate; the fact is dropped, not retried, so a
+/// refused write cannot pile up behind an outage.
+pub async fn drain(state: &AppState) -> Drained {
+    let queued: Vec<QueuedFact> = std::mem::take(&mut *AppState::lock(&state.memory_queue));
+    let mut drained = Drained::default();
+    for item in queued {
+        let receipt = match admit_fact(
+            state,
+            &item.scoped_guild,
+            &item.scoped_user,
+            &item.fact,
+            None,
+        )
+        .await
+        {
+            Ok(receipt) => receipt,
+            Err(message) => {
+                drained.refused += 1;
+                tracing::warn!(reason = %message, "episode gate: queued model memory write not admitted; nothing stored");
+                continue;
+            }
+        };
+        let service = state.memory_service();
+        let outcome = match item.supersedes.as_deref() {
+            Some(old) => service.remember_proposing(
+                &item.scoped_guild,
+                &item.scoped_user,
+                &item.fact,
+                old,
+                item.queued_at,
+            ),
+            None => service.remember(
+                &item.scoped_guild,
+                &item.scoped_user,
+                &item.fact,
+                item.queued_at,
+            ),
+        };
+        match (&outcome, &receipt) {
+            (
+                Ok(RememberOutcome::Stored(stored) | RememberOutcome::Proposed { stored, .. }),
+                Some(digest_hex),
+            ) => {
+                settle_receipts(
+                    state,
+                    &item.scoped_guild,
+                    &item.scoped_user,
+                    stored,
+                    None,
+                    digest_hex,
+                );
+                drained.admitted += 1;
+            }
+            (Ok(RememberOutcome::Stored(_) | RememberOutcome::Proposed { .. }), None) => {
+                drained.admitted += 1;
+            }
+            _ => {
+                // Admitted (or ungated) but the local store refused after all:
+                // a concurrent write beat the queue. The log is the record.
+                tracing::warn!("episode gate: queued model memory write stored nothing locally");
+                drained.refused += 1;
+            }
+        }
+    }
+    if drained.admitted + drained.refused > 0 {
+        tracing::info!(
+            admitted = drained.admitted,
+            refused = drained.refused,
+            "episode gate: model memory queue drained"
+        );
+    }
+    drained
+}
 
 /// Why a memory write did not happen, in words the person can act on. Content-
 /// free: only the gateway's closed labels ride along.
@@ -126,4 +270,131 @@ pub fn settle_receipts(
         service.take_receipt(scoped_guild, scoped_user, removed);
     }
     service.record_receipt(scoped_guild, scoped_user, stored, digest_hex);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::episode_gate::{EpisodeGate, EpisodeGateConfig};
+    use crate::platform::SocialNetwork;
+    use crate::runtime::ToolScope;
+    use crate::tools::ToolHost as _;
+    use std::sync::Arc;
+
+    /// A gate whose `abi` binary does not exist: every proposal is
+    /// `Unavailable`, which is the fail-closed path this module promises.
+    fn dead_gate() -> Arc<EpisodeGate> {
+        let temp = std::env::temp_dir();
+        let json = serde_json::json!({
+            "abi_cli": temp.join("abi-that-does-not-exist").display().to_string(),
+            "endpoint": "http://127.0.0.1:50051",
+            "token_file": temp.join("abbey-episode-token").display().to_string(),
+            "policy_version": "policy_v1",
+            "contract_revision": 2,
+            "contract_digest": "01".repeat(32),
+            "timeout_secs": 5,
+        })
+        .to_string();
+        Arc::new(EpisodeGate::new(
+            EpisodeGateConfig::from_json(&json).unwrap(),
+        ))
+    }
+
+    fn scope(state: &AppState) -> ToolScope<'_> {
+        ToolScope {
+            state,
+            network: SocialNetwork::Discord,
+            scoped_guild: "discord:123456789012345678".into(),
+            scoped_user: "discord:42".into(),
+            scoped_channel: "discord:c".into(),
+            now: 10,
+            persona: crate::persona::Persona::Abbey,
+        }
+    }
+
+    #[tokio::test]
+    async fn with_a_gate_the_model_tool_queues_and_a_dead_gate_stores_nothing() {
+        let mut state = AppState::in_memory();
+        Arc::get_mut(&mut state).unwrap().episode_gate = Some(dead_gate());
+        let (g, u) = ("discord:123456789012345678", "discord:42");
+        let mut host = scope(&state);
+        let reply = host.remember_fact("likes compilers", None);
+        assert!(reply.starts_with("Queued"), "{reply}");
+        assert!(reply.contains("nothing is on record yet"));
+        assert!(state.memory_service().facts(g, u).is_empty());
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        assert!(
+            host.remember_fact("likes compilers", None)
+                .starts_with("Already queued")
+        );
+        assert!(
+            host.remember_fact("moved to zig", Some("likes compilers"))
+                .starts_with("Queued")
+        );
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 2);
+
+        let drained = drain(&state).await;
+        assert_eq!(
+            drained,
+            Drained {
+                admitted: 0,
+                refused: 2
+            }
+        );
+        assert!(
+            state.memory_service().facts(g, u).is_empty(),
+            "nothing admitted, nothing stored"
+        );
+        assert!(
+            AppState::lock(&state.memory_queue).is_empty(),
+            "refused items are dropped"
+        );
+        let counters = state.episode_gate.as_ref().unwrap().counters();
+        assert_eq!(counters.unavailable, 2);
+        assert_eq!(counters.appended, 0);
+        assert!(
+            state
+                .memory_service()
+                .receipt(g, u, "likes compilers")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_gate_a_drained_queue_stores_locally_and_a_held_fact_is_not_queued() {
+        let state = AppState::in_memory();
+        let (g, u) = ("discord:123456789012345678", "discord:42");
+        AppState::lock(&state.memory_queue).push(QueuedFact {
+            scoped_guild: g.into(),
+            scoped_user: u.into(),
+            fact: "uses rust".into(),
+            supersedes: None,
+            queued_at: 7,
+        });
+        let drained = drain(&state).await;
+        assert_eq!(
+            drained,
+            Drained {
+                admitted: 1,
+                refused: 0
+            }
+        );
+        assert_eq!(
+            state.memory_service().facts(g, u),
+            vec!["uses rust".to_string()]
+        );
+        assert!(
+            state.memory_service().receipt(g, u, "uses rust").is_none(),
+            "no gate, no receipt"
+        );
+        assert_eq!(
+            enqueue(&state, g, u, "uses rust", None, 8).unwrap_err(),
+            "Not queued: already on record."
+        );
+        assert!(
+            enqueue(&state, g, u, "   ", None, 8).is_err(),
+            "validation still applies"
+        );
+        assert!(AppState::lock(&state.memory_queue).is_empty());
+    }
 }

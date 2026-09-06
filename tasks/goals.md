@@ -645,6 +645,15 @@ status: in_progress
   `ABI_WDBX_PATH`): `decision=appended`, nothing under `~/.abi` touched, and the replay refused
   with `AlreadyExists: episode_replay`. The bot's own runner is proven only against fake
   scripts, and no gateway is deployed.
+- 2026-09-06 04:0x: **pushed** (`dbe4b88..a7b39fb` on `origin/main`, Donald's yes; `a7b39fb`
+  fixed three ordering gaps found in review: tombstones are proposed only for a confirm that
+  will remove, `replaces` is resolved before proposing, receipts are dropped after the local
+  delete). Then, on Donald's two calls: the cumulative payload charge stays and checkpoint
+  guilds get sized budgets (AGENTS.md), and the model's `remember_fact` tool now **queues**
+  instead of refusing while the gate is configured (`memory_gate::{enqueue, drain}`,
+  `AppState.memory_queue`, cap 64, drained after each pipeline reply and before each gated
+  persist; a refused item is dropped, not retried; tests cover the dead-gate and no-gate
+  paths). Gate result in the commit; that commit is local until its own yes.
 - 2026-09-06 03:4x: **memory-candidate adapter landed (amendment step 3 of 3, local commit,
   not pushed).** `episode_gate.rs` transcribes `MemoryClass`/`RetentionClass`/`MemoryCandidate`
   and the `memory_candidate` event (pinned by `tests/fixtures/episode_write_memory_candidate.json`,
