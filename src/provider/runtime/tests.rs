@@ -481,3 +481,295 @@ async fn explicit_adaptive_order_uses_live_scoring_while_legacy_retains_primary(
         );
     }
 }
+
+#[derive(Default)]
+struct UncertainDelivery {
+    recorded: crate::pipeline::testing::FakeOut,
+    accepted: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+impl crate::pipeline::Outbound for UncertainDelivery {
+    async fn send(
+        &self,
+        channel: &str,
+        message: &crate::platform::OutboundMessage,
+    ) -> Result<String, String> {
+        self.recorded.send(channel, message).await?;
+        self.accepted.notify_one();
+        self.release.notified().await;
+        Err("synthetic delivery result lost after acceptance".into())
+    }
+    async fn edit(&self, channel: &str, id: &str, text: &str) -> Result<(), String> {
+        self.recorded.edit(channel, id, text).await
+    }
+    async fn typing(&self, _: &str) {}
+    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
+        Err("no network".into())
+    }
+}
+
+#[tokio::test]
+async fn accepted_delivery_with_lost_result_cannot_replay_on_another_provider() {
+    let mut runtime = ProviderRuntime::empty();
+    let first = fake(&mut runtime, "primary", vec![failure(ProviderFailureKind::Timeout)],
+        vec!["A sufficiently long synthetic answer that must be posted before the provider finishes.".into()], true);
+    let second = fake(&mut runtime, "secondary", vec![], vec![], true);
+    let mut state = crate::runtime::AppState::in_memory();
+    Arc::get_mut(&mut state).unwrap().providers = runtime;
+    let context = crate::memory::PersonaContext::empty();
+    let out = UncertainDelivery::default();
+    let ask = crate::generation::Ask {
+        session_mode: crate::generation::SessionMode::Ephemeral,
+        scope: "scope",
+        context: &context,
+        user_input: "question",
+        now: 1,
+    };
+    let generation = crate::generation::generate_read_only(
+        &state,
+        crate::persona::Persona::Abbey,
+        &ask,
+        Some(crate::generation::Delivery {
+            out: &out,
+            native_channel_id: "channel",
+            reply_to: None,
+        }),
+    );
+    tokio::pin!(generation);
+    tokio::select! {
+        result = &mut generation => panic!("delivery must still be pending: {result:?}"),
+        _ = out.accepted.notified() => {}
+    }
+    assert_eq!(out.recorded.sent.lock().unwrap().len(), 1);
+    assert_eq!(second.calls.load(Ordering::Relaxed), 0);
+    out.release.notify_one();
+    assert!(generation.await.is_err());
+    assert_eq!(
+        first.calls.load(Ordering::Relaxed),
+        0,
+        "adapter was cancelled while delivering deltas"
+    );
+    assert_eq!(second.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(out.recorded.sent.lock().unwrap().len(), 1);
+}
+
+#[cfg(unix)]
+struct FakeWallClock(AtomicU64);
+#[cfg(unix)]
+impl ProviderClock for FakeWallClock {
+    fn now_ms(&self) -> u64 {
+        0
+    }
+    fn unix_secs(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn verified_new_qualification_witness_clears_only_its_exact_persisted_block() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = std::env::temp_dir().join(format!(
+        "abbey-runtime-requalification-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let executable = root.join("synthetic-fm");
+    std::fs::write(
+        &executable,
+        b"synthetic executable identity only; never run",
+    )
+    .unwrap();
+    let cfg = FmConfig {
+        mode: FmMode::System,
+        endpoint: None,
+        cli: executable,
+        fallback: true,
+        timeout_secs: 1,
+    };
+    let record: super::super::ProviderRecord = serde_json::from_value(serde_json::json!({
+        "version": 2, "fixture_version": super::super::FIXTURE_VERSION,
+        "provider_id": "foundation-models", "provider_class": "os_managed_local",
+        "identity": super::super::qualification::fm_manifest_identity(&cfg).unwrap(),
+        "declared_capabilities": { "text": true, "streaming": false, "structured_output": true,
+            "tools": true, "vision": true, "ocr": true },
+        "isolation_capabilities": { "environment_cleared": true, "absolute_no_shell_execution": true,
+            "process_tree_contained": false, "private_runtime_state": true, "loopback_only": false, "sandbox_attested": false },
+        "qualification_status": "qualified"
+    })).unwrap();
+    let manifest = root.join("providers.json");
+    let blocks = root.join("provider-blocks.json");
+    let mut base = super::super::qualification::unix_now();
+    let clock = Arc::new(FakeWallClock(AtomicU64::new(base - 10)));
+    let write = |records: &[super::super::ProviderRecord]| {
+        std::fs::write(
+            &manifest,
+            super::super::manifest::encode_v2(records).unwrap(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    let build = || {
+        let verified = super::super::qualification::verify_fm_manifest(&manifest, &cfg).unwrap();
+        let fm = FoundationModels::new_qualified(cfg.clone(), None, true, verified);
+        let mut runtime = ProviderRuntime::legacy(None, None, Some(fm), None, true, 1, 1);
+        runtime.clock = clock.clone();
+        runtime.apply_fm_qualification(&manifest).unwrap();
+        runtime.restore_blocks(blocks.clone()).unwrap();
+        runtime
+    };
+    async fn block(runtime: &ProviderRuntime) {
+        let mut conversation = runtime.begin(false, false);
+        conversation.reserve().await.unwrap();
+        conversation
+            .lease
+            .take()
+            .unwrap()
+            .complete(Some(&LlmError::classified(
+                "synthetic",
+                ProviderFailureKind::Authentication,
+            )));
+    }
+    write(std::slice::from_ref(&record));
+    block(&build()).await;
+    assert!(
+        !build().generation_available(),
+        "unwitnessed restart cannot clear a block"
+    );
+    super::super::manifest::publish_v2(&manifest, std::slice::from_ref(&record)).unwrap();
+    base = super::super::qualification::unix_now();
+    clock.0.store(base + 1, Ordering::Relaxed);
+    let freshly_qualified = build();
+    assert!(freshly_qualified.generation_available());
+    block(&freshly_qualified).await;
+    assert!(
+        !build().generation_available(),
+        "same witnessed qualification remains blocked"
+    );
+    let super::super::manifest::ManifestDocument::V2(saved) =
+        super::super::manifest::read_manifest(&manifest).unwrap()
+    else {
+        panic!("v2")
+    };
+    let previous = saved.records()[0].clone();
+    let mut unrelated = previous.clone();
+    unrelated.provider_id = ProviderId::parse("unrelated").unwrap();
+    unrelated.qualification_run_nonce = Some("ab".repeat(32));
+    write(&[previous.clone(), unrelated]);
+    assert!(
+        !build().generation_available(),
+        "another provider's evidence cannot unblock this one"
+    );
+    let mut newer = previous.clone();
+    newer.qualification_generation = Some(previous.qualification_generation.unwrap() + 1);
+    newer.qualification_run_nonce = Some("cd".repeat(32));
+    // A qualification can have a generation higher than the startup record yet
+    // still have finished before the later runtime failure. It is not recovery.
+    newer.qualification_completed_unix_secs = Some(base);
+    write(std::slice::from_ref(&newer));
+    assert!(
+        !build().generation_available(),
+        "pre-failure publication cannot clear later block"
+    );
+    newer.qualification_completed_unix_secs = Some(base + 2);
+    write(std::slice::from_ref(&newer));
+    assert!(
+        !build().generation_available(),
+        "future qualification cannot clear block"
+    );
+    clock.0.store(base + 3, Ordering::Relaxed);
+    assert!(
+        build().generation_available(),
+        "new completed qualification clears same identity"
+    );
+    block(&build()).await;
+    write(std::slice::from_ref(&previous));
+    assert!(
+        !build().generation_available(),
+        "older valid witness replay cannot clear newer block"
+    );
+    write(std::slice::from_ref(&newer));
+    assert!(!build().generation_available());
+    newer.qualification_generation = Some(newer.qualification_generation.unwrap() + 1);
+    newer.qualification_completed_unix_secs = Some(base + 4);
+    newer.qualification_run_nonce = Some("ef".repeat(32));
+    write(std::slice::from_ref(&newer));
+    clock.0.store(base + 5, Ordering::Relaxed);
+    assert!(build().generation_available());
+    // Legacy block records without a failure-time baseline remain blocked.
+    let mut old_blocks: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&blocks).unwrap()).unwrap();
+    old_blocks[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("blocked_unix_secs");
+    std::fs::write(&blocks, serde_json::to_vec(&old_blocks).unwrap()).unwrap();
+    assert!(!build().generation_available());
+
+    std::fs::remove_file(&blocks).unwrap();
+    use super::super::qualification::{
+        CapabilityEvidence, CapabilityEvidenceSet, ProviderEvidence, QualificationReport,
+        QualificationTarget,
+    };
+    let identity = super::super::qualification::fm_identity(&cfg).unwrap();
+    let mut report = QualificationReport {
+        version: 1,
+        fixture_version: super::super::FIXTURE_VERSION.into(),
+        generated_unix_secs: base,
+        target: QualificationTarget::Fm,
+        overall_pass: true,
+        primary: ProviderEvidence::skipped(),
+        fm_server: ProviderEvidence::skipped(),
+        fm_cli: ProviderEvidence {
+            configured: true,
+            identity: Some(identity.clone()),
+            vision_identity: Some(identity),
+            capabilities: CapabilityEvidenceSet {
+                text: CapabilityEvidence::pass(),
+                streaming: CapabilityEvidence::unsupported(),
+                structured_output: CapabilityEvidence::pass(),
+                tools: CapabilityEvidence::pass(),
+                vision: CapabilityEvidence::pass(),
+                ocr: CapabilityEvidence::pass(),
+            },
+        },
+    };
+    std::fs::write(&manifest, serde_json::to_vec(&report).unwrap()).unwrap();
+    block(&build()).await;
+    assert!(!build().generation_available());
+    report.primary.capabilities.text = CapabilityEvidence::unsupported();
+    std::fs::write(&manifest, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    assert!(
+        !build().generation_available(),
+        "format or unrelated route changes cannot clear v1 block"
+    );
+    report.generated_unix_secs = base + 4;
+    std::fs::write(&manifest, serde_json::to_vec(&report).unwrap()).unwrap();
+    assert!(
+        !build().generation_available(),
+        "higher-than-startup v1 report predates failure"
+    );
+    report.generated_unix_secs = base + 6;
+    std::fs::write(&manifest, serde_json::to_vec(&report).unwrap()).unwrap();
+    assert!(
+        !build().generation_available(),
+        "future v1 report cannot recover"
+    );
+    clock.0.store(base + 7, Ordering::Relaxed);
+    let recovered_v1 = build();
+    assert!(recovered_v1.generation_available());
+    clock.0.store(base + 1, Ordering::Relaxed);
+    block(&recovered_v1).await;
+    clock.0.store(base + 7, Ordering::Relaxed);
+    report.generated_unix_secs = base + 4;
+    std::fs::write(&manifest, serde_json::to_vec(&report).unwrap()).unwrap();
+    assert!(
+        !build().generation_available(),
+        "clock regression cannot make older qualification evidence newer than its persisted high-water"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

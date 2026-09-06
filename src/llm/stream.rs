@@ -335,10 +335,7 @@ impl StreamTransport for HttpTransport {
                 ));
             }
             if !status.is_success() {
-                let body = crate::http_body::read_capped(response, MAX_ERROR_RESPONSE_BYTES)
-                    .await
-                    .map_err(|error| LlmError::backend(format!("HTTP {status}: {error}")))?;
-                drop(body);
+                let _ = crate::http_body::read_capped(response, MAX_ERROR_RESPONSE_BYTES).await;
                 return Err(rejection);
             }
 

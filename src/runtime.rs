@@ -188,13 +188,13 @@ impl VisionTransport for HttpVisionTransport {
                     crate::provider::ProviderFailureKind::ProtocolDrift,
                 ));
             }
-            let body = crate::http_body::read_capped(response, 2 * 1024 * 1024)
-                .await
-                .map_err(|e| VisionError::internal(e.to_string()))?;
             if !status.is_success() {
-                drop(body);
+                let _ = crate::http_body::read_capped(response, 4096).await;
                 return Err(VisionError::from_llm(rejection));
             }
+            let body = crate::http_body::read_capped(response, 2 * 1024 * 1024)
+                .await
+                .map_err(|error| VisionError::from_llm(crate::llm::LlmError::body_read(error)))?;
             String::from_utf8(body).map_err(|_| {
                 VisionError::internal("the vision provider returned non-UTF-8 response bytes")
             })

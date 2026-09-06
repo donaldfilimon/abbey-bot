@@ -401,6 +401,16 @@ impl LlmError {
         }
     }
 
+    pub(crate) fn body_read(error: crate::http_body::BodyReadError) -> Self {
+        use crate::provider::ProviderFailureKind as F;
+        let failure = match error {
+            crate::http_body::BodyReadError::TooLarge { .. } => F::ResponseSchema,
+            crate::http_body::BodyReadError::Read { timeout: true } => F::Timeout,
+            crate::http_body::BodyReadError::Read { timeout: false } => F::TransportUnavailable,
+        };
+        Self::classified("provider response body could not be read", failure)
+    }
+
     pub(crate) fn transport(error: reqwest::Error) -> Self {
         let failure = if error.is_timeout() {
             crate::provider::ProviderFailureKind::Timeout

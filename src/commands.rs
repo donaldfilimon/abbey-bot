@@ -256,8 +256,23 @@ pub async fn ask(
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
     let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
-    ctx.say(clamp_message(reply)).await?;
+    deliver_generated_reply(&ctx.data().state, ctx.say(clamp_message(reply))).await?;
     Ok(())
+}
+
+/// Finish delivery before admitting queued model writes. Failed delivery keeps
+/// the queue for the existing periodic persistence path; it cannot claim that
+/// the requested fact was stored. Both interactive generation surfaces use this
+/// boundary, while the pipeline owns its corresponding outbound boundary.
+async fn deliver_generated_reply<T, E>(
+    state: &AppState,
+    delivery: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let delivered = delivery.await?;
+    if state.episode_gate.is_some() {
+        crate::memory_gate::drain(state).await;
+    }
+    Ok(delivered)
 }
 
 /// Whether an answered question joins the channel's running transcript.
@@ -472,7 +487,7 @@ pub async fn ask_context_menu(
     }
 
     let reply = answer_question(ctx, question, None, Commit::No).await;
-    ctx.say(clamp_message(reply)).await?;
+    deliver_generated_reply(&ctx.data().state, ctx.say(clamp_message(reply))).await?;
     Ok(())
 }
 
@@ -746,6 +761,94 @@ pub async fn webhook(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued_command_state() -> std::sync::Arc<AppState> {
+        use crate::tools::ToolHost as _;
+        let mut state = AppState::in_memory();
+        let missing = std::env::temp_dir().join(format!(
+            "abbey-command-drain-{}-missing-abi",
+            std::process::id()
+        ));
+        assert!(!missing.exists(), "synthetic ABI path must be absent");
+        let config = serde_json::json!({
+            "abi_cli": missing,
+            "endpoint": "http://127.0.0.1:50051",
+            "token_file": std::env::temp_dir().join("abbey-command-drain-unused-token"),
+            "policy_version": "policy_v1",
+            "contract_revision": 2,
+            "contract_digest": "01".repeat(32),
+            "timeout_secs": 5,
+            "guilds": ["discord:123"]
+        });
+        std::sync::Arc::get_mut(&mut state).unwrap().episode_gate =
+            Some(std::sync::Arc::new(crate::episode_gate::EpisodeGate::new(
+                crate::episode_gate::EpisodeGateConfig::from_json(&config.to_string()).unwrap(),
+            )));
+        let mut host = runtime::ToolScope {
+            state: &state,
+            network: crate::platform::SocialNetwork::Discord,
+            scoped_guild: "discord:123".into(),
+            scoped_user: "discord:42".into(),
+            scoped_channel: "discord:channel".into(),
+            now: 10,
+            persona: Persona::Abbey,
+        };
+        assert!(
+            host.remember_fact("likes compilers", None)
+                .starts_with("Queued")
+        );
+        state
+    }
+
+    #[tokio::test]
+    async fn generated_reply_finishes_delivery_before_draining_real_gated_queue() {
+        let state = queued_command_state();
+        let (sent, received) = tokio::sync::oneshot::channel();
+        let completion = deliver_generated_reply(&state, async {
+            received.await.unwrap();
+            Ok::<_, ()>("delivered")
+        });
+        tokio::pin!(completion);
+        // Drive the actual production helper into its pending delivery await.
+        tokio::select! {
+            biased;
+            _ = &mut completion => panic!("delivery has not completed"),
+            _ = std::future::ready(()) => {}
+        }
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        assert!(
+            state
+                .memory_service()
+                .facts("discord:123", "discord:42")
+                .is_empty()
+        );
+        sent.send(()).unwrap();
+        assert_eq!(completion.await, Ok("delivered"));
+        // The unavailable fake gate refuses: the queue is handled after the
+        // reply, but delivering a reply does not imply any fact was stored.
+        assert!(AppState::lock(&state.memory_queue).is_empty());
+        assert!(
+            state
+                .memory_service()
+                .facts("discord:123", "discord:42")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_generated_reply_preserves_queue_and_stores_nothing() {
+        let state = queued_command_state();
+        let result =
+            deliver_generated_reply(&state, async { Err::<(), _>("delivery failed") }).await;
+        assert_eq!(result, Err("delivery failed"));
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        assert!(
+            state
+                .memory_service()
+                .facts("discord:123", "discord:42")
+                .is_empty()
+        );
+    }
 
     #[test]
     fn choice_mirrors_map_onto_their_pure_types() {

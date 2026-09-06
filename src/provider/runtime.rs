@@ -14,6 +14,9 @@ use blocks::BlockStore;
 
 pub trait ProviderClock: Send + Sync {
     fn now_ms(&self) -> u64;
+    fn unix_secs(&self) -> u64 {
+        super::qualification::unix_now()
+    }
 }
 struct MonotonicClock(Instant);
 impl ProviderClock for MonotonicClock {
@@ -73,6 +76,9 @@ struct Entry {
     stream_only: bool,
     slots: Arc<tokio::sync::Semaphore>,
     identity: ProviderIdentityHashes,
+    qualification_witness: Option<String>,
+    qualification_generation: Option<u64>,
+    qualification_completed_unix_secs: Option<u64>,
 }
 struct OperationalState {
     router: AdaptiveRouter,
@@ -304,6 +310,9 @@ impl ProviderRuntime {
                 stream_only,
                 slots: Arc::new(tokio::sync::Semaphore::new(self.capacity)),
                 identity,
+                qualification_witness: None,
+                qualification_generation: None,
+                qualification_completed_unix_secs: None,
             },
         );
     }
@@ -395,6 +404,38 @@ impl ProviderRuntime {
                         }),
                 })
                 .collect();
+            entry.qualification_witness = match &document {
+                super::manifest::ManifestDocument::LegacyV1(report) => {
+                    let evidence = if name == "foundation-models-server" {
+                        &report.fm_server
+                    } else {
+                        &report.fm_cli
+                    };
+                    Some(super::manifest::sha256_bytes(
+                        &serde_json::to_vec(&(report.generated_unix_secs, evidence))
+                            .map_err(|_| "cannot encode verified qualification witness")?,
+                    ))
+                }
+                super::manifest::ManifestDocument::V2(manifest) => manifest
+                    .record(&ProviderId::parse("foundation-models").expect("static ID"))
+                    .and_then(|record| record.qualification_run_nonce.clone()),
+            };
+            let (generation, completed) = match &document {
+                super::manifest::ManifestDocument::LegacyV1(report) => {
+                    (None, Some(report.generated_unix_secs))
+                }
+                super::manifest::ManifestDocument::V2(manifest) => manifest
+                    .record(&ProviderId::parse("foundation-models").expect("static ID"))
+                    .map(|record| {
+                        (
+                            record.qualification_generation,
+                            record.qualification_completed_unix_secs,
+                        )
+                    })
+                    .unwrap_or((None, None)),
+            };
+            entry.qualification_generation = generation;
+            entry.qualification_completed_unix_secs = completed;
             entry.identity = identity.clone();
             lock(&self.state).router.requalify(
                 id,
@@ -410,6 +451,27 @@ impl ProviderRuntime {
         let blocks = BlockStore::read(path)?;
         let mut state = lock(&self.state);
         for record in blocks.records() {
+            let fresh_qualification = self.entries.get(&record.id).is_some_and(|entry| {
+                entry.identity == record.identity
+                    && entry.qualification_witness.is_some()
+                    && entry.qualification_witness != record.qualification_witness
+                    && record.blocked_unix_secs.is_some_and(|blocked| {
+                        entry
+                            .qualification_completed_unix_secs
+                            .is_some_and(|completed| {
+                                completed
+                                    > blocked
+                                        .max(record.qualification_completed_unix_secs.unwrap_or(0))
+                                    && completed <= self.clock.unix_secs()
+                            })
+                    })
+                    && entry
+                        .qualification_generation
+                        .is_none_or(|new| new > record.qualification_generation.unwrap_or(0))
+            });
+            if fresh_qualification {
+                continue;
+            }
             state
                 .router
                 .restore_blocked(&record.id, &record.identity, record.reason);
@@ -960,11 +1022,16 @@ impl AttemptLease<'_> {
             now,
         );
         if let Some(kind) = kind.filter(|kind| kind.is_blocked()) {
-            state.blocks.block(
-                self.id.clone(),
-                self.runtime.entries[&self.id].identity.clone(),
-                kind,
-            );
+            let entry = &self.runtime.entries[&self.id];
+            state.blocks.block(blocks::BlockRecord {
+                id: self.id.clone(),
+                identity: entry.identity.clone(),
+                qualification_witness: entry.qualification_witness.clone(),
+                qualification_generation: entry.qualification_generation,
+                blocked_unix_secs: Some(self.runtime.clock.unix_secs()),
+                qualification_completed_unix_secs: entry.qualification_completed_unix_secs,
+                reason: kind,
+            });
         }
     }
 }

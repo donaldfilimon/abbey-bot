@@ -37,6 +37,9 @@ fn endpoint_request(raw: &str, class: ProviderClass, sandbox_attested: bool) -> 
 
 fn qualified_record(raw: &str, class: ProviderClass, sandbox_attested: bool) -> ProviderRecord {
     ProviderRecord {
+        qualification_run_nonce: None,
+        qualification_generation: None,
+        qualification_completed_unix_secs: None,
         version: PROVIDER_MANIFEST_VERSION,
         fixture_version: crate::provider::FIXTURE_VERSION.to_string(),
         provider_id: id(raw),

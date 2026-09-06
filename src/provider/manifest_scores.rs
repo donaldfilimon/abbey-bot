@@ -27,6 +27,12 @@ struct RecordWire {
     isolation_capabilities: QualifiedIsolation,
     qualification_status: QualificationStatus,
     #[serde(default, deserialize_with = "present")]
+    qualification_run_nonce: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    qualification_generation: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    qualification_completed_unix_secs: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
     score_policy: Option<u8>,
     #[serde(default, deserialize_with = "present")]
     score_profiles: Option<Profiles>,
@@ -57,6 +63,9 @@ impl<'de> Deserialize<'de> for ProviderRecord {
             declared_capabilities: w.declared_capabilities,
             isolation_capabilities: w.isolation_capabilities,
             qualification_status: w.qualification_status,
+            qualification_run_nonce: w.qualification_run_nonce,
+            qualification_generation: w.qualification_generation,
+            qualification_completed_unix_secs: w.qualification_completed_unix_secs,
             score_policy: w.score_policy,
             score_profiles: profiles,
         })

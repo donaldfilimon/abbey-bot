@@ -9,6 +9,9 @@ fn hash(byte: u8) -> String {
 
 fn record(id: &str, class: ProviderClass) -> ProviderRecord {
     ProviderRecord {
+        qualification_run_nonce: None,
+        qualification_generation: None,
+        qualification_completed_unix_secs: None,
         version: PROVIDER_MANIFEST_VERSION,
         fixture_version: FIXTURE_VERSION.to_string(),
         provider_id: ProviderId::parse(id).expect("valid provider id"),
@@ -300,6 +303,32 @@ mod unix {
             let _ = std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700));
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn qualification_publication_advances_generation_and_refuses_overflow() {
+        let files = TestRoot::new(false);
+        let mut evidence = record("qualified", ProviderClass::LocalServer);
+        publish_v2(&files.manifest, std::slice::from_ref(&evidence)).unwrap();
+        let ManifestDocument::V2(first) = read_manifest(&files.manifest).unwrap() else {
+            panic!("v2")
+        };
+        assert_eq!(first.records()[0].qualification_generation, Some(1));
+        publish_v2(&files.manifest, std::slice::from_ref(&evidence)).unwrap();
+        let ManifestDocument::V2(second) = read_manifest(&files.manifest).unwrap() else {
+            panic!("v2")
+        };
+        assert_eq!(second.records()[0].qualification_generation, Some(2));
+        assert_ne!(
+            first.records()[0].qualification_run_nonce,
+            second.records()[0].qualification_run_nonce
+        );
+        evidence = second.records()[0].clone();
+        evidence.qualification_generation = Some(i64::MAX as u64);
+        let previous = encode_v2(std::slice::from_ref(&evidence)).unwrap();
+        std::fs::write(&files.manifest, &previous).unwrap();
+        assert!(publish_v2(&files.manifest, &[evidence]).is_err());
+        assert_eq!(std::fs::read(&files.manifest).unwrap(), previous);
     }
 
     #[test]

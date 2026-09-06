@@ -531,3 +531,58 @@ fn shared_rejected_evidence_is_not_publishable_and_never_projects_a_class() {
         }
     }
 }
+
+#[test]
+fn qualification_run_nonce_is_optional_but_strict_when_present() {
+    let record = old_record();
+    assert!(record.qualification_run_nonce.is_none());
+    for invalid in [
+        serde_json::Value::Null,
+        serde_json::json!(true),
+        serde_json::json!(7),
+        serde_json::json!("AB".repeat(32)),
+        serde_json::json!("ab".repeat(31)),
+        serde_json::json!("gh".repeat(32)),
+    ] {
+        let mut value = serde_json::to_value(&record).unwrap();
+        value["qualification_run_nonce"] = invalid;
+        assert!(decode_manifest(&serde_json::to_vec(&vec![value]).unwrap()).is_err());
+    }
+    let mut witnessed = record;
+    witnessed.qualification_run_nonce = Some("ab".repeat(32));
+    witnessed.qualification_generation = Some(1);
+    witnessed.qualification_completed_unix_secs = Some(0);
+    assert!(decode_manifest(&encode_v2(&[witnessed]).unwrap()).is_ok());
+}
+
+#[test]
+fn qualification_witness_group_requires_bounded_complete_ordering_evidence() {
+    let mut record = old_record();
+    record.qualification_run_nonce = Some("ab".repeat(32));
+    record.qualification_generation = Some(1);
+    record.qualification_completed_unix_secs = Some(10);
+    let complete = serde_json::to_value(record).unwrap();
+    for key in [
+        "qualification_run_nonce",
+        "qualification_generation",
+        "qualification_completed_unix_secs",
+    ] {
+        let mut missing = complete.clone();
+        missing.as_object_mut().unwrap().remove(key);
+        assert!(decode_manifest(&serde_json::to_vec(&vec![missing]).unwrap()).is_err());
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!(true),
+            serde_json::json!(1.5),
+            serde_json::json!("1"),
+            serde_json::json!(u64::MAX),
+        ] {
+            let mut wrong = complete.clone();
+            wrong[key] = invalid;
+            assert!(decode_manifest(&serde_json::to_vec(&vec![wrong]).unwrap()).is_err());
+        }
+    }
+    let mut zero_generation = complete;
+    zero_generation["qualification_generation"] = serde_json::json!(0);
+    assert!(decode_manifest(&serde_json::to_vec(&vec![zero_generation]).unwrap()).is_err());
+}

@@ -482,3 +482,53 @@ async fn live_fm_cli_accepts_the_production_decision_schema() {
     assert!(!continuation.text.trim().is_empty(), "{continuation:?}");
     assert!(continuation.calls.is_empty(), "{continuation:?}");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn replaced_qualified_cli_never_executes_for_text_or_images() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = std::env::temp_dir().join(format!("abbey-cli-identity-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let binary = root.join("fake-fm");
+    let marker = root.join("invoked");
+    std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut cfg = config(FmMode::System);
+    cfg.cli = binary.clone();
+    let fm = FoundationModels::new_qualified(
+        cfg,
+        None,
+        true,
+        VerifiedFmCapabilities {
+            server: None,
+            cli: ProviderCapabilities {
+                vision: true,
+                ocr: true,
+                ..ProviderCapabilities::text_with_tools()
+            },
+        },
+    );
+    std::fs::write(
+        &binary,
+        format!("#!/bin/sh\nprintf invoked > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    let text = fm
+        .cli_turn("", &[ChatTurn::user("question")], &[], "synthetic")
+        .await
+        .unwrap_err();
+    let image = fm
+        .image_turn(FmImageTask::Describe, b"synthetic", "png")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        text.provider_failure(),
+        ProviderFailureKind::ExecutableIdentity
+    );
+    assert_eq!(
+        image.provider_failure(),
+        ProviderFailureKind::ExecutableIdentity
+    );
+    assert!(!marker.exists());
+    std::fs::remove_dir_all(root).unwrap();
+}

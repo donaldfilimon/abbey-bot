@@ -9,6 +9,14 @@ pub(super) struct BlockRecord {
     pub id: ProviderId,
     pub identity: ProviderIdentityHashes,
     pub reason: ProviderFailureKind,
+    #[serde(default)]
+    pub qualification_witness: Option<String>,
+    #[serde(default)]
+    pub qualification_generation: Option<u64>,
+    #[serde(default)]
+    pub blocked_unix_secs: Option<u64>,
+    #[serde(default)]
+    pub qualification_completed_unix_secs: Option<u64>,
 }
 pub(super) struct BlockStore {
     path: Option<PathBuf>,
@@ -76,19 +84,10 @@ impl BlockStore {
             failed: false,
         })
     }
-    pub fn block(
-        &mut self,
-        id: ProviderId,
-        identity: ProviderIdentityHashes,
-        reason: ProviderFailureKind,
-    ) {
+    pub fn block(&mut self, record: BlockRecord) {
         self.records
-            .retain(|record| record.id != id || record.identity != identity);
-        self.records.push(BlockRecord {
-            id,
-            identity,
-            reason,
-        });
+            .retain(|old| old.id != record.id || old.identity != record.identity);
+        self.records.push(record);
         if let Some(path) = &self.path {
             let result = (|| -> std::io::Result<()> {
                 let parent = path

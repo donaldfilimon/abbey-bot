@@ -5,7 +5,7 @@ use futures_util::StreamExt as _;
 #[derive(Debug)]
 pub enum BodyReadError {
     TooLarge { max: usize },
-    Read(String),
+    Read { timeout: bool },
 }
 
 impl BodyReadError {
@@ -18,7 +18,8 @@ impl std::fmt::Display for BodyReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TooLarge { max } => write!(f, "response body exceeds the {max}-byte limit"),
-            Self::Read(message) => f.write_str(message),
+            Self::Read { timeout: true } => f.write_str("reading the response timed out"),
+            Self::Read { timeout: false } => f.write_str("reading the response failed"),
         }
     }
 }
@@ -50,11 +51,8 @@ pub async fn read_capped(
     let mut body = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| {
-            BodyReadError::Read(format!(
-                "reading the response failed: {}",
-                error.without_url()
-            ))
+        let chunk = chunk.map_err(|error| BodyReadError::Read {
+            timeout: error.is_timeout(),
         })?;
         append_capped(&mut body, &chunk, max)?;
     }

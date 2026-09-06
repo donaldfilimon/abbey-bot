@@ -172,6 +172,12 @@ pub struct ProviderRecord {
     pub isolation_capabilities: QualifiedIsolation,
     pub qualification_status: QualificationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualification_run_nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualification_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualification_completed_unix_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub score_policy: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_profiles: Option<Vec<QualificationScoreEvidence>>,
@@ -216,6 +222,16 @@ impl ProviderRecord {
             return Err(ManifestError::FixtureMismatch);
         }
         self.identity.validate()?;
+        validate_optional_sha256(self.qualification_run_nonce.as_deref())?;
+        match (
+            &self.qualification_run_nonce,
+            self.qualification_generation,
+            self.qualification_completed_unix_secs,
+        ) {
+            (None, None, None) => {}
+            (Some(_), Some(1..=9223372036854775807), Some(0..=9223372036854775807)) => {}
+            _ => return Err(ManifestError::InvalidQualification),
+        }
         match (&self.score_policy, &self.score_profiles) {
             (None, None) => {}
             (Some(1), Some(profiles)) => {
@@ -543,7 +559,41 @@ pub fn publish_v2(path: &Path, records: &[ProviderRecord]) -> Result<(), Manifes
             validate_manifest_path(path, effective_user_id())?;
         }
 
-        let encoded = encode_v2(records)?;
+        // A successful qualification publication is a new witnessed run,
+        // unlike copying, formatting or merely rereading a manifest.
+        validate_records(records)?;
+        let prior = if path.exists() {
+            Some(read_manifest(path)?)
+        } else {
+            None
+        };
+        let mut records = records.to_vec();
+        for record in &mut records {
+            if record.qualification_status == QualificationStatus::Qualified {
+                let previous = match &prior {
+                    Some(ManifestDocument::V2(manifest)) => manifest
+                        .record(&record.provider_id)
+                        .filter(|prior| prior.identity == record.identity)
+                        .and_then(|prior| prior.qualification_generation)
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                let generation = previous
+                    .checked_add(1)
+                    .filter(|value| *value <= i64::MAX as u64)
+                    .ok_or(ManifestError::PublishFailed)?;
+                use std::io::Read as _;
+                let mut bytes = [0_u8; 32];
+                std::fs::File::open("/dev/urandom")
+                    .and_then(|mut source| source.read_exact(&mut bytes))
+                    .map_err(|_| ManifestError::PublishFailed)?;
+                record.qualification_run_nonce =
+                    Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect());
+                record.qualification_generation = Some(generation);
+                record.qualification_completed_unix_secs = Some(super::qualification::unix_now());
+            }
+        }
+        let encoded = encode_v2(&records)?;
 
         let (temporary_path, mut temporary) = create_temporary_manifest(parent)?;
         let mut cleanup = TemporaryFile::new(temporary_path.clone());

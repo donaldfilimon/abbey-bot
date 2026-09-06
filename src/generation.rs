@@ -111,6 +111,9 @@ async fn stream_received<O: Outbound + Sync>(
             return Ok(());
         }
         let visible = apply_grounding(text, grounding);
+        // Delivery may be accepted remotely even if awaiting its result fails.
+        // Close replay before handing provider output to the outbound adapter.
+        effects.mark_visible_output();
         match posted {
             None => {
                 let message = OutboundMessage {
@@ -123,7 +126,6 @@ async fn stream_received<O: Outbound + Sync>(
             }
             Some(id) => out.edit(channel, id, &visible).await?,
         }
-        effects.mark_visible_output();
         *last_edited_len = text.chars().count();
         Ok(())
     }
@@ -180,10 +182,10 @@ async fn stream_received<O: Outbound + Sync>(
             };
             let tidy = finalize_reply(persona, &full, grounding);
             if let Some(id) = &posted {
+                effects.mark_visible_output();
                 out.edit(native_channel_id, id, &tidy)
                     .await
                     .map_err(llm::LlmError::backend)?;
-                effects.mark_visible_output();
             }
             Ok(StreamEnd::Text(tidy, posted))
         }

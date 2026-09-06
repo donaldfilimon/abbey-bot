@@ -279,6 +279,7 @@ pub struct FoundationModels {
     pub server_capabilities: Option<ProviderCapabilities>,
     pub cli_capabilities: ProviderCapabilities,
     qualified: bool,
+    qualified_cli_sha256: Option<String>,
 }
 
 impl FoundationModels {
@@ -299,6 +300,7 @@ impl FoundationModels {
             server_capabilities: server,
             cli_capabilities: cli,
             qualified: false,
+            qualified_cli_sha256: None,
         }
     }
 
@@ -309,6 +311,7 @@ impl FoundationModels {
         _primary_tools_enabled: bool,
         qualified: VerifiedFmCapabilities,
     ) -> Self {
+        let qualified_cli_sha256 = qualification::file_sha256(&config.cli).ok();
         Self {
             config,
             server_capabilities: qualified.server.map(|caps| ProviderCapabilities {
@@ -318,6 +321,7 @@ impl FoundationModels {
             }),
             cli_capabilities: qualified.cli,
             qualified: true,
+            qualified_cli_sha256,
         }
     }
 
@@ -347,6 +351,19 @@ impl FoundationModels {
             })
     }
 
+    fn verify_cli_identity(&self) -> Result<(), LlmError> {
+        if self.qualified
+            && (self.qualified_cli_sha256.is_none()
+                || qualification::file_sha256(&self.config.cli).ok() != self.qualified_cli_sha256)
+        {
+            return Err(LlmError::classified(
+                "qualified FM executable identity changed",
+                ProviderFailureKind::ExecutableIdentity,
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn cli_turn(
         &self,
         system_prompt: &str,
@@ -360,6 +377,7 @@ impl FoundationModels {
             LlmError::backend(format!("could not prepare the FM response schema: {error}"))
         })?;
         let invocation = CliInvocation::new(&self.config, &transcript, file.path());
+        self.verify_cli_identity()?;
         let output = invocation.run(self.config.timeout_secs).await?;
         parse_cli_output(&output, tools, call_id)
     }
@@ -379,6 +397,7 @@ impl FoundationModels {
             LlmError::backend(format!("could not prepare the private FM image: {error}"))
         })?;
         let invocation = CliInvocation::for_image(&self.config, task, file.path());
+        self.verify_cli_identity()?;
         let output = invocation.run(self.config.timeout_secs).await?;
         let output = output.trim();
         if output.is_empty()

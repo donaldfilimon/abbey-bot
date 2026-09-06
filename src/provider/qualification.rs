@@ -561,6 +561,9 @@ mod tests {
     #[cfg(unix)]
     fn successful_v2_fm_record(config: &FmConfig) -> super::super::ProviderRecord {
         super::super::ProviderRecord {
+            qualification_run_nonce: None,
+            qualification_generation: None,
+            qualification_completed_unix_secs: None,
             version: super::super::PROVIDER_MANIFEST_VERSION,
             fixture_version: FIXTURE_VERSION.to_string(),
             provider_id: super::super::ProviderId::parse(FOUNDATION_MODELS_PROVIDER_ID).unwrap(),
