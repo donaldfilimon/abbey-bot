@@ -152,7 +152,7 @@ class Harness:
         self.home = self.root / 'home'; self.home.mkdir(mode=0o700)
         self.repo = self.root / 'bundle'; (self.repo / 'deploy').mkdir(parents=True)
         source = Path(__file__).resolve().parent
-        for name in ('install-launchd.sh', 'service_transaction.py', 'service_installation.py',
+        for name in ('install-launchd.sh', 'service_transaction.py', 'service_installation.py', 'service_environment.py',
                      'service_readiness.py', 'service_protocol.py', 'service-protocol-v1.json',
                      'check-service-readiness.py', 'check-launchd-env.sh', LABEL + '.plist'):
             shutil.copyfile(source / name, self.repo / 'deploy' / name)
@@ -418,6 +418,24 @@ class Tests(unittest.TestCase):
             self.assertEqual(h.state()['commands'],[])
             result=h.run('--unknown');self.check_private(result,h)
             self.assertEqual(result.returncode,2)
+
+    def test_runtime_invalid_assignments_fail_before_stopping_prior_service(self):
+        cases = (
+            b'DISCORD_TOKEN=' + CANARY.encode() + b'\nDISCORD_TOKEN=again\n',
+            b'DISCORD_TOKEN="' + CANARY.encode() + b'\n',
+            b'DISCORD_TOKEN=' + CANARY.encode() + b'\nBAD-KEY=value\n',
+            b'DISCORD_TOKEN=" \t "\n',
+        )
+        for raw in cases:
+            with self.subTest(raw_kind=len(raw)), tempfile.TemporaryDirectory() as temp:
+                h=Harness(temp,prior=True);h.write('.config/abbey-bot/env',raw)
+                result=h.run();self.check_private(result,h)
+                self.assertEqual(result.returncode,1)
+                self.assertIn(b'installation: environment',result.stderr)
+                self.assertEqual(h.state()['commands'],[])
+                self.assertTrue(h.state()['loaded'])
+                self.assertEqual(h.binary().read_bytes(),b'old binary')
+                self.assertFalse((h.home/'.local/share/abbey-bot/install.lock').exists())
 
     def test_missing_complete_bundle_fails_without_raw_path(self):
         with tempfile.TemporaryDirectory() as temp:

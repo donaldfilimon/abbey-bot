@@ -131,7 +131,8 @@ impl EventHandler for DiscordAudioForwarder {
                         let manager = self.manager.clone();
                         let guild_id = self.guild_id;
                         let epoch = self.epoch;
-                        tokio::spawn(async move {
+                        let owner = Arc::clone(&runtime);
+                        let _ = owner.spawn_owned(async move {
                             let Some(pause) = runtime
                                 .begin_participant_pause_epoch_for_consent(
                                     epoch,

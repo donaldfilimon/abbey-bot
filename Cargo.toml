@@ -21,6 +21,7 @@ tracing = "0.1.44"
 # OpenAI Realtime adapters. Disable defaults so the TLS root source remains an
 # explicit compiled WebPKI choice rather than a platform-native dependency.
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Discord voice. Songbird 0.6 is the first release line with the DAVE/MLS
@@ -41,7 +42,13 @@ image = { version = "0.25.10", default-features = false, features = ["gif", "jpe
 # never writes TOML, so the display half of the crate stays out of the tree.
 toml = { version = "1.1.5", default-features = false, features = ["parse", "serde", "std"] }
 
+getrandom = "0.3.4"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+
 [dev-dependencies]
+tokio = { version = "1.53.1", features = ["test-util"] }
 regex = "1.13.1"
 
 [patch.crates-io]

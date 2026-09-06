@@ -3,6 +3,40 @@ use super::{ProviderFailureKind, ProviderId, ProviderIdentityHashes};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    mpsc,
+};
+
+pub(crate) struct BlockWriter {
+    sender: mpsc::Sender<Option<BlockRecord>>,
+    pending: Arc<AtomicUsize>,
+    handle: tokio::task::JoinHandle<()>,
+    failure: Arc<crate::service::failure::FailureSignal>,
+    stopping: Arc<AtomicBool>,
+}
+impl BlockWriter {
+    pub(crate) fn idle(&self) -> bool {
+        self.pending.load(Ordering::SeqCst) == 0
+    }
+    pub(crate) fn failure(&self) -> Arc<crate::service::failure::FailureSignal> {
+        self.failure.clone()
+    }
+    pub(crate) fn stop(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        let _ = self.sender.send(None);
+    }
+    pub(crate) async fn joined(&mut self) -> Result<(), tokio::task::JoinError> {
+        (&mut self.handle).await
+    }
+}
+impl Drop for BlockWriter {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BlockRecord {
@@ -21,21 +55,23 @@ pub(super) struct BlockRecord {
 pub(super) struct BlockStore {
     path: Option<PathBuf>,
     records: Vec<BlockRecord>,
-    failed: bool,
+    failed: Arc<AtomicBool>,
+    writer: Option<(mpsc::Sender<Option<BlockRecord>>, Arc<AtomicUsize>)>,
 }
 impl BlockStore {
     pub fn memory() -> Self {
         Self {
             path: None,
             records: Vec::new(),
-            failed: false,
+            failed: Arc::new(AtomicBool::new(false)),
+            writer: None,
         }
     }
     pub fn records(&self) -> &[BlockRecord] {
         &self.records
     }
     pub fn failed(&self) -> bool {
-        self.failed
+        self.failed.load(Ordering::SeqCst)
     }
     pub fn read(path: PathBuf) -> Result<Self, String> {
         #[cfg(unix)]
@@ -81,13 +117,64 @@ impl BlockStore {
         Ok(Self {
             path: Some(path),
             records,
-            failed: false,
+            failed: Arc::new(AtomicBool::new(false)),
+            writer: None,
         })
+    }
+    pub fn attach_writer(&mut self) -> BlockWriter {
+        assert!(self.writer.is_none(), "provider writer attached once");
+        let (sender, receiver) = mpsc::channel();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let owned_pending = pending.clone();
+        let mut store = Self {
+            path: self.path.clone(),
+            records: self.records.clone(),
+            failed: self.failed.clone(),
+            writer: None,
+        };
+        let failure = Arc::new(crate::service::failure::FailureSignal::default());
+        let failed = failure.clone();
+        let stopping = Arc::new(AtomicBool::new(false));
+        let stopping_owned = stopping.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            struct Guard(Arc<AtomicBool>, Arc<crate::service::failure::FailureSignal>);
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    if !self.0.load(Ordering::SeqCst) {
+                        self.1.trigger();
+                    }
+                }
+            }
+            let _guard = Guard(stopping_owned, failed.clone());
+            while let Ok(Some(record)) = receiver.recv() {
+                store.block(record);
+                if store.failed() {
+                    failed.trigger();
+                }
+                owned_pending.fetch_sub(1, Ordering::SeqCst);
+            }
+        });
+        self.writer = Some((sender.clone(), pending.clone()));
+        BlockWriter {
+            sender,
+            pending,
+            handle,
+            failure,
+            stopping,
+        }
     }
     pub fn block(&mut self, record: BlockRecord) {
         self.records
             .retain(|old| old.id != record.id || old.identity != record.identity);
-        self.records.push(record);
+        self.records.push(record.clone());
+        if let Some((sender, pending)) = &self.writer {
+            pending.fetch_add(1, Ordering::SeqCst);
+            if sender.send(Some(record)).is_err() {
+                pending.fetch_sub(1, Ordering::SeqCst);
+                self.failed.store(true, Ordering::SeqCst);
+            }
+            return;
+        }
         if let Some(path) = &self.path {
             let result = (|| -> std::io::Result<()> {
                 let parent = path
@@ -134,9 +221,60 @@ impl BlockStore {
                 Ok(())
             })();
             if result.is_err() {
-                self.failed = true;
+                self.failed.store(true, Ordering::SeqCst);
                 tracing::error!("provider operational block publication failed; routing disabled");
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod writer_tests {
+    use super::*;
+    #[tokio::test]
+    async fn background_publication_failure_wakes_root_without_a_second_attempt() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut entropy = [0u8; 16];
+        getrandom::fill(&mut entropy).unwrap();
+        let suffix: String = entropy.iter().map(|b| format!("{b:02x}")).collect();
+        let directory = std::env::temp_dir().join(format!("abbey-block-writer-{suffix}"));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = directory.join("blocks.json");
+        let mut store = BlockStore::read(path.clone()).unwrap();
+        let mut writer = store.attach_writer();
+        // The exclusive marker collision deterministically fails actual publication.
+        std::fs::write(
+            path.with_extension("pending"),
+            b"controlled unfinished publication",
+        )
+        .unwrap();
+        store.block(BlockRecord {
+            id: ProviderId::parse("primary").unwrap(),
+            identity: ProviderIdentityHashes {
+                abbey_binary_sha256: "a".repeat(64),
+                provider_binary_sha256: None,
+                model_sha256: None,
+                os_sha256: None,
+                tool_schema_sha256: "b".repeat(64),
+                sandbox_sha256: None,
+            },
+            reason: ProviderFailureKind::ResponseSchema,
+            qualification_witness: None,
+            qualification_generation: None,
+            blocked_unix_secs: Some(1),
+            qualification_completed_unix_secs: None,
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            writer.failure().notified(),
+        )
+        .await
+        .unwrap();
+        assert!(store.failed());
+        writer.stop();
+        writer.joined().await.unwrap();
+        assert!(writer.idle());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

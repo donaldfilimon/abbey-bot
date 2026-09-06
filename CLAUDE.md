@@ -58,7 +58,7 @@ The Discord/network surface (imports serenity/poise / adapters):
 | File | Role |
 |---|---|
 | `commands.rs`, `commands_brain.rs`, `commands_voice.rs` (+ `commands_voice/`) | Translate Discord data into plain structs and lifecycle calls |
-| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | `discord.rs` matches eight `FullEvent` variants (Ready, Message, ReactionAdd/Remove, MessageDelete, GuildCreate/Delete, GuildMemberAddition — reactions and deletes feed rewards, not replies) into `SocialEvent` → `pipeline::handle`; `shared.rs` holds the `Outbound` impl and `clamp_message`; Slack/Telegram are serenity-free adapters |
+| `gateway/` (`discord.rs`, `shared.rs`, `slack.rs`, `telegram.rs`) | `discord.rs` handles ten `FullEvent` variants: Ready/Resume/ShardStageUpdate maintain connection evidence; Message, ReactionAdd/Remove, MessageDelete, GuildCreate/Delete and GuildMemberAddition translate activity into `SocialEvent` → `pipeline::handle` or scoped lifecycle changes. Reactions and deletes feed rewards, not replies. `shared.rs` holds shared output helpers; Slack/Telegram are serenity-free adapters |
 | `voice_session.rs`, `voice_local.rs`, `voice_openai.rs`, `voice_self_test.rs` (+ `voice_session/`, `voice_local/`) | Songbird-facing voice actors (see the voice paragraph below) |
 | `main.rs` | Env parsing and framework wiring only; reads no guild data |
 
@@ -162,6 +162,37 @@ composes on top in `routing_signals.rs`.
 **If you find yourself writing an `if` inside a `#[poise::command]` function that isn't about fetching data, it belongs in a pure module instead.**
 
 **Abbey default voice (code):** warm, sharp friend — result-first, clear, honest about uncertainty (`src/persona.rs` / `src/ask.rs`). Do not rewrite prompts toward help-desk filler.
+
+## Managed process ownership and operational evidence
+
+`service/` owns accepted framework callbacks, connector actors, scheduler work,
+voice actors, episode children and serialized persistence. Register work before
+it runs; dropping an interaction response receiver does not release its actual
+owner. The root closes admission before draining and freezes state only after
+all mutation owners have joined. Voice consent persistence remains independent.
+A cancellation, abort or kill request is never evidence of completed cleanup.
+Shutdown uses one 20-second cooperative budget with four stages capped at five
+seconds each; retained blocking work may require the explicit process boundary.
+Final persistence is attempted at most once after observed quiescence.
+
+Managed mode is selected only by `--managed-service`. `managed_service`,
+`managed_env`, `bootstrap`, `readiness` and `managed_log` implement its private
+preflight/artifact contract. Operational JSONL accepts only the closed types in
+`observability`; do not feed raw tracing, IDs, paths, endpoints, model names,
+content or error text into it. `InteractionEntry` retains categorized metadata
+only, and managed startup rewrites legacy state before ready. A retained
+readiness owner refreshes during startup and draining as well as normal running.
+Actual command registration, presence, Discord readiness and scheduler execution
+must precede ready; a connection-stage notification alone cannot restore it.
+`shutdown_finalizing` records that final cleanup is starting. Only the root's
+observed shutdown report classifies completed cleanup; the log cannot attest its
+own future retirement.
+
+The private fact browser (`memory_browser`, `commands_memory_browser`) reads a
+fresh authorized subject snapshot on every navigation. Its envelope binds owner,
+subject, scope and fixed expiry; current permissions are checked before reading
+facts. `scoped_stats` and `operator_guidance` provide read-only member/operator
+views. Keep these rendering decisions outside the Discord shell.
 
 ## Live Mac backends (2026-09-03 — fail closed)
 

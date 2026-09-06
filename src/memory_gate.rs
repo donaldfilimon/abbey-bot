@@ -79,6 +79,21 @@ pub fn enqueue(
 /// logged and counted by the gate; the fact is dropped, not retried, so a
 /// refused write cannot pile up behind an outage.
 pub async fn drain(state: &AppState) -> Drained {
+    if let Some(registry) = state.service_registry() {
+        let Some(owned) = state.owned_state() else {
+            return Drained::default();
+        };
+        return match registry.spawn_result(crate::service::OperationKind::MemoryDrain, async move {
+            drain_owned(&owned).await
+        }) {
+            Ok(result) => result.await.unwrap_or_default(),
+            Err(_) => Drained::default(),
+        };
+    }
+    drain_owned(state).await
+}
+
+async fn drain_owned(state: &AppState) -> Drained {
     let queued: Vec<QueuedFact> = std::mem::take(&mut *AppState::lock(&state.memory_queue));
     let mut drained = Drained::default();
     for item in queued {

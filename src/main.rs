@@ -53,6 +53,7 @@
 mod admin_dashboard;
 mod ask;
 mod audio_tap;
+mod bootstrap;
 mod brain;
 mod checkpoint_gate;
 mod command_catalog;
@@ -62,6 +63,7 @@ mod commands;
 mod commands_brain;
 mod commands_context;
 mod commands_help;
+mod commands_memory_browser;
 mod commands_voice;
 #[cfg(test)]
 mod contracts;
@@ -77,12 +79,18 @@ mod http_body;
 mod image_attachment;
 mod inspect;
 mod llm;
+mod managed_env;
+mod managed_log;
+mod managed_service;
 mod memory;
+mod memory_browser;
 mod memory_card;
 mod memory_gate;
 mod moderation;
 mod music;
+mod observability;
 mod offline_voice;
+mod operator_guidance;
 mod perms;
 mod persist;
 mod persona;
@@ -92,10 +100,13 @@ mod player_control;
 mod profile;
 mod provider;
 mod provider_self_test;
+mod readiness;
 mod recall;
 mod routing_signals;
 mod runtime;
+mod scoped_stats;
 mod server;
+mod service;
 mod text;
 mod tools;
 mod vad;
@@ -138,24 +149,170 @@ async fn shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+struct ManagedStartup {
+    publisher: readiness::ReadinessPublisher,
+    log: std::sync::Arc<managed_log::ManagedLog>,
+    privacy_report: persist::PersistReport,
+    fatal: std::sync::Arc<managed_service::ManagedFatalSignal>,
+}
 
+fn configure_managed_panic_hook(
+    fatal: Option<std::sync::Arc<managed_service::ManagedFatalSignal>>,
+) {
+    std::panic::set_hook(Box::new(move |_| {
+        if let Some(fatal) = &fatal {
+            fatal.trigger();
+        }
+    }));
+}
+
+fn main() -> Result<(), Error> {
+    // Argument validation and managed credential loading happen before any
+    // runtime/log worker thread exists. Self-tests never enter managed preflight.
+    let managed_requested = std::env::args_os()
+        .skip(1)
+        .any(|arg| arg == "--managed-service");
     let startup = match startup_action() {
         Ok(action) => action,
         Err(error) => {
-            eprintln!("{error}");
+            if managed_requested {
+                eprintln!("invalid managed service arguments");
+            } else {
+                eprintln!("{error}");
+            }
             std::process::exit(2);
         }
     };
+    let managed = if startup == StartupAction::ManagedDiscord {
+        configure_managed_panic_hook(None);
+        let Some(home) = std::env::var_os("HOME") else {
+            std::process::exit(78);
+        };
+        let prepared = match managed_service::begin(std::path::Path::new(&home)) {
+            Ok(prepared) => prepared,
+            Err(_) => std::process::exit(78),
+        };
+        let fatal = prepared.fatal.clone();
+        configure_managed_panic_hook(Some(fatal));
+        for (name, value) in prepared.environment.into_values() {
+            // SAFETY: main has not constructed a runtime, logging worker or any
+            // other application thread. Every environment reader starts later.
+            unsafe {
+                std::env::set_var(name, value);
+            }
+        }
+        Some(ManagedStartup {
+            publisher: prepared.publisher,
+            log: prepared.log,
+            privacy_report: prepared.privacy_report,
+            fatal: prepared.fatal,
+        })
+    } else {
+        None
+    };
+    let is_managed = managed.is_some();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let mut terminal = service::shutdown::TerminalBoundary::default();
+    let result = runtime.block_on(run(startup, managed, &mut terminal));
+    if let Some(initialization) = &mut terminal.initialization {
+        let remaining = terminal.budget.map_or(service::SHUTDOWN_BUDGET, |budget| {
+            budget.remaining(tokio::time::Instant::now())
+        });
+        let joined = runtime.block_on(async {
+            tokio::time::timeout(remaining, initialization)
+                .await
+                .is_ok()
+        });
+        terminal.incomplete |= !joined;
+    }
+    if !terminal.refresh_joined
+        && let Some(refresh) = &mut terminal.refresh
+    {
+        refresh.stop();
+        let remaining = terminal.budget.map_or(service::SHUTDOWN_BUDGET, |budget| {
+            budget.remaining(tokio::time::Instant::now())
+        });
+        let result =
+            runtime.block_on(async { tokio::time::timeout(remaining, refresh.joined()).await });
+        terminal.refresh_joined = result.is_ok();
+        terminal.incomplete |= !result.is_ok_and(|r| r.is_ok());
+    }
+    if !terminal.telemetry_joined
+        && let Some(telemetry) = &mut terminal.telemetry
+    {
+        telemetry.stop();
+        let remaining = terminal.budget.map_or(service::SHUTDOWN_BUDGET, |budget| {
+            budget.remaining(tokio::time::Instant::now())
+        });
+        terminal.telemetry_joined = runtime.block_on(async {
+            tokio::time::timeout(remaining, telemetry.joined())
+                .await
+                .is_ok_and(|r| r.is_ok())
+        });
+        terminal.incomplete |= !terminal.telemetry_joined;
+    }
+    let remaining = terminal.budget.map_or(service::SHUTDOWN_BUDGET, |budget| {
+        budget.remaining(tokio::time::Instant::now())
+    });
+    runtime.shutdown_timeout(remaining);
+    // Incomplete blocking work is contained by process termination, never
+    // reported as joined or allowed into unbounded implicit Runtime::drop.
+    if terminal.incomplete {
+        std::process::exit(70);
+    }
+    if is_managed && result.is_err() {
+        std::process::exit(if terminal.budget.is_none() { 78 } else { 1 });
+    }
+    result
+}
+
+fn startup_stop(
+    supervisor: &mut service::ServiceSupervisor,
+    terminal: &mut service::shutdown::TerminalBoundary,
+    reason: service::ShutdownReason,
+) -> Error {
+    let start = supervisor.begin_draining(reason, tokio::time::Instant::now());
+    terminal.budget = Some(start.budget);
+    runtime::StartupError("service interrupted during startup".into()).into()
+}
+
+fn initialize_state() -> Result<Data, Error> {
+    let state = runtime::AppState::from_env()?;
+    let voice = voice::VoiceConfig::from_env()
+        .map_err(runtime::StartupError)?
+        .map(|config| {
+            let consent = std::sync::Arc::new(voice_consent_store::ConsentStore::load(
+                state.data_dir.as_deref(),
+                config.guild_id,
+            ));
+            voice_session::VoiceRuntime::new_with_inspect(
+                config,
+                state.voice_inspect.clone(),
+                consent,
+            )
+        })
+        .map(std::sync::Arc::new);
+    Ok(Data { state, voice })
+}
+
+async fn run(
+    startup: StartupAction,
+    managed: Option<ManagedStartup>,
+    terminal: &mut service::shutdown::TerminalBoundary,
+) -> Result<(), Error> {
+    tracing_subscriber::fmt()
+        .with_env_filter(if managed.is_some() {
+            tracing_subscriber::EnvFilter::new("off")
+        } else {
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        })
+        .init();
+
     match startup {
-        StartupAction::Discord => {}
+        StartupAction::Discord | StartupAction::ManagedDiscord => {}
         StartupAction::VoiceSelfTest(output) => {
             let report = voice_self_test::run(&output)
                 .await
@@ -201,6 +358,49 @@ async fn main() -> Result<(), Error> {
         }
     }
 
+    let mut supervisor = service::ServiceSupervisor::new();
+    let signal = shutdown_signal();
+    tokio::pin!(signal);
+    let connectors = gateway::ConnectorConfig::from_env()?;
+    let managed_fatal = managed.as_ref().map(|prepared| prepared.fatal.clone());
+    let managed_status = if let Some(prepared) = managed {
+        let identity = prepared.publisher.identity().clone();
+        let writer = service::telemetry::TelemetryWriter::start(
+            prepared.log,
+            prepared.publisher,
+            prepared.fatal.clone(),
+        );
+        let status = std::sync::Arc::new(service::status::ManagedStatus::new(
+            identity,
+            writer.requests(),
+            prepared.privacy_report,
+            connectors.telegram_enabled(),
+            connectors.slack_enabled(),
+        ));
+        terminal.telemetry = Some(writer);
+        terminal.refresh = Some(service::refresh::RefreshOwner::start(
+            status.clone(),
+            prepared.fatal,
+        ));
+        let result = status
+            .refresh()
+            .map_err(|_| "managed starting publication failed")?;
+        tokio::select! {
+            result = result => result.map_err(|_| "managed starting publication interrupted")?.map_err(|_| "managed starting publication failed")?,
+            _ = &mut signal => return Err(startup_stop(&mut supervisor, terminal, service::ShutdownReason::Signal)),
+        }
+        Some(status)
+    } else {
+        None
+    };
+    let fatal_wait = async {
+        match &managed_fatal {
+            Some(fatal) => fatal.notified().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(fatal_wait);
+
     // Read before building anything else: a missing token should fail in the
     // first millisecond with a sentence you can act on, not inside a gateway
     // handshake error.
@@ -212,8 +412,10 @@ async fn main() -> Result<(), Error> {
             .build();
         (http, source)
     };
-    if let Err(error) = http.get_current_user().await {
-        return Err(map_discord_startup_error(error, credential_source));
+    tokio::select! {
+        result = http.get_current_user() => if let Err(error) = result { return Err(map_discord_startup_error(error, credential_source)); },
+        () = &mut fatal_wait => return Err(startup_stop(&mut supervisor, terminal, service::ShutdownReason::OperationalInvariantFailed)),
+        _ = &mut signal => return Err(startup_stop(&mut supervisor, terminal, service::ShutdownReason::Signal)),
     }
     tracing::info!("{}", credential_source.accepted_diagnostic());
 
@@ -234,21 +436,22 @@ async fn main() -> Result<(), Error> {
         Err(_) => None,
     };
 
-    let state = runtime::AppState::from_env()?;
-    let voice_runtime = voice::VoiceConfig::from_env()
-        .map_err(runtime::StartupError)?
-        .map(|config| {
-            let consent = std::sync::Arc::new(voice_consent_store::ConsentStore::load(
-                state.data_dir.as_deref(),
-                config.guild_id,
-            ));
-            voice_session::VoiceRuntime::new_with_inspect(
-                config,
-                std::sync::Arc::clone(&state.voice_inspect),
-                consent,
-            )
-        })
-        .map(std::sync::Arc::new);
+    let initialization = terminal
+        .initialization
+        .insert(tokio::task::spawn_blocking(initialize_state));
+    let initialized = tokio::select! {
+        result = initialization => result,
+        _ = &mut signal => return Err(startup_stop(&mut supervisor, terminal, service::ShutdownReason::Signal)),
+        () = &mut fatal_wait => return Err(startup_stop(&mut supervisor, terminal, service::ShutdownReason::OperationalInvariantFailed)),
+    };
+    terminal.initialization = None;
+    let Data {
+        state,
+        voice: voice_runtime,
+    } = initialized.map_err(|_| "state initialization panicked")??;
+    if let (Some(status), Some(writer)) = (&managed_status, &terminal.telemetry) {
+        state.attach_observability(writer.requests(), status.clone());
+    }
     match &state.data_dir {
         Some(dir) => tracing::info!(path = %dir.display(), "persisting to data dir"),
         None => tracing::warn!("ABBEY_DATA_DIR unset — learning and memory are in-memory only"),
@@ -313,9 +516,14 @@ async fn main() -> Result<(), Error> {
             "ABBEY_QUIET=1 — no unsolicited replies anywhere; mentions, DMs, and commands still answer"
         );
     }
-    state.start_scheduler();
-    gateway::maybe_start_telegram(&state);
-    gateway::maybe_start_slack(&state);
+    let mut writer = state.attach_service(supervisor.operations());
+    let mut provider_writer = state.providers.attach_block_writer();
+    if let Some(voice) = &voice_runtime {
+        voice.attach_service(supervisor.operations());
+        if let Some(events) = state.operational_events() {
+            voice.attach_telemetry(events.clone());
+        }
+    }
 
     let intents = if std::env::var("ABBEY_MESSAGE_CONTENT")
         .map(|v| v.trim() == "1")
@@ -377,8 +585,12 @@ async fn main() -> Result<(), Error> {
             },
             on_error: |error| {
                 Box::pin(async move {
-                    if let poise::FrameworkError::Command { ctx, error, .. } = &error {
-                        record_interaction(*ctx, false, Some(error.to_string()));
+                    if let poise::FrameworkError::Command { ctx, .. } = &error {
+                        record_interaction(
+                            *ctx,
+                            false,
+                            Some(memory::InteractionErrorCategory::Internal),
+                        );
                     }
                     // Structured, not `println!` — and never swallowed: a command
                     // that fails silently is indistinguishable from Discord
@@ -406,12 +618,28 @@ async fn main() -> Result<(), Error> {
                         );
                     }
                 }
+                if let Some(events) = shell_state.operational_events() {
+                    let _ = events.record(
+                        observability::EventComponent::Discord,
+                        observability::EventCode::CommandsRegistered,
+                        observability::EventOutcome::Succeeded,
+                        None,
+                    );
+                }
                 // Spec (botarchitecture / discordbmapi): Online + Listening "for questions".
                 ctx.set_presence(
                     Some(serenity::gateway::ActivityData::listening("for questions")),
                     serenity::model::user::OnlineStatus::Online,
                 );
                 tracing::info!("presence set: Online, listening for questions");
+                if let Some(events) = shell_state.operational_events() {
+                    let _ = events.record(
+                        observability::EventComponent::Discord,
+                        observability::EventCode::PresenceApplied,
+                        observability::EventOutcome::Succeeded,
+                        None,
+                    );
+                }
                 let voice_autojoin = std::env::var("ABBEY_VOICE_AUTOJOIN")
                     .map(|value| value.trim() == "1")
                     .unwrap_or(false);
@@ -435,6 +663,24 @@ async fn main() -> Result<(), Error> {
                 }
                 tracing::info!(user = %ready.user.name, "connected");
                 shell_state.register_self(format!("discord:{}", ready.user.id.get()));
+                if let Some(events) = shell_state.operational_events() {
+                    let _ = events.record(
+                        observability::EventComponent::Discord,
+                        observability::EventCode::DiscordReady,
+                        observability::EventOutcome::Ready,
+                        None,
+                    );
+                }
+                if let Some(status) = shell_state.managed_status() {
+                    status.discord_ready();
+                    let receipt = status
+                        .refresh()
+                        .map_err(|_| "managed ready publication failed")?;
+                    receipt
+                        .await
+                        .map_err(|_| "managed ready publication interrupted")?
+                        .map_err(|_| "managed ready publication failed")?;
+                }
                 Ok(Data {
                     state: shell_state,
                     voice: setup_voice_runtime,
@@ -444,39 +690,338 @@ async fn main() -> Result<(), Error> {
         .build();
 
     use songbird::SerenityInit;
-    let mut client = serenity::client::ClientBuilder::new_with_http(http, intents)
-        .framework(framework)
+    let persistence_failure = writer.failure();
+    let provider_failure = provider_writer.failure();
+    let construction = serenity::client::ClientBuilder::new_with_http(http, intents)
+        .framework(service::framework::OwnedFramework::new(
+            framework,
+            supervisor.operations(),
+        ))
         .register_songbird_from_config(
             songbird::Config::default().decode_mode(songbird::driver::DecodeMode::Pass),
+        );
+    let built = tokio::select! {
+        result = construction => result.map_err(|error| map_discord_startup_error(error, credential_source)),
+        _ = &mut signal => Err(runtime::StartupError("service interrupted during Discord initialization".into()).into()),
+        () = &mut fatal_wait => Err("managed output failed during initialization".into()),
+        () = persistence_failure.notified() => Err("persistence owner failed during initialization".into()),
+        () = provider_failure.notified() => Err("provider state owner failed during initialization".into()),
+    };
+    let mut client = match built {
+        Ok(client) => client,
+        Err(error) => {
+            let start = supervisor.begin_draining(
+                service::ShutdownReason::OperationalInvariantFailed,
+                tokio::time::Instant::now(),
+            );
+            supervisor.finish_startup();
+            writer.stop();
+            provider_writer.stop();
+            let stage = start.budget.stage(tokio::time::Instant::now());
+            let joined = tokio::time::timeout_at(stage.deadline, async {
+                writer.joined().await.is_ok() && provider_writer.joined().await.is_ok()
+            })
+            .await
+            .unwrap_or(false);
+            terminal.budget = Some(start.budget);
+            terminal.incomplete = !joined;
+            terminal.supervisor = Some(supervisor);
+            terminal.writer = Some(writer);
+            terminal.provider_writer = Some(provider_writer);
+            return Err(error);
+        }
+    };
+
+    supervisor.finish_startup();
+    let scheduler_state = state.clone();
+    supervisor
+        .spawn_service(service::TaskName::Scheduler, move |cancel| {
+            scheduler_state.run_scheduler(cancel)
+        })
+        .map_err(|_| runtime::StartupError("scheduler ownership failed".into()))?;
+    gateway::start_connectors(&state, &mut supervisor, connectors)
+        .map_err(|_| runtime::StartupError("connector ownership failed".into()))?;
+    let shard_manager = client.shard_manager.clone();
+    let songbird_manager = client
+        .data
+        .read()
+        .await
+        .get::<songbird::SongbirdKey>()
+        .cloned();
+    let reason = {
+        let connection = client.start();
+        tokio::pin!(connection);
+        loop {
+            tokio::select! {
+                signal = &mut signal => break if signal.is_ok() { service::ShutdownReason::Signal } else { service::ShutdownReason::OperationalInvariantFailed },
+                result = &mut connection => break if result.is_ok() { service::ShutdownReason::DiscordClientReturned } else { service::ShutdownReason::DiscordClientFailed },
+                completion = supervisor.next_completion() => {
+                    if let Some(events) = state.operational_events() {
+                        let _ = events.record(observability::EventComponent::Process, observability::EventCode::TaskExit, match completion.exit { service::TaskExit::Returned => observability::EventOutcome::Succeeded, service::TaskExit::Cancelled => observability::EventOutcome::Cancelled, service::TaskExit::Panicked => observability::EventOutcome::Failed }, None);
+                    }
+                    if let Some(reason) = completion.fatal { break reason; }
+                },
+                () = &mut fatal_wait => break service::ShutdownReason::OperationalInvariantFailed,
+                () = persistence_failure.notified() => break service::ShutdownReason::OperationalInvariantFailed,
+                () = provider_failure.notified() => break service::ShutdownReason::OperationalInvariantFailed,
+            }
+        }
+    };
+    let started = supervisor.begin_draining(reason, tokio::time::Instant::now());
+    assert!(started.first_trigger, "one root shutdown trigger");
+    debug_assert_eq!(supervisor.phase(), service::ServicePhase::Draining);
+    let mut stages = [service::shutdown::StageOutcome::Completed; 4];
+    terminal.budget = Some(started.budget);
+    if let Some(voice) = &voice_runtime {
+        voice.begin_draining();
+    }
+    if let Some(status) = &managed_status {
+        status.draining();
+        let _ = status.refresh();
+    }
+    if let Some(events) = state.operational_events() {
+        let _ = events.record(
+            observability::EventComponent::Shutdown,
+            observability::EventCode::ShutdownStarted,
+            observability::EventOutcome::Draining,
+            None,
+        );
+    }
+    if let Some(voice) = voice_runtime {
+        let guild_id = voice.config.guild_id;
+        let mut cleanup: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), ()>> + Send>,
+        > = Box::pin(async move {
+            service::shutdown::close_voice(
+                voice.disconnect("process shutdown stopped voice"),
+                async {
+                    let manager = songbird_manager.ok_or(())?;
+                    manager
+                        .remove(std::num::NonZeroU64::new(guild_id).ok_or(())?)
+                        .await
+                        .map_err(|_| ())
+                },
+            )
+            .await
+        });
+        match tokio::time::timeout_at(
+            started.budget.stage(tokio::time::Instant::now()).deadline,
+            &mut cleanup,
         )
         .await
-        .map_err(|error| map_discord_startup_error(error, credential_source))?;
-
-    // Persist on interactive Ctrl-C and service-manager SIGTERM before taking
-    // shards down. Otherwise a redeploy loses the current five-minute window.
-    let shard_manager = client.shard_manager.clone();
-    let shutdown_state = std::sync::Arc::clone(&state);
-    let shutdown_voice = voice_runtime.clone();
-    tokio::spawn(async move {
-        if shutdown_signal().await.is_ok() {
-            tracing::info!("shutting down");
-            if let Some(voice) = shutdown_voice {
-                voice.disconnect("process shutdown stopped voice").await;
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(())) => stages[0] = service::shutdown::StageOutcome::Failed,
+            Err(_) => {
+                stages[0] = service::shutdown::StageOutcome::TimedOut;
+                terminal.voice_cleanup = Some(cleanup);
             }
-            gateway::shutdown(&shutdown_state);
-            shard_manager.shutdown_all().await;
         }
-    });
-
-    // Persist whether the gateway ended cleanly or with an error — a bad
-    // token after a long uptime must not also cost the last five minutes.
-    let result = client.start().await;
-    if let Some(voice) = voice_runtime {
-        voice.disconnect("Discord gateway stopped voice").await;
     }
-    gateway::shutdown(&state);
-    result.map_err(|error| map_discord_startup_error(error, credential_source))?;
-    Ok(())
+    let mut shards: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+        Box::pin(async move {
+            shard_manager.shutdown_all().await;
+        });
+    if tokio::time::timeout_at(
+        started.budget.stage(tokio::time::Instant::now()).deadline,
+        &mut shards,
+    )
+    .await
+    .is_err()
+    {
+        stages[1] = service::shutdown::StageOutcome::TimedOut;
+        terminal.shard_cleanup = Some(shards);
+    }
+    let reap = supervisor
+        .cancel_and_reap(started.budget.stage(tokio::time::Instant::now()))
+        .await;
+    stages[2] = match reap.outcome {
+        service::ReapOutcome::Joined => service::shutdown::StageOutcome::Completed,
+        service::ReapOutcome::TimedOut => service::shutdown::StageOutcome::TimedOut,
+    };
+    writer.close_admission();
+    let quiescent = terminal.voice_cleanup.is_none()
+        && terminal.shard_cleanup.is_none()
+        && reap.outstanding.is_empty()
+        && supervisor
+            .try_freeze(writer.idle() && provider_writer.idle())
+            .is_ok();
+    let final_stage = started.budget.stage(tokio::time::Instant::now());
+    let outcome = if quiescent && tokio::time::Instant::now() < final_stage.deadline {
+        let snapshot_state = state.clone();
+        let snapshot_task =
+            terminal
+                .final_snapshot
+                .insert(tokio::task::spawn_blocking(move || {
+                    snapshot_state.final_snapshot()
+                }));
+        match tokio::time::timeout_at(final_stage.deadline, snapshot_task).await {
+            Ok(Ok(snapshot)) if tokio::time::Instant::now() < final_stage.deadline => {
+                terminal.final_snapshot = None;
+                match writer.final_snapshot(snapshot, final_stage.deadline) {
+                    Ok(result) => match tokio::time::timeout_at(final_stage.deadline, result).await
+                    {
+                        Ok(Ok(Ok(report))) => {
+                            service::shutdown::FinalPersistOutcome::Completed(report)
+                        }
+                        Ok(Ok(Err(service::persistence::RequestError::DeadlineExpired))) => {
+                            service::shutdown::FinalPersistOutcome::NotStarted(
+                                service::shutdown::NotStartedReason::DeadlineExpired,
+                            )
+                        }
+                        _ => service::shutdown::FinalPersistOutcome::Incomplete {
+                            progress: writer.final_progress(),
+                        },
+                    },
+                    Err(_) => service::shutdown::FinalPersistOutcome::NotStarted(
+                        service::shutdown::NotStartedReason::WriterUnavailable,
+                    ),
+                }
+            }
+            _ => service::shutdown::FinalPersistOutcome::NotStarted(
+                service::shutdown::NotStartedReason::SnapshotIncomplete,
+            ),
+        }
+    } else {
+        service::shutdown::FinalPersistOutcome::NotStarted(if quiescent {
+            service::shutdown::NotStartedReason::DeadlineExpired
+        } else {
+            service::shutdown::NotStartedReason::NotQuiescent
+        })
+    };
+    provider_writer.stop();
+    let provider_joined = tokio::time::timeout_at(final_stage.deadline, provider_writer.joined())
+        .await
+        .is_ok_and(|r| r.is_ok());
+    writer.stop();
+    let writer_joined = tokio::time::timeout_at(final_stage.deadline, writer.joined())
+        .await
+        .is_ok_and(|r| r.is_ok());
+    if let Some(events) = state.operational_events() {
+        let _ = events.record(
+            observability::EventComponent::Persistence,
+            observability::EventCode::PersistenceAttempt,
+            if outcome.successful_completion() {
+                observability::EventOutcome::Succeeded
+            } else {
+                observability::EventOutcome::Failed
+            },
+            None,
+        );
+    }
+    match &outcome {
+        service::shutdown::FinalPersistOutcome::Completed(report) => {
+            crate::persist::log_report("shutdown", report)
+        }
+        service::shutdown::FinalPersistOutcome::Incomplete { progress } => tracing::error!(
+            canonical = ?progress.canonical_state, projection = ?progress.wdbx_projection,
+            "final persistence incomplete"
+        ),
+        service::shutdown::FinalPersistOutcome::NotStarted(reason) => {
+            tracing::error!(reason = ?reason, "final persistence not started")
+        }
+    }
+    terminal.incomplete = !quiescent
+        || !provider_joined
+        || !writer_joined
+        || !matches!(
+            outcome,
+            service::shutdown::FinalPersistOutcome::Completed(_)
+        );
+    if let Some(refresh) = &mut terminal.refresh {
+        refresh.stop();
+        let result = tokio::time::timeout_at(final_stage.deadline, refresh.joined()).await;
+        terminal.refresh_joined = result.is_ok();
+        terminal.incomplete |= !result.is_ok_and(|r| r.is_ok());
+    }
+    if let Some(telemetry) = &mut terminal.telemetry {
+        if let service::shutdown::FinalPersistOutcome::Completed(report) = outcome
+            && let Some(status) = &managed_status
+        {
+            status.persisted(report);
+            let _ = status.refresh();
+        }
+        let _ = telemetry.requests().record(
+            observability::EventComponent::Shutdown,
+            observability::EventCode::ShutdownFinalizing,
+            observability::EventOutcome::Started,
+            None,
+        );
+        let removed = match telemetry.requests().remove_final() {
+            Ok(receipt) => tokio::time::timeout_at(final_stage.deadline, receipt)
+                .await
+                .is_ok_and(|r| r.is_ok_and(|r| r.is_ok())),
+            Err(_) => false,
+        };
+        telemetry.stop();
+        let join_result = tokio::time::timeout_at(final_stage.deadline, telemetry.joined()).await;
+        terminal.telemetry_joined = join_result.is_ok();
+        terminal.incomplete |= !removed || !join_result.is_ok_and(|r| r.is_ok());
+    }
+    stages[3] = if tokio::time::Instant::now() >= final_stage.deadline {
+        service::shutdown::StageOutcome::TimedOut
+    } else if terminal.incomplete || !outcome.successful_completion() {
+        service::shutdown::StageOutcome::Failed
+    } else {
+        service::shutdown::StageOutcome::Completed
+    };
+    let mut outstanding_resources = Vec::new();
+    if !writer_joined {
+        outstanding_resources.push(service::shutdown::ResourceCategory::SnapshotWriter);
+    }
+    if !provider_joined {
+        outstanding_resources.push(service::shutdown::ResourceCategory::ProviderBlockWriter);
+    }
+    if terminal
+        .telemetry
+        .as_ref()
+        .is_some_and(|writer| !writer.idle())
+        || !terminal.telemetry_joined && terminal.telemetry.is_some()
+    {
+        outstanding_resources.push(service::shutdown::ResourceCategory::TelemetryWriter);
+    }
+    if terminal.refresh.is_some() && !terminal.refresh_joined {
+        outstanding_resources.push(service::shutdown::ResourceCategory::ReadinessRefresh);
+    }
+    if terminal.voice_cleanup.is_some() {
+        outstanding_resources.push(service::shutdown::ResourceCategory::VoiceCleanup);
+    }
+    if terminal.shard_cleanup.is_some() {
+        outstanding_resources.push(service::shutdown::ResourceCategory::ShardCleanup);
+    }
+    if terminal
+        .final_snapshot
+        .as_ref()
+        .is_some_and(|task| !task.is_finished())
+    {
+        outstanding_resources.push(service::shutdown::ResourceCategory::SnapshotPreparation);
+    }
+    let report = service::shutdown::ShutdownReport {
+        reason: started.reason,
+        stages,
+        aborted: reap
+            .joined
+            .iter()
+            .filter(|task| task.abort_requested)
+            .map(|task| task.kind)
+            .collect(),
+        reaped: reap.joined.iter().map(|task| task.kind).collect(),
+        outstanding: reap.outstanding.iter().map(|task| task.kind).collect(),
+        outstanding_resources,
+        total_duration: started.budget.elapsed(tokio::time::Instant::now()),
+        final_persist: outcome,
+    };
+    report.log();
+    let clean_shutdown = report.clean();
+    terminal.report = Some(report);
+    terminal.supervisor = Some(supervisor);
+    terminal.writer = Some(writer);
+    terminal.provider_writer = Some(provider_writer);
+    if reason == service::ShutdownReason::Signal && clean_shutdown {
+        Ok(())
+    } else {
+        Err(runtime::StartupError("service ended without a complete clean shutdown".into()).into())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -627,6 +1172,7 @@ fn map_discord_startup_error(error: serenity::Error, source: DiscordTokenSource)
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StartupAction {
     Discord,
+    ManagedDiscord,
     VoiceSelfTest(std::path::PathBuf),
     ProviderSelfTest(provider::QualificationTarget),
     ServerPlan(server::run::Options),
@@ -642,6 +1188,12 @@ fn parse_startup_arguments(
     let Some(mode) = arguments.next() else {
         return Ok(StartupAction::Discord);
     };
+    if mode == std::ffi::OsStr::new("--managed-service") {
+        if arguments.next().is_some() {
+            return Err("--managed-service must be the sole argument".into());
+        }
+        return Ok(StartupAction::ManagedDiscord);
+    }
     if mode == std::ffi::OsStr::new("--voice-self-test") {
         let output = arguments.next().ok_or_else(|| {
             "usage: abbey-bot --voice-self-test OUTPUT.wav (the output must not already exist)"
@@ -770,25 +1322,21 @@ async fn register_globally_keeping_entry_point(
 }
 
 /// `InteractionLog` row per slash command (`docs/spec/botarchitecture.md`).
-fn record_interaction(ctx: Context<'_>, succeeded: bool, error: Option<String>) {
-    let started = ctx.created_at().unix_timestamp();
-    let now = runtime::now();
-    let duration_ms = u64::try_from(i64::try_from(now).unwrap_or(0) - started)
-        .unwrap_or(0)
-        .saturating_mul(1000);
-    let entry = memory::InteractionEntry {
-        command: ctx.command().qualified_name.clone(),
-        user_id: guild::scoped_user_id("discord", &ctx.author().id.get().to_string()),
-        guild_id: guild::scoped_guild_id(
-            "discord",
-            ctx.guild_id().map(|g| g.get().to_string()).as_deref(),
-        ),
-        channel_id: guild::scoped_channel_id("discord", &ctx.channel_id().get().to_string()),
+fn record_interaction(
+    ctx: Context<'_>,
+    succeeded: bool,
+    error: Option<memory::InteractionErrorCategory>,
+) {
+    let started = u64::try_from(ctx.created_at().timestamp_millis()).unwrap_or(0);
+    let now = runtime::now_millis();
+    let duration_ms = memory::InteractionEntry::total_latency_ms(started, now);
+    let entry = memory::InteractionEntry::new(
+        &ctx.command().qualified_name,
         succeeded,
         error,
         duration_ms,
-        at: now,
-    };
+        now,
+    );
     runtime::AppState::lock(&ctx.data().state.stores)
         .memory
         .interactions
@@ -797,6 +1345,58 @@ fn record_interaction(ctx: Context<'_>, succeeded: bool, error: Option<String>) 
 
 #[cfg(test)]
 mod startup_argument_tests {
+    #[test]
+    fn managed_panic_hook_child() {
+        if std::env::var_os("ABBEY_TEST_MANAGED_PANIC").is_some() {
+            super::configure_managed_panic_hook(None);
+            panic!("MANAGED-PANIC-PRIVATE-CANARY");
+        }
+    }
+    #[test]
+    fn managed_panic_payload_cannot_reach_process_output() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "startup_argument_tests::managed_panic_hook_child",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("ABBEY_TEST_MANAGED_PANIC", "1")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        for bytes in [&output.stdout, &output.stderr] {
+            assert!(!String::from_utf8_lossy(bytes).contains("MANAGED-PANIC-PRIVATE-CANARY"));
+        }
+    }
+    #[test]
+    fn managed_service_mode_requires_exactly_one_argument() {
+        assert_eq!(
+            super::parse_startup_arguments(
+                ["--managed-service"]
+                    .into_iter()
+                    .map(std::ffi::OsString::from)
+            )
+            .unwrap(),
+            super::StartupAction::ManagedDiscord
+        );
+        for tail in [
+            "--managed-service",
+            "--provider-self-test",
+            "--voice-self-test",
+            "private-canary",
+        ] {
+            assert!(
+                super::parse_startup_arguments(
+                    ["--managed-service", tail]
+                        .into_iter()
+                        .map(std::ffi::OsString::from)
+                )
+                .is_err()
+            );
+        }
+    }
+
     use super::*;
 
     fn parse(arguments: &[&str]) -> Result<StartupAction, String> {

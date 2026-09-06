@@ -19,6 +19,20 @@ backlog; implement in order unless a phase is explicitly deferred.
 
 ---
 
+## 2026-09-06 source integration update
+
+Guided private help, the `Abbey: memory` member menu, four-fact private browser,
+scoped `/stats`, and fixed persistence/provider recovery advice are implemented
+in the completion worktree. Browser pages recheck owner, exact server or bot-DM
+context, original expiry and current server permissions before reading a fresh
+snapshot; browsing performs no memory writes. The existing command factories,
+classic admin controls and Entry Point preservation remain registered.
+
+The recorded integration run passed 1,175 Rust tests with 4 intentional ignores.
+The fresh strict gate, canonical integration, hosted CI and
+live Discord UX acceptance remain pending. The historical statuses below belong
+to their earlier surfaces and do not establish deployment of these additions.
+
 ## Already shipped
 
 | Area | Status | Where |

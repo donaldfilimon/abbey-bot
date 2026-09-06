@@ -11,6 +11,7 @@ use crate::vision::{ConfiguredVision, ImageUnderstanding, VisionError};
 
 mod blocks;
 use blocks::BlockStore;
+pub(crate) use blocks::BlockWriter;
 
 pub trait ProviderClock: Send + Sync {
     fn now_ms(&self) -> u64;
@@ -86,6 +87,7 @@ struct OperationalState {
 }
 
 pub struct ProviderRuntime {
+    operational_events: std::sync::OnceLock<crate::service::telemetry::TelemetryRequests>,
     catalog: ProviderCatalog,
     entries: BTreeMap<ProviderId, Entry>,
     order: Vec<ProviderId>,
@@ -99,6 +101,23 @@ pub struct ProviderRuntime {
 }
 
 impl ProviderRuntime {
+    pub(crate) fn attach_observability(
+        &self,
+        events: crate::service::telemetry::TelemetryRequests,
+    ) {
+        assert!(
+            self.operational_events.set(events).is_ok(),
+            "provider telemetry attached once"
+        );
+    }
+    pub(crate) fn attach_service(&self, registry: crate::service::OperationRegistry) {
+        if let Some(fm) = &self.fm {
+            fm.attach_service(registry);
+        }
+    }
+    pub(crate) fn attach_block_writer(&self) -> BlockWriter {
+        lock(&self.state).blocks.attach_writer()
+    }
     pub fn empty() -> Self {
         Self::legacy(
             None,
@@ -127,6 +146,7 @@ impl ProviderRuntime {
             entries: BTreeMap::new(),
             order: Vec::new(),
             legacy_order: true,
+            operational_events: std::sync::OnceLock::new(),
             state: Mutex::new(OperationalState {
                 router: AdaptiveRouter::new(Vec::new()),
                 blocks: BlockStore::memory(),
@@ -1021,6 +1041,26 @@ impl AttemptLease<'_> {
             Some(now.saturating_sub(self.started)),
             now,
         );
+        if let Some(events) = self.runtime.operational_events.get() {
+            use crate::observability::{EventCode, EventComponent, EventOutcome, OperationalEvent};
+            let failure = error.map_or(ProviderFailureKind::Success, LlmError::provider_failure);
+            let outcome = match failure {
+                ProviderFailureKind::Success => EventOutcome::Succeeded,
+                ProviderFailureKind::Cancelled => EventOutcome::Cancelled,
+                ProviderFailureKind::Timeout => EventOutcome::TimedOut,
+                _ => EventOutcome::Failed,
+            };
+            if let Ok(event) = OperationalEvent::new(
+                crate::runtime::now_millis(),
+                EventComponent::Provider,
+                EventCode::ProviderAttempt,
+                outcome,
+            ) {
+                let _ = events.event(event.with_provider(self.id.clone()).with_duration(
+                    std::time::Duration::from_millis(now.saturating_sub(self.started)),
+                ));
+            }
+        }
         if let Some(kind) = kind.filter(|kind| kind.is_blocked()) {
             let entry = &self.runtime.entries[&self.id];
             state.blocks.block(blocks::BlockRecord {

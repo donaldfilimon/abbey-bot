@@ -1,4 +1,4 @@
-//! Gateway trinity — re-export and wiring (≤80 lines).
+//! Gateway trinity — exports, validated connector configuration, and wiring.
 
 pub mod discord;
 pub mod shared;
@@ -23,61 +23,152 @@ pub use telegram::{TelegramOutbound, run_telegram};
 
 use std::sync::Arc;
 
-use crate::persist::{PersistReport, log_report};
 use crate::runtime::AppState;
+use crate::service::{AdmissionError, ServiceSupervisor, TaskExit, TaskName};
 
-/// Spawn the Telegram adapter if `TELEGRAM_BOT_TOKEN` is set.
-pub fn maybe_start_telegram(state: &Arc<AppState>) {
-    let Some(token) = std::env::var("TELEGRAM_BOT_TOKEN")
-        .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-    else {
-        return;
-    };
-    let state = Arc::clone(state);
-    tokio::spawn(telegram::run_telegram(state, token));
+/// Parsed before any service spawn. Debug only exposes configuration shape.
+#[derive(Debug)]
+pub struct ConnectorConfig {
+    telegram: Option<SecretString>,
+    slack: Option<SlackConfig>,
+}
+#[derive(Debug)]
+struct SlackConfig {
+    bot: SecretString,
+    app: SecretString,
+}
+impl ConnectorConfig {
+    pub fn from_env() -> Result<Self, &'static str> {
+        Self::from_get(|name| std::env::var(name))
+    }
+    fn from_get(
+        mut read: impl FnMut(&str) -> Result<String, std::env::VarError>,
+    ) -> Result<Self, &'static str> {
+        fn optional(
+            value: Result<String, std::env::VarError>,
+        ) -> Result<Option<SecretString>, &'static str> {
+            match value {
+                Ok(value) => {
+                    let value = value.trim();
+                    Ok((!value.is_empty()).then(|| SecretString::new(value)))
+                }
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    Err("connector configuration is not valid Unicode")
+                }
+            }
+        }
+        let telegram = optional(read("TELEGRAM_BOT_TOKEN"))?;
+        let bot = optional(read("SLACK_BOT_TOKEN"))?;
+        let app = optional(read("SLACK_APP_TOKEN"))?;
+        let slack = match (bot, app) {
+            (None, None) => None,
+            (Some(bot), Some(app)) => Some(SlackConfig { bot, app }),
+            _ => return Err("Slack requires both bot and app credentials"),
+        };
+        Ok(Self { telegram, slack })
+    }
+    pub fn telegram_enabled(&self) -> bool {
+        self.telegram.is_some()
+    }
+    pub fn slack_enabled(&self) -> bool {
+        self.slack.is_some()
+    }
 }
 
-/// Spawn the Slack adapter if both tokens are set.
-pub fn maybe_start_slack(state: &Arc<AppState>) {
-    let read = |name: &str| {
-        std::env::var(name)
-            .ok()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-    };
-    let (Some(bot), Some(app)) = (read("SLACK_BOT_TOKEN"), read("SLACK_APP_TOKEN")) else {
-        return;
-    };
-    let state = Arc::clone(state);
-    tokio::spawn(slack::run_slack(state, bot, app));
+/// Configuration has been validated as one unit before any named task starts.
+/// Cancellation covers network requests, response bodies and reconnect waits.
+pub fn start_connectors(
+    state: &Arc<AppState>,
+    supervisor: &mut ServiceSupervisor,
+    config: ConnectorConfig,
+) -> Result<(), AdmissionError> {
+    if let Some(token) = config.telegram {
+        let state = state.clone();
+        supervisor.spawn_service(TaskName::Telegram, move |cancel| async move {
+            connector_started(&state, crate::observability::EventComponent::Telegram);
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => TaskExit::Cancelled,
+                _ = telegram::run_telegram(state, token.expose().to_owned()) => TaskExit::Returned,
+            }
+        })?;
+    }
+    if let Some(config) = config.slack {
+        let state = state.clone();
+        supervisor.spawn_service(TaskName::Slack, move |cancel| async move {
+            connector_started(&state, crate::observability::EventComponent::Slack);
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => TaskExit::Cancelled,
+                _ = slack::run_slack(state, config.bot.expose().to_owned(), config.app.expose().to_owned()) => TaskExit::Returned,
+            }
+        })?;
+    }
+    Ok(())
 }
 
-/// Persist on the way out. Called from the ctrl-c handler in `main`.
-pub fn shutdown(state: &AppState) -> PersistReport {
-    let report = state.persist_all();
-    log_report("shutdown", &report);
-    report
+fn connector_started(state: &AppState, component: crate::observability::EventComponent) {
+    if let Some(events) = state.operational_events() {
+        let _ = events.record(
+            component,
+            crate::observability::EventCode::TaskStarted,
+            crate::observability::EventOutcome::Started,
+            None,
+        );
+    }
 }
 
 #[cfg(test)]
-mod tests {
+mod connector_configuration_tests {
     use super::*;
-    use crate::persist::{PersistComponentOutcome, PersistOverall};
-
+    fn parse(values: &[(&str, &str)]) -> Result<ConnectorConfig, &'static str> {
+        ConnectorConfig::from_get(|name| {
+            values
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+                .ok_or(std::env::VarError::NotPresent)
+        })
+    }
     #[test]
-    fn shutdown_returns_the_same_truthful_process_report() {
-        let state = AppState::in_memory();
-        let report = shutdown(&state);
-        assert_eq!(report.overall, PersistOverall::MemoryOnly);
-        assert_eq!(
-            report.canonical_state,
-            PersistComponentOutcome::NotConfigured
-        );
-        assert_eq!(
-            report.wdbx_projection,
-            PersistComponentOutcome::NotConfigured
-        );
+    fn absent_or_all_blank_is_disabled_and_complete_values_are_redacted() {
+        let empty = parse(&[]).unwrap();
+        assert!(!empty.telegram_enabled() && !empty.slack_enabled());
+        let blank = parse(&[
+            ("TELEGRAM_BOT_TOKEN", " "),
+            ("SLACK_BOT_TOKEN", ""),
+            ("SLACK_APP_TOKEN", "\t"),
+        ])
+        .unwrap();
+        assert!(!blank.telegram_enabled() && !blank.slack_enabled());
+        let full = parse(&[
+            ("TELEGRAM_BOT_TOKEN", "PRIVATE_TELEGRAM"),
+            ("SLACK_BOT_TOKEN", "PRIVATE_BOT"),
+            ("SLACK_APP_TOKEN", "PRIVATE_APP"),
+        ])
+        .unwrap();
+        assert!(full.telegram_enabled() && full.slack_enabled());
+        assert!(!format!("{full:?}").contains("PRIVATE"));
+    }
+    #[test]
+    fn either_partial_slack_direction_including_blank_is_rejected() {
+        for values in [
+            vec![("SLACK_BOT_TOKEN", "PRIVATE")],
+            vec![("SLACK_APP_TOKEN", "PRIVATE")],
+            vec![("SLACK_BOT_TOKEN", "PRIVATE"), ("SLACK_APP_TOKEN", " ")],
+            vec![("SLACK_BOT_TOKEN", ""), ("SLACK_APP_TOKEN", "PRIVATE")],
+        ] {
+            let error = parse(&values).unwrap_err();
+            assert!(!error.contains("PRIVATE"));
+        }
+    }
+    #[test]
+    fn non_unicode_is_fixed_error_instead_of_disabled() {
+        let error = ConnectorConfig::from_get(|_| {
+            Err(std::env::VarError::NotUnicode("PRIVATE_NONUNICODE".into()))
+        })
+        .unwrap_err();
+        assert_eq!(error, "connector configuration is not valid Unicode");
     }
 }

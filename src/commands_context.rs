@@ -50,8 +50,8 @@ async fn selected_image(ctx: Context<'_>, message: &Message) -> Result<Option<Ve
             private_reply(ctx, NO_SUPPORTED_IMAGE).await?;
             Ok(None)
         }
-        Selection::FetchFailed(error) => {
-            private_reply(ctx, &format!("Could not read that attachment: {error}")).await?;
+        Selection::FetchFailed(_) => {
+            private_reply(ctx, "Could not read that attachment. Check that it is available and within the image size limit, then try again.").await?;
             Ok(None)
         }
     }
@@ -75,7 +75,11 @@ pub async fn describe_image(ctx: Context<'_>, message: Message) -> Result<(), Er
     let Some(vision_client) = state.vision() else {
         private_reply(
             ctx,
-            "Image understanding is not configured (ABBEY_VISION_ENDPOINT).",
+            crate::commands_help::provider_recovery(
+                ctx,
+                crate::provider::ProviderFailureKind::Configuration,
+            )
+            .await,
         )
         .await?;
         return Ok(());
@@ -86,10 +90,10 @@ pub async fn describe_image(ctx: Context<'_>, message: Message) -> Result<(), Er
     let reply = match vision_client.describe(bytes).await {
         Ok(description) => vision::render_see("Abbey", &description),
         Err(error) => {
-            tracing::warn!(error = %error, "vision context-menu description failed");
-            error.public_message().unwrap_or(
-                "I couldn't read that image because the vision backend failed; try again or check the bot logs.",
-            ).to_string()
+            tracing::warn!(failure = ?error.provider_failure(), "vision context-menu description failed");
+            crate::commands_help::provider_recovery(ctx, error.provider_failure())
+                .await
+                .to_string()
         }
     };
     private_reply(ctx, &reply).await
@@ -102,7 +106,11 @@ pub async fn read_image_text(ctx: Context<'_>, message: Message) -> Result<(), E
     let Some(vision_client) = state.vision() else {
         private_reply(
             ctx,
-            "Image understanding is not configured (ABBEY_VISION_ENDPOINT).",
+            crate::commands_help::provider_recovery(
+                ctx,
+                crate::provider::ProviderFailureKind::Configuration,
+            )
+            .await,
         )
         .await?;
         return Ok(());
@@ -113,10 +121,10 @@ pub async fn read_image_text(ctx: Context<'_>, message: Message) -> Result<(), E
     let reply = match vision_client.extract_text(bytes).await {
         Ok(text) => vision::render_ocr(&text),
         Err(error) => {
-            tracing::warn!(error = %error, "vision context-menu OCR failed");
-            error.public_message().unwrap_or(
-                "I couldn't read that image because the vision backend failed; try again or check the bot logs.",
-            ).to_string()
+            tracing::warn!(failure = ?error.provider_failure(), "vision context-menu OCR failed");
+            crate::commands_help::provider_recovery(ctx, error.provider_failure())
+                .await
+                .to_string()
         }
     };
     private_reply(ctx, &reply).await

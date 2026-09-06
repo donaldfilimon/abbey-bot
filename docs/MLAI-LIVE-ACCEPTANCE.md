@@ -1,3 +1,15 @@
+> **Source-only update 2026-09-06 — modernization integration, no live transition:**
+> The completion worktree contains the guided menu/memory browser and managed
+> readiness, logging and lifecycle changes. The recorded integration run passed
+> **1,175 Rust tests, 4 intentional ignores**; the offline installer suite passed
+> **26 tests** using temporary fixtures. The fresh strict
+> gate, locked release and exact-head hosted CI remain pending. This pass did not
+> install or restart a service, qualify a provider, change Discord settings,
+> activate voice or observe audible output. All dated live evidence below is
+> preserved as historical evidence for its recorded artifact and configuration;
+> it does not qualify the new managed contract. Follow
+> [the live protocol](live-test-protocol.md) before promoting any layer.
+
 > **Update 2026-09-04 ~19:07 ET — community redesign saved and blueprint repair installed:** Native Discord onboarding now uses eight defaults (six chattable), three participation tasks, a rewritten Abbey welcome, and public interest mappings. Help is a default; ABI/WDBX are optional. The Community Guidelines resource now contains the existing screening standards and useful channel links; Help posting guidance was improved. A full client reload and roleless newcomer preview verified saved content and navigation. Two archives remain outside onboarding; custom Guide banner requires Level 2 (current Level 1). No channel deletion, private-channel opening, or member-role grant occurred.
 >
 > Source **`71468e1`** repairs read-only blueprint posting/thread denies and misleading role inheritance wording. `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` passed **870 tests, 0 failed, 2 intentional ignores**, warnings-denied clippy, locked release, deployment checks, and WDBX parity. Managed launchd installation succeeded; installed and tested SHA-256 both **`da7fbe97a1f96ba740b550c9ce424b0b51b60c099f45426be33db368709b5417`**. PID **24593**, one run/no exits; gateway connected at **19:06:02 ET**. Native `/server community` at **19:07 ET** returned the corrected blueprint ephemerally. Rollback: `rollback/abbey/20260904T230557Z.FnLdiU`. Existing automatic voice presence returned muted/deafened; logs confirm decoding/transmission disabled. No conversational voice activation or audible test occurred. Source remains local/unpushed; this is not hosted CI evidence. README adds a reviewed Apollo Rust coding-skill reference; runtime remains the seven compiled tools, with no SKILL.md loader added.

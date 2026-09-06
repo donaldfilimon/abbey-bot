@@ -358,3 +358,25 @@ yet: no observed settle whose reward moved because of a typed outcome.
 - [ ] Separate operator acceptance: installed identity, capture permission,
       real capture exclusion, audible music/ducking and participant echo checks.
       No live capture or launchd change is authorized by this source task.
+
+## 2026-09-06 integration follow-through
+
+Status: in progress. Source implements private guided help and the full-fact
+memory browser, scoped statistics and fixed operator advice, plus managed
+readiness/logging and retained service/voice/persistence ownership. The recorded
+integration snapshot passed 1,175 Rust tests with 4 intentional ignores and 26
+offline installer tests. The Rust results include the final review fixes; formatting and all-target
+Clippy also passed.
+
+- Pending: module decomposition, fresh full strict gate
+  and locked release for the resulting source.
+- Pending: reviewed integration into canonical main and exact-head hosted CI.
+- Pending separately: installed artifact identity and managed transaction
+  acceptance, qualified provider identity, live two-guild Discord/UI checks,
+  unanimous current participant consent and human-witnessed voice acceptance.
+- Preserve historical live evidence and recovery material. Source validation
+  does not authorize or establish a live transition.
+
+See `docs/live-test-protocol.md` for lifecycle/status semantics and
+`docs/MLAI-LIVE-ACCEPTANCE.md` for dated live observations. Root owns the detailed
+Superpowers plan progress; this entry does not mark its pending tasks complete.

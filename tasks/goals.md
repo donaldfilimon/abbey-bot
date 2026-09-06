@@ -791,3 +791,25 @@ status: done
   verify clean on the topic-less archetype plans). The three commits `dac71a7`, `f74bb7a`,
   `233b2df` are local only, not pushed.
 
+
+## 2026-09-06 full modernization integration
+
+Status: in progress. Source implements private guided help and the full-fact
+memory browser, scoped statistics and fixed operator advice, plus managed
+readiness/logging and retained service/voice/persistence ownership. The recorded
+integration snapshot passed 1,175 Rust tests with 4 intentional ignores and 26
+offline installer tests. The Rust results include the final review fixes; formatting and all-target
+Clippy also passed.
+
+- Pending: module decomposition, fresh full strict gate
+  and locked release for the resulting source.
+- Pending: reviewed integration into canonical main and exact-head hosted CI.
+- Pending separately: installed artifact identity and managed transaction
+  acceptance, qualified provider identity, live two-guild Discord/UI checks,
+  unanimous current participant consent and human-witnessed voice acceptance.
+- Preserve historical live evidence and recovery material. Source validation
+  does not authorize or establish a live transition.
+
+See `docs/live-test-protocol.md` for lifecycle/status semantics and
+`docs/MLAI-LIVE-ACCEPTANCE.md` for dated live observations. Root owns the detailed
+Superpowers plan progress; this entry does not mark its pending tasks complete.

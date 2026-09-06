@@ -6,7 +6,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use crate::{
@@ -26,6 +26,8 @@ struct State {
 }
 
 pub struct ConsentStore {
+    service: OnceLock<crate::service::OperationRegistry>,
+    standalone_writers: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     dir: Option<PathBuf>,
     state: Mutex<State>,
     writer: Mutex<()>,
@@ -33,10 +35,13 @@ pub struct ConsentStore {
 
 pub struct StoreChange {
     pub current: bool,
-    pub saved: tokio::task::JoinHandle<Result<bool, &'static str>>,
+    pub saved: tokio::sync::oneshot::Receiver<Result<bool, &'static str>>,
 }
 
 impl ConsentStore {
+    pub fn attach_service(&self, registry: crate::service::OperationRegistry) {
+        let _ = self.service.set(registry);
+    }
     #[cfg(test)]
     pub fn acknowledged_fixture(guild: u64, users: &[u64], mode: VoiceMode) -> Self {
         let store = Self::load(None, guild);
@@ -63,6 +68,8 @@ impl ConsentStore {
         });
         let available = loaded.is_some();
         Self {
+            service: OnceLock::new(),
+            standalone_writers: Mutex::new(Vec::new()),
             dir: dir.map(Path::to_path_buf),
             state: Mutex::new(State {
                 ledger: loaded.unwrap_or_else(|| Ledger::new(guild)),
@@ -128,7 +135,7 @@ impl ConsentStore {
             }
         };
         let store = Arc::clone(self);
-        let saved = tokio::task::spawn_blocking(move || match revision {
+        let work = move || match revision {
             None => Err(UNAVAILABLE),
             Some(0) => Ok(false),
             Some(_) => {
@@ -143,7 +150,36 @@ impl ConsentStore {
                     .get(&user)
                     .is_some_and(|member| member.last_event == event))
             }
-        });
+        };
+        let saved = if let Some(registry) = self.service.get() {
+            match registry.blocking_result(crate::service::OperationKind::ConsentPersistence, work)
+            {
+                Ok(receive) => receive,
+                Err(_) => {
+                    self.state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .available = false;
+                    let (send, receive) = tokio::sync::oneshot::channel();
+                    let _ = send.send(Err(UNAVAILABLE));
+                    receive
+                }
+            }
+        } else {
+            // Standalone/offline callers retain the real writer on the store;
+            // production attaches the root registry before admitting commands.
+            let (send, receive) = tokio::sync::oneshot::channel();
+            let handle = tokio::task::spawn_blocking(move || {
+                let _ = send.send(work());
+            });
+            let mut writers = self
+                .standalone_writers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            writers.retain(|handle| !handle.is_finished());
+            writers.push(handle);
+            receive
+        };
         StoreChange {
             current: revision != Some(0),
             saved,
@@ -319,6 +355,25 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn service_retains_actual_consent_writer_when_reply_receiver_disappears() {
+        let mut supervisor = crate::service::ServiceSupervisor::new();
+        supervisor.finish_startup();
+        let dir = Scratch::new();
+        let store = Arc::new(ConsentStore::load(Some(&dir.0), 10));
+        store.attach_service(supervisor.operations());
+        let blocked = store.writer.lock().unwrap();
+        let change = store.change(20, 100, Choice::Agree(VoiceMode::Local), 1);
+        drop(change.saved);
+        assert_eq!(supervisor.outstanding().len(), 1);
+        assert!(!store.agrees(20, VoiceMode::Local));
+        drop(blocked);
+        let completion = supervisor.next_completion().await;
+        assert_eq!(completion.exit, crate::service::TaskExit::Returned);
+        assert!(supervisor.outstanding().is_empty());
+        assert!(ConsentStore::load(Some(&dir.0), 10).agrees(20, VoiceMode::Local));
     }
 
     #[tokio::test]

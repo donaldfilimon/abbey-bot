@@ -22,6 +22,7 @@ use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
 mod adapters;
 mod runtime;
+pub(crate) use runtime::BlockWriter;
 pub use runtime::{ConversationEffects, ProviderConversation, ProviderRuntime};
 mod catalog;
 mod circuit;
@@ -275,6 +276,7 @@ impl ProviderCapabilities {
 }
 
 pub struct FoundationModels {
+    service: std::sync::OnceLock<crate::service::OperationRegistry>,
     pub config: FmConfig,
     pub server_capabilities: Option<ProviderCapabilities>,
     pub cli_capabilities: ProviderCapabilities,
@@ -296,6 +298,7 @@ impl FoundationModels {
         });
         let cli = ProviderCapabilities::text_with_tools();
         Self {
+            service: std::sync::OnceLock::new(),
             config,
             server_capabilities: server,
             cli_capabilities: cli,
@@ -313,6 +316,7 @@ impl FoundationModels {
     ) -> Self {
         let qualified_cli_sha256 = qualification::file_sha256(&config.cli).ok();
         Self {
+            service: std::sync::OnceLock::new(),
             config,
             server_capabilities: qualified.server.map(|caps| ProviderCapabilities {
                 tools: false,
@@ -364,6 +368,51 @@ impl FoundationModels {
         Ok(())
     }
 
+    pub(crate) fn attach_service(&self, registry: crate::service::OperationRegistry) {
+        assert!(
+            self.service.set(registry).is_ok(),
+            "FM service attached once"
+        );
+    }
+
+    async fn run_owned<T: Send + 'static>(
+        &self,
+        invocation: CliInvocation,
+        file: T,
+    ) -> Result<String, LlmError> {
+        let timeout = self.config.timeout_secs;
+        if let Some(registry) = self.service.get() {
+            let expected = self.qualified_cli_sha256.clone();
+            let qualified = self.qualified;
+            let cancel = registry.cancellation();
+            let result = registry
+                .spawn_result(crate::service::OperationKind::ProviderProcess, async move {
+                    let _private_file_owner = file;
+                    if qualified
+                        && (expected.is_none()
+                            || qualification::file_sha256(&invocation.program).ok() != expected)
+                    {
+                        return Err(LlmError::classified(
+                            "qualified FM executable identity changed",
+                            ProviderFailureKind::ExecutableIdentity,
+                        ));
+                    }
+                    invocation.run_with_cancel(timeout, Some(cancel)).await
+                })
+                .map_err(|_| {
+                    LlmError::classified("service is shutting down", ProviderFailureKind::Cancelled)
+                })?;
+            result.await.map_err(|_| {
+                LlmError::classified(
+                    "provider process ownership interrupted",
+                    ProviderFailureKind::Cancelled,
+                )
+            })?
+        } else {
+            invocation.run(timeout).await
+        }
+    }
+
     pub async fn cli_turn(
         &self,
         system_prompt: &str,
@@ -378,7 +427,7 @@ impl FoundationModels {
         })?;
         let invocation = CliInvocation::new(&self.config, &transcript, file.path());
         self.verify_cli_identity()?;
-        let output = invocation.run(self.config.timeout_secs).await?;
+        let output = self.run_owned(invocation, file).await?;
         parse_cli_output(&output, tools, call_id)
     }
 
@@ -398,7 +447,7 @@ impl FoundationModels {
         })?;
         let invocation = CliInvocation::for_image(&self.config, task, file.path());
         self.verify_cli_identity()?;
-        let output = invocation.run(self.config.timeout_secs).await?;
+        let output = self.run_owned(invocation, file).await?;
         let output = output.trim();
         if output.is_empty()
             && !matches!(
@@ -467,6 +516,13 @@ impl CliInvocation {
     }
 
     async fn run(self, timeout_secs: u64) -> Result<String, LlmError> {
+        self.run_with_cancel(timeout_secs, None).await
+    }
+    async fn run_with_cancel(
+        self,
+        timeout_secs: u64,
+        cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<String, LlmError> {
         let mut command = tokio::process::Command::new(&self.program);
         command
             .args(&self.args)
@@ -517,13 +573,33 @@ impl CliInvocation {
             String::from_utf8(stdout)
                 .map_err(|_| "the FM CLI returned stdout that was not UTF-8".to_string())
         };
-        match tokio::time::timeout(Duration::from_secs(timeout_secs), operation).await {
-            Ok(Ok(output)) => Ok(output),
-            Ok(Err(error)) => Err(LlmError::backend(error)),
-            Err(_) => Err(LlmError::classified(
-                "the FM CLI timed out",
-                ProviderFailureKind::Timeout,
-            )),
+        let completed = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(timeout_secs), operation) => Some(result),
+            () = async { match cancel { Some(cancel) => cancel.cancelled().await, None => std::future::pending().await } } => None,
+        };
+        match completed {
+            Some(Ok(Ok(output))) => Ok(output),
+            Some(Ok(Err(error))) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(LlmError::backend(error))
+            }
+            Some(Err(_)) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(LlmError::classified(
+                    "the FM CLI timed out",
+                    ProviderFailureKind::Timeout,
+                ))
+            }
+            None => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(LlmError::classified(
+                    "the FM CLI cancelled",
+                    ProviderFailureKind::Cancelled,
+                ))
+            }
         }
     }
 }

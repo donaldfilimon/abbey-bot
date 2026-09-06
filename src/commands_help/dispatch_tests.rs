@@ -927,6 +927,36 @@ async fn registered_memory_menu_shares_card_and_a1_denial_without_mutation() {
     let content = assert_private_no_mentions_reply(&requests);
     assert!(content.contains("likes Rust"));
     assert!(content.contains("standing 0.50"));
+    let menu_body = content.to_string();
+    let reply = requests
+        .iter()
+        .find(|request| request.route.contains("/webhooks/"))
+        .unwrap();
+    assert_eq!(
+        reply.body["components"][0]["components"][0]["label"],
+        "Browse facts"
+    );
+    let recall = command_by_key(&commands, CommandKey::Recall);
+    let invocation = Invocation::new(recall, true, None);
+    let options = poise::FrameworkOptions::default();
+    let context = invocation.context(
+        &fixture,
+        recall,
+        &options,
+        &data,
+        poise::CommandInteractionType::Command,
+    );
+    assert!(recall.slash_action.unwrap()(context).await.is_ok());
+    let slash_requests = fixture.take_requests();
+    assert_eq!(assert_private_no_mentions_reply(&slash_requests), menu_body);
+    let slash = slash_requests
+        .iter()
+        .find(|request| request.route.contains("/webhooks/"))
+        .unwrap();
+    assert_eq!(
+        slash.body["components"][0]["components"][0]["label"],
+        "Browse facts"
+    );
     assert_eq!(*runtime::AppState::lock(&data.state.stores), before);
     assert_eq!(
         runtime::AppState::lock(&data.state.rewards).pending_len(),
@@ -1794,4 +1824,317 @@ async fn actual_member_voice_status_hides_channel_and_runs_no_provider_probe() {
                 || request.route.contains("chat/completions"))
     );
     assert_eq!(providers.calls.load(Ordering::SeqCst), 0);
+}
+
+fn memory_component(
+    fixture: &DiscordFixture,
+    session: crate::memory_browser::MemorySession,
+) -> ComponentInteraction {
+    let helper = help_center::HelpSession::new(ACTOR, runtime::now(), HelpSection::Memory).unwrap();
+    let in_guild = matches!(session.scope, crate::memory_browser::MemoryScope::Guild(_));
+    let mut component = help_component(fixture, helper, false, in_guild);
+    component.context = Some(if in_guild {
+        serenity::all::InteractionContext::Guild
+    } else {
+        serenity::all::InteractionContext::BotDm
+    });
+    component.data.custom_id = session.custom_id();
+    component
+}
+
+#[tokio::test]
+async fn memory_browser_dispatch_refreshes_full_facts_permissions_and_preserves_state() {
+    use crate::memory_browser::{MemoryScope, MemorySession};
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    fixture.permissions.store(
+        (Permissions::VIEW_CHANNEL | Permissions::MANAGE_MESSAGES).bits(),
+        Ordering::SeqCst,
+    );
+    let guild = format!("discord:{GUILD}");
+    let subject = format!("discord:{OTHER}");
+    let facts: Vec<_> = (0..7)
+        .map(|n| format!("fact {n} {}", "界".repeat(290)))
+        .collect();
+    for fact in &facts {
+        data.state
+            .memory_service()
+            .remember(&guild, &subject, fact, 1)
+            .unwrap();
+    }
+    let session =
+        MemorySession::new(ACTOR, OTHER, MemoryScope::Guild(GUILD), runtime::now()).unwrap();
+    let stores = runtime::AppState::lock(&data.state.stores).clone();
+    let rewards = runtime::AppState::lock(&data.state.rewards).clone();
+    let engine = format!("{:?}", *runtime::AppState::lock(&data.state.engine));
+    let voice = format!("{:?}", data.voice.as_ref().unwrap().snapshot().await);
+    for index in [0, 1] {
+        let component = memory_component(&fixture, session.navigate(index).unwrap());
+        assert!(dispatch_component(&fixture.context, &component, &data, false).await);
+        let requests = fixture.take_requests();
+        let body = assert_private_help_response(&requests);
+        for fact in &facts[usize::from(index) * 4..(usize::from(index) * 4 + 4).min(facts.len())] {
+            assert!(body["content"].as_str().unwrap().contains(fact));
+        }
+        assert!(requests.iter().any(|request| request.method == "GET"));
+        let encoded = body["components"][0]["components"][0]["custom_id"]
+            .as_str()
+            .unwrap();
+        let next = crate::memory_browser::validate(
+            encoded,
+            ACTOR,
+            &MemoryScope::Guild(GUILD),
+            runtime::now(),
+        )
+        .unwrap();
+        assert_eq!(next.expiry, session.expiry);
+    }
+    fixture
+        .permissions
+        .store(Permissions::VIEW_CHANNEL.bits(), Ordering::SeqCst);
+    let component = memory_component(&fixture, session.navigate(1).unwrap());
+    dispatch_component(&fixture.context, &component, &data, false).await;
+    let requests = fixture.take_requests();
+    let body = assert_private_help_response(&requests);
+    assert!(
+        body["content"]
+            .as_str()
+            .unwrap()
+            .contains("only while Discord grants")
+    );
+    assert!(!body["content"].as_str().unwrap().contains(&facts[4]));
+    assert_eq!(*runtime::AppState::lock(&data.state.stores), stores);
+    assert_eq!(*runtime::AppState::lock(&data.state.rewards), rewards);
+    assert_eq!(
+        format!("{:?}", *runtime::AppState::lock(&data.state.engine)),
+        engine
+    );
+    assert_eq!(
+        format!("{:?}", data.voice.as_ref().unwrap().snapshot().await),
+        voice
+    );
+}
+
+#[tokio::test]
+async fn memory_browser_envelope_and_bot_dm_scope_fail_before_permission_lookup() {
+    use crate::memory_browser::{MemoryScope, MemorySession};
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    let session = MemorySession::new(ACTOR, ACTOR, MemoryScope::BotDm, runtime::now()).unwrap();
+    data.state
+        .memory_service()
+        .remember(
+            &format!("discord:dm:{ACTOR}"),
+            &format!("discord:{ACTOR}"),
+            "private DM fact",
+            1,
+        )
+        .unwrap();
+    let good = memory_component(&fixture, session);
+    dispatch_component(&fixture.context, &good, &data, false).await;
+    let requests = fixture.take_requests();
+    assert!(
+        assert_private_help_response(&requests)["content"]
+            .as_str()
+            .unwrap()
+            .contains("private DM fact")
+    );
+    assert!(!requests.iter().any(|request| request.method == "GET"));
+    for failure in 0..5 {
+        let mut component = memory_component(&fixture, session);
+        match failure {
+            0 => component.context = None,
+            1 => component.user.id = UserId::new(OTHER),
+            2 => component.message.author = user(OTHER),
+            3 => component.data.custom_id = "abbey:mem:v9:invalid".into(),
+            _ => {
+                component.data.custom_id = MemorySession {
+                    expiry: runtime::now(),
+                    ..session
+                }
+                .custom_id()
+            }
+        }
+        dispatch_component(&fixture.context, &component, &data, false).await;
+        let requests = fixture.take_requests();
+        let body = assert_private_help_response(&requests);
+        assert!(
+            !body["content"]
+                .as_str()
+                .unwrap()
+                .contains("private DM fact")
+        );
+        assert!(!requests.iter().any(|request| request.method == "GET"));
+    }
+}
+
+#[tokio::test]
+async fn memory_browser_acknowledgement_holds_all_permission_requests() {
+    use crate::memory_browser::{MemoryScope, MemorySession};
+    let fixture = DiscordFixture::new().await;
+    fixture.hold_acknowledgement.store(true, Ordering::SeqCst);
+    let data = configured_data();
+    let session =
+        MemorySession::new(ACTOR, ACTOR, MemoryScope::Guild(GUILD), runtime::now()).unwrap();
+    let component = memory_component(&fixture, session);
+    let action = dispatch_component(&fixture.context, &component, &data, false);
+    tokio::pin!(action);
+    tokio::select! {
+        permit = fixture.acknowledgement_entered.acquire() => permit.unwrap().forget(),
+        _ = &mut action => panic!("browser completed before held acknowledgement"),
+    }
+    assert!(
+        !fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.method == "GET")
+    );
+    fixture.acknowledgement_release.add_permits(1);
+    assert!(action.await);
+    let requests = fixture.take_requests();
+    assert_private_help_response(&requests);
+    assert!(requests.iter().any(|request| request.method == "GET"));
+}
+
+#[tokio::test]
+async fn memory_browser_recomputes_pages_after_facts_are_removed_elsewhere() {
+    use crate::memory_browser::{MemoryScope, MemorySession};
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    let guild = format!("discord:{GUILD}");
+    let actor = format!("discord:{ACTOR}");
+    for index in 0..5 {
+        data.state
+            .memory_service()
+            .remember(&guild, &actor, &format!("fact {index}"), 1)
+            .unwrap();
+    }
+    let session = MemorySession::new(ACTOR, ACTOR, MemoryScope::Guild(GUILD), runtime::now())
+        .unwrap()
+        .navigate(1)
+        .unwrap();
+    let component = memory_component(&fixture, session);
+    dispatch_component(&fixture.context, &component, &data, false).await;
+    let requests = fixture.take_requests();
+    assert!(
+        assert_private_help_response(&requests)["content"]
+            .as_str()
+            .unwrap()
+            .contains("Page 2 of 2")
+    );
+    for index in 1..5 {
+        assert!(
+            data.state
+                .memory_service()
+                .forget(&guild, &actor, &format!("fact {index}"))
+        );
+    }
+    dispatch_component(&fixture.context, &component, &data, false).await;
+    let requests = fixture.take_requests();
+    let body = assert_private_help_response(&requests);
+    assert!(body["content"].as_str().unwrap().contains("Page 1 of 1"));
+    assert!(body["content"].as_str().unwrap().contains("fact 0"));
+    assert_eq!(body["components"], json!([]));
+}
+
+async fn stats_output(fixture: &DiscordFixture, data: &Data, in_guild: bool) -> String {
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::Stats);
+    let invocation = Invocation::new(command, in_guild, None);
+    let options = poise::FrameworkOptions::default();
+    let context = invocation.context(
+        fixture,
+        command,
+        &options,
+        data,
+        poise::CommandInteractionType::Command,
+    );
+    assert!(command.slash_action.unwrap()(context).await.is_ok());
+    let requests = fixture.take_requests();
+    assert_private_no_mentions_reply(&requests).to_string()
+}
+
+#[tokio::test]
+async fn registered_stats_ignores_other_guilds_and_dms_but_keeps_own_brain_and_budget() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    let guild_before = stats_output(&fixture, &data, true).await;
+    let dm_before = stats_output(&fixture, &data, false).await;
+    assert!(guild_before.starts_with("This server"));
+    assert!(dm_before.starts_with("Your DM"));
+    {
+        let mut stores = runtime::AppState::lock(&data.state.stores);
+        stores.memory.messages_seen += 900;
+        stores
+            .memory
+            .interactions
+            .record(crate::memory::InteractionEntry::new(
+                "stats", true, None, 1, 1000,
+            ));
+        for scope in ["discord:other-guild", "discord:dm:790", "discord:dm:791"] {
+            stores
+                .memory
+                .record_message(scope, "unrelated-user", "private unrelated activity", 1);
+            runtime::AppState::lock(&data.state.rewards).register_reply(
+                vec![0.5],
+                1,
+                scope,
+                scope,
+                1,
+            );
+            runtime::AppState::lock(&data.state.brains)
+                .brain(scope, &*stores, runtime::now())
+                .set_epsilon(0.8);
+            runtime::AppState::lock(&data.state.budget).try_take(scope, 6, runtime::now());
+        }
+    }
+    assert_eq!(stats_output(&fixture, &data, true).await, guild_before);
+    assert_eq!(stats_output(&fixture, &data, false).await, dm_before);
+    {
+        let stores = runtime::AppState::lock(&data.state.stores);
+        runtime::AppState::lock(&data.state.brains)
+            .brain(&format!("discord:{GUILD}"), &*stores, runtime::now())
+            .set_epsilon(0.123);
+        assert!(runtime::AppState::lock(&data.state.budget).try_take(
+            &format!("discord:{GUILD}"),
+            6,
+            runtime::now()
+        ));
+    }
+    let changed = stats_output(&fixture, &data, true).await;
+    assert_ne!(changed, guild_before);
+    assert!(changed.contains("0.123"));
+    assert!(changed.contains("5.0 of 6/h"));
+    assert_eq!(stats_output(&fixture, &data, false).await, dm_before);
+}
+
+#[tokio::test]
+async fn registered_image_failure_uses_typed_private_member_guidance() {
+    let fixture = DiscordFixture::new().await;
+    let provider = ProviderFixture::new().await;
+    let data = configured_data_at(Some(provider.address));
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::DescribeImage);
+    let mut message = Message::default();
+    message.attachments.push(serde_json::from_value(json!({
+        "id":"1", "filename":"image.png", "size":100,
+        "url":format!("http://{}/fixture.png",fixture.address), "proxy_url":"https://private.invalid/canary"
+    })).unwrap());
+    invoke_message_menu(&fixture, command, &data, message, false).await;
+    let requests = fixture.take_requests();
+    let content = assert_private_no_mentions_reply(&requests);
+    assert!(content.contains("Ask a server manager"));
+    for forbidden in [
+        "logs",
+        "credentials",
+        "127.0.0.1",
+        "fixture",
+        "private.invalid",
+        "ABBEY_",
+    ] {
+        assert!(!content.contains(forbidden));
+    }
+    assert!(provider.calls.load(Ordering::SeqCst) > 0);
 }

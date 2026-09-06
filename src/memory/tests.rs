@@ -150,29 +150,20 @@ fn render_recent_is_oldest_to_newest_and_limited() {
 }
 
 fn entry(command: &str, ok: bool) -> InteractionEntry {
-    InteractionEntry {
-        command: command.to_string(),
-        user_id: "u".into(),
-        guild_id: "g".into(),
-        channel_id: "c".into(),
-        succeeded: ok,
-        error: (!ok).then(|| "boom".to_string()),
-        duration_ms: 5,
-        at: 1,
-    }
+    InteractionEntry::new(command, ok, None, 5, 1000)
 }
 
 #[test]
 fn stats_count_totals_outcomes_and_per_command() {
     let mut log = InteractionLog::default();
-    log.record(entry("ask", true));
-    log.record(entry("ask", false));
+    log.record(entry("persona ask", true));
+    log.record(entry("persona ask", false));
     log.record(entry("whois", true));
     let stats = log.stats();
     assert_eq!(stats.total, 3);
     assert_eq!(stats.succeeded, 2);
     assert_eq!(stats.failed, 1);
-    assert_eq!(stats.per_command["ask"], 2);
+    assert_eq!(stats.per_command["persona ask"], 2);
     assert_eq!(stats.per_command["whois"], 1);
 }
 
@@ -180,23 +171,23 @@ fn stats_count_totals_outcomes_and_per_command() {
 fn interaction_log_caps_at_one_thousand() {
     let mut log = InteractionLog::default();
     for i in 0..(INTERACTION_CAP + 5) {
-        let mut e = entry("ask", true);
-        e.at = i as u64;
+        let mut e = entry("persona ask", true);
+        e.at_unix_ms = i as u64;
         log.record(e);
     }
     assert_eq!(log.entries.len(), INTERACTION_CAP);
-    assert_eq!(log.entries.front().expect("some").at, 5);
+    assert_eq!(log.entries.front().expect("some").at_unix_ms, 5);
 }
 
 #[test]
 fn render_stats_snapshot() {
     let mut log = InteractionLog::default();
     log.record(entry("whois", true));
-    log.record(entry("ask", false));
-    log.record(entry("ask", true));
+    log.record(entry("persona ask", false));
+    log.record(entry("persona ask", true));
     assert_eq!(
         render_stats(&log.stats()),
-        "**Interactions:** 3 total — 2 succeeded, 1 failed\n**By command:**\n• /ask: 2\n• /whois: 1"
+        "**Interactions:** 3 total — 2 succeeded, 1 failed\n**By command:**\n• /persona ask: 2\n• /whois: 1"
     );
     assert_eq!(
         render_stats(&InteractionStats::default()),
@@ -370,7 +361,7 @@ fn bank_round_trips_through_json() {
     let mut bank = MemoryBank::default();
     bank.remember("g", "u", "fact", 1);
     bank.record_message("c", "a", "hi", 2);
-    bank.interactions.record(entry("ask", true));
+    bank.interactions.record(entry("persona ask", true));
     let json = serde_json::to_string(&bank).expect("serializes");
     let back: MemoryBank = serde_json::from_str(&json).expect("deserializes");
     assert_eq!(back, bank);
@@ -438,4 +429,48 @@ fn pending_supersessions_are_capped_without_touching_facts() {
     );
     assert_eq!(bank.pending_supersessions("g", "u")[0].old_fact, "old 5");
     assert_eq!(bank.facts("g", "u"), ["a durable fact"]);
+}
+
+#[test]
+fn legacy_interaction_rows_discard_every_private_field() {
+    let raw = r#"{"command":"persona ask","user_id":"PRIVATE_USER","guild_id":"PRIVATE_GUILD","channel_id":"PRIVATE_CHANNEL","error":"PRIVATE_ERROR","succeeded":false,"duration_ms":17,"at":42}"#;
+    let entry: InteractionEntry = serde_json::from_str(raw).unwrap();
+    assert_eq!(entry.at_unix_ms, 42_000);
+    assert_eq!(entry.duration_ms, 17);
+    assert_eq!(
+        entry.error_category,
+        Some(InteractionErrorCategory::Internal)
+    );
+    let encoded = serde_json::to_string(&entry).unwrap();
+    assert!(!encoded.contains("PRIVATE"));
+    assert!(!format!("{entry:?}").contains("PRIVATE"));
+    assert_eq!(
+        serde_json::from_str::<InteractionEntry>(&encoded).unwrap(),
+        entry
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&encoded)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        5
+    );
+}
+
+#[test]
+fn interaction_unknown_commands_and_timing_are_bounded() {
+    let entry = InteractionEntry::new(
+        "PRIVATE_COMMAND",
+        true,
+        Some(InteractionErrorCategory::Panic),
+        u64::MAX,
+        u64::MAX,
+    );
+    assert_eq!(entry.command.0, "unknown");
+    assert_eq!(entry.error_category, None);
+    assert_eq!(entry.duration_ms, i64::MAX as u64);
+    assert_eq!(entry.at_unix_ms, i64::MAX as u64);
+    assert_eq!(InteractionEntry::total_latency_ms(10_001, 10_018), 17);
+    assert_eq!(InteractionEntry::total_latency_ms(10_018, 10_001), 0);
 }

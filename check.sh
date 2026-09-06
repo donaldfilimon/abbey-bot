@@ -28,6 +28,7 @@ python3 deploy/test-configure-mlx-primary.py
 python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
 python3 deploy/test-service-protocol.py
+python3 deploy/test-service-environment.py
 python3 deploy/test-service-installation.py
 python3 deploy/test-service-readiness.py
 python3 deploy/test-service-status.py
@@ -36,6 +37,8 @@ python3 deploy/test-install-audio-tap-launchd.py
 python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
 python3 deploy/test-patch-mlx-vlm-tool-encoding.py
 python3 scripts/check-privacy.py
+python3 scripts/test-check-rust-module-size.py
+python3 scripts/check-rust-module-size.py
 python3 scripts/test-check-pages-liquid.py
 python3 scripts/check-pages-liquid.py
 python3 scripts/test-check-abbey-contracts.py

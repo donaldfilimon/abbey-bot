@@ -172,6 +172,58 @@ do not mix old and new components.
 Installation proves artifact identity only. It does not inherit the foreground
 Discord or voice result.
 
+## Managed lifecycle and status observation
+
+This section describes the new managed source contract, not a record of live
+acceptance. As of the 2026-09-06 integration snapshot, 1,175 Rust tests passed
+with 4 intentional ignores and 26 offline installer tests passed. The final
+post-review strict gate, locked release and exact-head hosted CI are pending;
+stages 0–6 still require their own evidence.
+
+The launchd installer validates private environment syntax before stopping the
+prior service. It installs direct `--managed-service` arguments and accepts a
+replacement only when its installed binary hash, current launchd PID and fresh
+run identity match a valid readiness document. Discord and the scheduler must
+be ready for five continuous seconds of observations within one 30-second budget
+that includes bootstrap. Restoring a prior binary requires a fresh transaction
+and the same readiness checks. Failed child cleanup or unconfirmed rollback
+retains the install lock and recovery material; do not interpret a retained lock
+as permission to bypass those checks. Uninstall removes only the managed plist
+and same-identity readiness/bootstrap records, preserving binary, data,
+environment, recovery material and logs.
+
+`python3 -I deploy/service-status.py` performs one read-only current observation.
+Exit 0 means ready, 1 means unavailable/not ready, and 2 means usage or unsupported
+platform. It neither writes nor probes providers, and displays no PID, nonce,
+hash or raw log content. A successful observation does not establish the
+installer's five-second stability interval or any provider/voice acceptance.
+
+The managed readiness owner refreshes starting, ready and draining state at
+least every ten seconds; observed Discord reconnects publish non-ready state
+without waiting for that interval. Ready requires the committed canonical
+privacy rewrite, a running scheduler, Discord Ready, completed registration and
+applied presence. The root-retained refresh owner also runs during slow credential, state and
+framework initialization. Its paused-time regression passed in the integrated suite.
+
+On shutdown the root closes work and media admission, then budgets voice
+teardown, Discord shard shutdown, task cancellation/reaping and final persistence
+as four stages of at most five seconds each within one 20-second deadline.
+Dropping a waiter is not proof that a child, blocking write or actor stopped.
+Unfinished work stays owned through the terminal runtime boundary; incomplete
+cleanup does not produce a clean-exit claim. Final persistence runs at most once
+after quiescence, and canonical/projection outcomes remain distinct.
+
+Managed operational JSONL uses a private directory, owner-only files, bounded
+lines and an 8 MiB rotation limit with at most five archives. It contains closed
+operational categories rather than raw diagnostics, content or identities.
+Queue acceptance is not a durability receipt. The implemented shutdown producer
+uses `ShutdownFinalizing`/`Started` before final cleanup; it must not describe
+that row as completed shutdown. The root's final shutdown report can attest
+completion only after observed joins and component outcomes. A log row cannot
+prove its own writer's future retirement. These changes passed the integrated
+Rust suite and Clippy; the fresh strict delivery gate remains pending. Historical
+legacy logs are not rewritten.
+
 ## 6 — complete managed-service acceptance
 
 Repeat the full protocol through the managed service, not an abbreviated smoke:

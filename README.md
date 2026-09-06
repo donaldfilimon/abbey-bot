@@ -20,7 +20,24 @@ a home-grown Swift Discord library, not either bot. The Rust and Swift products
 share no application code; cross-language agreement is established only through
 the independently vendored Abbey contract corpus and each consumer's own gate.
 
-## Current status (2026-09-03)
+## Current source progress (2026-09-06)
+
+The completion worktree implements guided private help, the member memory menu
+and full-fact browser, scoped statistics, fixed operator recovery advice, and
+managed service readiness, logging and task ownership. The latest recorded Rust
+run passed **1,175 tests with 4 intentional ignores**; the offline launchd
+installer suite passed **26 tests**. These are source-test results from the
+integration work, including the final review fixes. Formatting and all-target
+Clippy also passed. The final strict gate,
+locked release, canonical integration and exact-head hosted CI remain pending.
+No installation, provider qualification, Discord interaction or audible voice
+acceptance was performed by this source-validation pass.
+
+The following older table is a historical baseline. Its source result does not
+qualify the current integration, and newer live observations remain dated in
+[the live acceptance record](docs/MLAI-LIVE-ACCEPTANCE.md).
+
+## Historical baseline (2026-09-03)
 
 | Layer | Status | Evidence |
 |-------|--------|----------|
@@ -72,7 +89,7 @@ opening; run `/help` again for a fresh session.
 | `/ocr` | guild, bot DM | public | Read the text in an image. |
 | `Abbey: describe image` | guild, bot DM | private | Describe the first supported attachment privately. |
 | `Abbey: read image text` | guild, bot DM | private | Read text from the first supported attachment privately. |
-| `/stats` | guild, bot DM | private | Read command usage and learning statistics. |
+| `/stats` | guild, bot DM | private | Read this conversation’s learning and reply budget. |
 | `/admin show` | guild | private | Read this server's settings. |
 | `/admin persona` | guild | private | Set the server's default persona. |
 | `/admin learning` | guild | private | Control learning for this server. |
@@ -178,7 +195,7 @@ evidence, not proof about the currently installed service.
 **DMs work.** A DM to Abbey is always answered (through the backend), keeps a
 per-conversation transcript, and is its own one-person namespace
 (`discord:dm:<user>`) for facts, recall, and reputation — two people DMing her
-never share memory. `/persona`, `/remember`, `/forget`, `/recall`,
+never share memory. `/recall` and the **Abbey: memory** member menu add **Browse facts** when facts exist. The private browser shows four complete facts per page, refreshes facts and server permissions each time you navigate, and expires after 15 minutes. Browsing is read-only; DM pages remain scoped to your own conversation. `/stats` shows only this server’s or your own DM’s learning and reply budget. Persistence results keep their exact component outcomes and add recovery advice; provider failures give retry or manager guidance without exposing raw diagnostics. `/persona`, `/remember`, `/forget`, `/recall`,
 `/reputation`, `/summarize`, `/see`, `/ocr`, and `/stats` all work in a DM;
 `/admin` and the guild-data commands stay guild-only.
 
@@ -593,7 +610,10 @@ the policy's choice is neither acted on nor learned). `/admin learning off`
 pins a server to mentions and commands, and `/admin brain` shows ε / steps /
 buffer, the last decision's Q-values, the action histogram, recent reward mean,
 and budget left — so the loop is inspectable rather than a black box. Learning runs every 30 s, reputation flushes every
-60 s, everything persists every 5 min and on shutdown.
+60 s, and scheduled persistence runs every 5 min. One owned scheduler skips
+missed ticks instead of replaying a backlog. Shutdown attempts one final snapshot
+only after work that can change state has quiesced; a failed or incomplete
+shutdown does not claim that snapshot was saved.
 
 **Nothing Abbey says is a template.** Replies, welcomes, and summaries come from
 the configured backend or not at all; with none configured she says so. Persona
@@ -740,7 +760,7 @@ restart:
   and loads `deploy/com.donaldfilimon.abbey-bot.plist` as a user agent (restart
   on crash with a 30 s throttle, not after a clean exit). Secrets come from
   `~/.config/abbey-bot/env` (chmod 600), never from the plist.
-  `--uninstall` reverses it. The env file must carry everything the bot
+  The env file must carry everything the bot
   should know — at minimum `DISCORD_TOKEN`, and for a useful bot also
   `ABBEY_BOT_LLM_ENDPOINT`, `ABBEY_BOT_LLM_MODEL`, and (if you want images)
   `ABBEY_VISION_PROVIDER=remote` plus
@@ -755,6 +775,33 @@ restart:
   stage and validate the replacement before a SIGTERM-driven graceful stop,
   then publish by same-directory renames with rollback. The service umask and
   installer keep the env, learned state, WDBX segment, and logs owner-only.
+  The managed installer validates direct `--managed-service` arguments, the
+  installed SHA, current launchd PID, a fresh new run nonce, ready Discord and
+  scheduler states, and five seconds of valid observations within the same
+  30-second bootstrap/readiness budget. Rollback uses the same checks. Incomplete
+  child cleanup or unconfirmed rollback retains recovery material and the install
+  lock. `--uninstall` removes only the plist and matching readiness/bootstrap
+  records, preserving the binary, data, env, recovery material and logs. The
+  August 20 acceptance above is historical; acceptance of this managed-service
+  contract remains pending.
+
+  `python3 -I deploy/service-status.py` makes a read-only current observation:
+  exit 0 means ready, 1 means unavailable or not ready, and 2 means usage or an
+  unsupported platform. It displays no identities or logs, starts no provider
+  probes, and writes nothing. It does not claim the installer's five-second
+  stability acceptance.
+
+  Managed mode writes only typed operational events to
+  `~/Library/Logs/abbey-bot/abbey-bot.events.jsonl`, rotating at 8 MiB with at most
+  five archives. Directories are private and files are owner-only. Event fields
+  exclude message and media content, identities, credentials, raw errors, paths
+  and endpoints; existing legacy logs are preserved. One bounded queue feeds an
+  owned writer, and an output failure makes managed readiness fail closed.
+  Readiness requires the canonical privacy rewrite, the running scheduler,
+  Discord Ready, completed command registration and applied presence. Optional
+  connector degradation is reported separately. See the
+  [managed lifecycle protocol](docs/live-test-protocol.md#managed-lifecycle-and-status-observation)
+  for shutdown and observation limits.
 - **WDBX episode gateway (this Mac)** — `deploy/install-wdbx-gateway-launchd.sh
   <abi target/release>` copies `abi`, `abi-wdbx-gateway`, and their two
   `libabi_*.dylib` shims into `~/.local/libexec/abbey-bot`, loads

@@ -582,7 +582,7 @@ async fn start_voice(
                 playback: Arc::clone(&playback),
                 backend,
             };
-            tokio::spawn(crate::voice_local::run(session))
+            runtime.spawn_actor(cancel_tx.clone(), crate::voice_local::run(session))
         }
         (VoiceBackendConfig::OpenAi(config), None) => {
             let (ready_tx, ready_rx) = oneshot::channel();
@@ -600,7 +600,7 @@ async fn start_voice(
                 playback: Arc::clone(&playback),
                 ready: Some(ready_tx),
             };
-            tokio::spawn(crate::voice_openai::run(session))
+            runtime.spawn_actor(cancel_tx.clone(), crate::voice_openai::run(session))
         }
         _ => {
             let _ = manager.remove(guild_id).await;
@@ -610,6 +610,18 @@ async fn start_voice(
             drop(transition);
             ctx.say("The selected voice backend was unavailable; no audio was captured.")
                 .await?;
+            return Ok(());
+        }
+    };
+    let task = match task {
+        Ok(task) => task,
+        Err(message) => {
+            let _ = manager.remove(guild_id).await;
+            runtime
+                .fail_safe("service stopped during voice startup")
+                .await;
+            drop(transition);
+            ctx.say(message).await?;
             return Ok(());
         }
     };

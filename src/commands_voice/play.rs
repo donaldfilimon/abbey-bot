@@ -61,12 +61,23 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
     Ok(runtime)
 }
 
-async fn execute(script: Script) -> Result<(), Error> {
+async fn execute(runtime: &VoiceRuntime, script: Script) -> Result<(), Error> {
+    runtime
+        .spawn_result(move |cancel| execute_owned(script, cancel, None))?
+        .await
+        .map_err(|_| "Player control ownership failed.")?
+}
+
+async fn execute_owned(
+    script: Script,
+    cancel: tokio_util::sync::CancellationToken,
+    music: Option<(Arc<VoiceRuntime>, u64)>,
+) -> Result<(), Error> {
     if !cfg!(target_os = "macos") {
         return Err("Native music control requires macOS.".into());
     }
-    use tokio::io::AsyncReadExt;
-    let mut child = tokio::process::Command::new("/usr/bin/osascript")
+    let mut command = tokio::process::Command::new("/usr/bin/osascript");
+    command
         .arg("-e")
         .arg(script.source)
         .arg("--")
@@ -74,19 +85,53 @@ async fn execute(script: Script) -> Result<(), Error> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
+        .kill_on_drop(true);
+    let (child, music_cancel) = if let Some((runtime, generation)) = music {
+        runtime
+            .music
+            .launch_current(generation, || spawn_if_running(&cancel, || command.spawn()))
+            .ok_or("Music start cancelled before player launch.")?
+    } else {
+        (
+            spawn_if_running(&cancel, || command.spawn()),
+            tokio_util::sync::CancellationToken::new(),
+        )
+    };
+    let mut child = child?;
+    wait_player(&mut child, &cancel, &music_cancel).await
+}
+
+async fn wait_player(
+    child: &mut tokio::process::Child,
+    cancel: &tokio_util::sync::CancellationToken,
+    music_cancel: &tokio_util::sync::CancellationToken,
+) -> Result<(), Error> {
+    use tokio::io::AsyncReadExt;
     let mut stderr = child
         .stderr
         .take()
         .ok_or("Player stderr unavailable")?
         .take(4096);
     let mut bytes = Vec::new();
-    let result = tokio::time::timeout(Duration::from_secs(8), async {
-        tokio::try_join!(child.wait(), stderr.read_to_end(&mut bytes))
-    })
-    .await;
-    let (status, _) = result.map_err(|_| "Player control timed out; music stayed off.")??;
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => None,
+        _ = music_cancel.cancelled() => None,
+        result = tokio::time::timeout(Duration::from_secs(8), async {
+            tokio::try_join!(child.wait(), stderr.read_to_end(&mut bytes))
+        }) => result.ok(),
+    };
+    let (status, _) = match result {
+        Some(Ok(result)) => result,
+        Some(Err(_)) | None => {
+            // Root owns this future through kill AND wait, even when the
+            // interaction waiter disappears. An unresponsive wait remains an
+            // outstanding service operation at the terminal deadline.
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err("Player control stopped before completion; music stayed off.".into());
+        }
+    };
     if !status.success() {
         return Err(format!(
             "Player refused playback: {}",
@@ -101,6 +146,16 @@ async fn execute(script: Script) -> Result<(), Error> {
         .into());
     }
     Ok(())
+}
+
+fn spawn_if_running<T>(
+    cancel: &tokio_util::sync::CancellationToken,
+    spawn: impl FnOnce() -> std::io::Result<T>,
+) -> Result<T, Error> {
+    if cancel.is_cancelled() {
+        return Err("Player control cancelled before launch; music stayed off.".into());
+    }
+    spawn().map_err(Into::into)
 }
 
 fn tap_client() -> Result<AudioTapClient, Error> {
@@ -148,7 +203,7 @@ pub async fn voice_pause(ctx: Context<'_>) -> Result<(), Error> {
         let runtime = authorized(ctx).await?;
         runtime.music.stop("paused", PlaybackTermination::Stopped);
         if let Some(player) = runtime.music.player() {
-            execute(player_control::pause(player)).await?;
+            execute(&runtime, player_control::pause(player)).await?;
         }
         Ok("Music paused; listening consent is unchanged.".into())
     }
@@ -303,7 +358,11 @@ async fn start(
             return Err::<_, Error>("Music start cancelled.".into());
         }
         let call = output_call(ctx.serenity_context(), &runtime).await?;
-        execute(script).await?;
+        let owner = runtime.clone();
+        runtime
+            .spawn_result(move |cancel| execute_owned(script, cancel, Some((owner, generation))))?
+            .await
+            .map_err(|_| "Player control ownership failed.")??;
         if !runtime.music.current(generation) {
             return Err("Music start cancelled.".into());
         }
@@ -325,7 +384,8 @@ async fn start(
         poise::Context::Application(app) => Some(app.interaction.clone()),
         _ => None,
     };
-    tokio::spawn(async move {
+    let owner = Arc::clone(&runtime);
+    owner.spawn_owned(async move {
         let result = run_music(&context, &runtime, generation, client, call, stream).await;
         if runtime.music.current(generation) {
             let message = result
@@ -346,7 +406,7 @@ async fn start(
                     .await;
             }
         }
-    });
+    })?;
     Ok("Mirroring the eligible host application mix, excluding Discord and browser/terminal audio. Other eligible apps can still be heard. Music ducks while Abbey speaks; listening consent is unchanged.".into())
 }
 
@@ -470,6 +530,79 @@ async fn connect_tap(
 
 #[cfg(test)]
 mod tests {
+    fn fixture_runtime() -> Arc<VoiceRuntime> {
+        Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Disabled,
+            true,
+        )))
+    }
+
+    #[tokio::test]
+    async fn invalidated_music_generation_never_launches_after_a_pending_setup() {
+        let music = fixture_runtime();
+        let generation = music.music.begin(Player::Spotify);
+        let (release, pending) = tokio::sync::oneshot::channel();
+        let owner = music.clone();
+        let task = tokio::spawn(async move {
+            pending.await.unwrap();
+            owner.music.launch_current(generation, || -> () {
+                panic!("invalidated generation launched player")
+            })
+        });
+        music.music.stop("leave", PlaybackTermination::Stopped);
+        release.send(()).unwrap();
+        assert!(task.await.unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stopping_music_cancels_and_reaps_the_owned_player_child() {
+        let music = fixture_runtime();
+        let generation = music.music.begin(Player::Spotify);
+        let (child, token) = music
+            .music
+            .launch_current(generation, || {
+                tokio::process::Command::new("/bin/sh")
+                    .args(["-c", "exec sleep 60"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+            })
+            .unwrap();
+        let mut child = child.unwrap();
+        music.music.stop("leave", PlaybackTermination::Stopped);
+        let service_cancel = tokio_util::sync::CancellationToken::new();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                wait_player(&mut child, &service_cancel, &token)
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "cancellation returns only after child wait"
+        );
+    }
+
+    #[test]
+    fn cancelled_player_request_never_calls_the_process_launcher() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        let launched = std::cell::Cell::new(false);
+        let result = super::spawn_if_running(&cancel, || {
+            launched.set(true);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!launched.get());
+    }
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

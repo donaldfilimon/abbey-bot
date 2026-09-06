@@ -706,6 +706,7 @@ impl GateOutcome {
 }
 
 pub struct EpisodeGate {
+    service: std::sync::OnceLock<crate::service::OperationRegistry>,
     config: EpisodeGateConfig,
     nonce: AtomicU64,
     appended: AtomicU64,
@@ -717,6 +718,7 @@ pub struct EpisodeGate {
 impl EpisodeGate {
     pub fn new(config: EpisodeGateConfig) -> Self {
         Self {
+            service: std::sync::OnceLock::new(),
             config,
             nonce: AtomicU64::new(0),
             appended: AtomicU64::new(0),
@@ -726,6 +728,12 @@ impl EpisodeGate {
         }
     }
 
+    pub fn attach_service(&self, registry: crate::service::OperationRegistry) {
+        assert!(
+            self.service.set(registry).is_ok(),
+            "episode service attached once"
+        );
+    }
     pub fn counters(&self) -> GateCounters {
         GateCounters {
             appended: self.appended.load(Ordering::Relaxed),
@@ -820,7 +828,19 @@ impl EpisodeGate {
                 };
             }
         };
-        let file = match WriteFile::create(&encoded) {
+        let created = if let Some(registry) = self.service.get() {
+            match registry.blocking_result(crate::service::OperationKind::Episode, move || {
+                WriteFile::create(&encoded)
+            }) {
+                Ok(result) => result
+                    .await
+                    .unwrap_or_else(|_| Err("episode write preparation interrupted".into())),
+                Err(_) => Err("service is shutting down; episode was not started".into()),
+            }
+        } else {
+            WriteFile::create(&encoded)
+        };
+        let file = match created {
             Ok(file) => file,
             Err(detail) => return GateOutcome::Unavailable { detail },
         };
@@ -839,7 +859,24 @@ impl EpisodeGate {
             args.push("--ca-cert".into());
             args.push(ca_cert.as_os_str().to_owned());
         }
-        run_abi(&self.config.abi_cli, &args, self.config.timeout_secs).await
+        if let Some(registry) = self.service.get() {
+            let program = self.config.abi_cli.clone();
+            let timeout = self.config.timeout_secs;
+            let cancel = registry.cancellation();
+            match registry.spawn_result(crate::service::OperationKind::Episode, async move {
+                let _file_owner = file;
+                run_abi_owned(&program, &args, timeout, Some(cancel)).await
+            }) {
+                Ok(result) => result.await.unwrap_or(GateOutcome::Unavailable {
+                    detail: "episode operation interrupted".into(),
+                }),
+                Err(_) => GateOutcome::Unavailable {
+                    detail: "service is shutting down; episode was not started".into(),
+                },
+            }
+        } else {
+            run_abi(&self.config.abi_cli, &args, self.config.timeout_secs).await
+        }
     }
 }
 
@@ -879,6 +916,14 @@ impl Drop for WriteFile {
 }
 
 async fn run_abi(program: &Path, args: &[OsString], timeout_secs: u64) -> GateOutcome {
+    run_abi_owned(program, args, timeout_secs, None).await
+}
+async fn run_abi_owned(
+    program: &Path,
+    args: &[OsString],
+    timeout_secs: u64,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+) -> GateOutcome {
     let environment: Vec<(OsString, OsString)> = std::env::vars_os()
         .filter(|(name, _)| {
             ALLOWED_ENVIRONMENT
@@ -904,6 +949,8 @@ async fn run_abi(program: &Path, args: &[OsString], timeout_secs: u64) -> GateOu
         }
     };
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
         return GateOutcome::Unavailable {
             detail: "the abi child had no output pipes".into(),
         };
@@ -916,16 +963,25 @@ async fn run_abi(program: &Path, args: &[OsString], timeout_secs: u64) -> GateOu
         )?;
         Ok::<_, String>((stdout, stderr, status))
     };
-    let (stdout, stderr, status) =
-        match tokio::time::timeout(Duration::from_secs(timeout_secs), operation).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(detail)) => return GateOutcome::Unavailable { detail },
-            Err(_) => {
-                return GateOutcome::Unavailable {
-                    detail: format!("the abi binary did not answer within {timeout_secs}s"),
-                };
-            }
-        };
+    let completed = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(timeout_secs), operation) => Some(result),
+        () = async { match cancel { Some(cancel) => cancel.cancelled().await, None => std::future::pending().await } } => None,
+    };
+    let (stdout, stderr, status) = match completed {
+        Some(Ok(Ok(result))) => result,
+        failure => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return GateOutcome::Unavailable {
+                detail: match failure {
+                    Some(Ok(Err(detail))) => detail,
+                    Some(Err(_)) => format!("the abi binary did not answer within {timeout_secs}s"),
+                    None => "the abi operation was cancelled during shutdown".into(),
+                    Some(Ok(Ok(_))) => unreachable!("success handled above"),
+                },
+            };
+        }
+    };
     classify(status.code(), &stdout, &stderr)
 }
 

@@ -90,19 +90,20 @@ async fn memory_subject_authorized(ctx: Context<'_>, subject: &User) -> bool {
     crate::memory_card::subject_authorized(ctx.author().id.get(), subject.id.get(), &permissions)
 }
 
-fn memory_card(state: &AppState, guild: &str, subject: &User) -> String {
+fn memory_card(state: &AppState, guild: &str, subject: &User) -> (String, bool) {
     let user = scoped_user(subject);
     let (facts, pending) = state.memory_service().subject_snapshot(guild, &user);
     let standing = {
         let stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).reputation(&user, guild, &*stores)
     };
-    crate::memory_card::render(&crate::memory_card::MemoryCard {
+    let content = crate::memory_card::render(&crate::memory_card::MemoryCard {
         subject_id: subject.id.get(),
         facts: &facts,
         pending: &pending,
         standing,
-    })
+    });
+    (content, !facts.is_empty())
 }
 
 async fn send_private_no_mentions(ctx: Context<'_>, content: String) -> Result<(), Error> {
@@ -657,7 +658,8 @@ pub async fn recall(
         ctx.say(CROSS_USER_MEMORY_DENIED).await?;
         return Ok(());
     }
-    send_private_no_mentions(ctx, memory_card(&ctx.data().state, &g, subject)).await
+    let (content, has_facts) = memory_card(&ctx.data().state, &g, subject);
+    crate::commands_memory_browser::send_summary(ctx, subject.id.get(), content, has_facts).await
 }
 
 /// Right-click a guild member and read the same bounded card as `/recall`.
@@ -673,7 +675,8 @@ pub async fn memory_context_menu(ctx: Context<'_>, user: User) -> Result<(), Err
         return Ok(());
     }
     let guild = guild::scoped_guild_id(PLATFORM, Some(&guild_id.get().to_string()));
-    send_private_no_mentions(ctx, memory_card(&ctx.data().state, &guild, &user)).await
+    let (content, has_facts) = memory_card(&ctx.data().state, &guild, &user);
+    crate::commands_memory_browser::send_summary(ctx, user.id.get(), content, has_facts).await
 }
 
 /// Your standing privately, or another member when authorized.
@@ -731,7 +734,7 @@ pub async fn summarize(
         return Ok(());
     }
     let persona = r#as.map_or(crate::persona::Persona::Abbey, Into::into);
-    let Some(backend_label) = state.generation_label() else {
+    let Some(_) = state.generation_label() else {
         ctx.say(clamp_message(ask::degraded_reply(persona))).await?;
         return Ok(());
     };
@@ -748,8 +751,10 @@ pub async fn summarize(
             ask::render_answer(persona, provider_label, &summary)
         }
         Err(e) => {
-            tracing::warn!(error = %e, backend = backend_label, "summary generation failed");
-            ask::render_failure(persona, backend_label, &e)
+            tracing::warn!(failure = ?e.provider_failure(), "summary generation failed");
+            crate::commands_help::provider_recovery(ctx, e.provider_failure())
+                .await
+                .to_string()
         }
     };
     ctx.say(clamp_message(reply)).await?;
@@ -777,16 +782,20 @@ pub async fn see(
     ctx.defer().await?;
     let state = &ctx.data().state;
     let Some(vision_client) = state.vision() else {
-        ctx.say("Image understanding is not configured (ABBEY_VISION_ENDPOINT).")
-            .await?;
+        ctx.say(
+            crate::commands_help::provider_recovery(
+                ctx,
+                crate::provider::ProviderFailureKind::Configuration,
+            )
+            .await,
+        )
+        .await?;
         return Ok(());
     };
     let bytes = match fetch_attachment(state, &image).await {
         Ok(b) => b,
-        Err(e) => {
-            ctx.say(clamp_message(format!(
-                "Could not read that attachment: {e}"
-            )))
+        Err(_) => {
+            ctx.say("Could not read that attachment. Check that it is available and within the image size limit, then try again.")
             .await?;
             return Ok(());
         }
@@ -794,17 +803,15 @@ pub async fn see(
     let description = match vision_client.describe(bytes).await {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!(error = %e, "vision description failed");
-            ctx.say(e.public_message().unwrap_or(
-                "I couldn't read that image because the vision backend failed; try again or check the bot logs.",
-            ))
-            .await?;
+            tracing::warn!(failure = ?e.provider_failure(), "vision description failed");
+            ctx.say(crate::commands_help::provider_recovery(ctx, e.provider_failure()).await)
+                .await?;
             return Ok(());
         }
     };
     let persona = crate::persona::Persona::Abbey;
     let reply = match (question, state.generation_label()) {
-        (Some(q), Some(backend_label)) => {
+        (Some(q), Some(_)) => {
             let folded = vision::fold_descriptions(&q, &[(image.filename.clone(), description)]);
             let outcome = {
                 state
@@ -816,8 +823,10 @@ pub async fn see(
                     ask::render_answer(persona, provider_label, &ask::tidy_reply(persona, &a))
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, backend = backend_label, "vision follow-up generation failed");
-                    ask::render_failure(persona, backend_label, &e)
+                    tracing::warn!(failure = ?e.provider_failure(), "vision follow-up generation failed");
+                    crate::commands_help::provider_recovery(ctx, e.provider_failure())
+                        .await
+                        .to_string()
                 }
             }
         }
@@ -836,21 +845,23 @@ pub async fn ocr(
     ctx.defer().await?;
     let state = &ctx.data().state;
     let Some(vision_client) = state.vision() else {
-        ctx.say("Image understanding is not configured (ABBEY_VISION_ENDPOINT).")
-            .await?;
+        ctx.say(
+            crate::commands_help::provider_recovery(
+                ctx,
+                crate::provider::ProviderFailureKind::Configuration,
+            )
+            .await,
+        )
+        .await?;
         return Ok(());
     };
     let reply = match fetch_attachment(state, &image).await {
-        Err(e) => format!("Could not read that attachment: {e}"),
+        Err(_) => "Could not read that attachment. Check that it is available and within the image size limit, then try again.".to_string(),
         Ok(bytes) => match vision_client.extract_text(bytes).await {
             Ok(text) => vision::render_ocr(&text),
             Err(e) => {
-                tracing::warn!(error = %e, "vision OCR failed");
-                e.public_message()
-                    .unwrap_or(
-                        "I couldn't read that image because the vision backend failed; try again or check the bot logs.",
-                    )
-                    .to_string()
+                tracing::warn!(failure = ?e.provider_failure(), "vision OCR failed");
+                crate::commands_help::provider_recovery(ctx, e.provider_failure()).await.to_string()
             }
         },
     };
@@ -862,23 +873,16 @@ pub async fn ocr(
 // /stats and /admin
 // ---------------------------------------------------------------------------
 
-/// Command usage and learning statistics.
+/// Learning and reply-budget statistics for this server or your DM.
 #[poise::command(slash_command, ephemeral)]
 pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
     let g = scoped_guild(ctx);
-    let (interaction_text, seen) = {
-        let stores = AppState::lock(&state.stores);
-        (
-            memory::render_stats(&stores.memory.interactions.stats()),
-            stores.memory.messages_seen,
-        )
-    };
     let brain_line = {
         let brains = AppState::lock(&state.brains);
         brains.get(&g).map_or_else(
-            || "brain: not loaded for this server yet".to_string(),
+            || "Brain: not loaded for this conversation yet".to_string(),
             |b| {
                 format!(
                     "brain: ε {:.3} · steps {} · buffer {} · experiences {}",
@@ -890,8 +894,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             },
         )
     };
-    let pending = AppState::lock(&state.rewards).pending_len();
-    let budget_line = {
+    let (budget_per_hour, tokens_left) = {
         let mut stores = AppState::lock(&state.stores);
         let settings = AppState::lock(&state.guilds).config(&g, &mut *stores);
         let left = AppState::lock(&state.budget).tokens_left(
@@ -899,22 +902,19 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             settings.unsolicited_per_hour,
             runtime::now(),
         );
-        format!(
-            "act: {} · budget {left:.1} of {}/h left",
-            if settings.unsolicited { "on" } else { "off" },
-            settings.unsolicited_per_hour
-        )
+        (settings.unsolicited_per_hour, left)
     };
-    let backend = state.generation_label().unwrap_or("none");
-    let text = format!(
-        "{interaction_text}\nmessages seen: {seen}\n{brain_line}\npending rewards: {pending}\nbackend: {backend} · vision: {}\n{budget_line}",
-        if state.providers.vision_available() {
-            "on"
+    let text = crate::scoped_stats::render_scoped_stats(&crate::scoped_stats::ScopedStatsInput {
+        scope_label: if ctx.guild_id().is_some() {
+            "This server"
         } else {
-            "off"
-        }
-    );
-    ctx.say(clamp_message(text)).await?;
+            "Your DM"
+        },
+        brain_summary: &brain_line,
+        budget_per_hour,
+        tokens_left,
+    });
+    send_private_no_mentions(ctx, text).await?;
     Ok(())
 }
 
@@ -1015,7 +1015,7 @@ pub async fn admin_learning(
             now: runtime::now(),
             nonce: gate.next_nonce(),
         };
-        tokio::spawn(async move {
+        ctx.data().state.spawn_episode(async move {
             gate.record_learning_toggle(request).await;
         });
     }
@@ -1158,12 +1158,23 @@ fn render_admin_flush(report: &PersistReport) -> String {
     )
 }
 
+fn render_persistence_result(report: &PersistReport) -> String {
+    format!(
+        "{}\n\n{}",
+        render_admin_flush(report),
+        crate::operator_guidance::persistence_guidance(report)
+    )
+}
+
 #[poise::command(slash_command, guild_only, ephemeral, rename = "flush")]
 pub async fn admin_flush(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let report = state.persist_all_gated().await;
-    ctx.say(clamp_message(render_admin_flush(&report))).await?;
+    let content = match state.request_persistence().await {
+        Ok(report) => render_persistence_result(&report),
+        Err(error) => error.to_string(),
+    };
+    ctx.say(clamp_message(content)).await?;
     Ok(())
 }
 
@@ -1537,12 +1548,10 @@ pub async fn dispatch_admin_component(
                 "Learning is now **{}**.",
                 if value { "on" } else { "off" }
             ));
-            if let Some(gate) = data.state.episode_gate.clone() {
+            let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.get().to_string()));
+            if let Some(gate) = data.state.gate_for(&scoped).cloned() {
                 let request = LearningToggleRequest {
-                    scoped_guild: guild::scoped_guild_id(
-                        PLATFORM,
-                        Some(&guild_id.get().to_string()),
-                    ),
+                    scoped_guild: scoped,
                     scoped_user: guild::scoped_user_id(
                         PLATFORM,
                         &interaction.user.id.get().to_string(),
@@ -1550,7 +1559,7 @@ pub async fn dispatch_admin_component(
                     now: runtime::now(),
                     nonce: gate.next_nonce(),
                 };
-                tokio::spawn(async move {
+                data.state.spawn_episode(async move {
                     gate.record_learning_toggle(request).await;
                 });
             }
@@ -1598,7 +1607,12 @@ pub async fn dispatch_admin_component(
                 .set_epsilon(epsilon);
             result = Some(format!("Exploration epsilon is now **{epsilon:.2}**."));
         }
-        AdminEffect::Persist => result = Some(render_admin_flush(&data.state.persist_all())),
+        AdminEffect::Persist => {
+            result = Some(match data.state.request_persistence().await {
+                Ok(report) => render_persistence_result(&report),
+                Err(error) => error.to_string(),
+            });
+        }
         AdminEffect::ResetChannel => {
             let scope =
                 guild::scoped_channel_id(PLATFORM, &interaction.channel_id.get().to_string());

@@ -174,16 +174,16 @@ Task 8 source closure: `2a24927` and reviewed fixes `9c09f70`. The full suite pa
 
 **Interfaces:** Produces `ServiceSupervisor`, `TaskName`, `TaskExit`, `ShutdownReason`, `ShutdownReport`, `FinalPersistOutcome`, `SchedulerIntervals`, complete framework admission ownership, and cancellation-aware connector functions.
 
-- [ ] Add direct `tokio-util` dependency and use `CancellationToken`.
-- [ ] Replace detached scheduler loops with one named actor using `MissedTickBehavior::Skip` and serialized persistence requests.
-- [ ] Make Telegram and Slack configuration explicit, secret-redacted, cancellable around I/O/backoff, and timeout-bounded.
-- [ ] Treat external connector outages as degraded retries; treat unexpected task exit/panic as readiness-fatal.
-- [ ] Replace duplicate signal/client-return shutdown paths with one root `tokio::select!`.
-- [ ] Apply the service spec's 2026-09-06 feasibility ruling: 20-second cooperative cleanup budget with five-second stages including abort/reap/I/O/runtime waiting; at most one final transaction with completed/not-started/incomplete outcomes, retained resource ownership, and an explicit exceptional process-lifetime boundary.
-- [ ] Atomically close and drain whole-framework/connector/summary/voice admission before freezing the snapshot; keep the actual serial writer owned through cancellation and prevent an older write from overtaking final publication.
-- [ ] Preserve independent consent persistence and explicitly own episode children; never equate timeout, abort, or kill request with completed joining.
-- [ ] Test paused scheduler cadence, cancellation, task panic/return, connector I/O/backoff cancellation, simultaneous shutdown triggers, abort/reap, and post-final-snapshot quiescence.
-- [ ] Commit the reviewed lifecycle slice.
+- [x] Add direct `tokio-util` dependency and use `CancellationToken`.
+- [x] Replace detached scheduler loops with one named actor using `MissedTickBehavior::Skip` and serialized persistence requests.
+- [x] Make Telegram and Slack configuration explicit, secret-redacted, cancellable around I/O/backoff, and timeout-bounded.
+- [x] Treat external connector outages as degraded retries; treat unexpected task exit/panic as readiness-fatal.
+- [x] Replace duplicate signal/client-return shutdown paths with one root `tokio::select!`.
+- [x] Apply the service spec's 2026-09-06 feasibility ruling: 20-second cooperative cleanup budget with five-second stages including abort/reap/I/O/runtime waiting; at most one final transaction with completed/not-started/incomplete outcomes, retained resource ownership, and an explicit exceptional process-lifetime boundary.
+- [x] Atomically close and drain whole-framework/connector/summary/voice admission before freezing the snapshot; keep the actual serial writer owned through cancellation and prevent an older write from overtaking final publication.
+- [x] Preserve independent consent persistence and explicitly own episode children; never equate timeout, abort, or kill request with completed joining.
+- [x] Test paused scheduler cadence, cancellation, task panic/return, connector I/O/backoff cancellation, simultaneous shutdown triggers, abort/reap, and post-final-snapshot quiescence.
+- [x] Commit the reviewed lifecycle slice.
 
 ### Task 10: Privacy-Safe Observability, Readiness, and Bounded Logs
 
@@ -191,17 +191,17 @@ Task 8 source closure: `2a24927` and reviewed fixes `9c09f70`. The full suite pa
 
 **Interfaces:** Produces `RunIdentity`, closed `EventCode`/component/outcome/error enums, privacy-safe `OperationalEvent`, exact version-1 `ReadinessPublisher`, bounded bootstrap status, and rotating managed JSONL writer.
 
-- [ ] Replace durable raw command errors and Discord IDs with command, success, categorized error, millisecond duration, and timestamp; deserialize legacy rows, discard legacy private fields, and require canonical privacy rewrite before managed ready.
-- [ ] Use monotonic millisecond timing for owned intervals and Discord timestamp milliseconds for total interaction latency.
-- [ ] Generate a 256-bit OS-random lowercase-hex per-run nonce and hash the running executable; never trust env-supplied identity.
-- [ ] Publish owner-only atomic readiness at the fixed managed path using the exact shared version-1 key/type/enum schema, freshness predicate, PID range, and unknown-field rejection.
-- [ ] Publish ready only after state rewrite, scheduler start, Discord ready, registration, and presence; publish draining and remove only the same PID/nonce file within Task 9's cleanup budget, reporting unfinished I/O without claiming durable terminal evidence.
-- [ ] Select managed mode only with `--managed-service`; add the independent fixed bootstrap status/exit-78 failure channel before managed JSONL initialization.
-- [ ] Add managed JSONL rotation: 8 MiB active file, five archives, 16 KiB event cap, directory 0700, files 0600, pre-write rotation, no symlinks/unexpected types.
-- [ ] Preserve foreground human-readable stderr and leave the legacy `abbey-bot.log` untouched.
-- [ ] Expand privacy gates to reject IDs, raw errors, paths, URLs, endpoints, models, prompts, transcripts, payloads, and media in structured events.
-- [ ] Test legacy migration, accurate short latency, canary exclusion, shared Rust/Python readiness fixtures, exact freshness/future skew/PID liveness, bootstrap failure visibility, rotation/concurrency/modes, and initialization-before-credential access.
-- [ ] Commit the reviewed observability/readiness slice.
+- [x] Replace durable raw command errors and Discord IDs with command, success, categorized error, millisecond duration, and timestamp; deserialize legacy rows, discard legacy private fields, and require canonical privacy rewrite before managed ready.
+- [x] Use monotonic millisecond timing for owned intervals and Discord timestamp milliseconds for total interaction latency.
+- [x] Generate a 256-bit OS-random lowercase-hex per-run nonce and hash the running executable; never trust env-supplied identity.
+- [x] Publish owner-only atomic readiness at the fixed managed path using the exact shared version-1 key/type/enum schema, freshness predicate, PID range, and unknown-field rejection.
+- [x] Publish ready only after state rewrite, scheduler start, Discord ready, registration, and presence; publish draining and remove only the same PID/nonce file within Task 9's cleanup budget, reporting unfinished I/O without claiming durable terminal evidence.
+- [x] Select managed mode only with `--managed-service`; add the independent fixed bootstrap status/exit-78 failure channel before managed JSONL initialization.
+- [x] Add managed JSONL rotation: 8 MiB active file, five archives, 16 KiB event cap, directory 0700, files 0600, pre-write rotation, no symlinks/unexpected types.
+- [x] Preserve foreground human-readable stderr and leave the legacy `abbey-bot.log` untouched.
+- [x] Expand privacy gates to reject IDs, raw errors, paths, URLs, endpoints, models, prompts, transcripts, payloads, and media in structured events.
+- [x] Test legacy migration, accurate short latency, canary exclusion, shared Rust/Python readiness fixtures, exact freshness/future skew/PID liveness, bootstrap failure visibility, rotation/concurrency/modes, and initialization-before-credential access.
+- [x] Commit the reviewed observability/readiness slice.
 
 ### Task 11: Offline launchd Transaction Verification
 
@@ -211,13 +211,15 @@ Apply the binding 2026-09-06 transaction-context clarification: capture the old 
 
 **Interfaces:** Produces `deploy/check-service-readiness.py` and `deploy/test-install-launchd.py`.
 
-- [ ] Make install success require exact `--managed-service` plist arguments, live launchd PID, exact-schema/fresh matching nonce and installed SHA, ready phase, scheduler running, Discord ready, and five additional stable seconds within a 30-second readiness budget.
-- [ ] Require the same contract after rollback; stable PID alone never proves recovery.
-- [ ] Preserve existing uninstall retention: stop exact service, remove plist and same-identity readiness/bootstrap status, leave binary/data/env/rollback/logs.
-- [ ] Build a temp-HOME harness with fake cargo/launchctl/plutil/sleep and descendant-path assertions; never touch the real launchd domain or service.
-- [ ] Cover fresh install, update, all readiness schema/freshness/PID failures, every bounded bootstrap/log-init failure channel, PID changes, bootstrap/rollback failures, locks, unsafe types, invalid env/hash, interrupts, uninstall, modes, and secret-canary output.
-- [ ] Wire POSIX behavior tests into `check.sh`; Windows syntax/privacy-checks helpers but explicitly skips launchd execution.
-- [ ] Commit the reviewed installer-verification slice.
+- [x] Make install success require exact `--managed-service` plist arguments, live launchd PID, exact-schema/fresh matching nonce and installed SHA, ready phase, scheduler running, Discord ready, and five additional stable seconds within a 30-second readiness budget.
+- [x] Require the same contract after rollback; stable PID alone never proves recovery.
+- [x] Preserve existing uninstall retention: stop exact service, remove plist and same-identity readiness/bootstrap status, leave binary/data/env/rollback/logs.
+- [x] Build a temp-HOME harness with fake cargo/launchctl/plutil/sleep and descendant-path assertions; never touch the real launchd domain or service.
+- [x] Cover fresh install, update, all readiness schema/freshness/PID failures, every bounded bootstrap/log-init failure channel, PID changes, bootstrap/rollback failures, locks, unsafe types, invalid env/hash, interrupts, uninstall, modes, and secret-canary output.
+- [x] Wire POSIX behavior tests into `check.sh`; Windows syntax/privacy-checks helpers but explicitly skips launchd execution.
+- [x] Commit the reviewed installer-verification slice.
+
+Task 11 Python source closure: reviewed installer work through `a241dd4` and gate wiring `c1e29d7`. Latest complete offline suites passed protocol 20, installation 10, readiness 24, status 15 and installer 25 tests. Rust managed startup and cross-language integrated verification remain Tasks 10/12; no real launchd installation or runtime acceptance is claimed.
 
 ### Task 12: Behavior-Neutral Decomposition, Dependency Refresh, and Closeout
 

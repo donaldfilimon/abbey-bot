@@ -206,6 +206,27 @@ pub(crate) async fn current_permissions(
     }
     Ok(guild.user_permissions_in(&channel, &member))
 }
+/// Recovery advice is role-aware only after fresh server permission evidence.
+pub(crate) async fn provider_recovery(
+    ctx: crate::Context<'_>,
+    kind: crate::provider::ProviderFailureKind,
+) -> &'static str {
+    let manager = match ctx.guild_id() {
+        Some(guild) => current_permissions(
+            ctx.serenity_context(),
+            guild,
+            ctx.channel_id(),
+            ctx.author().id,
+        )
+        .await
+        .is_ok_and(|permissions| {
+            permissions.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR)
+        }),
+        None => false,
+    };
+    crate::operator_guidance::provider_guidance(kind, manager)
+}
+
 fn presence(
     ctx: &serenity::all::Context,
     data: &Data,
@@ -556,6 +577,9 @@ pub async fn dispatch_component(
     let id = &interaction.data.custom_id;
     if !id.starts_with("abbey:") || crate::voice_consent::parse_button(id).is_some() {
         return false;
+    }
+    if id.starts_with("abbey:mem:") {
+        return crate::commands_memory_browser::dispatch(ctx, interaction, data).await;
     }
     let preparation = acknowledged_help(
         async {

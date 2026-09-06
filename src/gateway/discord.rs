@@ -192,6 +192,15 @@ pub async fn on_discord_event(
     match event {
         FullEvent::Ready { data_about_bot } => {
             state.register_self(format!("discord:{}", data_about_bot.user.id.get()));
+            discord_connection_observed(state, true);
+        }
+        FullEvent::Resume { .. } => {
+            discord_connection_observed(state, true);
+        }
+        FullEvent::ShardStageUpdate { event } => {
+            if event.new != serenity::gateway::ConnectionStage::Connected {
+                discord_connection_observed(state, false);
+            }
         }
         FullEvent::Message { new_message } => {
             let me = ctx.cache.current_user().id;
@@ -277,10 +286,107 @@ pub async fn on_discord_event(
     }
 }
 
+fn discord_connection_observed(state: &AppState, ready: bool) {
+    if let Some(status) = state.managed_status() {
+        if ready {
+            status.discord_resumed();
+        } else {
+            status.discord_connecting();
+        }
+        // Do not leave the preceding ready document eligible for an installer's
+        // entire stability window while waiting for the periodic heartbeat.
+        let _ = status.refresh();
+    }
+    if let Some(events) = state.operational_events() {
+        use crate::observability::{EventCode, EventComponent, EventOutcome};
+        let _ = events.record(
+            EventComponent::Discord,
+            EventCode::ConnectorState,
+            if ready {
+                EventOutcome::Ready
+            } else {
+                EventOutcome::Degraded
+            },
+            None,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::shared;
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn observed_disconnect_publishes_non_ready_without_waiting_for_heartbeat() {
+        let home = crate::readiness::tests::temporary_home();
+        let environment =
+            crate::readiness::private::PrivateDirectory::open(&home, &[".config", "abbey-bot"])
+                .unwrap();
+        environment
+            .publish("env", b"DISCORD_TOKEN=fixture-only\n")
+            .unwrap();
+        let managed = crate::managed_service::begin(&home)
+            .unwrap_or_else(|_| panic!("fixture preflight failed"));
+        let identity = managed.publisher.identity().clone();
+        let fatal = managed.fatal.clone();
+        let mut writer = crate::service::telemetry::TelemetryWriter::start(
+            managed.log,
+            managed.publisher,
+            managed.fatal,
+        );
+        let status = Arc::new(crate::service::status::ManagedStatus::new(
+            identity,
+            writer.requests(),
+            managed.privacy_report,
+            false,
+            false,
+        ));
+        let state = AppState::in_memory();
+        state.attach_observability(writer.requests(), status.clone());
+        status.scheduler_running();
+        status.discord_ready();
+        status.refresh().unwrap().await.unwrap().unwrap();
+        let path = home.join(".local/share/abbey-bot/readiness.json");
+        assert!(
+            crate::readiness::ReadinessDocument::decode(&std::fs::read(&path).unwrap())
+                .unwrap()
+                .is_ready()
+        );
+        // This is the same helper used by the actual shard-stage event arm.
+        // Stopping drains only already enqueued work; it schedules no refresh.
+        discord_connection_observed(&state, false);
+        writer.stop();
+        writer.joined().await.unwrap();
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(document["phase"], "starting");
+        assert_eq!(document["discord"], "connecting");
+        let events =
+            std::fs::read_to_string(home.join("Library/Logs/abbey-bot/abbey-bot.events.jsonl"))
+                .unwrap();
+        let publications: Vec<serde_json::Value> = events
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|row: &serde_json::Value| row["code"] == "readiness_published")
+            .collect();
+        assert_eq!(
+            publications.len(),
+            2,
+            "only the initial ready and observed disconnect were published"
+        );
+        assert!(publications.iter().all(|row| row["outcome"] == "succeeded"));
+        assert!(!events.contains("fixture-only"));
+        assert!(
+            publications
+                .iter()
+                .all(|row| row.get("pid").is_none() && row.get("run_nonce").is_none())
+        );
+        assert!(!fatal.pending());
+        drop(environment);
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn discord_mentions_are_fully_disabled() {

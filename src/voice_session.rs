@@ -6,21 +6,22 @@
 //! playback handle at a time.
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as SyncMutex};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as SyncMutex, OnceLock};
 use std::time::Duration;
 
 use songbird::tracks::TrackHandle;
 use tokio::sync::{Mutex, watch};
-use tokio::task::JoinHandle;
 
 use crate::inspect::{VoiceInspectRegistry, VoiceInspectState};
 use crate::voice::{VoiceBackendConfig, VoiceConfig, VoiceMode};
 
 mod control;
 mod music;
+mod ownership;
 mod playback;
 mod verification;
+pub use ownership::VoiceTask;
 
 pub use control::{authoritative_text_reply, requests_consent_withdrawal, withdrawal_requested};
 pub use playback::{PlaybackTermination, register_playback_termination};
@@ -153,7 +154,7 @@ impl VoiceRuntime {
 
 pub struct SessionControl {
     pub cancel: watch::Sender<bool>,
-    pub task: JoinHandle<()>,
+    pub task: VoiceTask,
     pub playback: SharedPlayback,
 }
 
@@ -278,6 +279,9 @@ pub struct VoiceSnapshot {
 }
 
 pub struct VoiceRuntime {
+    service: OnceLock<crate::service::OperationRegistry>,
+    telemetry: OnceLock<crate::service::telemetry::TelemetryRequests>,
+    draining: AtomicBool,
     pub music: music::MusicController,
     pub config: VoiceConfig,
     pub consent: Arc<crate::voice_consent_store::ConsentStore>,
@@ -310,7 +314,7 @@ pub struct VoiceRuntime {
 
 pub struct ConsentChange {
     pub epoch_to_stop: Option<u64>,
-    pub saved: tokio::task::JoinHandle<Result<bool, &'static str>>,
+    pub saved: tokio::sync::oneshot::Receiver<Result<bool, &'static str>>,
 }
 
 /// `VoiceMode` as a stable byte, so the mode in force can live in an atomic
@@ -370,6 +374,9 @@ impl VoiceRuntime {
         let (start_changes, _) = watch::channel(0);
         let selected_mode = AtomicU8::new(mode_code(config.mode()));
         Self {
+            service: OnceLock::new(),
+            telemetry: OnceLock::new(),
+            draining: AtomicBool::new(false),
             music: music::MusicController::default(),
             consent,
             selected_mode,
@@ -448,6 +455,19 @@ impl VoiceRuntime {
     }
 
     fn publish_inspect_phase(&self, phase: VoicePhase, media_enabled: bool) {
+        if let Some(events) = self.telemetry.get() {
+            use crate::observability::{EventCode, EventComponent, EventOutcome};
+            let outcome = match phase {
+                VoicePhase::Disconnected => EventOutcome::Stopped,
+                VoicePhase::PresenceOnly | VoicePhase::Listening => EventOutcome::Ready,
+                VoicePhase::Connecting | VoicePhase::Thinking | VoicePhase::Speaking => {
+                    EventOutcome::Started
+                }
+                VoicePhase::AwaitingConsent => EventOutcome::Skipped,
+                VoicePhase::Failed => EventOutcome::Failed,
+            };
+            let _ = events.record(EventComponent::Voice, EventCode::VoiceState, outcome, None);
+        }
         self.music.phase(phase);
         let state = match phase {
             VoicePhase::Disconnected => VoiceInspectState::Off,
@@ -482,7 +502,10 @@ impl VoiceRuntime {
     /// callbacks and playback use this software gate as the authority.
     #[must_use]
     pub fn media_enabled(&self, epoch: u64) -> bool {
-        epoch != 0 && self.is_current(epoch) && self.media_epoch.load(Ordering::SeqCst) == epoch
+        self.accepting_work()
+            && epoch != 0
+            && self.is_current(epoch)
+            && self.media_epoch.load(Ordering::SeqCst) == epoch
     }
 
     /// Timing-critical receive callbacks use this synchronous compare/exchange
@@ -511,7 +534,8 @@ impl VoiceRuntime {
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if epoch == 0
+        if !self.accepting_work()
+            || epoch == 0
             || self.current_epoch.load(Ordering::SeqCst) != epoch
             || self.media_epoch.load(Ordering::SeqCst) != epoch
         {
@@ -527,6 +551,9 @@ impl VoiceRuntime {
             .activation_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.accepting_work() {
+            return 0;
+        }
         let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.pending_start_generation
             .store(generation, Ordering::SeqCst);
@@ -579,7 +606,8 @@ impl VoiceRuntime {
     }
 
     fn reserve_if_unchanged_locked(&self, operation_token: u64) -> Option<u64> {
-        if self.start_generation.load(Ordering::SeqCst) != operation_token {
+        if !self.accepting_work() || self.start_generation.load(Ordering::SeqCst) != operation_token
+        {
             return None;
         }
         let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -703,7 +731,9 @@ impl VoiceRuntime {
 
     #[must_use]
     pub fn start_is_current(&self, generation: u64) -> bool {
-        self.start_generation.load(Ordering::SeqCst) == generation
+        self.accepting_work()
+            && generation != 0
+            && self.start_generation.load(Ordering::SeqCst) == generation
             && self.pending_start_generation.load(Ordering::SeqCst) == generation
     }
 
@@ -1036,7 +1066,7 @@ impl VoiceRuntime {
 
     pub async fn install_control(&self, epoch: u64, control: SessionControl) -> bool {
         let mut inner = self.inner.lock().await;
-        if inner.epoch != epoch || !self.is_current(epoch) {
+        if !self.accepting_work() || inner.epoch != epoch || !self.is_current(epoch) {
             drop(inner);
             stop_control(control).await;
             return false;
@@ -1255,31 +1285,19 @@ impl VoiceRuntime {
 
 async fn stop_control(control: SessionControl) {
     let _ = control.cancel.send(true);
-    let mut task = control.task;
-    let mut task_reaped = false;
-    let track =
-        match tokio::time::timeout(Duration::from_millis(250), control.playback.lock()).await {
-            Ok(mut playback) => playback.take(),
-            Err(_) => {
-                task.abort();
-                let _ = (&mut task).await;
-                task_reaped = true;
-                tokio::time::timeout(Duration::from_millis(250), control.playback.lock())
-                    .await
-                    .ok()
-                    .and_then(|mut playback| playback.take())
-            }
-        };
+    let track = tokio::time::timeout(Duration::from_millis(250), control.playback.lock())
+        .await
+        .ok()
+        .and_then(|mut playback| playback.take());
     if let Some(track) = track {
         let _ = track.stop();
     }
-    if !task_reaped
-        && tokio::time::timeout(Duration::from_secs(2), &mut task)
-            .await
-            .is_err()
-    {
-        task.abort();
-        let _ = task.await;
+    // A provider owns nested recognition/turn tasks. Aborting the outer actor
+    // would drop those JoinSets before observing their joins. The service's
+    // shared shutdown deadline bounds waiting, while retaining the real actor.
+    control.task.join().await;
+    if let Some(track) = control.playback.lock().await.take() {
+        let _ = track.stop();
     }
 }
 

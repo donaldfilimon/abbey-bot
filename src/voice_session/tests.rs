@@ -1077,7 +1077,7 @@ async fn exact_consent_epoch_closes_and_cancels_before_slow_actor_cleanup() {
                 epoch,
                 SessionControl {
                     cancel,
-                    task: actor,
+                    task: actor.into(),
                     playback: Arc::new(Mutex::new(None)),
                 },
             )

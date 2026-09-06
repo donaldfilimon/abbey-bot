@@ -297,7 +297,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C0,
         Start,
         true,
-        "Read command usage and learning statistics."
+        "Read this conversation’s learning and reply budget."
     ),
     spec!(
         AdminShow,

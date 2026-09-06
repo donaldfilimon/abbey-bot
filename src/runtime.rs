@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::brain::budget::Budget;
@@ -25,10 +25,7 @@ use crate::brain::state::{BotAction, STATE_DIMENSIONS};
 use crate::engine::Engine;
 use crate::guild::{GuildRegistry, ReplyCooldown};
 use crate::llm::Backend;
-use crate::persist::{
-    FsPersistenceSink, PersistComponentOutcome, PersistReport, PersistenceSink, Stores,
-    persist_canonical, persist_projection,
-};
+use crate::persist::{FsPersistenceSink, PersistReport, PersistenceSink, Stores};
 use crate::platform::SocialNetwork;
 #[cfg(test)]
 use crate::provider::FoundationModels;
@@ -211,6 +208,12 @@ impl VisionTransport for HttpVisionTransport {
 /// would deadlock against it (reported on PR #10, fixed after #16). `engine`
 /// and `recall` are only ever taken alone or last.
 pub struct AppState {
+    operational_events: OnceLock<crate::service::telemetry::TelemetryRequests>,
+    managed_status: OnceLock<Arc<crate::service::status::ManagedStatus>>,
+    service: OnceLock<crate::service::OperationRegistry>,
+    self_weak: OnceLock<Weak<Self>>,
+    persistence_requests: OnceLock<crate::service::persistence::PersistenceRequests>,
+    persistence_preparation: tokio::sync::Mutex<()>,
     pub stores: Mutex<Stores>,
     pub guilds: Mutex<GuildRegistry>,
     pub brains: Mutex<BrainRegistry<DqnAgent>>,
@@ -589,6 +592,12 @@ impl AppState {
             episode_gate,
             checkpoints: Mutex::new(checkpoints),
             memory_queue: Mutex::new(Vec::new()),
+            operational_events: OnceLock::new(),
+            managed_status: OnceLock::new(),
+            service: OnceLock::new(),
+            self_weak: OnceLock::new(),
+            persistence_requests: OnceLock::new(),
+            persistence_preparation: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -624,7 +633,84 @@ impl AppState {
             episode_gate: None,
             checkpoints: Mutex::new(BTreeMap::new()),
             memory_queue: Mutex::new(Vec::new()),
+            operational_events: OnceLock::new(),
+            managed_status: OnceLock::new(),
+            service: OnceLock::new(),
+            self_weak: OnceLock::new(),
+            persistence_requests: OnceLock::new(),
+            persistence_preparation: tokio::sync::Mutex::new(()),
         })
+    }
+
+    pub fn attach_observability(
+        &self,
+        events: crate::service::telemetry::TelemetryRequests,
+        status: Arc<crate::service::status::ManagedStatus>,
+    ) {
+        self.providers.attach_observability(events.clone());
+        assert!(
+            self.operational_events.set(events).is_ok(),
+            "operational output attached once"
+        );
+        assert!(
+            self.managed_status.set(status).is_ok(),
+            "readiness attached once"
+        );
+    }
+    pub fn operational_events(&self) -> Option<&crate::service::telemetry::TelemetryRequests> {
+        self.operational_events.get()
+    }
+    pub fn managed_status(&self) -> Option<&Arc<crate::service::status::ManagedStatus>> {
+        self.managed_status.get()
+    }
+
+    pub fn attach_service(
+        self: &Arc<Self>,
+        registry: crate::service::OperationRegistry,
+    ) -> crate::service::persistence::PersistenceWriter {
+        let writer = crate::service::persistence::PersistenceWriter::start(
+            self.data_dir.clone(),
+            self.persistence_sink.clone(),
+        );
+        if let Some(gate) = &self.episode_gate {
+            gate.attach_service(registry.clone());
+        }
+        self.providers.attach_service(registry.clone());
+        assert!(self.service.set(registry).is_ok(), "service attached once");
+        assert!(
+            self.self_weak.set(Arc::downgrade(self)).is_ok(),
+            "state owner attached once"
+        );
+        assert!(
+            self.persistence_requests.set(writer.requests()).is_ok(),
+            "writer attached once"
+        );
+        writer
+    }
+
+    pub fn service_registry(&self) -> Option<&crate::service::OperationRegistry> {
+        self.service.get()
+    }
+    pub fn owned_state(&self) -> Option<Arc<Self>> {
+        self.self_weak.get().and_then(Weak::upgrade)
+    }
+
+    pub fn spawn_episode(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
+        if let Some(registry) = self.service.get() {
+            let _ = registry.spawn_result(crate::service::OperationKind::Episode, work);
+        }
+    }
+
+    pub fn final_snapshot(&self) -> crate::service::persistence::Snapshot {
+        let (mut stores, recall) = self.take_snapshot(now());
+        if let Some(gate) = &self.episode_gate {
+            crate::checkpoint_gate::restrict_to_admitted(
+                &mut stores,
+                &Self::lock(&self.checkpoints),
+                |guild| gate.covers(guild),
+            );
+        }
+        crate::service::persistence::Snapshot { stores, recall }
     }
 
     pub async fn chat(
@@ -763,9 +849,61 @@ impl AppState {
     /// `experience` memory candidate (one per guild, superseding the last
     /// admitted one), then persist with refused checkpoints substituted. With
     /// no gate configured this is exactly [`Self::persist_all`].
+    pub async fn request_persistence(
+        &self,
+    ) -> Result<PersistReport, crate::service::persistence::RequestError> {
+        use crate::service::persistence::RequestError;
+        let Some(registry) = self.service.get() else {
+            return Ok(self.persist_all_gated().await);
+        };
+        let state = self
+            .self_weak
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or(RequestError::WriterUnavailable)?;
+        let result = registry
+            .spawn_result(
+                crate::service::OperationKind::PersistencePreparation,
+                async move {
+                    let _serial = state.persistence_preparation.lock().await;
+                    let (stores, recall) = state.prepare_gated_snapshot().await;
+                    state
+                        .persistence_requests
+                        .get()
+                        .ok_or(RequestError::WriterUnavailable)?
+                        .submit(crate::service::persistence::Snapshot { stores, recall })
+                        .await
+                        .inspect(|report| {
+                            if let Some(status) = state.managed_status() {
+                                status.persisted(*report);
+                            }
+                            if let Some(events) = state.operational_events() {
+                                let _ = events.record(
+                                    crate::observability::EventComponent::Persistence,
+                                    crate::observability::EventCode::PersistenceAttempt,
+                                    if report.overall == crate::persist::PersistOverall::Complete {
+                                        crate::observability::EventOutcome::Succeeded
+                                    } else {
+                                        crate::observability::EventOutcome::Degraded
+                                    },
+                                    None,
+                                );
+                            }
+                        })
+                },
+            )
+            .map_err(|_| RequestError::Draining)?;
+        result.await.map_err(|_| RequestError::WriterUnavailable)?
+    }
+
     pub async fn persist_all_gated(&self) -> PersistReport {
+        let snapshots = self.prepare_gated_snapshot().await;
+        self.persist_snapshot(snapshots)
+    }
+
+    async fn prepare_gated_snapshot(&self) -> (Stores, Recall) {
         let Some(gate) = self.episode_gate.clone() else {
-            return self.persist_all();
+            return self.take_snapshot(now());
         };
         crate::memory_gate::drain(self).await;
         let t = now();
@@ -803,7 +941,7 @@ impl AppState {
                 "persist: brain checkpoints not admitted by the episode gate; last admitted rows persisted instead"
             );
         }
-        self.persist_snapshot(snapshots)
+        snapshots
     }
 
     fn take_snapshot(&self, t: u64) -> (Stores, Recall) {
@@ -816,20 +954,14 @@ impl AppState {
     }
 
     fn persist_snapshot(&self, snapshots: (Stores, Recall)) -> PersistReport {
-        let Some(dir) = &self.data_dir else {
-            return PersistReport::memory_only();
-        };
-        if let Err(category) = persist_canonical(&*self.persistence_sink, dir, &snapshots.0) {
-            return PersistReport::from_components(
-                PersistComponentOutcome::Failed(category),
-                PersistComponentOutcome::SkippedCanonicalFailure,
-            );
-        }
-        let projection = persist_projection(&*self.persistence_sink, dir, &snapshots.1)
-            .map_or_else(PersistComponentOutcome::Failed, |()| {
-                PersistComponentOutcome::Committed
-            });
-        PersistReport::from_components(PersistComponentOutcome::Committed, projection)
+        crate::service::persistence::write_snapshot(
+            self.data_dir.as_deref(),
+            &*self.persistence_sink,
+            crate::service::persistence::Snapshot {
+                stores: snapshots.0,
+                recall: snapshots.1,
+            },
+        )
     }
 
     /// Rolling channel summaries — the spec's "rolling 2k-token summary
@@ -894,43 +1026,55 @@ impl AppState {
         done
     }
 
-    /// Start the heartbeat: learn / flush / persist / settle on their
-    /// intervals until the process exits. Returns nothing to hold — the tasks
-    /// are detached, and [`AppState::persist_all`] at shutdown is the flush.
-    pub fn start_scheduler(self: &Arc<Self>) {
-        let spawn = |every: Duration, f: fn(&AppState)| {
-            let state = Arc::clone(self);
-            tokio::spawn(async move {
-                let mut tick = tokio::time::interval(every);
-                tick.tick().await; // the first tick fires immediately; skip it
-                loop {
-                    tick.tick().await;
-                    f(&state);
+    /// One owned scheduler with skipped missed ticks and no immediate startup work.
+    pub async fn run_scheduler(
+        self: Arc<Self>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::service::TaskExit {
+        if let Some(status) = self.managed_status() {
+            status.scheduler_running();
+            let _ = status.refresh();
+        }
+        if let Some(events) = self.operational_events() {
+            let _ = events.record(
+                crate::observability::EventComponent::Scheduler,
+                crate::observability::EventCode::TaskStarted,
+                crate::observability::EventOutcome::Started,
+                None,
+            );
+        }
+        use crate::service::scheduler::{Schedule, Tick};
+        let mut schedule = Schedule::new();
+        loop {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => return crate::service::TaskExit::Cancelled,
+                tick = schedule.next() => match tick {
+                    Tick::Learn => self.learn_all(),
+                    Tick::Flush => self.flush_social(),
+                    Tick::Settle => self.settle_rewards(),
+                    Tick::Persist => {
+                    if let Some(registry) = self.service.get() {
+                        let state = self.clone();
+                        let _ = registry.spawn_result(crate::service::OperationKind::PersistencePreparation, async move {
+                            if let Ok(report) = state.request_persistence().await { crate::persist::log_report("scheduled", &report); }
+                        });
+                    }
                 }
-            });
-        };
-        spawn(LEARN_EVERY, Self::learn_all);
-        spawn(FLUSH_EVERY, Self::flush_social);
-        let persistence_state = Arc::clone(self);
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(PERSIST_EVERY);
-            tick.tick().await;
-            loop {
-                tick.tick().await;
-                let report = persistence_state.persist_all_gated().await;
-                crate::persist::log_report("scheduled", &report);
+                    Tick::Summary => {
+                    if let Some(registry) = self.service.get() {
+                        let state = self.clone();
+                        let _ = registry.spawn_operation(crate::service::OperationKind::Summary, move |cancel| async move {
+                            tokio::select! {
+                                () = cancel.cancelled() => crate::service::TaskExit::Cancelled,
+                                _ = state.refresh_summaries() => crate::service::TaskExit::Returned,
+                            }
+                        });
+                    }
+                }
+                }
             }
-        });
-        spawn(SETTLE_EVERY, Self::settle_rewards);
-        let state = Arc::clone(self);
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(SUMMARIZE_EVERY);
-            tick.tick().await;
-            loop {
-                tick.tick().await;
-                state.refresh_summaries().await;
-            }
-        });
+        }
     }
 }
 

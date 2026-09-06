@@ -165,6 +165,7 @@ impl Outbound for TelegramOutbound {
 /// Long-poll `getUpdates` forever, feeding the pipeline. Errors back off five
 /// seconds and re-poll, per the spec. Uses `PollLoop` for the backoff.
 pub async fn run_telegram(state: Arc<AppState>, token: String) {
+    telegram_observed(&state, crate::readiness::ConnectorState::Starting, None);
     let out = TelegramOutbound::new(&token);
     let mut poller = TelegramPoller::default();
     let backoff = PollLoop::telegram();
@@ -180,11 +181,21 @@ pub async fn run_telegram(state: Arc<AppState>, token: String) {
             Ok(resp) => match resp.json::<TgResponse<Vec<TgUpdate>>>().await {
                 Ok(body) if body.ok => body.result.unwrap_or_default(),
                 Ok(_) => {
+                    telegram_observed(
+                        &state,
+                        crate::readiness::ConnectorState::Degraded,
+                        Some(crate::observability::OperationalErrorCategory::Protocol),
+                    );
                     tracing::warn!("telegram getUpdates returned ok=false");
                     backoff.wait().await;
                     continue;
                 }
                 Err(e) => {
+                    telegram_observed(
+                        &state,
+                        crate::readiness::ConnectorState::Degraded,
+                        Some(crate::observability::OperationalErrorCategory::Protocol),
+                    );
                     tracing::warn!(
                         error = %render_reqwest_error(e),
                         "telegram getUpdates decode failed"
@@ -194,11 +205,17 @@ pub async fn run_telegram(state: Arc<AppState>, token: String) {
                 }
             },
             Err(e) => {
+                telegram_observed(
+                    &state,
+                    crate::readiness::ConnectorState::Degraded,
+                    Some(crate::observability::OperationalErrorCategory::Unavailable),
+                );
                 tracing::warn!(error = %render_reqwest_error(e), "telegram getUpdates failed");
                 backoff.wait().await;
                 continue;
             }
         };
+        telegram_observed(&state, crate::readiness::ConnectorState::Connected, None);
         poller.advance(&updates);
         for update in &updates {
             if let Some(event) = platform::translate_telegram(update) {
@@ -210,6 +227,32 @@ pub async fn run_telegram(state: Arc<AppState>, token: String) {
                 pipeline::handle(&state, &out, event, false, reply_to.as_deref()).await;
             }
         }
+    }
+}
+
+fn telegram_observed(
+    state: &AppState,
+    connector: crate::readiness::ConnectorState,
+    error: Option<crate::observability::OperationalErrorCategory>,
+) {
+    if let Some(status) = state.managed_status() {
+        status.telegram(connector);
+    }
+    if let Some(events) = state.operational_events() {
+        use crate::observability::{EventCode, EventComponent, EventOutcome};
+        let outcome = match connector {
+            crate::readiness::ConnectorState::Connected => EventOutcome::Ready,
+            crate::readiness::ConnectorState::Degraded => EventOutcome::Degraded,
+            crate::readiness::ConnectorState::Starting => EventOutcome::Started,
+            crate::readiness::ConnectorState::Stopped => EventOutcome::Stopped,
+            crate::readiness::ConnectorState::Disabled => EventOutcome::Skipped,
+        };
+        let _ = events.record(
+            EventComponent::Telegram,
+            EventCode::ConnectorState,
+            outcome,
+            error,
+        );
     }
 }
 

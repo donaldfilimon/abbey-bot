@@ -195,17 +195,111 @@ impl ChannelContext {
     }
 }
 
-/// One slash-command invocation (bot-architecture.md `InteractionLog` row).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A catalog-owned name. Unknown legacy/model labels collapse to a fixed value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct InteractionCommand(&'static str);
+
+impl InteractionCommand {
+    pub fn from_name(name: &str) -> Self {
+        Self(
+            crate::command_catalog::registered_commands()
+                .iter()
+                .find(|entry| entry.name == name)
+                .map_or("unknown", |entry| entry.name),
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for InteractionCommand {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|name| Self::from_name(&name))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionErrorCategory {
+    Configuration,
+    Authentication,
+    Authorization,
+    Unavailable,
+    Timeout,
+    Protocol,
+    Capacity,
+    Persistence,
+    UnsafeFileType,
+    UnexpectedReturn,
+    Panic,
+    Internal,
+}
+
+/// Durable command evidence contains no platform identities or raw diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InteractionEntry {
-    pub command: String,
-    pub user_id: String,
-    pub guild_id: String,
-    pub channel_id: String,
+    pub command: InteractionCommand,
     pub succeeded: bool,
-    pub error: Option<String>,
+    pub error_category: Option<InteractionErrorCategory>,
     pub duration_ms: u64,
-    pub at: u64,
+    pub at_unix_ms: u64,
+}
+
+impl InteractionEntry {
+    pub fn new(
+        command: &str,
+        succeeded: bool,
+        error: Option<InteractionErrorCategory>,
+        duration_ms: u64,
+        at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            command: InteractionCommand::from_name(command),
+            succeeded,
+            error_category: if succeeded {
+                None
+            } else {
+                Some(error.unwrap_or(InteractionErrorCategory::Internal))
+            },
+            duration_ms: duration_ms.min(i64::MAX as u64),
+            at_unix_ms: at_unix_ms.min(i64::MAX as u64),
+        }
+    }
+
+    /// Discord creation timestamps must already be in milliseconds at this boundary.
+    pub fn total_latency_ms(created_unix_ms: u64, now_unix_ms: u64) -> u64 {
+        now_unix_ms
+            .saturating_sub(created_unix_ms)
+            .min(i64::MAX as u64)
+    }
+}
+
+impl<'de> Deserialize<'de> for InteractionEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Unknown legacy fields (including IDs and raw `error`) are skipped by serde
+        // without entering the sanitized row or its Debug representation.
+        #[derive(Deserialize)]
+        struct LegacyOrCurrent {
+            command: String,
+            succeeded: bool,
+            #[serde(default)]
+            error_category: Option<InteractionErrorCategory>,
+            #[serde(default)]
+            duration_ms: u64,
+            #[serde(default)]
+            at_unix_ms: Option<u64>,
+            #[serde(default)]
+            at: u64,
+        }
+        let row = LegacyOrCurrent::deserialize(deserializer)?;
+        Ok(Self::new(
+            &row.command,
+            row.succeeded,
+            row.error_category,
+            row.duration_ms,
+            row.at_unix_ms
+                .unwrap_or_else(|| row.at.saturating_mul(1000)),
+        ))
+    }
 }
 
 /// Slash-command usage analytics, capped at [`INTERACTION_CAP`] entries.
@@ -215,7 +309,8 @@ pub struct InteractionLog {
     pub entries: VecDeque<InteractionEntry>,
 }
 
-/// What `/stats` reports.
+/// Legacy aggregate renderer retained only for compatibility tests.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InteractionStats {
     pub total: u64,
@@ -232,6 +327,7 @@ impl InteractionLog {
         }
     }
 
+    #[cfg(test)]
     pub fn stats(&self) -> InteractionStats {
         let mut stats = InteractionStats::default();
         for entry in &self.entries {
@@ -241,7 +337,10 @@ impl InteractionLog {
             } else {
                 stats.failed += 1;
             }
-            *stats.per_command.entry(entry.command.clone()).or_insert(0) += 1;
+            *stats
+                .per_command
+                .entry(entry.command.0.to_string())
+                .or_insert(0) += 1;
         }
         stats
     }
@@ -249,6 +348,7 @@ impl InteractionLog {
 
 /// The `/stats` reply body. Commands are listed alphabetically (the map is
 /// ordered), so the output is stable across runs.
+#[cfg(test)]
 pub fn render_stats(stats: &InteractionStats) -> String {
     let mut out = format!(
         "**Interactions:** {} total — {} succeeded, {} failed",

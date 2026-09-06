@@ -5,7 +5,7 @@ use crate::{audio_tap::PcmBuffer, player_control::Player};
 use songbird::tracks::TrackHandle;
 use std::sync::{
     Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 struct Output {
@@ -14,6 +14,7 @@ struct Output {
     track: Option<TrackHandle>,
 }
 struct State {
+    cancel: tokio_util::sync::CancellationToken,
     output: Option<Output>,
     volume: u8,
     phase: VoicePhase,
@@ -22,14 +23,17 @@ struct State {
     last_event: Option<SessionEvent>,
 }
 pub struct MusicController {
+    closed: AtomicBool,
     generation: AtomicU64,
     state: Mutex<State>,
 }
 impl Default for MusicController {
     fn default() -> Self {
         Self {
+            closed: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             state: Mutex::new(State {
+                cancel: tokio_util::sync::CancellationToken::new(),
                 output: None,
                 volume: 100,
                 phase: VoicePhase::Disconnected,
@@ -41,11 +45,20 @@ impl Default for MusicController {
     }
 }
 impl MusicController {
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.stop("service stopping", PlaybackTermination::Stopped);
+    }
     pub fn begin(&self, player: Player) -> u64 {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.closed.load(Ordering::SeqCst) {
+            return 0;
+        }
+        state.cancel.cancel();
+        state.cancel = tokio_util::sync::CancellationToken::new();
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(old) = state.output.take() {
             old.buffer.close();
@@ -58,7 +71,23 @@ impl MusicController {
         generation
     }
     pub fn current(&self, generation: u64) -> bool {
-        self.generation.load(Ordering::SeqCst) == generation
+        !self.closed.load(Ordering::SeqCst)
+            && generation != 0
+            && self.generation.load(Ordering::SeqCst) == generation
+    }
+    /// Serialize native launch with generation invalidation. The returned token
+    /// cancels an already-launched child when leave, stop, or replacement wins.
+    pub fn launch_current<T>(
+        &self,
+        generation: u64,
+        launch: impl FnOnce() -> T,
+    ) -> Option<(T, tokio_util::sync::CancellationToken)> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.current(generation)
+            .then(|| (launch(), state.cancel.clone()))
     }
     pub fn install(&self, generation: u64, buffer: PcmBuffer, track: TrackHandle) -> bool {
         let mut state = self
@@ -90,6 +119,7 @@ impl MusicController {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cancel.cancel();
         self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(old) = state.output.take() {
             old.buffer.close();
@@ -108,6 +138,7 @@ impl MusicController {
         if !self.current(generation) {
             return;
         }
+        state.cancel.cancel();
         self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(old) = state.output.take() {
             old.buffer.close();

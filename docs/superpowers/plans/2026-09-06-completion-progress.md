@@ -30,11 +30,11 @@ The ignored local records are `.superpowers/baseline-strict-gate.log` and `.supe
 | Task 5 memory/image menus | `4045ab1` implements shared card, memory USER menu, two image MESSAGE menus, bounded decoded attachment selection and registered-action privacy/state tests; independent review approved | Final integrated gate and live registration/interaction acceptance remain separate |
 | Task 6 voice/admin UX | `12de8cc` / `ccdd6f7` / `aa65ffb` deliver member voice privacy, diagnostics, typed modes and the full dashboard; actual dispatcher/reset/export/provider-isolation tests and all-target Clippy pass; review approved | Preserve these boundaries during runtime/lifecycle work; final integrated gate and live acceptance remain |
 | Task 7 router | `0fafed3` implements pure normalized scoring, strict compatible manifests, circuit/Retry-After policy and conversation-owned fallback; 114 focused tests and all-target Clippy pass | Independent review approved; production integration remains Task 8 |
-| Task 8 provider runtime | Legacy production paths still separate | One runtime authority and conversation effect tracking, preserving legacy compatibility |
-| Task 9 lifecycle | Persistence result exists; scheduler/connector ownership remains incomplete | Supervision, cancellation, serialized persistence and one bounded shutdown |
-| Task 10 observability | Managed readiness/events/logging contract not implemented | Strict identity/schema/privacy, bootstrap failure channel, bounded JSONL and managed startup ordering |
-| Task 11 installer | Current installer uses stable PID checks | Shared readiness checker and complete fake-launchd transaction matrix |
-| Task 12 closeout | Some prior module splits exist | Size ratchet, remaining decomposition, compatible dependency refresh, documentation, final review, fresh strict gate, exact-head CI and integration cleanup |
+| Task 8 provider runtime | Runtime authority, failover/effect boundaries and compatibility integration implemented and reviewed | Final lifecycle integration and strict delivery gate |
+| Task 9 lifecycle | Supervised actors, retained operations/writers and four-stage shutdown integrated; full 1,167-test suite passed before final review fixes | Post-review verification, integration commit and strict delivery gate |
+| Task 10 observability | Private managed artifacts, closed events, migration and bounded logs integrated and reviewed | Final startup heartbeat/event truth checks, integration commit and strict delivery gate |
+| Task 11 installer | Shared identity-bound readiness validation, transaction recovery and 26 passing offline installer tests | Final integrated gate; real installation remains separate |
+| Task 12 closeout | Reviewed server extraction committed at `9632416`; seven size-gate fixtures pass | Size ratchet, remaining decomposition, compatible dependency refresh, documentation, final review, fresh strict gate, exact-head CI and integration cleanup |
 
 WDBX episode integration remains proposal-only and default-off. Approval/execution events belong to the constitutional host; neither admin controls nor a successful proposal imply ledger authorization. The broader live acceptance ledger remains separate from these source tasks.
 
@@ -130,3 +130,76 @@ unverified. Independent review approved the source after fixing bytecode writes
 and rechecking freshness after the final service query. README/gate wiring and
 the full shared installer regression remain pending, so the added operator plan
 is not yet closed.
+
+## Reviewed installer and active lifecycle integration
+
+Task 8 review is now closed by `9c09f70`, including delivery-effect ordering,
+typed body-transport failures, invocation-time FM executable verification and
+ordered requalification recovery. The full suite passed 1,095 tests with four
+live tests ignored before the final narrow recovery high-water adjustment; its
+focused regression and all-target Clippy passed afterward. This does not replace
+the pending final integrated gate.
+
+The Python service bundle is reviewed and the latest complete offline runs pass:
+protocol 20, installation artifacts 10, readiness 24, read-only status 15 and
+installer transaction 25 tests. Installer cleanup now retains the recovery lock
+and skips competing rollback when a child has not been reaped. `c1e29d7` wires
+the POSIX suites and portable Windows schema corpus into the repository gates.
+No real launchd transaction or current host-status probe was run.
+
+Canonical committed history through `4bbce84` has been integrated. The full
+service supervisor, actual serialized persistence worker, retained framework and
+child ownership, managed preflight/environment/privacy rewrite, closed logging,
+private complete fact browser and scoped operator guidance are being integrated
+in disjoint owned files. Voice actor/consent writer cancellation tests have been
+added; no compile/test success is claimed for this uncommitted integration yet.
+Task 12 decomposition, dependency refresh, fresh strict gate, whole-branch
+review, canonical merge/worktree cleanup and exact-head hosted CI remain open.
+
+The first complete managed/UI/voice integration compiled without warnings and
+then ran 1,164 passing Rust tests, one generated README catalog mismatch and
+four intentionally ignored live tests. The 51-row catalog region has since been
+regenerated. Browser/command, operator renderer, voice ownership and telemetry
+source reviews are closed, including immediate non-ready publication on an
+observed Discord disconnect and retention of an output owner that panics. Later
+service fixes add startup exit categories, actual Songbird removal, explicit
+shutdown resource reporting and final-write deadline enforcement; their final
+integrated test/Clippy evidence is still pending.
+
+Task 12 server movement has extracted the unchanged diff policy and embedded
+tests into child modules; the three production parents and new policy module
+are below 800 lines. The new Rust size/suppression ratchet has seven passing
+fixture tests, including commented/string fake attributes and files shared by
+test and production module paths. It currently rejects eleven remaining
+oversized production files, which are queued for responsibility-based movement.
+Installer environment parsing is being aligned with managed Rust startup so a
+malformed owner file is rejected before stopping the preceding service.
+
+The subsequent full locked Rust suite passed: 1,167 passed, zero failed, and
+four intentionally ignored tests. All-target Clippy also passed before the last
+small typed-event and shutdown-outcome follow-ups; those follow-ups await their
+focused checks. Shared environment parity passes in Rust and Python (34 literal
+fixtures), and all 26 offline installer tests passed in 54.599 seconds, including
+malformed environment rejection before stop. No live service action was run.
+
+Post-suite review corrected a native-player generation race: the actual launch
+now serializes with generation invalidation, and a generation token cancels the
+retained child through kill and wait. Independent source review clears the fix;
+its controlled prelaunch and owned-child regressions await the coordinated gate.
+The same final gate includes retained startup readiness refresh and truthful
+`shutdown_finalizing` event semantics.
+
+The final post-review locked suite passed 1,175 tests with zero failures and
+four intentional ignores (57.69 seconds). Formatting and all-target locked
+Clippy passed with warnings denied. This includes the startup heartbeat, event
+truth and music-generation fixes. Debug entrypoint fixture checks precede the
+integration commit; the fresh strict delivery gate remains open.
+
+The locked debug build and scratch-HOME entrypoint checks passed. Missing owner
+environment and missing HOME exit 78 without output; mixed/repeated managed
+arguments exit 2 with fixed usage and no argument canary. The scratch path was
+resolved before execution because the private-path contract rejects the macOS
+`/var` alias. No provider or Discord request was needed. Tasks 9 and 10 are
+implemented, reviewed and validated for the combined integration commit; Task 12
+still owns mechanical decomposition, compatible dependency refresh and final
+delivery validation.

@@ -134,13 +134,17 @@ pub async fn run_slack(state: Arc<AppState>, bot_token: String, app_token: Strin
     use futures_util::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+    slack_observed(&state, crate::readiness::ConnectorState::Starting, None);
     let out = SlackOutbound::new(&bot_token);
     if let Ok(me) = out.call("auth.test", &serde_json::json!({})).await
         && let Some(id) = me.get("user_id").and_then(serde_json::Value::as_str)
     {
         state.register_self(format!("slack:{id}"));
     }
-    let opener = reqwest::Client::new();
+    let opener = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("static Slack request client");
     loop {
         let url = match opener
             .post("https://slack.com/api/apps.connections.open")
@@ -169,23 +173,49 @@ pub async fn run_slack(state: Arc<AppState>, bot_token: String, app_token: Strin
             }
         };
         let Some(url) = url else {
+            slack_observed(
+                &state,
+                crate::readiness::ConnectorState::Degraded,
+                Some(crate::observability::OperationalErrorCategory::Unavailable),
+            );
             PollLoop::slack_open().wait().await;
             continue;
         };
-        let (mut socket, _) = match tokio_tungstenite::connect_async(&url).await {
-            Ok(pair) => pair,
-            Err(e) => {
-                tracing::warn!(error = %e, "slack socket connect failed");
+        let (mut socket, _) = match tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio_tungstenite::connect_async(&url),
+        )
+        .await
+        {
+            Ok(Ok(pair)) => pair,
+            _ => {
+                slack_observed(
+                    &state,
+                    crate::readiness::ConnectorState::Degraded,
+                    Some(crate::observability::OperationalErrorCategory::Unavailable),
+                );
+                tracing::warn!("slack socket connect failed");
                 PollLoop::slack_open().wait().await;
                 continue;
             }
         };
+        slack_observed(&state, crate::readiness::ConnectorState::Connected, None);
         tracing::info!("slack socket mode connected");
-        while let Some(frame) = socket.next().await {
+        while let Ok(Some(frame)) =
+            tokio::time::timeout(Duration::from_secs(90), socket.next()).await
+        {
             let text = match frame {
                 Ok(WsMessage::Text(t)) => t,
                 Ok(WsMessage::Ping(p)) => {
-                    let _ = socket.send(WsMessage::Pong(p)).await;
+                    if !tokio::time::timeout(
+                        Duration::from_secs(30),
+                        socket.send(WsMessage::Pong(p)),
+                    )
+                    .await
+                    .is_ok_and(|r| r.is_ok())
+                    {
+                        break;
+                    }
                     continue;
                 }
                 Ok(WsMessage::Close(_)) | Err(_) => break,
@@ -196,7 +226,13 @@ pub async fn run_slack(state: Arc<AppState>, bot_token: String, app_token: Strin
             };
             if let Some(id) = &parsed.envelope_id {
                 let ack = serde_json::json!({ "envelope_id": id }).to_string();
-                if socket.send(WsMessage::Text(ack.into())).await.is_err() {
+                if !tokio::time::timeout(
+                    Duration::from_secs(30),
+                    socket.send(WsMessage::Text(ack.into())),
+                )
+                .await
+                .is_ok_and(|r| r.is_ok())
+                {
                     break;
                 }
             }
@@ -211,8 +247,40 @@ pub async fn run_slack(state: Arc<AppState>, bot_token: String, app_token: Strin
                 _ => {}
             }
         }
+        slack_observed(
+            &state,
+            crate::readiness::ConnectorState::Degraded,
+            Some(crate::observability::OperationalErrorCategory::Unavailable),
+        );
         tracing::info!("slack socket closed; reconnecting");
         PollLoop::slack_reconnect().wait().await;
+    }
+}
+
+fn slack_observed(
+    state: &AppState,
+    connector: crate::readiness::ConnectorState,
+    error: Option<crate::observability::OperationalErrorCategory>,
+) {
+    if let Some(status) = state.managed_status() {
+        status.slack(connector);
+        let _ = status.refresh();
+    }
+    if let Some(events) = state.operational_events() {
+        use crate::observability::{EventCode, EventComponent, EventOutcome};
+        let outcome = match connector {
+            crate::readiness::ConnectorState::Connected => EventOutcome::Ready,
+            crate::readiness::ConnectorState::Degraded => EventOutcome::Degraded,
+            crate::readiness::ConnectorState::Starting => EventOutcome::Started,
+            crate::readiness::ConnectorState::Stopped => EventOutcome::Stopped,
+            crate::readiness::ConnectorState::Disabled => EventOutcome::Skipped,
+        };
+        let _ = events.record(
+            EventComponent::Slack,
+            EventCode::ConnectorState,
+            outcome,
+            error,
+        );
     }
 }
 

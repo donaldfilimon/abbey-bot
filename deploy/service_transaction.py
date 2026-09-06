@@ -21,6 +21,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from service_installation import binary_digest, validate_managed_plist
+    from service_environment import EnvironmentError, validate_environment
     from service_protocol import ProtocolError, read_optional_private
     from service_readiness import (BUDGET_NS, TransactionContext, ReadinessError,
                                    launchd_pid, make_context, wait_ready, parse_pid_record, cleanup_incomplete)
@@ -421,7 +422,12 @@ def phase(operation, home, state, checkout):
             descriptor = tree.directory('.config/abbey-bot', exact=True)
             os.close(descriptor)
             env = tree.read(ENV, cap=65536)
-            # Existing names-only parser runs separately under the shell before stop.
+            # Match the managed runtime parser before the shell may stop a prior run.
+            try:
+                validate_environment(env)
+            except EnvironmentError:
+                raise TransactionError('environment') from None
+            # Existing names-only diagnostics still run separately under the shell.
             old_bin = tree.read(BIN, 0o700, optional=True)
             old_plist = tree.read(PLIST, optional=True, cap=65536)
             state['baseline'] = capture(home)
