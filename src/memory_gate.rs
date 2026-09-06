@@ -67,7 +67,9 @@ pub async fn admit_fact(
 
 /// Propose a `forgets` candidate for the exact stored `fact` before it is
 /// deleted locally. A fact with no receipt (stored before the gate existed)
-/// is deleted without a ledger edge and counted as an ungated forget.
+/// is deleted without a ledger edge and counted as an ungated forget. The
+/// receipt stays until the caller reports the local delete with
+/// [`drop_receipt`], so a delete that fails after all keeps its join.
 pub async fn admit_forget(
     state: &AppState,
     scoped_guild: &str,
@@ -97,12 +99,16 @@ pub async fn admit_forget(
         nonce: gate.next_nonce(),
     };
     match gate.record_memory_candidate(request).await {
-        GateOutcome::Appended { .. } => {
-            service.take_receipt(scoped_guild, scoped_user, fact);
-            Ok(())
-        }
+        GateOutcome::Appended { .. } => Ok(()),
         other => Err(refusal(&other)),
     }
+}
+
+/// The local delete happened: the fact's receipt is no longer a live join.
+pub fn drop_receipt(state: &AppState, scoped_guild: &str, scoped_user: &str, fact: &str) {
+    state
+        .memory_service()
+        .take_receipt(scoped_guild, scoped_user, fact);
 }
 
 /// After a successful local write, key the stored fact by its receipt and

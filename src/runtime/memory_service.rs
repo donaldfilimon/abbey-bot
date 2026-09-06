@@ -344,6 +344,24 @@ impl<'a> MemoryService<'a> {
         }
     }
 
+    /// Read-only precondition for a gated `/pending confirm`: true only when a
+    /// proposal names `old_fact` and both it and its replacement are still
+    /// stored, i.e. when `confirm_supersession` would actually remove
+    /// something. Otherwise no tombstone may be proposed for it.
+    pub fn confirm_would_remove(&self, guild: &str, user: &str, old_fact: &str) -> bool {
+        let stores = AppState::lock(self.stores);
+        let facts = stores.memory.facts(guild, user);
+        stores
+            .memory
+            .pending_supersessions(guild, user)
+            .iter()
+            .any(|pending| {
+                pending.old_fact == old_fact
+                    && facts.iter().any(|held| held == old_fact)
+                    && facts.iter().any(|held| held == &pending.new_fact)
+            })
+    }
+
     fn receipt_key(guild: &str, user: &str, fact: &str) -> String {
         format!("{guild}\u{1f}{user}\u{1f}{fact}")
     }

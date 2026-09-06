@@ -133,16 +133,33 @@ pub async fn remember(
             return Ok(());
         }
     };
-    if state.episode_gate.is_some()
-        && replaces.is_none()
-        && state
-            .memory_service()
-            .remember_blocked(&g, &u, &fact)
-            .is_some()
-    {
-        ctx.say("Already on record (or the fact list is full).")
-            .await?;
-        return Ok(());
+    if state.episode_gate.is_some() {
+        match replaces.as_deref() {
+            None => {
+                if state
+                    .memory_service()
+                    .remember_blocked(&g, &u, &fact)
+                    .is_some()
+                {
+                    ctx.say("Already on record (or the fact list is full).")
+                        .await?;
+                    return Ok(());
+                }
+            }
+            Some(old) => match state.memory_service().resolve_fact(&g, &u, old) {
+                None => {
+                    ctx.say("No remembered fact matches what you asked to replace.")
+                        .await?;
+                    return Ok(());
+                }
+                Some(selected) if selected == fact => {
+                    ctx.say("Already on record (or the fact list is full).")
+                        .await?;
+                    return Ok(());
+                }
+                Some(_) => {}
+            },
+        }
     }
     let receipt = match memory_gate::admit_fact(state, &g, &u, &fact, replaces.as_deref()).await {
         Ok(receipt) => receipt,
@@ -238,6 +255,9 @@ pub async fn forget(
         return Ok(());
     }
     let removed = state.memory_service().forget(&g, &u, &selected);
+    if removed {
+        memory_gate::drop_receipt(state, &g, &u, &selected);
+    }
     ctx.say(if removed {
         "Forgotten."
     } else {
@@ -359,6 +379,31 @@ fn pending_action_rows(
         .collect()
 }
 
+/// Confirm a proposed supersession behind the episode gate. A tombstone is
+/// proposed only when the confirm would actually remove the old fact (a
+/// pending entry names it and both facts are still held); otherwise
+/// `confirm_supersession` reports its own non-removing outcome and nothing is
+/// proposed. The receipt is dropped only after the fact is gone.
+async fn gated_confirm(
+    state: &runtime::AppState,
+    scoped_guild: &str,
+    scoped_user: &str,
+    old_fact: &str,
+) -> String {
+    let service = state.memory_service();
+    if service.confirm_would_remove(scoped_guild, scoped_user, old_fact)
+        && let Err(message) =
+            memory_gate::admit_forget(state, scoped_guild, scoped_user, old_fact).await
+    {
+        return message;
+    }
+    let outcome = service.confirm_supersession(scoped_guild, scoped_user, old_fact);
+    if matches!(outcome, runtime::SupersessionOutcome::Confirmed(_)) {
+        memory_gate::drop_receipt(state, scoped_guild, scoped_user, old_fact);
+    }
+    format_confirm_outcome(outcome)
+}
+
 fn format_confirm_outcome(outcome: runtime::SupersessionOutcome) -> String {
     match outcome {
         runtime::SupersessionOutcome::Confirmed(removed) => format!("Removed: {removed}"),
@@ -424,19 +469,7 @@ async fn run_pending_component_session(
                 let old_fact = entry.old_fact.clone();
                 match action {
                     PendingButtonAction::Confirm => {
-                        match memory_gate::admit_forget(
-                            &ctx.data().state,
-                            &guild_key,
-                            &user_key,
-                            &old_fact,
-                        )
-                        .await
-                        {
-                            Ok(()) => format_confirm_outcome(
-                                memory.confirm_supersession(&guild_key, &user_key, &old_fact),
-                            ),
-                            Err(message) => message,
-                        }
+                        gated_confirm(&ctx.data().state, &guild_key, &user_key, &old_fact).await
                     }
                     PendingButtonAction::Dismiss => {
                         if memory.dismiss_supersession(&guild_key, &user_key, &old_fact) {
@@ -556,15 +589,7 @@ pub async fn pending_confirm(
         return Ok(());
     }
     let u = scoped_user(subject);
-    let reply = match memory_gate::admit_forget(&ctx.data().state, &g, &u, &old_fact).await {
-        Ok(()) => format_confirm_outcome(
-            ctx.data()
-                .state
-                .memory_service()
-                .confirm_supersession(&g, &u, &old_fact),
-        ),
-        Err(message) => message,
-    };
+    let reply = gated_confirm(&ctx.data().state, &g, &u, &old_fact).await;
     ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
