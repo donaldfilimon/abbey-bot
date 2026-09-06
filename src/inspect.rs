@@ -90,6 +90,8 @@ pub struct RuntimeInspect {
     pub vision_on: bool,
     pub quiet: bool,
     pub data: bool,
+    /// Episode gate counters, `None` when no gate is configured.
+    pub gate: Option<crate::episode_gate::GateCounters>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +201,19 @@ pub fn render_runtime(runtime: &RuntimeInspect) -> String {
         on_off(runtime.vision_on),
         on_off(runtime.quiet),
         if runtime.data { "yes" } else { "no" },
-    )
+    ) + &render_gate(runtime.gate)
+}
+
+/// The episode gate's content-free counters, so a refusing or unreachable
+/// gate is visible in `/inspect` rather than only in the log.
+fn render_gate(gate: Option<crate::episode_gate::GateCounters>) -> String {
+    match gate {
+        None => " · gate: off".to_string(),
+        Some(counters) => format!(
+            " · gate: appended {} · rejected {} · unavailable {} · ungated forgets {}",
+            counters.appended, counters.rejected, counters.unavailable, counters.ungated_forgets
+        ),
+    }
 }
 
 pub fn render_provider(providers: &[ProviderRouteInspect]) -> String {
@@ -338,7 +352,24 @@ mod tests {
             vision_on: true,
             quiet: false,
             data: true,
+            gate: None,
         }
+    }
+
+    #[test]
+    fn gate_counters_render_only_when_configured() {
+        assert!(render_runtime(&runtime()).ends_with("gate: off"));
+        let mut with_gate = runtime();
+        with_gate.gate = Some(crate::episode_gate::GateCounters {
+            appended: 3,
+            rejected: 1,
+            unavailable: 0,
+            ungated_forgets: 2,
+        });
+        let line = render_runtime(&with_gate);
+        assert!(
+            line.ends_with("gate: appended 3 · rejected 1 · unavailable 0 · ungated forgets 2")
+        );
     }
 
     #[test]

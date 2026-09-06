@@ -645,6 +645,23 @@ status: in_progress
   `ABI_WDBX_PATH`): `decision=appended`, nothing under `~/.abi` touched, and the replay refused
   with `AlreadyExists: episode_replay`. The bot's own runner is proven only against fake
   scripts, and no gateway is deployed.
+- 2026-09-06 03:4x: **memory-candidate adapter landed (amendment step 3 of 3, local commit,
+  not pushed).** `episode_gate.rs` transcribes `MemoryClass`/`RetentionClass`/`MemoryCandidate`
+  and the `memory_candidate` event (pinned by `tests/fixtures/episode_write_memory_candidate.json`,
+  copied byte-for-byte from wdbx's golden), builds candidates with `memory_candidate_write`
+  (SHA-256 over the payload, never the payload), and counts appended/rejected/unavailable/
+  ungated-forgets for `/inspect`. `memory_gate.rs`: `/remember`, `/forget`, `/pending confirm`
+  propose before writing and write only on `appended`; receipts in `Stores.memory_receipts`
+  (`#[serde(default)]`, old state files still load). The model's `remember_fact` tool refuses
+  while the gate is configured (sync host cannot propose). `checkpoint_gate.rs`: per-guild
+  `BrainRow` proposed as an `experience` candidate once per changed persist, superseding the
+  last admitted digest; refused rows are substituted by the last admitted (or pre-gate
+  on-disk) row; the sync shutdown persist writes only admitted rows. Default-off path is
+  byte-identical. Not done: no end-to-end test against a live gateway from this repo (the
+  gate is exercised through fixtures and pure functions; the abi CLI test covers the wire),
+  and `operational` retention emits no `forgets` on checkpoint replacement (the supersede
+  chain is the lifecycle). Budget trap named in AGENTS.md: payload bytes are charged
+  cumulatively and never refunded.
 - **OWNED MISTAKE, 2026-09-06 03:1x:** the direct push of `f3c0ba8` turned the Windows gate red
   (5 `episode_gate` unit tests): the tests hardcoded POSIX absolute paths, which are relative on
   Windows, and built JSON by string formatting, so a Windows temp path's backslashes made the

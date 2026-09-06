@@ -475,6 +475,13 @@ pub struct Stores {
     /// publishes the migration decision.
     #[serde(default)]
     pub memory_projection_version: u32,
+    /// Episode digests (hex) of the memory-candidate receipts the ledger
+    /// issued for facts, keyed `"{scoped_guild}\u{1f}{scoped_user}\u{1f}{fact}"`
+    /// (amendment 2026-09-06, §4.2). Lets an audit join a stored fact to its
+    /// ledger entry without the ledger ever learning the fact. Empty unless
+    /// the episode gate was configured when the fact was stored.
+    #[serde(default)]
+    pub memory_receipts: BTreeMap<String, String>,
 }
 
 /// Why a load or save failed. Carries the path so the log line is actionable.

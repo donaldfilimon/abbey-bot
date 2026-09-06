@@ -23,6 +23,7 @@ use crate::episode_gate::LearningToggleRequest;
 use crate::guild::{self, GuildSettings};
 use crate::llm;
 use crate::memory;
+use crate::memory_gate;
 use crate::persist::{PersistReport, render_component_outcome};
 use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
@@ -121,6 +122,35 @@ pub async fn remember(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
+    // With the episode gate configured the write is proposed first and
+    // happens only on `appended` (amendment 2026-09-06). The local
+    // preconditions are checked read-only before proposing, so no candidate
+    // is admitted for a write that would not happen anyway.
+    let fact = match memory::validated_fact(&fact) {
+        Ok(fact) => fact,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
+    if state.episode_gate.is_some()
+        && replaces.is_none()
+        && state
+            .memory_service()
+            .remember_blocked(&g, &u, &fact)
+            .is_some()
+    {
+        ctx.say("Already on record (or the fact list is full).")
+            .await?;
+        return Ok(());
+    }
+    let receipt = match memory_gate::admit_fact(state, &g, &u, &fact, replaces.as_deref()).await {
+        Ok(receipt) => receipt,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
     // `replaces` is an explicit human signal, so it is authoritative and needs
     // no confirmation step. Without it nothing is ever removed here.
     let outcome = match replaces.as_deref() {
@@ -131,6 +161,20 @@ pub async fn remember(
             .memory_service()
             .remember(&g, &u, &fact, runtime::now()),
     };
+    if let Some(digest_hex) = &receipt {
+        match &outcome {
+            Ok(runtime::RememberOutcome::Stored(stored)) => {
+                memory_gate::settle_receipts(state, &g, &u, stored, None, digest_hex);
+            }
+            Ok(runtime::RememberOutcome::Superseded { stored, removed }) => {
+                memory_gate::settle_receipts(state, &g, &u, stored, Some(removed), digest_hex);
+            }
+            // Admitted, but the local store refused after all (a concurrent
+            // write). The candidate stands in the ledger with nothing behind
+            // it; the log is the record.
+            _ => tracing::warn!("episode gate: admitted fact candidate stored nothing locally"),
+        }
+    }
     let reply = match outcome {
         Ok(runtime::RememberOutcome::Stored(fact)) => {
             format!("Stored about <@{}>: {fact}", subject.id.get())
@@ -185,7 +229,15 @@ pub async fn forget(
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
-    let removed = state.memory_service().forget(&g, &u, &fact);
+    let Some(selected) = state.memory_service().resolve_fact(&g, &u, &fact) else {
+        ctx.say("Nothing by that wording was on record.").await?;
+        return Ok(());
+    };
+    if let Err(message) = memory_gate::admit_forget(state, &g, &u, &selected).await {
+        ctx.say(message).await?;
+        return Ok(());
+    }
+    let removed = state.memory_service().forget(&g, &u, &selected);
     ctx.say(if removed {
         "Forgotten."
     } else {
@@ -371,9 +423,21 @@ async fn run_pending_component_session(
             Some(entry) => {
                 let old_fact = entry.old_fact.clone();
                 match action {
-                    PendingButtonAction::Confirm => format_confirm_outcome(
-                        memory.confirm_supersession(&guild_key, &user_key, &old_fact),
-                    ),
+                    PendingButtonAction::Confirm => {
+                        match memory_gate::admit_forget(
+                            &ctx.data().state,
+                            &guild_key,
+                            &user_key,
+                            &old_fact,
+                        )
+                        .await
+                        {
+                            Ok(()) => format_confirm_outcome(
+                                memory.confirm_supersession(&guild_key, &user_key, &old_fact),
+                            ),
+                            Err(message) => message,
+                        }
+                    }
                     PendingButtonAction::Dismiss => {
                         if memory.dismiss_supersession(&guild_key, &user_key, &old_fact) {
                             "Dismissed. Both facts are kept.".to_string()
@@ -492,12 +556,15 @@ pub async fn pending_confirm(
         return Ok(());
     }
     let u = scoped_user(subject);
-    let reply = format_confirm_outcome(
-        ctx.data()
-            .state
-            .memory_service()
-            .confirm_supersession(&g, &u, &old_fact),
-    );
+    let reply = match memory_gate::admit_forget(&ctx.data().state, &g, &u, &old_fact).await {
+        Ok(()) => format_confirm_outcome(
+            ctx.data()
+                .state
+                .memory_service()
+                .confirm_supersession(&g, &u, &old_fact),
+        ),
+        Err(message) => message,
+    };
     ctx.say(clamp_message(reply)).await?;
     Ok(())
 }
@@ -1063,7 +1130,7 @@ fn render_admin_flush(report: &PersistReport) -> String {
 pub async fn admin_flush(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let report = state.persist_all();
+    let report = state.persist_all_gated().await;
     ctx.say(clamp_message(render_admin_flush(&report))).await?;
     Ok(())
 }

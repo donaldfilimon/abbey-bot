@@ -5,18 +5,23 @@
 //! it. This module is abbey-bot's first caller of that gate. It is
 //! deliberately narrow:
 //!
-//! - It records exactly one thing: that a guild administrator asked Abbey to
-//!   toggle adaptive learning, as a `proposal` event of an operation chain.
-//!   Approval, execution, and terminal events belong to the constitutional
-//!   host, not to this bot, so nothing here claims the toggle was
-//!   *authorized* by the ledger. The local toggle still applies immediately;
-//!   the ledger write is a mirror, never a gate on the command.
+//! - It records two things. A guild administrator's request to toggle
+//!   adaptive learning goes in as a `proposal` event of an operation chain;
+//!   approval, execution, and terminal events belong to the constitutional
+//!   host, so nothing here claims the toggle was *authorized* by the ledger,
+//!   and the local toggle applies immediately. Memory writes go in as
+//!   `memory_candidate` events (amendment 2026-09-06): the adapter proposes
+//!   *before* it writes locally and writes only on `appended`, so with the
+//!   gate configured a refused or unreachable gate means nothing is stored
+//!   and the person is told so. The ledger holds the SHA-256 of the payload
+//!   and its size, never the payload.
 //! - It never links the `abi` workspace. The gateway is reached by running
 //!   the `abi` binary (`abi wdbx episode propose <write.json> --json`), the
 //!   same "transcribe, never depend" stance as `wyhash.rs` and `wdbx.rs`.
 //!   The write vocabulary below is a transcription of
-//!   `abi-wdbx::v3::episode` pinned by `tests/fixtures/episode_write_proposal.json`,
-//!   which was generated from the canonical types.
+//!   `abi-wdbx::v3::episode` pinned by `tests/fixtures/episode_write_proposal.json`
+//!   and `tests/fixtures/episode_write_memory_candidate.json`, both generated
+//!   from the canonical types.
 //! - It is off unless `ABBEY_EPISODE_GATE_CONFIG` names a JSON file. Unset,
 //!   the bot's behaviour is byte-identical to before this module existed.
 //!
@@ -56,6 +61,8 @@ const TOKEN_COST: u64 = 1;
 const PRINCIPAL_SEED: u64 = 0x6162_6265_795f_6764; // "abbey_gd"
 const OPERATION_SEED: u64 = 0x6c65_6172_6e5f_6f70; // "learn_op"
 const REQUEST_SEED: u64 = 0x6c65_6172_6e5f_7271; // "learn_rq"
+const MEMORY_OPERATION_SEED: u64 = 0x6d65_6d6f_7279_6f70; // "memoryop"
+const MEMORY_REQUEST_SEED: u64 = 0x6d65_6d6f_7279_7271; // "memoryrq"
 
 /// The environment the `abi` child inherits: locale and temp dir only, never
 /// the bot's own credentials.
@@ -113,13 +120,66 @@ pub enum EvidenceLevel {
     C3,
 }
 
-/// Operation lifecycle event. Only `proposal` is emitted by this bot.
+/// Memory record class. Transcribed from `abi-wdbx::v3::episode::MemoryClass`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryClass {
+    Fact,
+    Experience,
+    Embedding,
+    Summary,
+}
+
+impl MemoryClass {
+    /// Stable label, used in operation ids and log lines.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fact => "fact",
+            Self::Experience => "experience",
+            Self::Embedding => "embedding",
+            Self::Summary => "summary",
+        }
+    }
+}
+
+/// Retention class. Transcribed from `abi-wdbx::v3::episode::RetentionClass`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RetentionClass {
+    Session,
+    Operational,
+    Durable,
+}
+
+/// Content-free description of one memory write, field order identical to
+/// the canonical struct. The store's rules (a `forgets` candidate carries zero
+/// bytes and the all-zero commitment; every other one is nonzero; `dimension`
+/// exactly for `embedding`) are enforced by WDBX, and [`memory_candidate_write`]
+/// builds only shapes it admits.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MemoryCandidate {
+    pub class: MemoryClass,
+    pub retention: RetentionClass,
+    pub payload_commitment: [u8; 32],
+    pub payload_bytes: u64,
+    pub dimension: Option<u16>,
+    pub embedding_version: Option<String>,
+    pub member_scoped: bool,
+    pub supersedes: Option<[u8; 32]>,
+    pub forgets: Option<[u8; 32]>,
+}
+
+/// Operation lifecycle event. This bot emits `proposal` and `memory_candidate`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EpisodeEvent {
     Proposal {
         requested_by: ActorRef,
         proposed_by: ActorRef,
+    },
+    MemoryCandidate {
+        recorded_by: ActorRef,
+        candidate: MemoryCandidate,
     },
 }
 
@@ -342,7 +402,7 @@ fn absolute_path(path: &Path, field: &str) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
-fn parse_digest(text: &str) -> Option<[u8; 32]> {
+pub fn parse_digest(text: &str) -> Option<[u8; 32]> {
     if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
@@ -450,6 +510,113 @@ pub fn learning_toggle_proposal(
     })
 }
 
+/// What a memory write site hands over: the scope, the class, and the
+/// canonical payload bytes. The bytes never leave this process; only their
+/// SHA-256 and length reach the ledger.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryCandidateRequest {
+    pub scoped_guild: String,
+    pub class: MemoryClass,
+    pub retention: RetentionClass,
+    /// Canonical payload bytes; empty exactly when `forgets` is set.
+    pub payload: Vec<u8>,
+    /// True when the record is guild-plus-user isolated.
+    pub member_scoped: bool,
+    /// Episode digest of the candidate this replaces.
+    pub supersedes: Option<[u8; 32]>,
+    /// Episode digest of the candidate this erases.
+    pub forgets: Option<[u8; 32]>,
+    pub now: u64,
+    pub nonce: u64,
+}
+
+/// Build the memory-candidate write. `Err` names the reason nothing can be
+/// proposed; nothing was sent. The bot never proposes the `embedding` class:
+/// the projection's vector is derived deterministically from the fact, so the
+/// fact candidate already commits to it.
+pub fn memory_candidate_write(
+    config: &EpisodeGateConfig,
+    request: &MemoryCandidateRequest,
+) -> Result<EpisodeWrite, String> {
+    use sha2::{Digest as _, Sha256};
+
+    let guild_ref = guild_ref_for(&request.scoped_guild)
+        .ok_or_else(|| "scoped guild id does not map to a ledger guild reference".to_string())?;
+    if request.class == MemoryClass::Embedding {
+        return Err("the bot never proposes embedding candidates".into());
+    }
+    let (payload_commitment, payload_bytes) = if request.forgets.is_some() {
+        if request.supersedes.is_some() || !request.payload.is_empty() {
+            return Err("a forget candidate carries no payload and no supersedes edge".into());
+        }
+        ([0_u8; 32], 0)
+    } else {
+        if request.payload.is_empty() {
+            return Err("a memory candidate needs payload bytes to commit to".into());
+        }
+        let digest: [u8; 32] = Sha256::digest(&request.payload).into();
+        (
+            digest,
+            u64::try_from(request.payload.len()).map_err(|_| "payload too large".to_string())?,
+        )
+    };
+    Ok(EpisodeWrite {
+        request_id: keyed_id(
+            "req",
+            MEMORY_REQUEST_SEED,
+            &guild_ref,
+            request.now,
+            request.nonce,
+        ),
+        operation_id: keyed_id(
+            &format!("memory-{}", request.class.label()),
+            MEMORY_OPERATION_SEED,
+            &guild_ref,
+            request.now,
+            request.nonce,
+        ),
+        contract_revision: config.contract_revision,
+        contract_digest: config.contract_digest,
+        guild_ref,
+        consent_epoch: None,
+        source_type: EpisodeSource::DiscordGuild,
+        policy_version: config.policy_version.clone(),
+        evidence_level: config.evidence_level,
+        event: EpisodeEvent::MemoryCandidate {
+            recorded_by: ActorRef {
+                principal_id: config.service_principal.clone(),
+                kind: ActorKind::Service,
+            },
+            candidate: MemoryCandidate {
+                class: request.class,
+                retention: request.retention,
+                payload_commitment,
+                payload_bytes,
+                dimension: None,
+                embedding_version: None,
+                member_scoped: request.member_scoped,
+                supersedes: request.supersedes,
+                forgets: request.forgets,
+            },
+        },
+        token_cost: TOKEN_COST,
+        expected_commitment: None,
+        quiet: false,
+    })
+}
+
+/// Content-free counters `inspect_status` shows so a refusing or unreachable
+/// gate is visible (decision 78) rather than silent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GateCounters {
+    pub appended: u64,
+    pub rejected: u64,
+    pub unavailable: u64,
+    /// Local deletions of facts the ledger never admitted (stored before the
+    /// gate existed), so no tombstone edge could be proposed.
+    pub ungated_forgets: u64,
+}
+
 // ---------------------------------------------------------------------------
 // The gate: run `abi wdbx episode propose` and report what happened.
 // ---------------------------------------------------------------------------
@@ -489,6 +656,10 @@ impl GateOutcome {
 pub struct EpisodeGate {
     config: EpisodeGateConfig,
     nonce: AtomicU64,
+    appended: AtomicU64,
+    rejected: AtomicU64,
+    unavailable: AtomicU64,
+    ungated_forgets: AtomicU64,
 }
 
 impl EpisodeGate {
@@ -496,7 +667,62 @@ impl EpisodeGate {
         Self {
             config,
             nonce: AtomicU64::new(0),
+            appended: AtomicU64::new(0),
+            rejected: AtomicU64::new(0),
+            unavailable: AtomicU64::new(0),
+            ungated_forgets: AtomicU64::new(0),
         }
+    }
+
+    pub fn counters(&self) -> GateCounters {
+        GateCounters {
+            appended: self.appended.load(Ordering::Relaxed),
+            rejected: self.rejected.load(Ordering::Relaxed),
+            unavailable: self.unavailable.load(Ordering::Relaxed),
+            ungated_forgets: self.ungated_forgets.load(Ordering::Relaxed),
+        }
+    }
+
+    /// A fact the ledger never admitted was deleted locally; visible, not silent.
+    pub fn note_ungated_forget(&self) {
+        self.ungated_forgets.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn count(&self, outcome: &GateOutcome) {
+        let counter = match outcome {
+            GateOutcome::Appended { .. } => &self.appended,
+            GateOutcome::Rejected { .. } => &self.rejected,
+            GateOutcome::Unavailable { .. } => &self.unavailable,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Propose one memory write. The caller writes locally only on
+    /// [`GateOutcome::Appended`]; the returned digest is the receipt it keys
+    /// the local record by. Logs are content-free (class and outcome labels).
+    pub async fn record_memory_candidate(&self, request: MemoryCandidateRequest) -> GateOutcome {
+        let class = request.class.label();
+        let edge = if request.forgets.is_some() {
+            "forgets"
+        } else if request.supersedes.is_some() {
+            "supersedes"
+        } else {
+            "new"
+        };
+        let outcome = match memory_candidate_write(&self.config, &request) {
+            Ok(write) => self.propose(&write).await,
+            Err(detail) => GateOutcome::Unavailable { detail },
+        };
+        self.count(&outcome);
+        match &outcome {
+            GateOutcome::Appended { .. } => {
+                tracing::info!(class, edge, outcome = %outcome.summary(), "episode gate: memory candidate admitted");
+            }
+            GateOutcome::Rejected { .. } | GateOutcome::Unavailable { .. } => {
+                tracing::warn!(class, edge, outcome = %outcome.summary(), "episode gate: memory candidate not admitted; nothing written");
+            }
+        }
+        outcome
     }
 
     pub fn config(&self) -> &EpisodeGateConfig {
@@ -514,6 +740,7 @@ impl EpisodeGate {
             Ok(write) => self.propose(&write).await,
             Err(detail) => GateOutcome::Unavailable { detail },
         };
+        self.count(&outcome);
         match &outcome {
             GateOutcome::Appended { .. } => {
                 tracing::info!(outcome = %outcome.summary(), "episode gate: learning toggle proposed");

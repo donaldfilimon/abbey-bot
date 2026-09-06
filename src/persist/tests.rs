@@ -265,6 +265,9 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
             "guilds",
             "memory",
             "memory_projection_version",
+            // Added 2026-09-06 by the memory-candidate amendment; `#[serde(default)]`
+            // and no `deny_unknown_fields`, so files cross both ways between builds.
+            "memory_receipts",
             "pending_rewards",
             "reputations",
         ]

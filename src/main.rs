@@ -53,6 +53,7 @@
 mod ask;
 mod audio_tap;
 mod brain;
+mod checkpoint_gate;
 mod command_catalog;
 #[cfg(test)]
 mod command_registration_tests;
@@ -74,6 +75,7 @@ mod http_body;
 mod inspect;
 mod llm;
 mod memory;
+mod memory_gate;
 mod moderation;
 mod music;
 mod offline_voice;

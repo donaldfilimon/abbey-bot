@@ -80,20 +80,41 @@ at runtime), `contracts/` (`#[cfg(test)]`-only guard over the
 pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
 `recall.rs`, `vad.rs`, `offline_voice.rs`.
 
-`episode_gate.rs` (added 2026-09-06) is the bot's first caller of the WDBX v3
+`episode_gate.rs` (added 2026-09-06) is the bot's caller of the WDBX v3
 episode gate and is **default-off** (`ABBEY_EPISODE_GATE_CONFIG` unset means
-byte-identical behaviour). It records exactly one thing, a content-free
-`proposal` that a guild administrator asked for `/admin learning on|off`, by
-running the `abi` binary (`abi wdbx episode propose --json`) with a cleared
-environment, an owner-only temp write file, a timeout, and capped output; the
-local toggle never waits on it. Approval/execution/terminal events belong to
-the constitutional host, so nothing here claims the ledger authorized the
-toggle. Its write vocabulary is a transcription pinned by
-`tests/fixtures/episode_write_proposal.json`, generated from `abi-wdbx`'s
-types; regenerate that fixture from the canonical crate if the v3 contract
+byte-identical behaviour). It runs the `abi` binary (`abi wdbx episode propose
+--json`) with a cleared environment, an owner-only temp write file, a timeout,
+and capped output, and records two things. First, a content-free `proposal`
+that a guild administrator asked for `/admin learning on|off`; the local toggle
+never waits on it, and approval/execution/terminal events belong to the
+constitutional host, so nothing here claims the ledger authorized the toggle.
+Second, since the memory-candidate amendment (2026-09-06; `memory_gate.rs`,
+`checkpoint_gate.rs`), `memory_candidate` events for every memory write:
+`/remember`, `/forget`, and `/pending confirm` propose first and write locally
+only on `appended` (a refusal or an unreachable gate stores nothing and tells
+the person); the model's `remember_fact` tool refuses to store while the gate
+is configured, because the tool host is synchronous and cannot propose; and
+each guild's DQN checkpoint (`BrainRow`) is proposed as an `experience`
+candidate once per changed persist, superseding the last admitted one, on the
+scheduled and `/admin flush` paths (`persist_all_gated`). The synchronous
+shutdown persist proposes nothing and writes only admitted checkpoints,
+substituting the last admitted (or pre-gate on-disk) row, so a gate outage
+never drops a checkpoint that was already on disk and never holds facts or
+settings hostage. Receipts (episode digests) live in `Stores.memory_receipts`
+keyed by guild, user, and fact text; a fact stored before the gate has none,
+so its deletion is counted as an "ungated forget" on `/inspect`'s gate line
+instead of tombstoned. The write vocabulary is a transcription pinned by
+`tests/fixtures/episode_write_proposal.json` and
+`tests/fixtures/episode_write_memory_candidate.json`, both generated from
+`abi-wdbx`'s types; regenerate them from the canonical crate if the v3 contract
 changes, never by hand. Principal ids are keyed wyhash digests of scoped ids;
 the gateway policy must key the guild as `discord-<guild id>` because the store
-admits only `[a-z0-9_.-]`.
+admits only `[a-z0-9_.-]`. Known consequence of the store's accounting: every
+candidate's `payload_bytes` is charged against the guild's storage budget and a
+superseded checkpoint is never refunded, so a large brain row exhausts a small
+budget after a few changed checkpoints, after which the gate refuses and the
+last admitted row keeps being persisted; size the budget (or amend the
+accounting) before turning the gate on for a chatty guild.
 
 `server/` (added 2026-09-06) is the server-plan engine behind
 `abbey-bot --server-plan PLAN.toml --guild ID [--stage …] [--apply]`. Pure:

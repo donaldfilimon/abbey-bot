@@ -259,7 +259,10 @@ fn learning_toggle_proposal_is_bound_to_the_configured_policy() {
     let EpisodeEvent::Proposal {
         requested_by,
         proposed_by,
-    } = &write.event;
+    } = &write.event
+    else {
+        panic!("a learning toggle is a proposal");
+    };
     assert_eq!(requested_by.kind, ActorKind::GuildAdministrator);
     assert_eq!(proposed_by.kind, ActorKind::Service);
     assert_ne!(requested_by.principal_id, proposed_by.principal_id);
@@ -456,4 +459,192 @@ mod with_a_fake_abi {
         assert!(!seen.contains("CARGO_MANIFEST_DIR="));
         assert!(!seen.lines().any(|line| line.starts_with("PATH=")));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Memory candidates (amendment 2026-09-06).
+// ---------------------------------------------------------------------------
+
+fn pattern(mul: u8, add: u8) -> [u8; 32] {
+    let mut out = [0_u8; 32];
+    for (index, byte) in out.iter_mut().enumerate() {
+        *byte = u8::try_from(index)
+            .unwrap()
+            .wrapping_mul(mul)
+            .wrapping_add(add);
+    }
+    out
+}
+
+fn memory_request(class: MemoryClass) -> MemoryCandidateRequest {
+    MemoryCandidateRequest {
+        scoped_guild: "discord:123456789012345678".into(),
+        class,
+        retention: RetentionClass::Durable,
+        payload: b"uses rust".to_vec(),
+        member_scoped: true,
+        supersedes: None,
+        forgets: None,
+        now: 1_700_000_000,
+        nonce: 3,
+    }
+}
+
+fn candidate_of(write: &EpisodeWrite) -> (&ActorRef, &MemoryCandidate) {
+    match &write.event {
+        EpisodeEvent::MemoryCandidate {
+            recorded_by,
+            candidate,
+        } => (recorded_by, candidate),
+        EpisodeEvent::Proposal { .. } => panic!("a memory request builds a memory candidate"),
+    }
+}
+
+#[test]
+fn memory_candidate_json_matches_the_canonical_fixture() {
+    // Copied byte-for-byte from wdbx `crates/abi-wdbx/tests/golden/` on
+    // 2026-09-06 (generated there from `abi-wdbx::v3::episode` with
+    // `WDBX_WRITE_GOLDEN=1`); the store pins its digest as
+    // 3c19a479a23077d95238b710876e5c03d2300dd77e9ccfedbbe6c11b0fc768bc.
+    let fixture = include_str!("../../tests/fixtures/episode_write_memory_candidate.json");
+    let write = EpisodeWrite {
+        request_id: "req-memory-00000000deadbeef".into(),
+        operation_id: "memory-embedding-0123456789abcdef".into(),
+        contract_revision: 2,
+        contract_digest: pattern(7, 1),
+        guild_ref: "discord-123456789012345678".into(),
+        consent_epoch: None,
+        source_type: EpisodeSource::DiscordGuild,
+        policy_version: "policy_v1".into(),
+        evidence_level: EvidenceLevel::C0,
+        event: EpisodeEvent::MemoryCandidate {
+            recorded_by: ActorRef {
+                principal_id: "abbey-service".into(),
+                kind: ActorKind::Service,
+            },
+            candidate: MemoryCandidate {
+                class: MemoryClass::Embedding,
+                retention: RetentionClass::Durable,
+                payload_commitment: pattern(5, 2),
+                payload_bytes: 1_536,
+                dimension: Some(384),
+                embedding_version: Some("abbey-embedding-v1".into()),
+                member_scoped: true,
+                supersedes: None,
+                forgets: None,
+            },
+        },
+        token_cost: 1,
+        expected_commitment: None,
+        quiet: false,
+    };
+    assert_eq!(serde_json::to_string(&write).unwrap(), fixture.trim_end());
+    let round_trip: EpisodeWrite = serde_json::from_str(fixture).unwrap();
+    assert_eq!(round_trip, write);
+}
+
+#[test]
+fn a_fact_candidate_commits_to_the_payload_and_never_carries_it() {
+    use sha2::{Digest as _, Sha256};
+
+    let config = config();
+    let memory = memory_request(MemoryClass::Fact);
+    let write = memory_candidate_write(&config, &memory).unwrap();
+    let (recorded_by, candidate) = candidate_of(&write);
+    assert_eq!(recorded_by.kind, ActorKind::Service);
+    assert_eq!(recorded_by.principal_id, DEFAULT_SERVICE_PRINCIPAL);
+    let expected: [u8; 32] = Sha256::digest(b"uses rust").into();
+    assert_eq!(candidate.payload_commitment, expected);
+    assert_eq!(candidate.payload_bytes, 9);
+    assert_eq!(candidate.class, MemoryClass::Fact);
+    assert_eq!(candidate.retention, RetentionClass::Durable);
+    assert_eq!(candidate.dimension, None);
+    assert_eq!(candidate.embedding_version, None);
+    assert!(candidate.member_scoped);
+    assert_eq!(write.guild_ref, "discord-123456789012345678");
+    assert_eq!(write.source_type, EpisodeSource::DiscordGuild);
+    assert!(write.operation_id.starts_with("memory-fact-"));
+    assert!(bounded_identifier(&write.operation_id, MAX_IDENTIFIER_LEN));
+    assert!(bounded_identifier(&write.request_id, MAX_IDENTIFIER_LEN));
+    let json = serde_json::to_string(&write).unwrap();
+    assert!(!json.contains("uses rust"));
+    assert!(json.contains("\"kind\":\"memory_candidate\""));
+
+    // Same clock and nonce as a learning toggle still yields distinct ids.
+    let mut toggle = request();
+    toggle.now = 1_700_000_000;
+    toggle.nonce = 3;
+    let toggle = learning_toggle_proposal(&config, &toggle).unwrap();
+    assert_ne!(toggle.request_id, write.request_id);
+    assert_ne!(toggle.operation_id, write.operation_id);
+}
+
+#[test]
+fn forget_and_supersede_shapes_follow_the_store_rules() {
+    let config = config();
+
+    let mut forget = memory_request(MemoryClass::Fact);
+    forget.payload.clear();
+    forget.forgets = Some([7; 32]);
+    let write = memory_candidate_write(&config, &forget).unwrap();
+    let (_, candidate) = candidate_of(&write);
+    assert_eq!(candidate.payload_commitment, [0; 32]);
+    assert_eq!(candidate.payload_bytes, 0);
+    assert_eq!(candidate.forgets, Some([7; 32]));
+    assert_eq!(candidate.supersedes, None);
+
+    let mut forget_with_payload = forget.clone();
+    forget_with_payload.payload = b"x".to_vec();
+    assert!(memory_candidate_write(&config, &forget_with_payload).is_err());
+    let mut forget_and_supersede = forget.clone();
+    forget_and_supersede.supersedes = Some([8; 32]);
+    assert!(memory_candidate_write(&config, &forget_and_supersede).is_err());
+
+    let mut supersede = memory_request(MemoryClass::Experience);
+    supersede.retention = RetentionClass::Operational;
+    supersede.member_scoped = false;
+    supersede.supersedes = Some([9; 32]);
+    let write = memory_candidate_write(&config, &supersede).unwrap();
+    let (_, candidate) = candidate_of(&write);
+    assert_eq!(candidate.supersedes, Some([9; 32]));
+    assert_eq!(candidate.class, MemoryClass::Experience);
+    assert!(!candidate.member_scoped);
+    assert!(write.operation_id.starts_with("memory-experience-"));
+
+    let mut empty = memory_request(MemoryClass::Summary);
+    empty.payload.clear();
+    assert!(memory_candidate_write(&config, &empty).is_err());
+    assert!(memory_candidate_write(&config, &memory_request(MemoryClass::Embedding)).is_err());
+    let mut bad_guild = memory_request(MemoryClass::Fact);
+    bad_guild.scoped_guild = "discord:not a guild".into();
+    assert!(memory_candidate_write(&config, &bad_guild).is_err());
+}
+
+#[test]
+fn counters_start_at_zero_and_count_every_outcome() {
+    let gate = EpisodeGate::new(config());
+    assert_eq!(gate.counters(), GateCounters::default());
+    gate.count(&GateOutcome::Appended {
+        digest_hex: "ab".repeat(32),
+        sequence: "1".into(),
+    });
+    gate.count(&GateOutcome::Rejected {
+        detail: "FailedPrecondition: episode_learning_disabled".into(),
+    });
+    gate.count(&GateOutcome::Rejected {
+        detail: "FailedPrecondition: episode_storage_budget_exhausted".into(),
+    });
+    gate.count(&GateOutcome::Unavailable {
+        detail: "timed out".into(),
+    });
+    gate.note_ungated_forget();
+    assert_eq!(
+        gate.counters(),
+        GateCounters {
+            appended: 1,
+            rejected: 2,
+            unavailable: 1,
+            ungated_forgets: 1,
+        }
+    );
 }
