@@ -2371,7 +2371,7 @@ async fn actual_unconfigured_voice_status_reaches_explanatory_handler() {
     assert!(requests.iter().any(|request| {
         request.body["content"].as_str().is_some_and(|body| {
             body.contains(
-                "Abbey voice is off because no complete destination was configured at startup.",
+                "No voice session is prepared in this server. A manager in a voice channel can use /voice join first.",
             )
         })
     }));

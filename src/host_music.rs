@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, Weak};
 const BUSY: &str = "The host music player is still owned by another operation. Stop music and wait for capture to finish before retrying.";
 
 #[derive(Default)]
-pub(crate) struct HostMusic {
+pub struct HostMusic {
     active: Mutex<Weak<Owner>>,
 }
 struct Owner {
@@ -82,21 +82,27 @@ mod tests {
         let host = HostMusic::default();
         let mut supervisor = crate::service::ServiceSupervisor::new();
         supervisor.finish_startup();
-        let runtime = crate::voice_session::VoiceRuntime::new(
-            crate::voice::VoiceConfig::selected_only(1, 2, crate::voice::VoiceBackendConfig::Disabled, true),
-        );
+        let runtime =
+            crate::voice_session::VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+                1,
+                2,
+                crate::voice::VoiceBackendConfig::Disabled,
+                true,
+            ));
         runtime.attach_service(supervisor.operations());
         let lease = host.try_start(1).unwrap();
         let (entered, started) = tokio::sync::oneshot::channel();
         let (release, blocked) = tokio::sync::oneshot::channel();
         let (done, finished) = tokio::sync::oneshot::channel();
-        let response = runtime.spawn_result(move |_| async move {
-            let _lease = lease;
-            entered.send(()).unwrap();
-            blocked.await.unwrap();
-            drop(_lease);
-            done.send(()).unwrap();
-        }).unwrap();
+        let response = runtime
+            .spawn_result(move |_| async move {
+                let _lease = lease;
+                entered.send(()).unwrap();
+                blocked.await.unwrap();
+                drop(_lease);
+                done.send(()).unwrap();
+            })
+            .unwrap();
         started.await.unwrap();
         drop(response);
         assert!(host.try_start(2).is_err());
@@ -105,5 +111,4 @@ mod tests {
         finished.await.unwrap();
         assert!(host.try_start(2).is_ok());
     }
-
 }
