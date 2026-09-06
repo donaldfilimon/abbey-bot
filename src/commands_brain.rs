@@ -369,6 +369,7 @@ fn pending_action_rows(
     ctx_id: u64,
     subject_id: u64,
     pending: &[memory::PendingSupersession],
+    version: u64,
 ) -> Vec<CreateActionRow> {
     pending
         .iter()
@@ -376,19 +377,15 @@ fn pending_action_rows(
         .enumerate()
         .map(|(idx, _entry)| {
             CreateActionRow::Buttons(vec![
-                CreateButton::new(pending_button_custom_id(
-                    ctx_id,
-                    PendingButtonAction::Confirm,
-                    subject_id,
-                    idx,
+                CreateButton::new(format!(
+                    "{}:v:{version}",
+                    pending_button_custom_id(ctx_id, PendingButtonAction::Confirm, subject_id, idx,)
                 ))
                 .style(ButtonStyle::Success)
                 .label(format!("Confirm {}", idx + 1)),
-                CreateButton::new(pending_button_custom_id(
-                    ctx_id,
-                    PendingButtonAction::Dismiss,
-                    subject_id,
-                    idx,
+                CreateButton::new(format!(
+                    "{}:v:{version}",
+                    pending_button_custom_id(ctx_id, PendingButtonAction::Dismiss, subject_id, idx,)
                 ))
                 .style(ButtonStyle::Secondary)
                 .label(format!("Dismiss {}", idx + 1)),
@@ -437,95 +434,199 @@ fn format_confirm_outcome(outcome: runtime::SupersessionOutcome) -> String {
     }
 }
 
+pub(crate) struct PendingComponentSession {
+    pub command_id: u64,
+    pub owner: u64,
+    pub subject: u64,
+    pub guild: Option<u64>,
+    pub channel: u64,
+    pub version: u64,
+    pub displayed: Vec<memory::PendingSupersession>,
+}
+
+/// Construct no permission or effect future until acknowledgement completes.
+async fn authorized_pending_effect<A, V, P, PF, E, EF, T>(
+    acknowledgement: A,
+    session: &PendingComponentSession,
+    validate: V,
+    permissions: P,
+    effect: E,
+) -> Result<Option<T>, Error>
+where
+    A: std::future::Future<Output = Result<(), Error>>,
+    V: FnOnce() -> Option<(PendingButtonAction, usize)>,
+    P: FnOnce() -> PF,
+    PF: std::future::Future<Output = Result<Vec<crate::command_catalog::DiscordPermission>, Error>>,
+    E: FnOnce(PendingButtonAction, usize) -> EF,
+    EF: std::future::Future<Output = T>,
+{
+    acknowledgement.await?;
+    let Some((action, index)) = validate() else {
+        return Ok(None);
+    };
+    let Ok(permissions) = permissions().await else {
+        return Ok(None);
+    };
+    if !crate::memory_card::subject_authorized(session.owner, session.subject, &permissions) {
+        return Ok(None);
+    }
+    Ok(Some(effect(action, index).await))
+}
+
+/// Single-press adapter shared by the collector and offline Discord fixtures.
+pub(crate) async fn handle_pending_press(
+    ctx: &serenity::all::Context,
+    press: &ComponentInteraction,
+    state: &AppState,
+    session: &mut PendingComponentSession,
+) -> Result<bool, Error> {
+    let result = {
+        let session = &*session;
+        authorized_pending_effect(
+            async {
+                press
+                    .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+                    .await
+                    .map_err(Error::from)
+            },
+            session,
+            || {
+                use serenity::all::{ComponentInteractionDataKind, InteractionContext};
+                let scope_matches = match (session.guild, press.guild_id, press.context) {
+                    (Some(expected), Some(guild), Some(InteractionContext::Guild)) => {
+                        expected == guild.get()
+                    }
+                    (None, None, Some(InteractionContext::BotDm)) => {
+                        session.owner == session.subject
+                    }
+                    _ => false,
+                };
+                if press.user.bot
+                    || press.user.id.get() != session.owner
+                    || press.channel_id.get() != session.channel
+                    || !scope_matches
+                    || press.message.author.id != ctx.cache.current_user().id
+                    || !matches!(press.data.kind, ComponentInteractionDataKind::Button)
+                {
+                    return None;
+                }
+                let (action, subject, index) = parse_pending_button_custom_id(
+                    press
+                        .data
+                        .custom_id
+                        .strip_suffix(&format!(":v:{}", session.version))?,
+                    session.command_id,
+                )?;
+                (subject == session.subject).then_some((action, index))
+            },
+            || async {
+                match press.guild_id {
+                    Some(guild) => crate::commands_help::current_permissions(
+                        ctx,
+                        guild,
+                        press.channel_id,
+                        press.user.id,
+                    )
+                    .await
+                    .map(crate::commands_help::permissions_input),
+                    None => Ok(Vec::new()),
+                }
+            },
+            |action, index| async move {
+                let guild_key = session.guild.map_or_else(
+                    || format!("discord:dm:{}", session.owner),
+                    |guild| format!("discord:{guild}"),
+                );
+                let user_key = format!("discord:{}", session.subject);
+                let memory = state.memory_service();
+                let pending = memory.pending_supersessions(&guild_key, &user_key);
+                let status = match pending
+                    .get(index)
+                    .filter(|entry| session.displayed.get(index) == Some(*entry))
+                {
+                    Some(entry) => match action {
+                        PendingButtonAction::Confirm => {
+                            gated_confirm(state, &guild_key, &user_key, &entry.old_fact).await
+                        }
+                        PendingButtonAction::Dismiss => {
+                            if memory.dismiss_supersession(&guild_key, &user_key, &entry.old_fact) {
+                                "Dismissed. Both facts are kept.".to_string()
+                            } else {
+                                "No proposal names that fact.".to_string()
+                            }
+                        }
+                    },
+                    None => "That button is stale — refreshing the list.".to_string(),
+                };
+                let remaining = memory.pending_supersessions(&guild_key, &user_key);
+                let body = if remaining.is_empty() {
+                    format!("{status}\n\nNothing left proposed.")
+                } else {
+                    format!(
+                        "{status}\n\n{}",
+                        format_pending_list_body(session.subject, &remaining)
+                    )
+                };
+                let rows = if remaining.is_empty() {
+                    Vec::new()
+                } else {
+                    pending_action_rows(
+                        session.command_id,
+                        session.subject,
+                        &remaining,
+                        session.version + 1,
+                    )
+                };
+                (body, rows, remaining)
+            },
+        )
+        .await?
+    };
+    let denied = result.is_none();
+    let (body, rows, remaining) = result.unwrap_or_else(|| (
+        "Discord could not confirm access to these controls. Reopen `/pending list` to try again.".to_string(), Vec::new(), Vec::new()));
+    press
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .content(clamp_message(body))
+                .components(rows)
+                .allowed_mentions(crate::gateway::no_mentions()),
+        )
+        .await?;
+    let finished = denied || remaining.is_empty();
+    session.displayed = remaining;
+    session.version += 1;
+    Ok(finished)
+}
+
 async fn run_pending_component_session(
     ctx: Context<'_>,
     subject: &User,
-    guild_key: String,
-    user_key: String,
+    displayed: Vec<memory::PendingSupersession>,
 ) -> Result<(), Error> {
-    let ctx_id = ctx.id();
-    let author_id = ctx.author().id;
-    let subject_id = subject.id.get();
+    let mut session = PendingComponentSession {
+        command_id: ctx.id(),
+        owner: ctx.author().id.get(),
+        subject: subject.id.get(),
+        guild: ctx.guild_id().map(|guild| guild.get()),
+        channel: ctx.channel_id().get(),
+        version: 0,
+        displayed,
+    };
     let serenity_ctx = ctx.serenity_context().clone();
-
-    let id_prefix = format!("{ctx_id}:p:");
+    let id_prefix = format!("{}:p:", session.command_id);
     while let Some(press) = {
         let id_prefix = id_prefix.clone();
         serenity::collector::ComponentInteractionCollector::new(&serenity_ctx)
-            .author_id(author_id)
+            .author_id(ctx.author().id)
             .filter(move |press| press.data.custom_id.starts_with(&id_prefix))
             .timeout(Duration::from_secs(PENDING_COMPONENT_TIMEOUT_SECS))
     }
     .await
     {
-        let Some((action, button_subject, idx)) =
-            parse_pending_button_custom_id(&press.data.custom_id, ctx_id)
-        else {
-            continue;
-        };
-        if button_subject != subject_id {
-            continue;
-        }
-        if !memory_subject_authorized(ctx, subject).await {
-            press
-                .create_response(
-                    &serenity_ctx,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .ephemeral(true)
-                            .content(CROSS_USER_MEMORY_DENIED),
-                    ),
-                )
-                .await?;
-            return Ok(());
-        }
-
-        let memory = ctx.data().state.memory_service();
-        let pending = memory.pending_supersessions(&guild_key, &user_key);
-        let status = match pending.get(idx) {
-            Some(entry) => {
-                let old_fact = entry.old_fact.clone();
-                match action {
-                    PendingButtonAction::Confirm => {
-                        gated_confirm(&ctx.data().state, &guild_key, &user_key, &old_fact).await
-                    }
-                    PendingButtonAction::Dismiss => {
-                        if memory.dismiss_supersession(&guild_key, &user_key, &old_fact) {
-                            "Dismissed. Both facts are kept.".to_string()
-                        } else {
-                            "No proposal names that fact.".to_string()
-                        }
-                    }
-                }
-            }
-            None => "That button is stale — refreshing the list.".to_string(),
-        };
-        let remaining = memory.pending_supersessions(&guild_key, &user_key);
-        let body = if remaining.is_empty() {
-            format!("{status}\n\nNothing left proposed.")
-        } else {
-            format!(
-                "{status}\n\n{}",
-                format_pending_list_body(subject_id, &remaining)
-            )
-        };
-        let rows = if remaining.is_empty() {
-            Vec::new()
-        } else {
-            pending_action_rows(ctx_id, subject_id, &remaining)
-        };
-        press
-            .create_response(
-                &serenity_ctx,
-                CreateInteractionResponse::UpdateMessage(
-                    CreateInteractionResponseMessage::new()
-                        .content(clamp_message(body))
-                        .components(rows),
-                ),
-            )
-            .await?;
-        if remaining.is_empty() {
-            return Ok(());
+        if handle_pending_press(&serenity_ctx, &press, &ctx.data().state, &mut session).await? {
+            break;
         }
     }
     Ok(())
@@ -577,15 +678,16 @@ pub async fn pending_list(
     let subject_id = subject.id.get();
     let ctx_id = ctx.id();
     let body = format_pending_list_body(subject_id, &pending);
-    let rows = pending_action_rows(ctx_id, subject_id, &pending);
+    let rows = pending_action_rows(ctx_id, subject_id, &pending, 0);
     ctx.send(
         poise::CreateReply::default()
             .content(clamp_message(body))
             .components(rows)
-            .ephemeral(true),
+            .ephemeral(true)
+            .allowed_mentions(crate::gateway::no_mentions()),
     )
     .await?;
-    run_pending_component_session(ctx, subject, g, u).await?;
+    run_pending_component_session(ctx, subject, pending).await?;
     Ok(())
 }
 
@@ -1889,10 +1991,87 @@ mod pending_components_tests {
                 at: i as u64,
             })
             .collect();
-        let rows = pending_action_rows(1, 2, &pending);
+        let rows = pending_action_rows(1, 2, &pending, 0);
         assert_eq!(rows.len(), 5);
         let body = format_pending_list_body(2, &pending);
         assert!(body.contains("Buttons cover the first 5"));
         assert!(body.contains("1. old-0 → new-0"));
+    }
+}
+
+#[cfg(test)]
+mod pending_authorization_tests {
+    use super::*;
+    #[tokio::test]
+    async fn acknowledgement_failure_and_permission_revocation_construct_no_gate_or_snapshot() {
+        use std::cell::Cell;
+        let session = PendingComponentSession {
+            command_id: 1,
+            owner: 2,
+            subject: 3,
+            guild: Some(4),
+            channel: 5,
+            version: 0,
+            displayed: Vec::new(),
+        };
+        let failed: Result<Option<()>, Error> = authorized_pending_effect(
+            async { Err("synthetic acknowledgement failure".into()) },
+            &session,
+            || panic!("validation preceded acknowledgement"),
+            || async { panic!("permissions preceded acknowledgement") },
+            |_, _| async { panic!("gate preceded acknowledgement") },
+        )
+        .await;
+        assert!(failed.is_err());
+        let snapshots_and_gates = Cell::new(0);
+        let denied = authorized_pending_effect(
+            async { Ok(()) },
+            &session,
+            || Some((PendingButtonAction::Confirm, 0)),
+            || async { Ok(Vec::new()) },
+            |_, _| {
+                snapshots_and_gates.set(snapshots_and_gates.get() + 1);
+                async {}
+            },
+        )
+        .await
+        .unwrap();
+        assert!(denied.is_none());
+        assert_eq!(snapshots_and_gates.get(), 0);
+        let order = std::cell::RefCell::new(Vec::new());
+        authorized_pending_effect(
+            async {
+                order.borrow_mut().push("ack");
+                Ok(())
+            },
+            &session,
+            || {
+                order.borrow_mut().push("envelope");
+                Some((PendingButtonAction::Confirm, 0))
+            },
+            || {
+                order.borrow_mut().push("permissions constructed");
+                async {
+                    Ok(vec![
+                        crate::command_catalog::DiscordPermission::ManageMessages,
+                    ])
+                }
+            },
+            |_, _| {
+                order.borrow_mut().push("snapshot and gate constructed");
+                async {}
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *order.borrow(),
+            [
+                "ack",
+                "envelope",
+                "permissions constructed",
+                "snapshot and gate constructed"
+            ]
+        );
     }
 }
