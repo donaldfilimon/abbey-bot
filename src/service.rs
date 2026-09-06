@@ -20,6 +20,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+pub mod cancellation;
 pub mod failure;
 pub mod framework;
 pub mod persistence;

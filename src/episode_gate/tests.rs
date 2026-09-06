@@ -685,3 +685,16 @@ fn counters_start_at_zero_and_count_every_outcome() {
         }
     );
 }
+
+#[tokio::test]
+async fn pre_cancelled_abi_never_reaches_executable_launch() {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    let outcome = run_abi_owned(Path::new(""), &[], 5, Some(cancel)).await;
+    assert_eq!(
+        outcome,
+        GateOutcome::Unavailable {
+            detail: "the abi operation was cancelled during shutdown".into(),
+        }
+    );
+}

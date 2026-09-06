@@ -26,6 +26,11 @@ pub(super) async fn run_abi_owned(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
+        return GateOutcome::Unavailable {
+            detail: "the abi operation was cancelled during shutdown".into(),
+        };
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -49,10 +54,11 @@ pub(super) async fn run_abi_owned(
         )?;
         Ok::<_, String>((stdout, stderr, status))
     };
-    let completed = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(timeout_secs), operation) => Some(result),
-        () = async { match cancel { Some(cancel) => cancel.cancelled().await, None => std::future::pending().await } } => None,
-    };
+    let completed = crate::service::cancellation::complete_or_cancelled(
+        cancel,
+        tokio::time::timeout(Duration::from_secs(timeout_secs), operation),
+    )
+    .await;
     let (stdout, stderr, status) = match completed {
         Some(Ok(Ok(result))) => result,
         failure => {

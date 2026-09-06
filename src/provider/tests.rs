@@ -532,3 +532,21 @@ async fn replaced_qualified_cli_never_executes_for_text_or_images() {
     assert!(!marker.exists());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn pre_cancelled_cli_never_reaches_executable_launch() {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    let invocation = CliInvocation {
+        program: std::ffi::OsString::new().into(),
+        args: Vec::new(),
+        stdin: b"private prompt must not be submitted".to_vec(),
+        environment: Vec::new(),
+    };
+    let error = invocation
+        .run_with_cancel(5, Some(cancel))
+        .await
+        .unwrap_err();
+    assert_eq!(error.provider_failure(), ProviderFailureKind::Cancelled);
+    assert_eq!(error.to_string(), "the FM CLI cancelled");
+}

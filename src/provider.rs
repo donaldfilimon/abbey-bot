@@ -532,6 +532,12 @@ impl CliInvocation {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
+            return Err(LlmError::classified(
+                "the FM CLI cancelled",
+                ProviderFailureKind::Cancelled,
+            ));
+        }
         let mut child = command.spawn().map_err(|error| {
             LlmError::classified(
                 format!("could not start the configured FM CLI: {error}"),
@@ -573,10 +579,11 @@ impl CliInvocation {
             String::from_utf8(stdout)
                 .map_err(|_| "the FM CLI returned stdout that was not UTF-8".to_string())
         };
-        let completed = tokio::select! {
-            result = tokio::time::timeout(Duration::from_secs(timeout_secs), operation) => Some(result),
-            () = async { match cancel { Some(cancel) => cancel.cancelled().await, None => std::future::pending().await } } => None,
-        };
+        let completed = crate::service::cancellation::complete_or_cancelled(
+            cancel,
+            tokio::time::timeout(Duration::from_secs(timeout_secs), operation),
+        )
+        .await;
         match completed {
             Some(Ok(Ok(output))) => Ok(output),
             Some(Ok(Err(error))) => {
