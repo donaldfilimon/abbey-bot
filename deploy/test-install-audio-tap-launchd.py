@@ -404,6 +404,7 @@ class AudioTapInstallTests(unittest.TestCase):
 
     def test_public_install_directory_is_rejected_without_chmod(self):
         self.binary.parent.mkdir(parents=True, mode=0o755)
+        self.binary.parent.chmod(0o755)  # Preserve the public fixture under umask 077.
         self.run_installer(succeeds=False)
         self.assertEqual(stat.S_IMODE(self.binary.parent.stat().st_mode), 0o755)
 

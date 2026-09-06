@@ -717,6 +717,8 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
             symlink_parent.symlink_to(private_parent, target_is_directory=True)
             insecure_parent = root / "insecure-lock-parent"
             insecure_parent.mkdir(mode=0o755)
+            # The fixture must remain insecure even under an owner-only umask.
+            insecure_parent.chmod(0o755)
             before = env.read_bytes()
             for label, lock in (
                 ("symlink", symlink_parent / "install.lock"),
