@@ -30,7 +30,16 @@ unconfigured and active status includes wake-name and stop guidance. The existin
 slash commands, seven model tools, persistence formats and consent semantics are
 preserved.
 
-The implementation handoff is `5724bf6`. Before the final two catalog lint fixes,
+With episode gating enabled, queued model memory writes keep their originating
+turn's completion handle. Final notices distinguish local storage, a proposed
+replacement awaiting confirmation, rejection, cancellation before submission,
+and uncertain admission. A failed delivery does not replay an admission or
+remove an already stored fact. Facts and admission receipts enter the canonical
+memory snapshot together; existing persistence formats remain unchanged.
+
+The workflow implementation handoff is `5724bf6`. These handoff checks predate
+the memory-completion follow-up; its validation belongs to the final release
+record. Before the final two catalog lint fixes,
 the integrated Rust suite passed 1,222 tests with zero failures and five
 intentional ignores (four live tests and one operator-only command-payload
 exporter). The handoff source then passed the affected 18-test catalog suite and
@@ -42,7 +51,10 @@ The launchd installer now stages the executable reported by Cargo, including an
 external target directory, and retains private artifact validation and verified
 rollback. Offline regressions cover stale in-tree output and unsafe candidates.
 Permission-rejection fixtures explicitly set their intended public mode so an
-owner-only release umask cannot silently make them safe.
+owner-only release umask cannot silently make them safe. Installer fixtures use
+a private scratch parent so Linux temporary-directory selection exercises the
+transaction without bypassing production artifact checks. The Pages rendering
+inventory includes the approved workflow plan and specification.
 
 The required release gate is `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` against a
 stable candidate in a dedicated target. Canonical

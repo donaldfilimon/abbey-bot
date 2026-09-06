@@ -838,8 +838,10 @@ warnings-denied all-target Clippy then passed on the handoff source.
 
 The release slice also fixes selection of Cargo's actual external-target binary
 and makes two deliberately insecure permission fixtures independent of umask.
-It preserves the Windows fixture line-ending repair. Final strict-gate, exact
-remote-SHA CI, transactional installation, registered-schema and installed-provider
+Linux installer fixtures use a private scratch parent, and the Pages inventory
+includes the approved workflow documents. These repairs preserve production
+artifact validation and the Windows fixture line-ending repair. Final strict-gate,
+exact remote-SHA CI, transactional installation, registered-schema and installed-provider
 results are revision-bound observations in the canonical delivery record, rather
 than conclusions inherited from the earlier test counts. The earlier delivery
 record is preserved privately as historical evidence.
