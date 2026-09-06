@@ -79,7 +79,11 @@ Release task requested implementation of three review findings before candidate 
 
 - [x] Share provider admission and router hard-gate assessment between readiness and reservation; provider suite 137 pass, zero fail, one ignored. Independent provider re-review approved.
 - [x] Move shared delivery observation to `gateway::interaction_outcomes`; keep framework translation at startup. Independent source re-review approved; integrated test remains pending.
-- [ ] Replace duplicate catalog condition interpretation with typed canonical decisions and one capability readiness map; express vision policy in conditions, independent of help grouping.
-- [ ] Complete integrated Rust tests, warnings-denied Clippy and independent catalog re-review, then hand stable source to the release task.
+- [x] Replace duplicate catalog condition interpretation with typed canonical decisions and one capability readiness map; express vision policy in conditions, independent of help grouping.
+- [x] Complete integrated Rust tests, warnings-denied Clippy and independent catalog re-review, then hand stable source to the release task.
 
 Earlier final workflow results recovered after interruption: 61 help tests passed and all-target Clippy exited zero. These predate the strict corrections and do not replace their fresh integration checks.
+
+- Final correction validation: full Rust suite 1,222 passed, zero failed, five ignored. All-target warnings-denied Clippy passed after two small catalog lint corrections; the affected catalog suite was rerun on those final corrections: 18 passed, zero failed. Independent strict re-review and the narrow final recheck approved with no findings. Formatting, whitespace and Pages Liquid checks passed.
+- An external process committed/pushed the main correction slice as `543e3b671424194b57a30e3f1ce888a2cbb22123` during validation. This task preserves that commit and records only its final catalog lint correction and ledger in a follow-up. No push or installation was performed by this task during structural correction work.
+- Stable source handoff transfers all remaining aggregate release gates, hosted CI, installation and live acceptance to **Initialize Abbey bot**. Full strict release-gate and installed-artifact results must be recorded there; these Rust checks alone are not deployment evidence.

@@ -70,19 +70,15 @@ pub fn access_decision(rule: AccessRule, input: &EligibilityInput) -> Decision {
 }
 
 fn capability_decision(capability: Capability, input: &EligibilityInput) -> Decision {
-    let observation = input
-        .readiness
-        .get(&capability)
-        .copied()
-        .unwrap_or_else(|| {
-            CapabilityReadiness::Blocked(match capability {
-                Capability::Generation | Capability::ToolGeneration => Blocker::Generation,
-                Capability::Vision => Blocker::Vision,
-                Capability::Ocr => Blocker::Ocr,
-                Capability::VoiceConfigured => Blocker::VoiceSetup,
-                Capability::VoiceLocal | Capability::VoiceOpenAi => Blocker::VoiceMode,
-            })
-        });
+    let observation = input.readiness.get(&capability).copied().unwrap_or({
+        CapabilityReadiness::Blocked(match capability {
+            Capability::Generation | Capability::ToolGeneration => Blocker::Generation,
+            Capability::Vision => Blocker::Vision,
+            Capability::Ocr => Blocker::Ocr,
+            Capability::VoiceConfigured => Blocker::VoiceSetup,
+            Capability::VoiceLocal | Capability::VoiceOpenAi => Blocker::VoiceMode,
+        })
+    });
     match observation {
         CapabilityReadiness::Ready => Ok(()),
         CapabilityReadiness::Blocked(reason) => Err(reason),
@@ -124,13 +120,15 @@ pub fn condition_decision(
                 SelectedVoiceMode::OpenAi => capability_decision(Capability::VoiceOpenAi, input),
             },
             ConditionRule::HierarchyAllowsAction => {
-                if !input.action_target_resolved {
-                    return if mode == EvaluationMode::Discoverability {
-                        Ok(())
-                    } else {
-                        Err(Blocker::Target)
-                    };
+                if mode == EvaluationMode::Discoverability && !input.action_target_resolved {
+                    return Ok(());
                 }
+                evaluate(
+                    ConditionRule::Input(InputPredicate::ActionTargetResolved),
+                    input,
+                    mode,
+                    depth + 1,
+                )?;
                 (input.hierarchy_allows_action == Some(true))
                     .then_some(())
                     .ok_or(Blocker::Hierarchy)
