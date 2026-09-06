@@ -14,7 +14,10 @@ details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
 - Keep `--locked`: the gate must catch manifest/lock drift before deployment.
   Do not pipe gate output through a command that hides its exit status.
 - Focus: `cargo test --locked moderation::` or `cargo test --locked <filter>`;
-  tests live in the binary, not a library or workspace member.
+  tests live in the binary, not a library or workspace member. `-p` and
+  `--workspace` are therefore meaningless here and `--lib` matches nothing while
+  still exiting 0: a selector that quietly picks no tests reads exactly like a
+  pass.
 - Strict release evidence: `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh`.
   `scripts/check-wdbx-conformance.py` compares the frozen v1 fixture to `../wdbx`;
   `ABBEY_WDBX_REPO` overrides that path. Missing external fixtures otherwise skip.
@@ -29,6 +32,14 @@ details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
 - Source gates do not prove installed artifact identity, provider qualification,
   Discord behavior or audible consented voice. Never run installers, permission
   commands or production capture endpoints as source validation.
+- To check what the *deployed* service actually has in its environment, run
+  `sh deploy/check-launchd-env.sh ~/.config/abbey-bot/env`. Do not infer it from
+  the launchd plist and do not infer it from `ps`: the plist is generated from
+  `deploy/com.donaldfilimon.abbey-bot.plist`, whose `EnvironmentVariables` holds
+  only `RUST_LOG` and by design never carries secrets, while the real values live
+  in the env file and `main.rs` injects them with `std::env::set_var` after exec,
+  so they never reach the initial environ block that `ps eww` prints. Both
+  surfaces report a variable that IS set as unset.
 
 ## Boundaries
 
