@@ -138,15 +138,17 @@ Task 6 source closure: `12de8cc`, `ccdd6f7`, `aa65ffb`; member voice privacy, ty
 
 **Interfaces:** Produces `NormalizedScore`, `RequestClass`, `ScoreProducerPolicy`, `ProviderScoreProfile`, `ProviderFailureKind`, `RetryAfter`, `CircuitPhase`, `CircuitSnapshot`, `RouteDecision`, and `RouteUnavailableReason`.
 
-- [ ] Add failing shared fixtures for request-class partition, qualification baselines, latency/locality/reliability/quality conversion, legacy-manifest projection, explicit `[0,1]` scores, exact 40/30/25/5 weighting, component-local `n/20` blending, configured-order tie breaks, and invalid numbers.
-- [ ] Remove implicit capability-density, provider-class, and raw-latency normalization from the router.
-- [ ] Implement the complete injected-time phase/outcome/Retry-After table: third transient failure in five minutes opens 60 seconds; valid Retry-After may open early or extend but never shorten/cross 15 minutes; half-open failure escalates to five then 15 minutes; exactly one probe may reserve half-open.
-- [ ] Block auth/identity/schema/sandbox/configuration/protocol drift until requalification.
-- [ ] Exclude cancellation, invalid request, and busy outcomes from circuit/EWMA changes.
-- [ ] Reject Retry-After outside one second through 15 minutes and incompatible outcome/header combinations as protocol drift.
-- [ ] Exclude open/blocked candidates, including sole and previously pinned candidates.
-- [ ] Remove router-global sticky state and pin exact pre-effect fallback eligibility, including terminal cancellation and invalid request.
-- [ ] Run all provider domain/routing/catalog tests and commit the reviewed pure-router slice.
+- [x] Add failing shared fixtures for request-class partition, qualification baselines, latency/locality/reliability/quality conversion, legacy-manifest projection, explicit `[0,1]` scores, exact 40/30/25/5 weighting, component-local `n/20` blending, configured-order tie breaks, and invalid numbers.
+- [x] Remove implicit capability-density, provider-class, and raw-latency normalization from the router.
+- [x] Implement the complete injected-time phase/outcome/Retry-After table: third transient failure in five minutes opens 60 seconds; valid Retry-After may open early or extend but never shorten/cross 15 minutes; half-open failure escalates to five then 15 minutes; exactly one probe may reserve half-open.
+- [x] Block auth/identity/schema/sandbox/configuration/protocol drift until requalification.
+- [x] Exclude cancellation, invalid request, and busy outcomes from circuit/EWMA changes.
+- [x] Reject Retry-After outside one second through 15 minutes and incompatible outcome/header combinations as protocol drift.
+- [x] Exclude open/blocked candidates, including sole and previously pinned candidates.
+- [x] Remove router-global sticky state and pin exact pre-effect fallback eligibility, including terminal cancellation and invalid request.
+- [x] Run all provider domain/routing/catalog tests and commit the reviewed pure-router slice.
+
+Task 7 source closure: `0fafed3`; 114 focused provider tests passed, one intentional live test ignored, and all-target Clippy passed. Independent source review approved the pure policy and strict manifest boundary. Production integration remains Task 8.
 
 ### Task 8: Single Production Provider Runtime
 

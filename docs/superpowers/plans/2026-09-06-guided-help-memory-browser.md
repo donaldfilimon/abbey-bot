@@ -49,7 +49,7 @@ pub fn invocation_hint(kind: CommandKind) -> &'static str;
 pub fn visibility_hint(private: bool, context: InteractionContext) -> &'static str;
 ```
 
-- [ ] Add pure tests for invocation/visibility language and conditional shortcut visibility before changing rendering. Use the actual catalog evaluator for each referenced command, setting self-subject for the current help input. No duplicate eligibility table.
+- [x] Add pure tests for invocation/visibility language and conditional shortcut visibility before changing rendering. Use the actual catalog evaluator for each referenced command, setting self-subject for the current help input. No duplicate eligibility table.
 
 ```rust
 assert_eq!(invocation_hint(CommandKind::UserContext), "member menu");
@@ -58,8 +58,8 @@ assert_eq!(visibility_hint(false, InteractionContext::BotDm), "reply in this DM"
 assert_eq!(visibility_hint(true, InteractionContext::Guild), "private");
 ```
 
-- [ ] Run `cargo test --locked help_center::` and confirm new assertions fail before implementation.
-- [ ] Implement fixed invocation/visibility mapping and shortcuts: eligible persona ask -> Conversation; eligible self recall -> Memory; eligible OCR or describe-image menu -> Images. Render exact names and useful guidance only for eligible entries. Preserve every command in the section before clamping; reduce new prose if any full permitted section exceeds 2,000 codepoints.
+- [x] Run `cargo test --locked help_center::` and confirm new assertions fail before implementation.
+- [x] Implement fixed invocation/visibility mapping and shortcuts: eligible persona ask -> Conversation; eligible self recall -> Memory; eligible OCR or describe-image menu -> Images. Render exact names and useful guidance only for eligible entries. Preserve every command in the section before clamping; reduce new prose if any full permitted section exceeds 2,000 codepoints.
 
 ```rust
 pub fn visibility_hint(private: bool, context: InteractionContext) -> &'static str {
@@ -69,9 +69,11 @@ pub fn visibility_hint(private: bool, context: InteractionContext) -> &'static s
 }
 ```
 
-- [ ] Build one optional row of at most three classic text buttons on Start, alongside the existing selector. Encode the destination using `session.navigate(shortcut.section).custom_id()`. Extend the actual help dispatcher to accept Button navigation while retaining StringSelect validation. Preserve original expiry and refresh eligibility after envelope checks.
-- [ ] Extend actual dispatcher fixtures to invoke both component kinds, hold acknowledgement before permission I/O, revoke permission between pages, and reject malformed/expired/foreign-owner controls without lookup. Compare canonical stores, pending rewards and voice state before/after navigation. Render all eight sections over member/moderator/manager/admin/DM and capability combinations; assert eligible command coverage and row/ID/message bounds.
-- [ ] Read representative rendered output and update the README help-use paragraph. Run `cargo test --locked help_center::`, `cargo test --locked command_catalog::`, `cargo test --locked commands_help::`, formatting and all-targets Clippy. Commit only this task's owned files and obtain independent review.
+- [x] Build one optional row of at most three classic text buttons on Start, alongside the existing selector. Encode the destination using `session.navigate(shortcut.section).custom_id()`. Extend the actual help dispatcher to accept Button navigation while retaining StringSelect validation. Preserve original expiry and refresh eligibility after envelope checks.
+- [x] Extend actual dispatcher fixtures to invoke both component kinds, hold acknowledgement before permission I/O, revoke permission between pages, and reject malformed/expired/foreign-owner controls without lookup. Compare canonical stores, pending rewards and voice state before/after navigation. Render all eight sections over member/moderator/manager/admin/DM and capability combinations; assert eligible command coverage and row/ID/message bounds.
+- [x] Read representative rendered output and update the README help-use paragraph. Run `cargo test --locked help_center::`, `cargo test --locked command_catalog::`, `cargo test --locked commands_help::`, formatting and all-targets Clippy. Commit only this task's owned files and obtain independent review.
+
+Task 1 source closure: `8d5a06f8`; focused help/catalog/dispatcher tests and all-targets Clippy passed. Independent root source review approved the navigation, authorization and rendering boundaries. Final integrated and live acceptance remain separate.
 
 ### Task 2: Complete Private Fact Browsing
 
