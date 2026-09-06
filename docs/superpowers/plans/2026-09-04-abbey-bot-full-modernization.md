@@ -53,12 +53,14 @@
 - Produces `PersistErrorCategory`, `PersistComponentOutcome`, `PersistOverall`, `PersistReport`, and an injectable `PersistenceSink`.
 - `AppState::persist_all() -> PersistReport` becomes the only process-level persistence result.
 
-- [ ] Write failing tests for MemoryOnly, Complete, Partial, and Failed truth-table rows.
-- [ ] Test that canonical failure skips WDBX and that old files survive temporary-write and rename failures.
-- [ ] Implement categorized, content-free reports and atomic file sync/type checks.
-- [ ] Make `/admin flush`, scheduled persistence, and shutdown render/log the report instead of inferring success from a configured path.
-- [ ] Run `cargo test persist::`, `cargo test runtime::`, and the relevant admin/shutdown tests.
-- [ ] Commit the reviewed persistence slice.
+- [x] Write failing tests for MemoryOnly, Complete, Partial, and Failed truth-table rows.
+- [x] Test that canonical failure skips WDBX and that old files survive temporary-write and rename failures.
+- [x] Implement categorized, content-free reports and atomic file sync/type checks.
+- [x] Make `/admin flush`, scheduled persistence, and shutdown render/log the report instead of inferring success from a configured path.
+- [x] Run `cargo test persist::`, `cargo test runtime::`, and the relevant admin/shutdown tests.
+- [x] Commit the reviewed persistence slice.
+
+Revalidated 2026-09-06 at `f5537eb`: the strict full gate passed all 1,002 Rust tests (two live tests ignored), including persistence/runtime/admin/shutdown coverage, required sibling WDBX parity, Clippy, and locked release build. The existing persistence commits are `d000b41` and `2c8fee7`; Tasks 9/10 must preserve their reporting and durability authority. See [completion progress](2026-09-06-completion-progress.md).
 
 ### Task 3: Command Acknowledgement and Compatibility Characterization
 
@@ -66,14 +68,16 @@
 
 **Interfaces:** Produces a crate-private acknowledged-context helper and a pure Entry Point merge helper.
 
-- [ ] Add failing ordering tests for `/voice join`, `/voice resume`, and `/voice leave`.
-- [ ] Defer join/resume before every guard or network path.
-- [ ] Keep leave ordered as authorize synchronously, close media gate, then acknowledge concurrently with transition work.
-- [ ] Add registration fixtures proving Entry Point name, handler, integration types, and contexts survive global bulk registration.
-- [ ] Add characterization tests for backend precedence, FM/vision gating, tool order/corpus, self-test CLI, and existing persistence formats.
-- [ ] Reconcile roadmap text with the unconditional-defer rule.
-- [ ] Run command, voice-session, provider-config, tool, and registration tests.
-- [ ] Commit the reviewed acknowledgement/compatibility slice.
+- [x] Add failing ordering tests for `/voice join`, `/voice resume`, and `/voice leave`.
+- [x] Defer join/resume before every guard or network path.
+- [x] Keep leave ordered as authorize synchronously, close media gate, then acknowledge concurrently with transition work.
+- [x] Add registration fixtures proving Entry Point name, handler, integration types, and contexts survive global bulk registration.
+- [x] Add characterization tests for backend precedence, FM/vision gating, tool order/corpus, self-test CLI, and existing persistence formats.
+- [x] Reconcile roadmap text with the unconditional-defer rule.
+- [x] Run command, voice-session, provider-config, tool, and registration tests.
+- [x] Commit the reviewed acknowledgement/compatibility slice.
+
+Closure evidence 2026-09-06: `5b06446` and `b002bd6` pin actual registered voice-adapter acknowledgement/teardown ordering with controlled pending futures, plus the literal version-1 consent format through the real loader. Focused tests and all-targets Clippy passed; independent scoped re-review approved. Existing compatibility suites passed in the strict baseline gate. See [completion progress](2026-09-06-completion-progress.md).
 
 ### Task 4: Typed Command Catalog and Private Help Center
 
