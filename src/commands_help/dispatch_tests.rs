@@ -39,6 +39,45 @@ struct DiscordFixture {
     address: std::net::SocketAddr,
 }
 
+struct ProviderFixture {
+    address: std::net::SocketAddr,
+    calls: Arc<AtomicU64>,
+    server: tokio::task::JoinHandle<()>,
+}
+
+impl ProviderFixture {
+    async fn new() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let calls = Arc::new(AtomicU64::new(0));
+        let server_calls = Arc::clone(&calls);
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                server_calls.fetch_add(1, Ordering::SeqCst);
+                let response = b"{}";
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+                let _ = stream.write_all(response).await;
+            }
+        });
+        Self {
+            address,
+            calls,
+            server,
+        }
+    }
+}
+
+impl Drop for ProviderFixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
 fn user(id: u64) -> User {
     let mut user = User::default();
     user.id = UserId::new(id);
@@ -341,8 +380,12 @@ fn configured_data_at(address: Option<std::net::SocketAddr>) -> Data {
         voice: None,
     };
     let state = Arc::get_mut(&mut data.state).unwrap();
+    let fixture_endpoint = address.map_or_else(
+        || "http://127.0.0.1:1".into(),
+        |address| format!("http://{address}"),
+    );
     state.backend = Some(crate::llm::Backend::OpenAiCompatible {
-        endpoint: "http://127.0.0.1:1".into(),
+        endpoint: fixture_endpoint.clone(),
         model: "fixture".into(),
     });
     if address.is_some() {
@@ -369,8 +412,14 @@ fn configured_data_at(address: Option<std::net::SocketAddr>) -> Data {
             GUILD,
             CHANNEL,
             crate::voice::VoiceBackendConfig::Local(
-                crate::offline_voice::OfflineVoiceConfig::from_values(None, None, None, None, None)
-                    .unwrap(),
+                crate::offline_voice::OfflineVoiceConfig::from_values(
+                    Some(fixture_endpoint),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
             ),
             true,
         ),
@@ -1277,17 +1326,97 @@ async fn actual_admin_dispatch_enforces_ack_permission_reload_reset_scope_and_pr
             .is_some_and(|body| body.contains("already has"))
     }));
 
+    use crate::brain::social::ReputationStore;
+    let current_guild = "discord:123";
+    let other_guild = "discord:999";
+    let actor = "discord:789";
+    data.state
+        .memory_service()
+        .remember(current_guild, actor, "current fact", 1)
+        .unwrap();
+    data.state
+        .memory_service()
+        .remember(other_guild, actor, "other guild fact", 1)
+        .unwrap();
+    let protected_current_settings =
+        crate::runtime::AppState::lock(&data.state.stores).guilds[current_guild].clone();
+    let protected_other_settings = crate::guild::GuildSettings {
+        unsolicited: true,
+        ..Default::default()
+    };
+    {
+        let mut stores = crate::runtime::AppState::lock(&data.state.stores);
+        stores
+            .guilds
+            .insert(other_guild.into(), protected_other_settings.clone());
+        stores.store_reputation(current_guild, actor, 0.73, 1);
+        stores.store_reputation(other_guild, actor, 0.41, 1);
+    }
     let current = crate::guild::scoped_channel_id("discord", &CHANNEL.to_string());
     let other = crate::guild::scoped_channel_id("discord", "457");
+    let other_guild_transcript = crate::guild::scoped_channel_id("discord", "9999");
+    let dm_transcript = "discord:dm:790";
     crate::runtime::AppState::lock(&data.state.engine).commit(&current, "one", "reply", 1);
     crate::runtime::AppState::lock(&data.state.engine).commit(&other, "two", "reply", 1);
+    crate::runtime::AppState::lock(&data.state.engine).commit(
+        &other_guild_transcript,
+        "three",
+        "reply",
+        1,
+    );
+    crate::runtime::AppState::lock(&data.state.engine).commit(dm_transcript, "four", "reply", 1);
+    let assert_non_transcript_canaries = || {
+        assert_eq!(
+            data.state
+                .memory_service()
+                .subject_snapshot(current_guild, actor)
+                .0,
+            vec!["current fact"]
+        );
+        assert_eq!(
+            data.state
+                .memory_service()
+                .subject_snapshot(other_guild, actor)
+                .0,
+            vec!["other guild fact"]
+        );
+        assert_eq!(data.state.reputation_snapshot(current_guild, actor), 0.73);
+        assert_eq!(data.state.reputation_snapshot(other_guild, actor), 0.41);
+        let stores = crate::runtime::AppState::lock(&data.state.stores);
+        assert_eq!(stores.guilds[current_guild], protected_current_settings);
+        assert_eq!(stores.guilds[other_guild], protected_other_settings);
+        drop(stores);
+        assert_eq!(
+            crate::runtime::AppState::lock(&data.state.engine).session_len(&other),
+            2
+        );
+        assert_eq!(
+            crate::runtime::AppState::lock(&data.state.engine).session_len(&other_guild_transcript),
+            2
+        );
+        assert_eq!(
+            crate::runtime::AppState::lock(&data.state.engine).session_len(dm_transcript),
+            2
+        );
+    };
     let interaction = admin_component(&fixture, &session, AdminAction::RequestReset, CHANNEL);
     crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
     assert_eq!(
         crate::runtime::AppState::lock(&data.state.engine).session_len(&current),
         2
     );
-    fixture.take_requests();
+    assert_non_transcript_canaries();
+    let requests = fixture.take_requests();
+    let confirmation = requests
+        .iter()
+        .find_map(|request| request.body["content"].as_str())
+        .expect("confirm reset view");
+    assert!(confirmation.contains("Confirm reset"));
+    assert!(requests.iter().any(|request| {
+        request.body["components"]
+            .to_string()
+            .contains("confirm-reset")
+    }));
     let interaction = admin_component(&fixture, &session, AdminAction::ConfirmReset, CHANNEL);
     crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
     assert_eq!(
@@ -1298,6 +1427,7 @@ async fn actual_admin_dispatch_enforces_ack_permission_reload_reset_scope_and_pr
         crate::runtime::AppState::lock(&data.state.engine).session_len(&other),
         2
     );
+    assert_non_transcript_canaries();
     fixture.take_requests();
     let interaction = admin_component(&fixture, &session, AdminAction::ConfirmReset, CHANNEL);
     crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
@@ -1306,6 +1436,7 @@ async fn actual_admin_dispatch_enforces_ack_permission_reload_reset_scope_and_pr
             .as_str()
             .is_some_and(|body| body.contains("already clear"))
     }));
+    assert_non_transcript_canaries();
 
     let interaction = admin_component(&fixture, &session, AdminAction::Export, CHANNEL);
     crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data).await;
@@ -1372,10 +1503,11 @@ async fn actual_admin_dispatch_never_reads_or_mutates_before_acknowledgement() {
 #[tokio::test]
 async fn actual_member_voice_status_hides_channel_and_runs_no_provider_probe() {
     let fixture = DiscordFixture::new().await;
+    let providers = ProviderFixture::new().await;
     fixture
         .permissions
         .store(Permissions::empty().bits(), Ordering::SeqCst);
-    let data = configured_data();
+    let data = configured_data_at(Some(providers.address));
     let commands = crate::application_commands();
     let command = command_by_key(&commands, CommandKey::VoiceStatus);
     assert!(!invoke_voice_slash_fails(&fixture, command, &data, None).await);
@@ -1404,4 +1536,5 @@ async fn actual_member_voice_status_hides_channel_and_runs_no_provider_probe() {
                 || request.route.contains("models")
                 || request.route.contains("chat/completions"))
     );
+    assert_eq!(providers.calls.load(Ordering::SeqCst), 0);
 }
