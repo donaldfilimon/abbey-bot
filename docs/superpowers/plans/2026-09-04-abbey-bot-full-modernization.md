@@ -121,14 +121,16 @@ Task 5 source closure: `4045ab1`; shared memory card, three private menus, decod
 
 **Interfaces:** Produces `MemberVoiceInput/View`, `AdminVoiceInput/View`, `VoiceModeChoice`, `AdminPage`, `AdminAction`, `AdminEffect`, dashboard reducer/view, and versioned admin component protocol.
 
-- [ ] Make `/voice status` member-accessible and allowlist only coarse state, processing category, caller agreement, visible channel, and next action.
-- [ ] Add ephemeral Manage Server-only `/voice diagnostics` containing the current content-free operational detail.
-- [ ] Replace Discord free-form voice-mode input with Off/Local/OpenAI choices while retaining environment aliases.
-- [ ] Add ephemeral Manage Server-only `/admin dashboard` with Overview, Conversation, Learning, Operations, and Confirm Reset pages using classic components.
-- [ ] Route `abbey:admin:v1:<owner>:<guild>:<expiry>:<action>` centrally; recheck current permission and reload authoritative settings before every mutation.
-- [ ] Require a second interaction before channel-transcript reset; keep flush truthful and export ephemeral.
-- [ ] Test member-field allowlist, permission changes, hidden channel, mode eligibility, connected-session refusal, row/ID limits, stale-page idempotence, and reset scope.
-- [ ] Commit the reviewed voice/admin UX slice.
+- [x] Make `/voice status` member-accessible and allowlist only coarse state, processing category, caller agreement, visible channel, and next action.
+- [x] Add ephemeral Manage Server-only `/voice diagnostics` containing the current content-free operational detail.
+- [x] Replace Discord free-form voice-mode input with Off/Local/OpenAI choices while retaining environment aliases.
+- [x] Add ephemeral Manage Server-only `/admin dashboard` with Overview, Conversation, Learning, Operations, and Confirm Reset pages using classic components.
+- [x] Route `abbey:admin:v1:<owner>:<guild>:<expiry>:<action>` centrally; recheck current permission and reload authoritative settings before every mutation.
+- [x] Require a second interaction before channel-transcript reset; keep flush truthful and export ephemeral.
+- [x] Test member-field allowlist, permission changes, hidden channel, mode eligibility, connected-session refusal, row/ID limits, stale-page idempotence, and reset scope.
+- [x] Commit the reviewed voice/admin UX slice.
+
+Task 6 source closure: `12de8cc`, `ccdd6f7`, `aa65ffb`; member voice privacy, typed modes, dashboard controls and actual dispatcher safety fixtures pass focused checks and all-targets Clippy. Independent review approved after permission-failure, epsilon and fixture-isolation corrections. Live interaction acceptance remains separate.
 
 ### Task 7: Correct the Pure Adaptive Provider Router
 
