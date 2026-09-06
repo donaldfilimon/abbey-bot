@@ -733,6 +733,16 @@ status: in_progress
 
 ## Build the MLAI server from a plan file (`--server-plan`)
 status: done
+- 2026-09-06 04:5x: **manual steps taken by hand on Donald's choice ("also trim Team and
+  Moderator"), outside the engine as its 3.B.8 boundary requires.** Three REST role PATCHes with an
+  audit-log reason: @everyone gained Send Polls (nothing removed); Team and Moderator were set to
+  exactly the plan's permission sets. Net loss after @everyone inheritance, stated so it is not
+  discovered later: Team lost Change Nickname, Create Events, Create Private Threads, Manage
+  Events, Manage Nicknames, View Audit Log; Moderator lost those plus Mute/Deafen/Move Members
+  (which the plan reserves to Team). Role snapshots before and after are in
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-roles-{before,after}-hand-pass-2026-09-06.json`
+  (0600). The reveal dry run afterwards: `changes (0)`, manual steps down from four to one, the
+  remaining one being Member's guild-level extras, which Donald chose to leave. Goal stays `done`.
 - 2026-09-06 04:36: **OVERWRITES STAGE APPLIED, blueprint fully applied; goal closed.** Dry runs of
   all eight categories: six already `changes (0)`, BUILD LOG and PRODUCTS one change each (deny
   @everyone View Channel on #ci-and-deploys and #ops-console). Applied on Donald's yes, one run
