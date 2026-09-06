@@ -37,6 +37,15 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 ## Commands
 
+Open `/help` for a private command guide. Start offers **Talk with Abbey**,
+**Review memory**, and **Use an image** when those tasks are available; these
+buttons open guidance. The section selector covers all command groups. Each
+entry names its slash command, member menu, or message menu and says whether
+its result is private, channel-visible, or a reply in the current DM. For a
+menu action, open the member or message menu and choose **Apps**. Availability
+refreshes as you navigate. Controls belong to you and expire 15 minutes after
+opening; run `/help` again for a fresh session.
+
 <!-- BEGIN GENERATED COMMAND CATALOG -->
 | Command | Context | Response | What it does |
 |---|---|---|---|

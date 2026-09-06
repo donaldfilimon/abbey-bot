@@ -2,6 +2,50 @@ use super::*;
 use crate::command_catalog::{self, CommandKind};
 
 #[test]
+fn guided_button_payloads_follow_eligibility_and_keep_the_original_expiry() {
+    for context in [InteractionContext::Guild, InteractionContext::BotDm] {
+        for bits in 0..4 {
+            let mut input = EligibilityInput::new(context);
+            if bits & 1 != 0 {
+                input.capabilities.push(Capability::Generation);
+            }
+            if bits & 2 != 0 {
+                input.capabilities.push(Capability::Vision);
+            }
+            for section in HelpSection::ALL {
+                let session = help_center::HelpSession::new(u64::MAX, 1000, section).unwrap();
+                let rows = serde_json::to_value(help_rows(session, &input)).unwrap();
+                let expected = help_center::help_shortcuts(&input);
+                assert_eq!(
+                    rows.as_array().unwrap().len(),
+                    if section == HelpSection::Start && !expected.is_empty() {
+                        2
+                    } else {
+                        1
+                    }
+                );
+                let menu = &rows[0]["components"][0];
+                assert_eq!(menu["type"], 3);
+                assert_eq!(menu["options"].as_array().unwrap().len(), 8);
+                if let Some(buttons) = rows[1]["components"].as_array() {
+                    assert!(buttons.len() <= 3);
+                    for (button, shortcut) in buttons.iter().zip(expected) {
+                        assert_eq!(button["type"], 2);
+                        assert_eq!(button["label"], shortcut.label);
+                        assert!(button.get("url").is_none());
+                        let id = button["custom_id"].as_str().unwrap();
+                        assert!(id.is_ascii() && id.len() <= 100);
+                        let parsed = help_center::validate(id, u64::MAX, 1100).unwrap();
+                        assert_eq!(parsed.section, shortcut.section);
+                        assert_eq!(parsed.expiry, session.expiry);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn recursive_poise_catalog_and_runtime_binding_parity() {
     fn flatten<'a>(
         commands: &'a [poise::Command<Data, Error>],
@@ -110,9 +154,15 @@ fn discord_payload_contexts_parent_permissions_and_limits() {
         }
     }
     for section in HelpSection::ALL {
-        let rows = help_rows(help_center::HelpSession::new(u64::MAX, 1000, section).unwrap());
+        let rows = help_rows(
+            help_center::HelpSession::new(u64::MAX, 1000, section).unwrap(),
+            &EligibilityInput::new(InteractionContext::Guild),
+        );
         let json = serde_json::to_value(rows).unwrap();
-        assert_eq!(json.as_array().unwrap().len(), 1);
+        assert_eq!(
+            json.as_array().unwrap().len(),
+            if section == HelpSection::Start { 2 } else { 1 }
+        );
         let menu = &json[0]["components"][0];
         assert!(menu["custom_id"].as_str().unwrap().len() <= 100);
         assert_eq!(menu["options"].as_array().unwrap().len(), 8);

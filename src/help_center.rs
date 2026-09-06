@@ -1,5 +1,67 @@
 //! Owner-bound private help protocol; callers supply time and identities.
-use crate::command_catalog::HelpSection;
+use crate::command_catalog::{
+    self as catalog, CommandKey, CommandKind, EligibilityInput, EvaluationMode, HelpSection,
+    InteractionContext,
+};
+
+pub struct HelpShortcut {
+    pub section: HelpSection,
+    pub label: &'static str,
+}
+
+/// Shortcuts navigate; current catalog eligibility decides which tasks exist here.
+pub fn help_shortcuts(input: &EligibilityInput) -> Vec<HelpShortcut> {
+    let mut own = input.clone();
+    own.self_subject = Some(true);
+    [
+        (
+            HelpSection::Conversation,
+            "Talk with Abbey",
+            &[CommandKey::PersonaAsk][..],
+        ),
+        (
+            HelpSection::Memory,
+            "Review memory",
+            &[CommandKey::Recall][..],
+        ),
+        (
+            HelpSection::Images,
+            "Use an image",
+            &[CommandKey::Ocr, CommandKey::DescribeImage][..],
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(section, label, keys)| {
+        keys.iter()
+            .any(|key| {
+                catalog::eligible(
+                    catalog::command(*key),
+                    &own,
+                    EvaluationMode::Discoverability,
+                )
+            })
+            .then_some(HelpShortcut { section, label })
+    })
+    .collect()
+}
+
+pub const fn invocation_hint(kind: CommandKind) -> &'static str {
+    match kind {
+        CommandKind::Slash => "slash command",
+        CommandKind::UserContext => "member menu",
+        CommandKind::MessageContext => "message menu",
+    }
+}
+
+pub fn visibility_hint(private: bool, context: InteractionContext) -> &'static str {
+    if private {
+        "private"
+    } else if context == InteractionContext::BotDm {
+        "reply in this DM"
+    } else {
+        "channel-visible"
+    }
+}
 
 pub const LIFETIME_SECS: u64 = 15 * 60;
 pub const STALE: &str = "That control is stale or invalid. Open /help for fresh private controls.";
@@ -101,6 +163,89 @@ pub fn validate(custom_id: &str, actor: u64, now: u64) -> Result<HelpSession, Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn invocation_and_visibility_hints_name_the_actual_surface() {
+        use crate::command_catalog::{CommandKind, InteractionContext};
+        assert_eq!(invocation_hint(CommandKind::Slash), "slash command");
+        assert_eq!(invocation_hint(CommandKind::UserContext), "member menu");
+        assert_eq!(invocation_hint(CommandKind::MessageContext), "message menu");
+        assert_eq!(
+            visibility_hint(false, InteractionContext::Guild),
+            "channel-visible"
+        );
+        assert_eq!(
+            visibility_hint(false, InteractionContext::BotDm),
+            "reply in this DM"
+        );
+        for context in [InteractionContext::Guild, InteractionContext::BotDm] {
+            assert_eq!(visibility_hint(true, context), "private");
+        }
+    }
+
+    #[test]
+    fn shortcuts_use_current_catalog_eligibility_for_the_callers_own_memory() {
+        use crate::command_catalog::{
+            self as catalog, Capability, CommandKey, EligibilityInput, EvaluationMode,
+            InteractionContext,
+        };
+        for context in [InteractionContext::Guild, InteractionContext::BotDm] {
+            for bits in 0..4 {
+                let mut input = EligibilityInput::new(context);
+                input.self_subject = Some(false);
+                if bits & 1 != 0 {
+                    input.capabilities.push(Capability::Generation);
+                }
+                if bits & 2 != 0 {
+                    input.capabilities.push(Capability::Vision);
+                }
+                let shortcuts = help_shortcuts(&input);
+                let mut own = input.clone();
+                own.self_subject = Some(true);
+                for (section, label, keys) in [
+                    (
+                        HelpSection::Conversation,
+                        "Talk with Abbey",
+                        &[CommandKey::PersonaAsk][..],
+                    ),
+                    (
+                        HelpSection::Memory,
+                        "Review memory",
+                        &[CommandKey::Recall][..],
+                    ),
+                    (
+                        HelpSection::Images,
+                        "Use an image",
+                        &[CommandKey::Ocr, CommandKey::DescribeImage][..],
+                    ),
+                ] {
+                    let expected = keys.iter().any(|key| {
+                        catalog::eligible(
+                            catalog::command(*key),
+                            &own,
+                            EvaluationMode::Discoverability,
+                        )
+                    });
+                    assert_eq!(
+                        shortcuts.iter().any(|shortcut| shortcut.section == section),
+                        expected
+                    );
+                    if expected {
+                        assert_eq!(
+                            shortcuts
+                                .iter()
+                                .find(|shortcut| shortcut.section == section)
+                                .unwrap()
+                                .label,
+                            label
+                        );
+                    }
+                }
+                assert!(shortcuts.len() <= 3);
+                assert_eq!(input.self_subject, Some(false));
+            }
+        }
+    }
+
     #[test]
     fn strict_protocol_and_fixed_expiry() {
         let session = HelpSession::new(u64::MAX, 1000, HelpSection::Start).unwrap();

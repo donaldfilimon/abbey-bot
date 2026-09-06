@@ -1,5 +1,110 @@
 use super::*;
 
+#[test]
+fn guided_sections_preserve_every_eligible_entry_and_visibility_before_clamping() {
+    for context in [InteractionContext::Guild, InteractionContext::BotDm] {
+        for permission in [
+            None,
+            Some(DiscordPermission::ManageMessages),
+            Some(DiscordPermission::ModerateMembers),
+            Some(DiscordPermission::ManageServer),
+            Some(DiscordPermission::Administrator),
+        ] {
+            for bits in 0..32 {
+                let mut input = member();
+                input.context = context;
+                input.permissions = permission.into_iter().collect();
+                input.caller_present_in_voice = Some(true);
+                input.selected_voice_mode = SelectedVoiceMode::Local;
+                input.capabilities = [
+                    Capability::Generation,
+                    Capability::Vision,
+                    Capability::VoiceConfigured,
+                    Capability::VoiceLocal,
+                    Capability::VoiceOpenAi,
+                ]
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, cap)| (bits & (1 << index) != 0).then_some(cap))
+                .collect();
+                for section in HelpSection::ALL {
+                    let rendered = render_help(section, &input);
+                    assert!(
+                        rendered.chars().count() <= 2000,
+                        "{section:?}: {}",
+                        rendered.chars().count()
+                    );
+                    assert_eq!(crate::commands::clamp_message(rendered.clone()), rendered);
+                    for spec in registered_commands() {
+                        let name = format!(
+                            "`{}{}` (",
+                            if spec.kind == CommandKind::Slash {
+                                "/"
+                            } else {
+                                ""
+                            },
+                            spec.name
+                        );
+                        let expected = spec.section == section
+                            && eligible(spec, &input, EvaluationMode::Discoverability);
+                        assert_eq!(
+                            rendered.contains(&name),
+                            expected,
+                            "{section:?}: {} {input:?}",
+                            spec.name
+                        );
+                        if expected {
+                            let surface = match spec.kind {
+                                CommandKind::Slash => "slash command",
+                                CommandKind::UserContext => "member menu",
+                                CommandKind::MessageContext => "message menu",
+                            };
+                            let visibility = if spec.private {
+                                "private"
+                            } else if context == InteractionContext::BotDm {
+                                "reply in this DM"
+                            } else {
+                                "channel-visible"
+                            };
+                            assert!(rendered.contains(&format!("{name}{surface}; {visibility})")));
+                        }
+                    }
+                    if context == InteractionContext::BotDm {
+                        assert!(
+                            !rendered.contains("channel-visible")
+                                && !rendered.contains("member menu")
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn representative_guided_output_is_readable() {
+    let mut input = member();
+    input.capabilities = vec![Capability::Generation, Capability::Vision];
+    for section in [HelpSection::Start, HelpSection::Memory, HelpSection::Images] {
+        let rendered = render_help(section, &input);
+        match section {
+            HelpSection::Start => assert!(rendered.contains("Task buttons open guidance")),
+            HelpSection::Memory => {
+                assert!(rendered.contains("Open the member menu, then Apps"));
+                assert!(!rendered.contains("message menu"));
+            }
+            HelpSection::Images => {
+                assert!(rendered.contains("Open the message menu, then Apps"));
+                assert!(!rendered.contains("member menu"));
+            }
+            _ => unreachable!(),
+        }
+        println!("{rendered}\n");
+    }
+    input.context = InteractionContext::BotDm;
+    println!("{}", render_help(HelpSection::Conversation, &input));
+}
+
 fn member() -> EligibilityInput {
     let mut input = EligibilityInput::new(InteractionContext::Guild);
     input.self_subject = Some(true);

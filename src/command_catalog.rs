@@ -397,10 +397,12 @@ pub fn eligible(spec: &CommandSpec, input: &EligibilityInput, mode: EvaluationMo
 }
 pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
     let mut text = format!(
-        "**Abbey · {}**\nChoose a section below. Only commands usable here are listed.\n\n",
+        "**Abbey · {}**\nChoose a section. These commands are available here.\n\n",
         section.label()
     );
     let mut count = 0;
+    let mut member_menu = false;
+    let mut message_menu = false;
     for spec in REGISTERED.iter().filter(|spec| {
         spec.section == section && eligible(spec, input, EvaluationMode::Discoverability)
     }) {
@@ -409,13 +411,36 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
         } else {
             ""
         };
-        text.push_str(&format!("`{prefix}{}` — {}\n", spec.name, spec.description));
+        text.push_str(&format!(
+            "`{prefix}{}` ({}; {}) · {}\n",
+            spec.name,
+            crate::help_center::invocation_hint(spec.kind),
+            crate::help_center::visibility_hint(spec.private, input.context),
+            spec.description
+        ));
+        member_menu |= spec.kind == CommandKind::UserContext;
+        message_menu |= spec.kind == CommandKind::MessageContext;
         count += 1;
     }
     if count == 0 {
         text.push_str("No commands in this section are currently available to you.\n");
     }
-    text.push_str("\nSome commands may be hidden because a permission or deployment capability is unavailable. Use `/help` to start a new private session; controls expire after 15 minutes.");
+    if section == HelpSection::Start && !crate::help_center::help_shortcuts(input).is_empty() {
+        text.push_str("\nTask buttons open guidance; they do not run commands.\n");
+    }
+    match (member_menu, message_menu) {
+        (true, true) => {
+            text.push_str("\nOpen the member or message menu, then Apps, for its listed actions.\n")
+        }
+        (true, false) => {
+            text.push_str("\nOpen the member menu, then Apps, for its listed actions.\n")
+        }
+        (false, true) => {
+            text.push_str("\nOpen the message menu, then Apps, for its listed actions.\n")
+        }
+        (false, false) => {}
+    }
+    text.push_str("\nAvailability follows current permissions and capabilities. Controls expire 15 minutes after opening; `/help` starts a new private session.");
     text
 }
 #[cfg(test)]

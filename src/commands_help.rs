@@ -5,10 +5,10 @@ use catalog::{
     InteractionContext, SelectedVoiceMode,
 };
 use serenity::all::{
-    CommandDataOption, CommandDataOptionValue, ComponentInteraction, ComponentInteractionDataKind,
-    CreateActionRow, CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption, EditInteractionResponse, GuildId, Permissions,
-    UserId,
+    ButtonStyle, CommandDataOption, CommandDataOptionValue, ComponentInteraction,
+    ComponentInteractionDataKind, CreateActionRow, CreateButton, CreateInteractionResponse,
+    CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind,
+    CreateSelectMenuOption, EditInteractionResponse, GuildId, Permissions, UserId,
 };
 
 /// Attached to every executable adapter and read by the guard itself.
@@ -452,8 +452,8 @@ impl From<SectionChoice> for HelpSection {
         }
     }
 }
-fn help_rows(session: help_center::HelpSession) -> Vec<CreateActionRow> {
-    vec![CreateActionRow::SelectMenu(
+fn help_rows(session: help_center::HelpSession, input: &EligibilityInput) -> Vec<CreateActionRow> {
+    let mut rows = vec![CreateActionRow::SelectMenu(
         CreateSelectMenu::new(
             session.custom_id(),
             CreateSelectMenuKind::String {
@@ -469,7 +469,21 @@ fn help_rows(session: help_center::HelpSession) -> Vec<CreateActionRow> {
         .placeholder("Choose a help section")
         .min_values(1)
         .max_values(1),
-    )]
+    )];
+    if session.section == HelpSection::Start {
+        let buttons: Vec<_> = help_center::help_shortcuts(input)
+            .into_iter()
+            .map(|shortcut| {
+                CreateButton::new(session.navigate(shortcut.section).custom_id())
+                    .label(shortcut.label)
+                    .style(ButtonStyle::Secondary)
+            })
+            .collect();
+        if !buttons.is_empty() {
+            rows.push(CreateActionRow::Buttons(buttons));
+        }
+    }
+    rows
 }
 /// Browse commands available here using private, owner-bound controls.
 #[poise::command(slash_command, ephemeral)]
@@ -499,7 +513,7 @@ pub async fn help(
                     .content(crate::commands::clamp_message(catalog::render_help(
                         section, &input,
                     )))
-                    .components(help_rows(session))
+                    .components(help_rows(session, &input))
                     .ephemeral(true)
                     .allowed_mentions(crate::gateway::no_mentions()),
             )
@@ -574,6 +588,7 @@ pub async fn dispatch_component(
                 return Err(help_center::Rejection::Stale);
             }
             match &interaction.data.kind {
+                ComponentInteractionDataKind::Button => Ok(session),
                 ComponentInteractionDataKind::StringSelect { values } if values.len() == 1 => {
                     HelpSection::parse(&values[0])
                         .map(|section| session.navigate(section))
@@ -617,7 +632,7 @@ pub async fn dispatch_component(
         ),
         Ok(HelpPreparation::Ready(session, input)) => (
             catalog::render_help(session.section, &input),
-            help_rows(session),
+            help_rows(session, &input),
         ),
     };
     let _ = interaction
