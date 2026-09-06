@@ -1,0 +1,1292 @@
+[
+  {
+    "name": "readiness-canonical",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}\n",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-schema_version",
+    "kind": "readiness",
+    "document": "{\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-schema_version",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"schema_version\":1}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":null,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":[],\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":{},\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":true,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-string",
+    "kind": "readiness",
+    "document": "{\"schema_version\":\"1\",\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-float",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1.0,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-negative",
+    "kind": "readiness",
+    "document": "{\"schema_version\":-1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-schema_version-overflow",
+    "kind": "readiness",
+    "document": "{\"schema_version\":2,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-missing-pid",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-pid",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"pid\":4242}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":null,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":[],\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":{},\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":true,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-string",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":\"4242\",\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-float",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242.0,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-negative",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":-1,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-overflow",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":2147483648,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-zero",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":0,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-pid-max",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":2147483647,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-run_nonce",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-run_nonce",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":null,\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":[],\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":{},\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":true,\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bad-hex-29",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bad-hex-30",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bad-hex-31",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bad-hex-32",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bad-hex-33",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-run_nonce-bad-hex-34",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-missing-executable_sha256",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-executable_sha256",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":null,\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":[],\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":{},\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":true,\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bad-hex-41",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bad-hex-42",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bad-hex-43",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"bcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bad-hex-44",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567890\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bad-hex-45",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-executable_sha256-bad-hex-46",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-missing-phase",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-phase",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"phase\":\"ready\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-phase-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":null,\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-phase-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":[],\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-phase-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":{},\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-phase-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":true,\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-phase-unknown-enum",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"CANARY_INVALID\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-phase-starting",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-phase-ready",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-phase-draining",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"draining\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-published_at_unix_ms",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-published_at_unix_ms",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"published_at_unix_ms\":1788537600123}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":null,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":[],\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":{},\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":true,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-string",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":\"1788537600123\",\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-float",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123.0,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-negative",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":-1,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-published_at_unix_ms-overflow",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":9223372036854775808,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-timestamp-max",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":9223372036854775807,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-timestamp-zero",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":0,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-discord",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-discord",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"discord\":\"ready\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-discord-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":null,\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-discord-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":[],\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-discord-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":{},\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-discord-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":true,\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-discord-unknown-enum",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"CANARY_INVALID\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-discord-connecting",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"connecting\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-discord-ready",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-discord-stopped",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"stopped\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-scheduler",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-scheduler",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"scheduler\":\"running\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-scheduler-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":null,\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-scheduler-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":[],\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-scheduler-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":{},\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-scheduler-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":true,\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-scheduler-unknown-enum",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"CANARY_INVALID\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-scheduler-starting",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"starting\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-scheduler-running",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-scheduler-stopped",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"stopped\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-telegram",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-telegram",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"telegram\":\"disabled\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-telegram-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":null,\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-telegram-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":[],\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-telegram-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":{},\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-telegram-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":true,\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-telegram-unknown-enum",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"CANARY_INVALID\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-telegram-disabled",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-telegram-starting",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"starting\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-telegram-connected",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"connected\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-telegram-degraded",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"degraded\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-telegram-stopped",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"stopped\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-slack",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-slack",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"slack\":\"degraded\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-slack-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":null,\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-slack-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":[],\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-slack-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":{},\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-slack-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":true,\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-slack-unknown-enum",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"CANARY_INVALID\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-slack-disabled",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"disabled\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-slack-starting",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"starting\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-slack-connected",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"connected\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-slack-degraded",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-slack-stopped",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"stopped\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-missing-last_persistence",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-duplicate-last_persistence",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-last_persistence-null",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":null}",
+    "valid": false
+  },
+  {
+    "name": "readiness-last_persistence-array",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":[]}",
+    "valid": false
+  },
+  {
+    "name": "readiness-last_persistence-object",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":{}}",
+    "valid": false
+  },
+  {
+    "name": "readiness-last_persistence-bool",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":true}",
+    "valid": false
+  },
+  {
+    "name": "readiness-last_persistence-unknown-enum",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"CANARY_INVALID\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-last_persistence-not_attempted",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"not_attempted\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-last_persistence-memory_only",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"memory_only\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-last_persistence-complete",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-last_persistence-partial",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"partial\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-last_persistence-failed",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"failed\"}",
+    "valid": true
+  },
+  {
+    "name": "readiness-unknown-field",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\",\"private_payload\":\"CANARY_PRIVATE\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-126",
+    "kind": "readiness",
+    "document": "null",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-127",
+    "kind": "readiness",
+    "document": "[]",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-128",
+    "kind": "readiness",
+    "document": "true",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-129",
+    "kind": "readiness",
+    "document": "0",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-130",
+    "kind": "readiness",
+    "document": "{}",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-131",
+    "kind": "readiness",
+    "document": "{\"pid\":+1}",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-132",
+    "kind": "readiness",
+    "document": "{\"pid\":NaN}",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-133",
+    "kind": "readiness",
+    "document": "{\"pid\":Infinity}",
+    "valid": false
+  },
+  {
+    "name": "readiness-bad-top-134",
+    "kind": "readiness",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "readiness-oversize",
+    "kind": "readiness",
+    "document": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                {\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"ready\",\"published_at_unix_ms\":1788537600123,\"discord\":\"ready\",\"scheduler\":\"running\",\"telegram\":\"disabled\",\"slack\":\"degraded\",\"last_persistence\":\"complete\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-canonical",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}\n",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-missing-schema_version",
+    "kind": "bootstrap",
+    "document": "{\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-duplicate-schema_version",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"schema_version\":1}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-null",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":null,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-array",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":[],\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-object",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":{},\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-bool",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":true,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-string",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":\"1\",\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-float",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1.0,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-negative",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":-1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-schema_version-overflow",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":2,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-missing-pid",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-duplicate-pid",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"pid\":4242}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-null",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":null,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-array",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":[],\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-object",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":{},\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-bool",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":true,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-string",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":\"4242\",\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-float",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242.0,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-negative",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":-1,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-overflow",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":2147483648,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-zero",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":0,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-pid-max",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":2147483647,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-missing-run_nonce",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-duplicate-run_nonce",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-null",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":null,\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-array",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":[],\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-object",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":{},\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bool",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":true,\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bad-hex-165",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bad-hex-166",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bad-hex-167",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bad-hex-168",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bad-hex-169",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-run_nonce-bad-hex-170",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-missing-executable_sha256",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-duplicate-executable_sha256",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-null",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":null,\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-array",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":[],\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-object",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":{},\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bool",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":true,\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bad-hex-177",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bad-hex-178",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bad-hex-179",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"bcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bad-hex-180",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567890\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bad-hex-181",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-executable_sha256-bad-hex-182",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-missing-phase",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-duplicate-phase",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"phase\":\"starting\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-phase-null",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":null,\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-phase-array",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":[],\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-phase-object",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":{},\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-phase-bool",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":true,\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-phase-unknown-enum",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"CANARY_INVALID\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-phase-starting",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-phase-failed",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"failed\",\"code\":\"none\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-missing-code",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-duplicate-code",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-code-null",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":null}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-code-array",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":[]}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-code-object",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":{}}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-code-bool",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":true}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-code-unknown-enum",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"CANARY_INVALID\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-code-none",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-code-readiness_file",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"readiness_file\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-code-log_directory",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"log_directory\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-code-log_file",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"log_file\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-code-log_writer",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"log_writer\"}",
+    "valid": true
+  },
+  {
+    "name": "bootstrap-unknown-field",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\",\"private_payload\":\"CANARY_PRIVATE\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-205",
+    "kind": "bootstrap",
+    "document": "null",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-206",
+    "kind": "bootstrap",
+    "document": "[]",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-207",
+    "kind": "bootstrap",
+    "document": "true",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-208",
+    "kind": "bootstrap",
+    "document": "0",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-209",
+    "kind": "bootstrap",
+    "document": "{}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-210",
+    "kind": "bootstrap",
+    "document": "{\"pid\":+1}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-211",
+    "kind": "bootstrap",
+    "document": "{\"pid\":NaN}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-212",
+    "kind": "bootstrap",
+    "document": "{\"pid\":Infinity}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-bad-top-213",
+    "kind": "bootstrap",
+    "document": "{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}{\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  },
+  {
+    "name": "bootstrap-oversize",
+    "kind": "bootstrap",
+    "document": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                {\"schema_version\":1,\"pid\":4242,\"run_nonce\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"executable_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"phase\":\"starting\",\"code\":\"none\"}",
+    "valid": false
+  }
+]

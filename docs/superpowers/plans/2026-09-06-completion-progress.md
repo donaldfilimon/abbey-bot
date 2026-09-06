@@ -74,3 +74,19 @@ voice work, and observability I/O are included. No live latency or durability
 measurement has been performed. Implementation and review remain pending.
 
 Guided-help Task 1 is committed at `8d5a06f8` and independently reviewed: conditional task buttons, exact invocation/visibility guidance, current permissions, fixed expiry, private responses and no browsing effects. Focused tests and all-target Clippy passed. Complete private fact browsing remains Task 2 of the added plan.
+
+## Shared service protocol foundation
+
+The read-only Python parser/private-file reader and shared service schema/corpus
+are implemented as a partial Tasks 10/11 foundation. Fifteen offline tests pass,
+covering 215 document vectors and 28 freshness vectors; independent review
+approved the source after cleanup and symlink-test fixes. Removing no-follow in
+a review-only mutation causes six meaningful test failures. Rust conformance,
+continuous readiness, checker CLI, installer transactions, gate wiring and live
+service acceptance remain outstanding. Bootstrap has exactly six keys in the
+binding specification; an earlier ignored supplemental count was corrected.
+
+Remote main was fetched at `ba61202358808981c5566524b66bf2676aea1c29`. It adds
+constitutional memory-proposal adapters beyond our last canonical merge, and
+canonical has additional in-progress changes. Integrate committed changes at a
+clean boundary; preserve the other session's dirty gateway/episode work.
