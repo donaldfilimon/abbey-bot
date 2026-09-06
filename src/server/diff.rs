@@ -614,7 +614,11 @@ impl<'a> Context<'a> {
                 .as_deref()
                 .map(str::trim)
                 .filter(|t| !t.is_empty());
-            let topic_differs = channel.kind.has_topic() && topic != current_topic;
+            // A plan without a topic leaves the live topic alone; otherwise a
+            // channel with a hand-written topic would be "edited" on every diff
+            // with an edit that sends nothing, and --apply could never verify.
+            let topic_differs =
+                channel.kind.has_topic() && topic.is_some() && topic != current_topic;
             if state.parent != Some(category_id) || topic_differs {
                 self.report.changes.push(Change::EditChannel {
                     name: channel.name.clone(),
