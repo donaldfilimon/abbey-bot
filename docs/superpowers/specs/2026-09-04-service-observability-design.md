@@ -532,9 +532,69 @@ that value, and the checker requires `os.kill(pid, 0)` to succeed on every poll.
 `EPERM` is also failure rather than existence evidence. The fake harness injects
 the process-existence primitive without signaling a real process.
 
-Within a 30-second total monotonic readiness budget the checker samples its own
-wall clock for the exact freshness predicate above and requires a private
-regular document whose:
+### Transaction context clarification recorded 2026-09-06
+
+The installer captures the previous schema-valid readiness nonce before stopping
+or bootstrapping a service. A checker starting after bootstrap cannot reconstruct
+an overwritten nonce from its three arguments. Preserve the shell transaction,
+traps and rollback owner, and carry the comparison data through an explicit
+private stdin record. This narrow clarification is selected under the user's
+service modernization instruction; it preserves all three checker arguments and
+the readiness/bootstrap wire schemas.
+
+The checker requires exactly these stdin keys, encoded as one compact UTF-8
+JSON object plus LF and capped at 512 bytes:
+
+| Key | Type and bound |
+|---|---|
+| `schema_version` | integer exactly 1 |
+| `transaction_start_ms` | integer 0 through 9223372036854775807, equal to the CLI argument |
+| `deadline_monotonic_ns` | integer 0 through 9223372036854775807, absolute same-host monotonic deadline |
+| `excluded_nonces` | array of at most two distinct 64-character lowercase hexadecimal strings |
+
+All keys are required; duplicates, unknown keys, null, booleans in numeric
+fields, floats and numeric strings fail closed. Empty or missing stdin is not
+an empty baseline. The reader is byte-bounded and deadline-aware and cannot
+wait indefinitely for EOF from a pipe left open. Comparison context never
+supplies the bot's actual runtime identity, configuration or managed paths.
+
+The initial exclusion set is empty only after proving the fixed readiness leaf
+is absent beneath a validated private parent. Inaccessible, unsafe, malformed
+or otherwise unreadable evidence is not absence and fails before stop or
+publication. A stale or draining but schema-valid old document still contributes
+its nonce. Capture retains only comparison data in non-exported private shell
+variables and pipes: no new baseline file, caller-selected path, environment
+backdoor, identity-bearing command argument, shell tracing or user-visible
+identity output. Helper stdout is an internal protocol, not a status log.
+
+Immediately before each candidate bootstrap, mint the wall-clock lower bound
+and one absolute monotonic deadline 30 seconds later. Bootstrap acknowledgement,
+PID acquisition, context parsing, all checks/waits and the five-second stability
+phase consume this same allowance. The checker clamps the supplied allowance to
+at most 30 seconds from entry and rejects an expired context. It never resets
+the deadline when a PID or ready document first appears. Old-service stop and
+rollback are separately bounded phases; their time is not candidate readiness
+time. The stop phase must accommodate the service's 20-second cooperative
+cleanup policy and must prove termination before publishing a competing run.
+
+The CLI PID pins the expected candidate. Every poll reads the fixed
+`gui/<os.getuid()>/com.donaldfilimon.abbey-bot` launchctl record again, using a
+bounded capture with exactly one canonical top-level PID. It must agree with the
+argument and document, in addition to the process-existence check. Re-sample
+service identity around document validation to reject an observed replacement;
+discard raw launchctl output and errors after fixed categorization.
+
+The transaction uses the complete reviewed checkout's deploy helper bundle for
+both candidate and rollback. Python imports and JSON schemas resolve beside the
+helper, independently of cwd and owner environment. No helper files are copied
+individually into the managed installation. Missing/incompatible bundle members
+fail with fixed diagnostics, and a relocated complete-bundle test proves this
+contract. Raw launchctl status, readiness/bootstrap bodies, hashes and nonces
+must not enter transaction stdout/stderr or fake command logs.
+
+Within that single 30-second cooperative readiness budget the checker samples
+its own wall clock for the exact freshness predicate above and requires a
+private regular document whose:
 
 - publication is fresh for the current transaction;
 - PID equals launchd's current PID and that PID remains present;
@@ -545,8 +605,12 @@ regular document whose:
 - scheduler is `running`;
 - Discord is `ready`.
 
-After the first match, it requires five additional continuous seconds with the
-same PID, nonce, SHA, ready phase, scheduler, and Discord state. Connector state,
+After the first match, it requires five additional continuous seconds of valid
+observations with the same PID, nonce, SHA, ready phase, scheduler, and Discord
+state, including a final valid sample at or after five seconds and no later than
+the original deadline. Any invalid observation in that interval fails the
+attempt; it does not restart the budget. Bounded periodic sampling proves no
+invalid observed sample, not the absence of every transient between samples. Connector state,
 last persistence category, and publication timestamp may update without
 invalidating identity. Stable PID alone, a stale file, a matching hash under a
 different PID/nonce, or a transient ready file never proves success.
@@ -559,7 +623,16 @@ substitute.
 The installer uses the checker after a fresh install/update and after automatic
 rollback. A rollback is successful only when the restored binary's matching
 readiness contract also passes; restoring bytes or seeing a stable PID is not
-enough.
+enough. Rollback captures the failed candidate nonce before stopping it, retains
+the original nonce, and uses a new attempt start/deadline with the restored
+binary hash. More than two required exclusions fail closed instead of silently
+dropping history. A legacy restored binary that lacks managed readiness cannot
+pass through a PID-only exception. Existing recovery material is retained when
+rollback readiness is unconfirmed.
+
+Byte caps and cooperative time accounting do not guarantee kernel/filesystem
+latency or process termination deadlines. Bound controllable subprocess waits
+and retain cleanup ownership; do not detach a blocked thread and call it reaped.
 
 `deploy/test-install-launchd.py` runs the complete shell transaction under a
 temporary HOME with fake `cargo`, `launchctl`, `plutil`, and `sleep`. The

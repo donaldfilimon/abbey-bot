@@ -205,6 +205,8 @@ Task 7 source closure: `0fafed3`; 114 focused provider tests passed, one intenti
 
 **Files:** Add readiness checker and fake-home/fake-launchctl installer suite; modify installer/check scripts and documentation.
 
+Apply the binding 2026-09-06 transaction-context clarification: capture the old nonce before stop, send the exact bounded private stdin record, retain the three CLI arguments, re-sample current launchctl PID, and charge bootstrap/PID acquisition/stability to one absolute 30-second attempt deadline. Rollback uses a new deadline with original and failed-candidate exclusions. Use the complete reviewed deploy helper bundle and distinguish verified leaf absence from unreadable evidence.
+
 **Interfaces:** Produces `deploy/check-service-readiness.py` and `deploy/test-install-launchd.py`.
 
 - [ ] Make install success require exact `--managed-service` plist arguments, live launchd PID, exact-schema/fresh matching nonce and installed SHA, ready phase, scheduler running, Discord ready, and five additional stable seconds within a 30-second readiness budget.

@@ -7,6 +7,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -182,6 +183,24 @@ class PrivateFileTests(unittest.TestCase):
             finally:
                 target.unlink()
                 actual.rename(target)
+
+
+    def test_each_opened_owner_is_checked_independently(self):
+        original = os.fstat
+        for target in (self.home, self.home / ".local", self.home / ".local/share", self.parent, self.path):
+            selected = target.stat()
+            def fstat(fd):
+                metadata = original(fd)
+                if (metadata.st_dev, metadata.st_ino) == (selected.st_dev, selected.st_ino):
+                    fields = ("st_uid", "st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                    altered = {key: getattr(metadata, key) for key in fields}
+                    altered["st_uid"] += 1
+                    return SimpleNamespace(**altered)
+                return metadata
+            with self.subTest(target=target.name), patch.object(protocol.os, "fstat", side_effect=fstat):
+                with self.assertRaises(protocol.ProtocolError) as error:
+                    protocol.read_private(self.home)
+                self.assertEqual(error.exception.category, protocol.Failure.UNSAFE_FILE)
 
     def test_close_failures_are_private_and_all_descriptors_are_attempted(self):
         original = os.close
