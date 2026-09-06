@@ -103,3 +103,28 @@ absolute deadline evidence to the unchanged three-argument checker via bounded
 private stdin. It preserves shell rollback ownership, includes PID acquisition
 in the same readiness budget, and requires current launchctl sampling. The
 checker and fake installer implementation remain pending.
+
+## Integrated provider and service follow-up
+
+Provider runtime source is committed at `2a24927`: 1,072 tests passed with two
+live tests ignored, and all-target Clippy passed. Canonical `cf22506` is merged
+at `dac0f37`; the combined suite passed 1,085 tests with four live tests ignored.
+Independent review is still open. It found delivery-effect ordering, transport
+failure classification and executable qualification gaps that must be corrected
+before Task 8 closes. Interactive command post-reply memory draining is also
+being completed; Task 9 retains ownership of drains during cancellation.
+
+Readiness checker source `5c1e547` passes 22 offline tests and keeps the exact
+three arguments with private stdin transaction context. The safe installed
+binary/plist validator `d591b42` passes 10 tests after independent review fixes.
+The installer transaction and full fake-launchd matrix are being implemented.
+Managed Rust startup, lifecycle, logging, remaining UI and final strict/hosted
+verification and integration into canonical main are still outstanding.
+
+The local read-only status helper now has 14 passing offline tests, including
+real safe-reader calls against synthetic fixed artifacts and relocated bundle
+checks. It reports two fresh identity samples and closed state labels, never
+installation acceptance. A bootstrap failure is attributed only when its
+identity matches fresh readiness evidence; missing identity evidence remains
+unverified. Independent review, README/gate wiring and the full shared installer
+regression remain pending, so the added operator plan is not yet closed.

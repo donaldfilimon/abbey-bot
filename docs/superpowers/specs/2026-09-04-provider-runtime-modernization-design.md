@@ -369,6 +369,36 @@ Circuit state is runtime operational state, not provider-manifest evidence.
 Any persistence of it must remain content-free and may never turn a stale
 qualification identity into an eligible provider.
 
+### Requalification evidence clarification recorded 2026-09-06
+
+An unchanged successful manifest cannot distinguish a new qualification run
+from a process restart. Preserve version-1 report fields and version-2 reader
+compatibility, and add an optional per-provider version-2
+`qualification_run_nonce`: exactly 64 lowercase hexadecimal characters encoding
+32 operating-system random bytes. The successful qualification publisher mints
+this witness only after validating the successful evidence it publishes. It is
+not a timestamp, filesystem identity, runtime circuit field, or score input.
+The five-key score-profile objects above do not change.
+
+A persisted block records the qualification witness for its exact provider and
+identity. A newly validated successful qualification with a different witness
+can clear that block. Changes to another provider's record, file timestamps,
+inode replacement, restart or rewriting identical evidence cannot clear it.
+Legacy version-2 records without a witness remain readable and initially
+eligible under existing rules; they cannot prove a new qualification to clear
+an existing block. Republishing through the current successful qualification
+writer supplies the witness. Version-1 reports use their validated canonical
+successful evidence, including their existing generation timestamp, without
+changing the report wire format. An identical version-1 report is not evidence
+of a new attempt. Block-store recovery must preserve these distinctions and
+fail closed if evidence or durable publication is incomplete.
+
+The current production self-test continues to publish version 1. The existing
+version-2 publication seam is test-only; its witness generation is producer
+conformance evidence, not a new live CLI mode. The runtime accepts a witnessed
+version-2 record from a compatible external qualification producer. No new
+self-test field or provider command is introduced by this clarification.
+
 ## Conversation-Local Selection and Pinning
 
 Each generation/tool request creates or receives a `ProviderConversation`.
