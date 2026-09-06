@@ -130,7 +130,7 @@ pub enum Change {
         name: String,
         kind: ChannelKind,
         category: String,
-        topic: Option<String>,
+        topic: TopicEdit,
     },
     /// One `PUT` for one role on one channel. Other roles' and members'
     /// entries on that channel are untouched (this is what keeps 3.B.6 out).
@@ -138,6 +138,14 @@ pub enum Change {
         target: Target,
         overwrite: Overwrite,
     },
+}
+
+/// A channel edit must distinguish an omitted field from clearing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TopicEdit {
+    Unchanged,
+    Clear,
+    Set(String),
 }
 
 impl Change {
@@ -255,7 +263,11 @@ impl Change {
             } => format!(
                 "edit {}: parent {category:?}{}",
                 describe_channel(*kind, name),
-                if topic.is_some() { ", topic set" } else { "" }
+                match topic {
+                    TopicEdit::Unchanged => "",
+                    TopicEdit::Clear => ", topic cleared",
+                    TopicEdit::Set(_) => ", topic set",
+                }
             ),
             Self::SetOverwrite { target, overwrite } => {
                 if overwrite.is_empty() {
@@ -620,10 +632,12 @@ impl<'a> Context<'a> {
                     name: channel.name.clone(),
                     kind: channel.kind,
                     category: category.name.clone(),
-                    topic: if topic_differs {
-                        topic.map(str::to_string)
+                    topic: if !topic_differs {
+                        TopicEdit::Unchanged
+                    } else if let Some(topic) = topic {
+                        TopicEdit::Set(topic.to_string())
                     } else {
-                        None
+                        TopicEdit::Clear
                     },
                 });
             }
@@ -1070,7 +1084,7 @@ mod tests {
                 name: "t".into(),
                 kind: ChannelKind::Text,
                 category: "c".into(),
-                topic: None,
+                topic: TopicEdit::Unchanged,
             },
             Change::SetOverwrite {
                 target: Target::Channel {

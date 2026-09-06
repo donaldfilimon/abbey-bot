@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use super::ChannelKind;
-use super::diff::{Change, Target};
+use super::diff::{Change, Target, TopicEdit};
 use super::observe::{ChannelClass, GuildSnapshot, plan_channel_key};
 use super::plan::{EVERYONE, Overwrite};
 
@@ -47,7 +47,7 @@ pub enum Op {
     EditChannel {
         id: u64,
         parent: Option<u64>,
-        topic: Option<String>,
+        topic: TopicEdit,
     },
     SetOverwrite {
         channel_id: u64,
@@ -430,8 +430,10 @@ impl GuildWriter for FakeGuild {
                 if let Some(parent) = parent {
                     channel.parent = Some(*parent);
                 }
-                if let Some(topic) = topic {
-                    channel.topic = Some(topic.clone());
+                match topic {
+                    TopicEdit::Unchanged => {}
+                    TopicEdit::Clear => channel.topic = None,
+                    TopicEdit::Set(topic) => channel.topic = Some(topic.clone()),
                 }
                 Ok(None)
             }
@@ -732,7 +734,7 @@ mod tests {
         );
         assert!(reveal.is_clear(), "{:?}", reveal.blockers);
         assert!(
-            reveal.changes.iter().any(|c| matches!(c, Change::EditChannel { name, category, topic: Some(_), .. } if name == "rules" && category == "START HERE")),
+            reveal.changes.iter().any(|c| matches!(c, Change::EditChannel { name, category, topic: TopicEdit::Set(_), .. } if name == "rules" && category == "START HERE")),
             "{:?}",
             reveal.changes
         );
@@ -806,6 +808,85 @@ mod tests {
             rules.overwrite_for_role(2_000).is_some(),
             "SetOverwrite never removes another entry"
         );
+    }
+
+    #[tokio::test]
+    async fn reveal_clears_absent_topics_and_parent_only_moves_preserve_topics() {
+        let mut plan = mlai();
+        let mut guild = FakeGuild::new(empty_guild());
+        run_stage(
+            &plan,
+            &mut guild,
+            Scope {
+                stage: Stage::Additive,
+                category: None,
+            },
+        )
+        .await;
+
+        let clear_plan = plan
+            .categories
+            .iter_mut()
+            .flat_map(|category| category.channels.iter_mut())
+            .find(|channel| channel.topic.is_some())
+            .expect("the shipped plan has a channel with a topic");
+        let clear_name = clear_plan.name.clone();
+        let clear_kind = clear_plan.kind;
+        clear_plan.topic = None;
+        let clear_state = guild
+            .snapshot
+            .channels
+            .iter_mut()
+            .find(|channel| {
+                channel.class == ChannelClass::Kind(clear_kind)
+                    && channel.name == plan_channel_key(&clear_name, clear_kind)
+            })
+            .unwrap();
+        clear_state.topic = Some("remove me".into());
+        clear_state.parent = None;
+
+        let (_, keep_plan) = plan
+            .channels()
+            .find(|(_, channel)| channel.topic.is_some())
+            .expect("the shipped plan has another channel with a topic");
+        let keep_name = keep_plan.name.clone();
+        let keep_kind = keep_plan.kind;
+        let intended_topic = keep_plan.topic.clone().unwrap();
+        let keep_state = guild
+            .snapshot
+            .channels
+            .iter_mut()
+            .find(|channel| {
+                channel.class == ChannelClass::Kind(keep_kind)
+                    && channel.name == plan_channel_key(&keep_name, keep_kind)
+            })
+            .unwrap();
+        keep_state.topic = Some(intended_topic.clone());
+        keep_state.parent = None;
+
+        let scope = Scope {
+            stage: Stage::Reveal,
+            category: None,
+        };
+        let report = diff(&plan, &guild.snapshot, &scope);
+        assert!(report.changes.iter().any(|change| matches!(
+            change,
+            Change::EditChannel { name, topic: TopicEdit::Clear, .. } if name == &clear_name
+        )));
+        assert!(report.changes.iter().any(|change| matches!(
+            change,
+            Change::EditChannel { name, topic: TopicEdit::Unchanged, .. } if name == &keep_name
+        )));
+
+        let outcome = apply(&report.changes, &guild.snapshot.clone(), &mut guild).await;
+        assert!(outcome.failed.is_none(), "{:?}", outcome.failed);
+        let cleared = guild.snapshot.channels_matching(&clear_name, clear_kind)[0];
+        assert_eq!(cleared.topic, None);
+        let preserved = guild.snapshot.channels_matching(&keep_name, keep_kind)[0];
+        assert_eq!(preserved.topic.as_deref(), Some(intended_topic.as_str()));
+
+        let again = diff(&plan, &guild.snapshot, &scope);
+        assert!(again.changes.is_empty(), "{:?}", again.changes);
     }
 
     #[tokio::test]

@@ -13,6 +13,7 @@ use serenity::model::prelude::*;
 
 use super::ChannelKind;
 use super::apply::{GuildWriter, Op};
+use super::diff::TopicEdit;
 use super::observe::{
     BotState, ChannelClass, ChannelState, GuildSnapshot, OverwriteState, OverwriteTarget, RoleState,
 };
@@ -262,8 +263,10 @@ impl GuildWriter for DiscordWriter<'_> {
                 if let Some(parent) = parent {
                     edit = edit.category(ChannelId::new(nonzero(*parent, "category")?));
                 }
-                if let Some(topic) = topic {
-                    edit = edit.topic(topic.clone());
+                match topic {
+                    TopicEdit::Unchanged => {}
+                    TopicEdit::Clear => edit = edit.topic(String::new()),
+                    TopicEdit::Set(topic) => edit = edit.topic(topic.clone()),
                 }
                 ChannelId::new(nonzero(*id, "channel")?)
                     .edit(self.http, edit)

@@ -13,7 +13,7 @@ use serenity::http::Http;
 use serenity::model::id::GuildId;
 
 use super::apply::apply;
-use super::diff::{Scope, Stage, diff};
+use super::diff::{Report, Scope, Stage, diff};
 use super::discord::{DiscordWriter, permission_bits, snapshot};
 use super::plan::Plan;
 
@@ -27,6 +27,21 @@ pub struct Options {
 }
 
 pub const USAGE: &str = "usage: abbey-bot --server-plan PLAN.toml --guild ID [--stage additive|reveal|overwrites] [--category NAME] [--apply]";
+
+fn verify_applied(applied: usize, stage: Stage, remaining: &Report) -> Result<String, String> {
+    if remaining.is_clear() && remaining.changes.is_empty() {
+        return Ok(format!(
+            "verified: {applied} change(s) applied; the guild now matches stage {} of the plan.",
+            stage.label()
+        ));
+    }
+    let mut message = format!(
+        "applied {applied} change(s), but post-apply verification failed:\n{}",
+        remaining.render("POST-APPLY VERIFICATION")
+    );
+    message.push_str("Resolve the blockers or remaining changes above, then re-run the dry run.\n");
+    Err(message)
+}
 
 /// Parse the arguments after `--server-plan`.
 pub fn parse_options(
@@ -189,20 +204,15 @@ pub async fn run(options: &Options, http: &Http) -> i32 {
     match snapshot(http, guild_id).await {
         Ok(after) => {
             let remaining = diff(&plan, &after, &scope);
-            if remaining.changes.is_empty() {
-                println!(
-                    "verified: {} change(s) applied; the guild now matches stage {} of the plan.",
-                    outcome.applied.len(),
-                    options.stage.label()
-                );
-                0
-            } else {
-                println!(
-                    "applied {} change(s), but a fresh read still shows {} pending; re-run the dry run to inspect them.",
-                    outcome.applied.len(),
-                    remaining.changes.len()
-                );
-                1
+            match verify_applied(outcome.applied.len(), options.stage, &remaining) {
+                Ok(message) => {
+                    println!("{message}");
+                    0
+                }
+                Err(message) => {
+                    print!("{message}");
+                    1
+                }
             }
         }
         Err(error) => {
@@ -314,5 +324,81 @@ mod tests {
         assert_eq!(plan.name, "MLAI");
         let missing = load_plan(&path.with_file_name("does-not-exist.toml")).unwrap_err();
         assert!(missing.contains("cannot read"), "{missing}");
+    }
+
+    #[test]
+    fn post_apply_verification_fails_closed_and_renders_new_blockers() {
+        use crate::server::observe::{
+            BotState, ChannelClass, ChannelState, GuildSnapshot, RoleState,
+        };
+
+        let plan = Plan::from_toml(
+            r#"
+name = "verification"
+[[roles]]
+name = "Abbey"
+[[categories]]
+name = "Main"
+[[categories.channels]]
+name = "general"
+kind = "text"
+"#,
+        )
+        .unwrap();
+        let role = |id, name: &str, position, managed, permissions: &[&str]| RoleState {
+            id,
+            name: name.into(),
+            position,
+            managed,
+            hoist: false,
+            mentionable: false,
+            colour: 0,
+            permissions: permissions.iter().map(|name| (*name).into()).collect(),
+        };
+        let snapshot = GuildSnapshot {
+            guild_id: 42,
+            features: Vec::new(),
+            roles: vec![
+                role(42, "@everyone", 0, false, &["View Channel"]),
+                role(50, "Abbey Bot", 3, true, &["Administrator"]),
+                role(51, "Abbey", 2, true, &[]),
+            ],
+            channels: vec![
+                ChannelState {
+                    id: 60,
+                    name: "Main".into(),
+                    class: ChannelClass::Category,
+                    parent: None,
+                    topic: None,
+                    overwrites: Vec::new(),
+                },
+                ChannelState {
+                    id: 61,
+                    name: "general".into(),
+                    class: ChannelClass::Kind(crate::server::ChannelKind::Text),
+                    parent: Some(60),
+                    topic: None,
+                    overwrites: Vec::new(),
+                },
+            ],
+            bot: BotState {
+                user_id: 7,
+                role_ids: vec![50],
+            },
+        };
+        let remaining = diff(
+            &plan,
+            &snapshot,
+            &Scope {
+                stage: Stage::Reveal,
+                category: None,
+            },
+        );
+        assert!(remaining.changes.is_empty(), "{:?}", remaining.changes);
+        assert!(!remaining.blockers.is_empty());
+        let error = verify_applied(3, Stage::Reveal, &remaining).unwrap_err();
+        assert!(error.contains("post-apply verification failed"), "{error}");
+        assert!(error.contains("integration-managed role"), "{error}");
+        assert!(error.contains("Resolve the blockers"), "{error}");
     }
 }
