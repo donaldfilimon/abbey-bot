@@ -4,10 +4,9 @@
 //! that tokens live in env vars and never in source:
 //!
 //! - `DISCORD_TOKEN` (required) — bot token.
-//! - `ABBEY_GUILD_ID` (optional) — register commands to this guild only.
-//!   Guild-scoped registration is instant; global registration can take up to an
-//!   hour to propagate, which makes it useless during development. Unset means
-//!   global, which is what you want once the command set has settled.
+//! - `ABBEY_GUILD_ID` (optional) — also register commands immediately in this
+//!   home guild. Commands always register globally for every installation;
+//!   global propagation can take up to an hour. This does not restrict routing.
 //! - `ANTHROPIC_API_KEY` (optional, secret) — makes `/persona ask` answer via
 //!   the external Anthropic API. Same handling as `DISCORD_TOKEN`: env only.
 //! - `ABBEY_BOT_LLM_ENDPOINT` + `ABBEY_BOT_LLM_MODEL` (optional) — answer via an
@@ -557,9 +556,21 @@ fn merge_entry_point_commands(
         let mut preserved = CreateCommand::new(command.name)
             .kind(CommandType::PrimaryEntryPoint)
             .description(command.description)
-            .integration_types(command.integration_types);
+            .integration_types(command.integration_types)
+            .nsfw(command.nsfw);
+        for (locale, name) in command.name_localizations.unwrap_or_default() {
+            preserved = preserved.name_localized(locale, name);
+        }
+        for (locale, description) in command.description_localizations.unwrap_or_default() {
+            preserved = preserved.description_localized(locale, description);
+        }
+        if let Some(permissions) = command.default_member_permissions {
+            preserved = preserved.default_member_permissions(permissions);
+        }
         if let Some(contexts) = command.contexts {
             preserved = preserved.contexts(contexts);
+        } else if command.dm_permission == Some(false) {
+            preserved = preserved.contexts(vec![serenity::all::InteractionContext::Guild]);
         }
         if let Some(handler) = command.handler {
             preserved = preserved.handler(handler);
@@ -567,6 +578,25 @@ fn merge_entry_point_commands(
         generated.push(preserved);
     }
     generated
+}
+
+/// Register every installation first, then the optional immediate home copy.
+/// The caller can publish registration readiness only after both have succeeded.
+async fn register_command_scopes<G, F, H, E>(
+    home: Option<serenity::all::GuildId>,
+    global: G,
+    register_home: F,
+) -> Result<(), E>
+where
+    G: std::future::Future<Output = Result<(), E>>,
+    F: FnOnce(serenity::all::GuildId) -> H,
+    H: std::future::Future<Output = Result<(), E>>,
+{
+    global.await?;
+    if let Some(home) = home {
+        register_home(home).await?;
+    }
+    Ok(())
 }
 
 /// Global registration that survives Discord's Entry Point command.
@@ -586,7 +616,7 @@ async fn register_globally_keeping_entry_point(
     use serenity::all::{Command, CommandType};
 
     let create = poise::builtins::create_application_commands(commands);
-    let existing = Command::get_global_commands(&ctx.http).await?;
+    let existing = Command::get_global_commands_with_localizations(&ctx.http).await?;
     for command in &existing {
         if command.kind == CommandType::PrimaryEntryPoint {
             tracing::info!(name = %command.name, "preserving the app's Entry Point command");

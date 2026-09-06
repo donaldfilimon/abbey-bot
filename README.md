@@ -269,10 +269,12 @@ before guild parsing, application state, voice, schedulers, Telegram/Slack, or
 framework setup. Accepted and rejected diagnostics name only the selected
 environment-variable source and never its value.
 
-`ABBEY_GUILD_ID` registers commands to a single guild, which takes effect
-immediately. Leave it unset and commands register globally, where propagation can
-take up to an hour — fine once the command set is stable, miserable while
-iterating. See `.env.example`.
+Commands always register globally for every guild where Abbey is installed.
+`ABBEY_GUILD_ID` optionally adds an immediate command copy in a home guild while
+global updates propagate (up to an hour). It does not restrict conversations or
+memory to that guild. Each interaction uses its actual guild and user, and
+current permissions still govern server actions. Application ownership is
+resolved from Discord rather than a hardcoded account. See `.env.example`.
 
 Build a server from a plan file, from the operator's shell, never from a slash
 command:

@@ -300,20 +300,17 @@ pub(super) async fn run(
         })
         .setup(move |ctx, ready, framework| {
             Box::pin(async move {
-                match guild_id {
-                    Some(id) => {
+                register_command_scopes(
+                    guild_id,
+                    register_globally_keeping_entry_point(ctx, &framework.options().commands),
+                    |id| async move {
                         poise::builtins::register_in_guild(ctx, &framework.options().commands, id)
                             .await?;
-                        tracing::info!(guild = %id, "registered guild-scoped commands (instant)");
-                    }
-                    None => {
-                        register_globally_keeping_entry_point(ctx, &framework.options().commands)
-                            .await?;
-                        tracing::info!(
-                            "registered global commands — propagation can take up to an hour"
-                        );
-                    }
-                }
+                        Ok::<(), Error>(())
+                    },
+                )
+                .await?;
+                tracing::info!("registered global commands and optional home guild copy");
                 if let Some(events) = shell_state.operational_events() {
                     let _ = events.record(
                         observability::EventComponent::Discord,

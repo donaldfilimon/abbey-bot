@@ -10,14 +10,14 @@ fn entry_point_fixture() -> Command {
         "guild_id": null,
         "name": "launch",
         "name_localized": null,
-        "name_localizations": null,
+        "name_localizations": {"fr": "lancer"},
         "description": "Launch Abbey's Activity",
         "description_localized": null,
-        "description_localizations": null,
+        "description_localizations": {"fr": "Lancer Abbey"},
         "options": [],
-        "default_member_permissions": null,
+        "default_member_permissions": "32",
         "dm_permission": null,
-        "nsfw": false,
+        "nsfw": true,
         "integration_types": [0, 1],
         "contexts": [0, 1, 2],
         "version": "33",
@@ -37,14 +37,15 @@ fn global_bulk_registration_preserves_the_complete_entry_point_contract() {
         preserved,
         json!({
             "name": "launch",
-            "name_localizations": {},
+            "name_localizations": {"fr": "lancer"},
             "description": "Launch Abbey's Activity",
-            "description_localizations": {},
+            "description_localizations": {"fr": "Lancer Abbey"},
+            "default_member_permissions": "32",
             "options": [],
             "type": 4,
             "integration_types": [0, 1],
             "contexts": [0, 1, 2],
-            "nsfw": false,
+            "nsfw": true,
             "handler": 2
         })
     );
@@ -112,4 +113,71 @@ fn export_command_registration_payload() {
         .expect("create new command payload file without replacing existing files or symlinks");
     output.write_all(&encoded).expect("write command payload");
     output.sync_all().expect("sync command payload");
+}
+
+#[tokio::test]
+async fn registration_runs_global_then_optional_home_and_propagates_each_failure() {
+    use std::sync::Mutex;
+
+    for home in [None, Some(serenity::all::GuildId::new(42))] {
+        for failed_scope in [None, Some("global"), Some("home")] {
+            let calls = Mutex::new(Vec::new());
+            let result = register_command_scopes(
+                home,
+                async {
+                    calls.lock().unwrap().push("global");
+                    if failed_scope == Some("global") {
+                        Err("global failed")
+                    } else {
+                        Ok(())
+                    }
+                },
+                |id| {
+                    assert_eq!(Some(id), home);
+                    async {
+                        calls.lock().unwrap().push("home");
+                        if failed_scope == Some("home") {
+                            Err("home failed")
+                        } else {
+                            Ok(())
+                        }
+                    }
+                },
+            )
+            .await;
+            let expected_calls = if home.is_some() && failed_scope != Some("global") {
+                vec!["global", "home"]
+            } else {
+                vec!["global"]
+            };
+            assert_eq!(*calls.lock().unwrap(), expected_calls);
+            assert_eq!(
+                result,
+                match failed_scope {
+                    Some("global") => Err("global failed"),
+                    Some("home") if home.is_some() => Err("home failed"),
+                    _ => Ok(()),
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn entry_point_legacy_dm_restriction_is_migrated_without_overriding_contexts() {
+    let mut entry = entry_point_fixture();
+    entry.dm_permission = Some(false);
+    for contexts in [None, Some(vec![serenity::all::InteractionContext::BotDm])] {
+        entry.contexts = contexts.clone();
+        let merged = merge_entry_point_commands(Vec::new(), [entry.clone()]);
+        let encoded = serde_json::to_value(&merged[0]).unwrap();
+        assert_eq!(
+            encoded["contexts"],
+            if contexts.is_some() {
+                json!([1])
+            } else {
+                json!([0])
+            }
+        );
+    }
 }
