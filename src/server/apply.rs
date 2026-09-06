@@ -432,7 +432,6 @@ impl GuildWriter for FakeGuild {
                 }
                 match topic {
                     TopicEdit::Unchanged => {}
-                    TopicEdit::Clear => channel.topic = None,
                     TopicEdit::Set(topic) => channel.topic = Some(topic.clone()),
                 }
                 Ok(None)
@@ -811,7 +810,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reveal_clears_absent_topics_and_parent_only_moves_preserve_topics() {
+    async fn reveal_preserves_absent_topics_and_parent_only_moves_preserve_topics() {
         let mut plan = mlai();
         let mut guild = FakeGuild::new(empty_guild());
         run_stage(
@@ -871,7 +870,7 @@ mod tests {
         let report = diff(&plan, &guild.snapshot, &scope);
         assert!(report.changes.iter().any(|change| matches!(
             change,
-            Change::EditChannel { name, topic: TopicEdit::Clear, .. } if name == &clear_name
+            Change::EditChannel { name, topic: TopicEdit::Unchanged, .. } if name == &clear_name
         )));
         assert!(report.changes.iter().any(|change| matches!(
             change,
@@ -880,8 +879,8 @@ mod tests {
 
         let outcome = apply(&report.changes, &guild.snapshot.clone(), &mut guild).await;
         assert!(outcome.failed.is_none(), "{:?}", outcome.failed);
-        let cleared = guild.snapshot.channels_matching(&clear_name, clear_kind)[0];
-        assert_eq!(cleared.topic, None);
+        let preserved_omitted = guild.snapshot.channels_matching(&clear_name, clear_kind)[0];
+        assert_eq!(preserved_omitted.topic.as_deref(), Some("remove me"));
         let preserved = guild.snapshot.channels_matching(&keep_name, keep_kind)[0];
         assert_eq!(preserved.topic.as_deref(), Some(intended_topic.as_str()));
 

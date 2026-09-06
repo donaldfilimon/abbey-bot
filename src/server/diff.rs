@@ -144,7 +144,6 @@ pub enum Change {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TopicEdit {
     Unchanged,
-    Clear,
     Set(String),
 }
 
@@ -265,7 +264,6 @@ impl Change {
                 describe_channel(*kind, name),
                 match topic {
                     TopicEdit::Unchanged => "",
-                    TopicEdit::Clear => ", topic cleared",
                     TopicEdit::Set(_) => ", topic set",
                 }
             ),
@@ -636,13 +634,11 @@ impl<'a> Context<'a> {
                     name: channel.name.clone(),
                     kind: channel.kind,
                     category: category.name.clone(),
-                    topic: if !topic_differs {
-                        TopicEdit::Unchanged
-                    } else if let Some(topic) = topic {
-                        TopicEdit::Set(topic.to_string())
-                    } else {
-                        TopicEdit::Clear
-                    },
+                    topic: topic
+                        .filter(|_| topic_differs)
+                        .map_or(TopicEdit::Unchanged, |topic| {
+                            TopicEdit::Set(topic.to_string())
+                        }),
                 });
             }
             let planned = self.plan.effective_overwrites(category, channel);

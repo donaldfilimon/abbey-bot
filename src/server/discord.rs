@@ -117,7 +117,6 @@ fn edit_channel_builder<'a>(
     }
     match topic {
         TopicEdit::Unchanged => {}
-        TopicEdit::Clear => edit = edit.topic(String::new()),
         TopicEdit::Set(topic) => edit = edit.topic(topic.clone()),
     }
     Ok(edit)
@@ -267,21 +266,21 @@ impl GuildWriter for DiscordWriter<'_> {
                     });
                 }
                 builder = builder.permissions(resolved);
+                let mut payload = serde_json::to_value(builder)
+                    .map_err(|e| format!("serializing the channel creation: {e}"))?;
+                if !tags.is_empty() {
+                    payload["available_tags"] = serde_json::to_value(
+                        tags.iter()
+                            .map(|tag| CreateForumTag::new(tag.clone()))
+                            .collect::<Vec<_>>(),
+                    )
+                    .map_err(|e| format!("serializing the forum tags: {e}"))?;
+                }
                 let channel = self
-                    .guild_id
-                    .create_channel(self.http, builder)
+                    .http
+                    .create_channel(self.guild_id, &payload, Some(&self.reason))
                     .await
                     .map_err(|e| describe_error("creating the channel", &e))?;
-                if !tags.is_empty() {
-                    let edit = EditChannel::new()
-                        .available_tags(tags.iter().map(|t| CreateForumTag::new(t.clone())))
-                        .audit_log_reason(&self.reason);
-                    channel
-                        .id
-                        .edit(self.http, edit)
-                        .await
-                        .map_err(|e| describe_error("setting the forum tags", &e))?;
-                }
                 Ok(Some(channel.id.get()))
             }
             Op::EditChannel { id, parent, topic } => {
@@ -318,6 +317,83 @@ mod tests {
     use super::*;
     use crate::server::plan::{MLAI_COMMUNITY, Overwrite, Plan};
     use crate::server::{Archetype, NEVER_FOR_EVERYONE, blueprint};
+    use serenity::http::HttpBuilder;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn discord_fixture(
+        status: &'static str,
+        response_body: &'static str,
+    ) -> (Http, tokio::sync::oneshot::Receiver<(String, usize)>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback Discord fixture");
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (sent, received) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = socket.read(&mut buffer).await.expect("read request");
+                assert!(read > 0, "request ended before its body arrived");
+                request.extend_from_slice(&buffer[..read]);
+                let Some(headers_end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..headers_end]);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                    })
+                    .expect("content length");
+                if request.len() >= headers_end + 4 + length {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            socket.write_all(response.as_bytes()).await.expect("reply");
+            socket.shutdown().await.expect("close reply");
+            let follow_up = usize::from(
+                tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_ok(),
+            );
+            sent.send((
+                String::from_utf8(request).expect("UTF-8 request"),
+                follow_up,
+            ))
+            .ok();
+        });
+        (
+            HttpBuilder::new("fixture-token")
+                .proxy(endpoint)
+                .ratelimiter_disabled(true)
+                .build(),
+            received,
+        )
+    }
+
+    fn forum_op() -> Op {
+        Op::CreateChannel {
+            name: "field-notes".into(),
+            class: ChannelClass::Kind(ChannelKind::Forum),
+            parent: Some(77),
+            topic: Some("Bring findings here.".into()),
+            slowmode_secs: Some(12),
+            tags: vec!["Question".into(), "Solved".into()],
+            overwrites: vec![super::super::apply::ResolvedOverwrite {
+                role_id: 42,
+                allow: vec![],
+                deny: vec!["View Channel".into()],
+            }],
+        }
+    }
 
     #[test]
     fn every_permission_name_in_the_shipped_plan_resolves() {
@@ -373,10 +449,6 @@ mod tests {
         assert_eq!(unchanged.get("parent_id"), Some(&serde_json::json!("77")));
         assert!(unchanged.get("topic").is_none(), "{unchanged}");
 
-        let clear = payload(TopicEdit::Clear);
-        assert_eq!(clear.get("parent_id"), Some(&serde_json::json!("77")));
-        assert_eq!(clear.get("topic"), Some(&serde_json::json!("")));
-
         let set = payload(TopicEdit::Set("exact topic".into()));
         assert_eq!(set.get("parent_id"), Some(&serde_json::json!("77")));
         assert_eq!(set.get("topic"), Some(&serde_json::json!("exact topic")));
@@ -412,5 +484,105 @@ mod tests {
         let state = overwrite_state(&member).unwrap();
         assert_eq!(state.target, OverwriteTarget::Member(5));
         assert_eq!(state.allow, ["View Channel"]);
+    }
+
+    #[tokio::test]
+    async fn forum_creation_sends_tags_and_all_channel_fields_in_one_post() {
+        let response = r#"{"id":"99","type":15,"guild_id":"42","name":"field-notes","position":0,"permission_overwrites":[],"nsfw":false}"#;
+        let (http, request) = discord_fixture("200 OK", response).await;
+        let mut writer = DiscordWriter {
+            http: &http,
+            guild_id: GuildId::new(42),
+            reason: "server plan test".into(),
+        };
+
+        assert_eq!(writer.perform(&forum_op()).await.unwrap(), Some(99));
+        let (request, follow_up) = request.await.unwrap();
+        let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+        assert!(
+            headers.starts_with("POST /api/v10/guilds/42/channels HTTP/1.1"),
+            "{headers}"
+        );
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("x-audit-log-reason: server%20plan%20test"),
+            "{headers}"
+        );
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["name"], "field-notes");
+        assert_eq!(payload["type"], 15);
+        assert_eq!(payload["parent_id"], "77");
+        assert_eq!(payload["topic"], "Bring findings here.");
+        assert_eq!(payload["rate_limit_per_user"], 12);
+        assert_eq!(payload["permission_overwrites"][0]["id"], "42");
+        assert_eq!(
+            payload["permission_overwrites"][0]["deny"],
+            Permissions::VIEW_CHANNEL.bits().to_string()
+        );
+        assert_eq!(payload["available_tags"][0]["name"], "Question");
+        assert_eq!(payload["available_tags"][1]["name"], "Solved");
+        assert!(
+            payload["available_tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tag| tag.get("id").is_none()),
+            "{payload}"
+        );
+        assert_eq!(
+            follow_up, 0,
+            "forum creation must never PATCH tags afterward"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_forum_post_returns_failure_without_a_follow_up_request() {
+        let (http, request) = discord_fixture(
+            "400 Bad Request",
+            r#"{"message":"invalid forum","code":50035}"#,
+        )
+        .await;
+        let mut writer = DiscordWriter {
+            http: &http,
+            guild_id: GuildId::new(42),
+            reason: "server plan test".into(),
+        };
+
+        let error = writer.perform(&forum_op()).await.unwrap_err();
+        assert!(error.contains("creating the channel"), "{error}");
+        assert!(error.contains("HTTP 400"), "{error}");
+        let (request, follow_up) = request.await.unwrap();
+        assert!(request.starts_with("POST "), "{request}");
+        assert_eq!(follow_up, 0, "a failed POST must not trigger a PATCH");
+    }
+
+    #[tokio::test]
+    async fn non_forum_creation_still_uses_the_same_single_post_path() {
+        let response = r#"{"id":"100","type":0,"guild_id":"42","name":"general","position":0,"permission_overwrites":[],"nsfw":false}"#;
+        let (http, request) = discord_fixture("200 OK", response).await;
+        let mut writer = DiscordWriter {
+            http: &http,
+            guild_id: GuildId::new(42),
+            reason: "server plan test".into(),
+        };
+        let op = Op::CreateChannel {
+            name: "general".into(),
+            class: ChannelClass::Kind(ChannelKind::Text),
+            parent: Some(77),
+            topic: None,
+            slowmode_secs: None,
+            tags: Vec::new(),
+            overwrites: Vec::new(),
+        };
+
+        assert_eq!(writer.perform(&op).await.unwrap(), Some(100));
+        let (request, follow_up) = request.await.unwrap();
+        let (_, body) = request.split_once("\r\n\r\n").unwrap();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["name"], "general");
+        assert_eq!(payload["type"], 0);
+        assert!(payload.get("available_tags").is_none(), "{payload}");
+        assert_eq!(follow_up, 0);
     }
 }
