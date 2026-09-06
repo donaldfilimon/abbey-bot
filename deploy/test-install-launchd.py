@@ -156,6 +156,7 @@ class Harness:
                      'service_readiness.py', 'service_protocol.py', 'service-protocol-v1.json',
                      'check-service-readiness.py', 'check-launchd-env.sh', LABEL + '.plist'):
             shutil.copyfile(source / name, self.repo / 'deploy' / name)
+        shutil.copyfile(source.parent / 'Cargo.toml', self.repo / 'Cargo.toml')
         helper = self.repo / 'deploy/service_transaction.py'
         text = helper.read_text().replace("if __name__ == '__main__':", "from fixture_effects import Fake\nSYSTEM = Fake()\n\nif __name__ == '__main__':")
         text = text.replace("        elif operation == 'publish':", "        elif operation == 'publish':\n            scenario = SYSTEM.load()['scenario']\n            if scenario.startswith('signal_publish_'):\n                SYSTEM.send_signal(scenario[len('signal_publish_'):])")
@@ -189,8 +190,23 @@ PrivateTree.directory = checked_directory
         (self.repo / 'target/release/abbey-bot').write_bytes(b'candidate binary')
         self.commands = self.root / 'commands'; self.commands.mkdir()
         (self.commands / 'python3').symlink_to(sys.executable)
-        cargo = self.commands / 'cargo'; cargo.write_text('#!/bin/sh\necho private-build-canary >&2\nexit 0\n'); cargo.chmod(0o700)
-        self.env = {'HOME': str(self.home), 'PATH': str(self.commands) + ':/usr/bin:/bin', 'LC_ALL': 'C'}
+        cargo = self.commands / 'cargo'; cargo.write_text(r'''#!/bin/sh
+set -eu
+echo private-build-canary >&2
+emit_artifact() {
+    printf '{"reason":"compiler-artifact","package_id":"path+file:///fixture#abbey-bot@0.1.0","manifest_path":"%s","target":{"kind":["bin"],"crate_types":["bin"],"name":"abbey-bot","src_path":"/fixture/src/main.rs","edition":"2024","doc":true,"doctest":false,"test":true},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false},"features":[],"filenames":["%s"],"executable":"%s","fresh":false}\n' "$FAKE_CARGO_MANIFEST" "$FAKE_CARGO_ARTIFACT" "$FAKE_CARGO_ARTIFACT"
+}
+case "${FAKE_CARGO_MODE:-artifact}" in
+  artifact) emit_artifact ;;
+  duplicate) emit_artifact; emit_artifact ;;
+  malformed) printf '%s\n' "$PRIVATE_CARGO_CANARY" ;;
+  *) exit 2 ;;
+esac
+'''); cargo.chmod(0o700)
+        self.env = {'HOME': str(self.home), 'PATH': str(self.commands) + ':/usr/bin:/bin', 'LC_ALL': 'C',
+                    'FAKE_CARGO_ARTIFACT': str(self.repo / 'target/release/abbey-bot'),
+                    'FAKE_CARGO_MANIFEST': str(self.repo / 'Cargo.toml'),
+                    'PRIVATE_CARGO_CANARY': CANARY}
         self.write('.config/abbey-bot/env', ('DISCORD_TOKEN=' + CANARY + '\n').encode())
         self.statefile = self.home / 'fake-state.json'
         self.statefile.write_text(json.dumps({'ns': 0, 'scenario': scenario, 'rollback_mode': rollback,
@@ -248,6 +264,52 @@ class Tests(unittest.TestCase):
                 if prior:
                     backups = list((h.home / '.local/share/abbey-bot/rollback/abbey').glob('*/binary'))
                     self.assertEqual(backups[0].read_bytes(), b'old binary')
+
+    def test_installs_the_executable_reported_by_cargo_instead_of_stale_default_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            h = Harness(temp, prior=True)
+            (h.repo / 'target/release/abbey-bot').write_bytes(b'stale default binary')
+            external = h.root / 'external-target/aarch64-apple-darwin/release/abbey-bot'
+            external.parent.mkdir(parents=True)
+            external.write_bytes(b'external cargo binary')
+            h.env['FAKE_CARGO_ARTIFACT'] = str(external)
+
+            result = h.run(); self.check_private(result, h)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(h.binary().read_bytes(), b'external cargo binary')
+            self.assertEqual(h.state()['commands'], ['bootout', 'bootstrap'])
+
+    def test_invalid_cargo_artifacts_fail_before_stopping_the_prior_service(self):
+        for case in ('missing', 'symlink', 'malformed-output', 'multiple-output', 'foreign-package'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
+                h = Harness(temp, prior=True)
+                candidate = h.root / 'external-target/release/abbey-bot'
+                candidate.parent.mkdir(parents=True)
+                if case == 'missing':
+                    pass
+                elif case == 'symlink':
+                    target = h.root / 'external-target/other'
+                    target.write_bytes(b'external cargo binary')
+                    candidate.symlink_to(target)
+                else:
+                    candidate.write_bytes(b'external cargo binary')
+                    if case == 'malformed-output':
+                        h.env['FAKE_CARGO_MODE'] = 'malformed'
+                    elif case == 'multiple-output':
+                        h.env['FAKE_CARGO_MODE'] = 'duplicate'
+                    else:
+                        h.env['FAKE_CARGO_MANIFEST'] = str(h.root / 'foreign/Cargo.toml')
+                h.env['FAKE_CARGO_ARTIFACT'] = str(candidate)
+
+                result = h.run(); self.check_private(result, h)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(b'installation: artifact', result.stderr)
+                self.assertEqual(h.state()['commands'], [])
+                self.assertEqual(h.binary().read_bytes(), b'old binary')
+                self.assertTrue(h.state()['loaded'])
+                self.assertFalse((h.home / '.local/share/abbey-bot/install.lock').exists())
     def test_candidate_failure_and_verified_rollback(self):
         for scenario in ('wrong_sha','wrong_pid','wrong_nonce','stale','future','starting','discord',
                          'scheduler','pid_change','nonce_change','stop_scheduler','bootstrap_failure',

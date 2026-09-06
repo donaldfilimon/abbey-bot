@@ -85,11 +85,8 @@ if [ "$MODE" = uninstall ]; then
   echo 'installation: uninstalled'
   exit 0
 fi
-# Build output may contain arbitrary local paths; transaction diagnostics are fixed.
-if ! cargo build --release --locked >/dev/null 2>&1; then
-  echo 'installation: build' >&2
-  exit 1
-fi
+# Preparation builds through Cargo's JSON protocol and stages the exact executable
+# Cargo reports. Build output and artifact paths never enter diagnostics.
 run_phase prepare
 if ! sh deploy/check-launchd-env.sh "$HOME/.config/abbey-bot/env" >/dev/null 2>&1; then
   echo 'installation: environment' >&2

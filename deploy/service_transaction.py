@@ -35,6 +35,8 @@ BIN = '.local/libexec/abbey-bot/abbey-bot'
 PLIST = 'Library/LaunchAgents/' + LABEL + '.plist'
 ENV = '.config/abbey-bot/env'
 MAX_ARTIFACT = 512 * 1024 * 1024
+MAX_CARGO_LINE = 1024 * 1024
+MAX_CARGO_OUTPUT = 64 * 1024 * 1024
 
 
 class TransactionError(Exception):
@@ -164,6 +166,116 @@ class Production:
 
 _CHILDREN = []
 SYSTEM = Production()
+
+
+def build_artifact(checkout):
+    child = subprocess.Popen(
+        ['cargo', 'build', '--release', '--locked', '--package', 'abbey-bot',
+         '--bin', 'abbey-bot', '--message-format=json'],
+        cwd=checkout, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL)
+    candidates = []
+    consumed = 0
+    try:
+        while True:
+            raw = child.stdout.readline(MAX_CARGO_LINE + 1)
+            if not raw:
+                break
+            consumed += len(raw)
+            if len(raw) > MAX_CARGO_LINE or consumed > MAX_CARGO_OUTPUT or not raw.endswith(b'\n'):
+                raise TransactionError('artifact')
+            try:
+                message = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise TransactionError('artifact') from None
+            if type(message) is not dict or type(message.get('reason')) is not str:
+                raise TransactionError('artifact')
+            target = message.get('target')
+            if (message['reason'] == 'compiler-artifact' and type(target) is dict
+                    and target.get('name') == 'abbey-bot' and target.get('kind') == ['bin']):
+                executable = message.get('executable')
+                manifest = message.get('manifest_path')
+                if type(executable) is not str or type(manifest) is not str:
+                    raise TransactionError('artifact')
+                try:
+                    if not os.path.samefile(manifest, checkout / 'Cargo.toml'):
+                        raise TransactionError('artifact')
+                except OSError:
+                    raise TransactionError('artifact') from None
+                candidates.append(executable)
+        if child.wait() != 0:
+            raise TransactionError('build')
+    except BaseException:
+        if child.poll() is None:
+            try:
+                child.kill()
+                child.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                _CHILDREN.append(child)
+                raise TransactionError('cleanup') from None
+        raise
+    finally:
+        child.stdout.close()
+    if len(candidates) != 1:
+        raise TransactionError('artifact')
+    value = candidates.pop()
+    if len(value.encode('utf8')) > 4096:
+        raise TransactionError('artifact')
+    return value
+
+
+def read_build_artifact(value):
+    path = Path(value)
+    if not path.is_absolute() or '\x00' in value:
+        raise TransactionError('artifact')
+    try:
+        original = os.lstat(path)
+        if not stat.S_ISREG(original.st_mode):
+            raise TransactionError('artifact')
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise TransactionError('artifact') from None
+    descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parts = resolved.parts[1:]
+        if not parts:
+            raise TransactionError('artifact')
+        for part in parts[:-1]:
+            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = following
+            info = os.fstat(descriptor)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.getuid())
+                    or stat.S_IMODE(info.st_mode) & 0o022):
+                raise TransactionError('artifact')
+        handle = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=descriptor)
+        try:
+            before = os.fstat(handle)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                    or stat.S_IMODE(before.st_mode) & 0o022 or before.st_size > MAX_ARTIFACT):
+                raise TransactionError('artifact')
+            if any(getattr(original, key) != getattr(before, key) for key in
+                   ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')):
+                raise TransactionError('artifact')
+            result = bytearray()
+            while len(result) <= MAX_ARTIFACT:
+                chunk = os.read(handle, min(65536, MAX_ARTIFACT + 1 - len(result)))
+                if not chunk:
+                    break
+                result.extend(chunk)
+            after = os.fstat(handle)
+            if len(result) > MAX_ARTIFACT or any(getattr(before, key) != getattr(after, key) for key in
+                    ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')):
+                raise TransactionError('artifact')
+            return bytes(result)
+        finally:
+            os.close(handle)
+    except OSError:
+        raise TransactionError('artifact') from None
+    finally:
+        os.close(descriptor)
 
 
 class PrivateTree:
@@ -439,11 +551,7 @@ def phase(operation, home, state, checkout):
                 if raw is not None:
                     tree.write(backup + '/' + name, raw, mode, absent=True)
             state['had_bin'], state['had_plist'] = old_bin is not None, old_plist is not None
-            build_tree = PrivateTree(checkout)
-            try:
-                candidate = build_tree.read('target/release/abbey-bot', mode=None)
-            finally:
-                build_tree.close()
+            candidate = read_build_artifact(build_artifact(checkout))
             tree.write(backup + '/candidate-binary', candidate, 0o700, absent=True)
             model = plistlib.loads((checkout / 'deploy' / (LABEL + '.plist')).read_bytes())
             model['ProgramArguments'] = [str(home / BIN), '--managed-service']
