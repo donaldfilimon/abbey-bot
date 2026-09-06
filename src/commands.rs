@@ -264,7 +264,7 @@ pub async fn ask(
 /// the queue for the existing periodic persistence path; it cannot claim that
 /// the requested fact was stored. Both interactive generation surfaces use this
 /// boundary, while the pipeline owns its corresponding outbound boundary.
-async fn deliver_generated_reply<T, E>(
+pub(crate) async fn deliver_generated_reply<T, E>(
     state: &AppState,
     delivery: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
@@ -284,7 +284,7 @@ async fn deliver_generated_reply<T, E>(
 /// Abbey's context in a guild where Abbey holds no message-content access of
 /// its own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Commit {
+pub(crate) enum Commit {
     Yes,
     No,
 }
@@ -306,8 +306,30 @@ async fn answer_question(
     forced: Option<Persona>,
     commit: Commit,
 ) -> String {
-    let state = &ctx.data().state;
-    let scope = format!("discord:{}", ctx.channel_id().get());
+    answer_question_in_scope(
+        &ctx.data().state,
+        ctx.guild_id().map(|id| id.get()),
+        ctx.channel_id().get(),
+        ctx.author().id.get(),
+        question,
+        forced,
+        commit,
+    )
+    .await
+}
+
+/// Shared generation operation for genuine slash, context-menu and modal inputs.
+/// The adapter owns acknowledgement, authorization and delivery visibility.
+pub(crate) async fn answer_question_in_scope(
+    state: &AppState,
+    guild: Option<u64>,
+    channel: u64,
+    user: u64,
+    question: &str,
+    forced: Option<Persona>,
+    commit: Commit,
+) -> String {
+    let scope = format!("discord:{channel}");
     // Same composition the message pipeline uses, so `/persona ask` and an
     // ordinary message never disagree about identical text. Session stickiness
     // still applies, but only to text neither layer has an opinion about.
@@ -319,11 +341,11 @@ async fn answer_question(
             .session_persona(&scope)
             .unwrap_or(route.persona)
     };
-    let scoped_guild = match ctx.guild_id() {
-        Some(g) => format!("discord:{}", g.get()),
-        None => format!("discord:dm:{}", ctx.author().id.get()),
+    let scoped_guild = match guild {
+        Some(g) => format!("discord:{g}"),
+        None => format!("discord:dm:{user}"),
     };
-    let scoped_user = format!("discord:{}", ctx.author().id.get());
+    let scoped_user = format!("discord:{user}");
     let now = runtime::now();
     if !reserve_ask(state, &scoped_user, now) {
         return ASK_COOLDOWN_REPLY.to_string();

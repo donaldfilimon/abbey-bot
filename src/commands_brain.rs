@@ -34,6 +34,7 @@ mod dashboard;
 mod media;
 mod memory_commands;
 
+pub(crate) use dashboard::open_dashboard_component;
 pub use dashboard::{admin_dashboard, dispatch_admin_component};
 pub use media::{ocr, see, summarize};
 #[cfg(test)]
@@ -315,15 +316,21 @@ pub async fn admin_act(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let on = state.is_on();
-    let Some(_) = update_settings(ctx, |s| s.unsolicited = on) else {
+    let Some((_, settings)) = update_settings(ctx, |s| s.unsolicited = on) else {
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
-    ctx.say(if on {
-        "Abbey may now speak unsolicited here — bounded by the cooldown and the hourly budget (`/admin budget`). `ABBEY_QUIET=1` on the host still silences her."
-    } else {
-        "Abbey will only answer mentions, DMs, and commands here."
-    })
+    ctx.say(clamp_message(crate::admin_dashboard::unsolicited_status(
+        &settings,
+        ctx.data().state.quiet,
+        ctx.data()
+            .state
+            .providers
+            .request_readiness(crate::provider::RequestClass::text(
+                ctx.data().state.providers.tools_enabled(),
+            ))
+            .is_ok(),
+    )))
     .await?;
     Ok(())
 }

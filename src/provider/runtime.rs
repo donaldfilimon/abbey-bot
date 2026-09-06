@@ -610,6 +610,38 @@ impl ProviderRuntime {
             .find(|entry| entry.adapter.is_some())
             .map(|entry| entry.label)
     }
+    /// Snapshot-only request-class projection. No reservation, network call or qualification.
+    pub fn request_readiness(&self, class: RequestClass) -> Result<(), RouteUnavailableReason> {
+        if self.available(class, false) {
+            return Ok(());
+        }
+        if self.order.is_empty() {
+            return Err(RouteUnavailableReason::NoConfiguredProvider);
+        }
+        let state = lock(&self.state);
+        let snapshots = state.router.snapshot();
+        let mut reason = RouteUnavailableReason::CapabilityUnavailable;
+        for id in &self.order {
+            let Some(descriptor) = self.catalog.descriptor(id) else {
+                continue;
+            };
+            if !class.supported_by(descriptor.declared_capabilities) {
+                continue;
+            }
+            if !descriptor.eligibility.is_routable() || state.router.profile(id, class).is_none() {
+                reason = reason.max(RouteUnavailableReason::BlockedPendingRequalification);
+            } else if let Some(snapshot) = snapshots.iter().find(|entry| &entry.provider_id == id) {
+                reason = reason.max(match snapshot.circuit.phase {
+                    CircuitPhase::Blocked => RouteUnavailableReason::BlockedPendingRequalification,
+                    CircuitPhase::HalfOpen if snapshot.circuit.probe_reserved => {
+                        RouteUnavailableReason::Busy
+                    }
+                    _ => RouteUnavailableReason::AllOpen,
+                });
+            }
+        }
+        Err(reason)
+    }
     pub fn generation_available(&self) -> bool {
         self.available(RequestClass::TextReadOnly, false)
     }
@@ -640,13 +672,12 @@ impl ProviderRuntime {
                 .iter()
                 .find(|s| &s.provider_id == id)
                 .is_some_and(|s| {
-                    matches!(
-                        s.circuit.phase,
-                        CircuitPhase::Closed | CircuitPhase::HalfOpen
-                    ) || (s.circuit.phase == CircuitPhase::Open
-                        && s.circuit
-                            .open_until_ms
-                            .is_some_and(|until| self.clock.now_ms() >= until))
+                    matches!(s.circuit.phase, CircuitPhase::Closed)
+                        || (s.circuit.phase == CircuitPhase::HalfOpen && !s.circuit.probe_reserved)
+                        || (s.circuit.phase == CircuitPhase::Open
+                            && s.circuit
+                                .open_until_ms
+                                .is_some_and(|until| self.clock.now_ms() >= until))
                 })
     }
     pub fn foundation_models(&self) -> Option<&FoundationModels> {

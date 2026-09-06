@@ -14,7 +14,13 @@ fn guided_button_payloads_follow_eligibility_and_keep_the_original_expiry() {
             }
             for section in HelpSection::ALL {
                 let session = help_center::HelpSession::new(u64::MAX, 1000, section).unwrap();
-                let rows = serde_json::to_value(help_rows(session, &input)).unwrap();
+                let rows = serde_json::to_value(help_rows(
+                    session,
+                    (context == InteractionContext::Guild).then_some(123),
+                    456,
+                    &input,
+                ))
+                .unwrap();
                 let expected = help_center::help_shortcuts(&input);
                 assert_eq!(
                     rows.as_array().unwrap().len(),
@@ -333,11 +339,7 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
             ..Default::default()
         },
     );
-    assert!(
-        !runtime_input(&data, InteractionContext::Guild, Some(123))
-            .capabilities
-            .contains(&Capability::Vision)
-    );
+    assert!(!runtime_input(&data, InteractionContext::Guild, Some(123)).vision_allowed);
     assert!(
         runtime_input(&data, InteractionContext::Guild, Some(456))
             .capabilities
@@ -450,6 +452,8 @@ async fn registered_ordinary_guard_seam_acknowledges_before_lookup_and_evaluates
                 input.selected_voice_mode = SelectedVoiceMode::Local;
                 input.capabilities = vec![
                     Capability::Generation,
+                    Capability::ToolGeneration,
+                    Capability::Ocr,
                     Capability::Vision,
                     Capability::VoiceConfigured,
                     Capability::VoiceLocal,
@@ -473,7 +477,12 @@ async fn registered_ordinary_guard_seam_acknowledges_before_lookup_and_evaluates
             )
             .await
             .unwrap();
-            assert_eq!(allowed, expected, "{}", spec.name);
+            assert_eq!(
+                allowed == catalog::Availability::Ready,
+                expected,
+                "{}",
+                spec.name
+            );
             assert_eq!(steps.load(Ordering::SeqCst), 2);
         }
         let steps = AtomicUsize::new(0);

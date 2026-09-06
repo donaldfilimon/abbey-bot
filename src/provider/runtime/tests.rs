@@ -773,3 +773,42 @@ async fn verified_new_qualification_witness_clears_only_its_exact_persisted_bloc
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn readiness_is_request_specific_and_never_invokes_adapters() {
+    let mut runtime = ProviderRuntime::empty();
+    let image = Arc::new(ImageFake {
+        calls: AtomicUsize::new(0),
+    });
+    runtime.register(
+        ProviderId::parse("ocr-only").unwrap(),
+        "synthetic OCR",
+        ProviderClass::LocalServer,
+        ProviderCapabilities {
+            ocr: true,
+            ..ProviderCapabilities::default()
+        },
+        ExecutionLocality::SameHost,
+        ProviderProvenance::Configuration,
+        true,
+        config_identity(b"ocr-only"),
+        None,
+        Some(image.clone()),
+        false,
+        false,
+    );
+    assert_eq!(runtime.request_readiness(RequestClass::VisionOcr), Ok(()));
+    assert_eq!(
+        runtime.request_readiness(RequestClass::VisionDescribe),
+        Err(RouteUnavailableReason::CapabilityUnavailable)
+    );
+    assert_eq!(image.calls.load(Ordering::Relaxed), 0);
+    let adapter = fake(&mut runtime, "text", vec![], vec![], false);
+    for tools in [false, true] {
+        runtime.tools_enabled = tools;
+        let class = RequestClass::text(runtime.tools_enabled());
+        assert_eq!(runtime.begin(true, false).class, class);
+        assert_eq!(runtime.request_readiness(class), Ok(()));
+    }
+    assert_eq!(adapter.calls.load(Ordering::Relaxed), 0);
+}

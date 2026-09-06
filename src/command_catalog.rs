@@ -1,6 +1,8 @@
 //! Pure Discord surface policy. No transport, clock, environment, or live identities.
 
+mod availability;
 mod data;
+pub use availability::{Availability, Blocker, availability};
 #[cfg(test)]
 use data::BOTH;
 use data::{PLANNED, REGISTERED};
@@ -91,7 +93,9 @@ pub enum AccessRule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
     Generation,
+    ToolGeneration,
     Vision,
+    Ocr,
     VoiceConfigured,
     VoiceLocal,
     VoiceOpenAi,
@@ -132,6 +136,8 @@ pub enum ConditionId {
     C5,
     C6,
     C7,
+    C8,
+    C9,
 }
 impl AccessId {
     pub const fn rule(self) -> AccessRule {
@@ -170,6 +176,8 @@ impl ConditionId {
             Self::C5 => All(&[Available(VoiceConfigured), SelectedVoiceModeReady]),
             Self::C6 => All(&[Available(VoiceConfigured), Available(VoiceLocal)]),
             Self::C7 => HierarchyAllowsAction,
+            Self::C8 => Available(ToolGeneration),
+            Self::C9 => Available(Ocr),
         }
     }
 }
@@ -279,6 +287,8 @@ pub struct EligibilityInput {
     pub caller_present_in_voice: Option<bool>,
     pub selected_voice_mode: SelectedVoiceMode,
     pub capabilities: Vec<Capability>,
+    pub provider_blockers: Vec<(Capability, Blocker)>,
+    pub vision_allowed: bool,
     pub follow_up_absent: Option<bool>,
     pub action_target_resolved: bool,
     pub hierarchy_allows_action: Option<bool>,
@@ -293,6 +303,8 @@ impl EligibilityInput {
             caller_present_in_voice: None,
             selected_voice_mode: SelectedVoiceMode::Off,
             capabilities: Vec::new(),
+            provider_blockers: Vec::new(),
+            vision_allowed: true,
             follow_up_absent: None,
             action_target_resolved: false,
             hierarchy_allows_action: None,
@@ -387,17 +399,15 @@ pub fn condition_allows(
     evaluate(rule, input, mode, 0)
 }
 pub fn eligible(spec: &CommandSpec, input: &EligibilityInput, mode: EvaluationMode) -> bool {
-    spec.status == ImplementationStatus::Registered
-        && spec.registration.contexts.contains(&input.context)
-        && !(input.context == InteractionContext::BotDm
-            && spec.eligibility.access == AccessId::A1
-            && input.self_subject != Some(true))
-        && access_allows(spec.eligibility.access.rule(), input)
-        && condition_allows(spec.eligibility.condition.rule(), input, mode)
+    let result = availability(spec, input);
+    match mode {
+        EvaluationMode::Invocation => result == Availability::Ready,
+        EvaluationMode::Discoverability => !matches!(result, Availability::AccessBlocked(_)),
+    }
 }
 pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
     let mut text = format!(
-        "**Abbey · {}**\nChoose a section. These commands are available here.\n\n",
+        "**Abbey · {}**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n",
         section.label()
     );
     let mut count = 0;
@@ -416,7 +426,10 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
             spec.name,
             crate::help_center::invocation_hint(spec.kind),
             crate::help_center::visibility_hint(spec.private, input.context),
-            spec.description
+            match availability(spec, input) {
+                Availability::Blocked(reason) => reason.label(),
+                _ => spec.description,
+            }
         ));
         member_menu |= spec.kind == CommandKind::UserContext;
         message_menu |= spec.kind == CommandKind::MessageContext;
@@ -440,7 +453,7 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
         }
         (false, false) => {}
     }
-    text.push_str("\nAvailability follows current permissions and capabilities. Controls expire 15 minutes after opening; `/help` starts a new private session.");
+    text.push_str("\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session.");
     text
 }
 #[cfg(test)]

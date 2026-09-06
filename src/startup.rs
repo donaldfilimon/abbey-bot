@@ -1,5 +1,6 @@
 //! Root-owned application startup and shutdown orchestration.
 use super::*;
+pub(crate) mod command_errors;
 
 pub(super) async fn run(
     startup: StartupAction,
@@ -251,6 +252,13 @@ pub(super) async fn run(
             event_handler: |ctx, event, framework, data| {
                 Box::pin(async move {
                     if let serenity::all::FullEvent::InteractionCreate {
+                        interaction: serenity::all::Interaction::Modal(interaction),
+                    } = event
+                        && commands_help::workflows::dispatch_modal(ctx, interaction, data).await
+                    {
+                        return Ok(());
+                    }
+                    if let serenity::all::FullEvent::InteractionCreate {
                         interaction: serenity::all::Interaction::Component(interaction),
                     } = event
                         && (commands_brain::dispatch_admin_component(ctx, interaction, data).await
@@ -287,23 +295,7 @@ pub(super) async fn run(
                     record_interaction(ctx, true, None);
                 })
             },
-            on_error: |error| {
-                Box::pin(async move {
-                    if let poise::FrameworkError::Command { ctx, .. } = &error {
-                        record_interaction(
-                            *ctx,
-                            false,
-                            Some(memory::InteractionErrorCategory::Internal),
-                        );
-                    }
-                    // Structured, not `println!` — and never swallowed: a command
-                    // that fails silently is indistinguishable from Discord
-                    // dropping the interaction.
-                    if let Err(e) = poise::builtins::on_error(error).await {
-                        tracing::error!(error = %e, "error handler itself failed");
-                    }
-                })
-            },
+            on_error: |error| Box::pin(command_errors::handle(error)),
             ..Default::default()
         })
         .setup(move |ctx, ready, framework| {

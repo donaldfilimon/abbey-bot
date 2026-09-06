@@ -49,6 +49,7 @@ pub enum AdminEffect {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdminViewInput {
     pub settings: GuildSettings,
+    pub effective_policy: String,
     pub epsilon: f32,
     pub brain_summary: String,
     pub capabilities: Vec<&'static str>,
@@ -279,6 +280,7 @@ pub fn render(page: AdminPage, input: &AdminViewInput) -> String {
         .operation_result
         .as_ref()
         .map_or(String::new(), |value| format!("\n\n{value}"));
+    let result = format!("\n{}{}", input.effective_policy, result);
     match page {
         AdminPage::Overview => format!(
             "**Administration · Overview**\nPersona: **{}**\nLearning: **{}** · Vision: **{}** · Unsolicited: **{}**\nCapabilities: {}{result}",
@@ -311,6 +313,54 @@ pub fn render(page: AdminPage, input: &AdminViewInput) -> String {
     }
 }
 
+/// Requested guild policy and the blockers enforced before ordinary unsolicited replies.
+#[must_use]
+pub fn unsolicited_status(settings: &GuildSettings, quiet: bool, generation: bool) -> String {
+    let mut blockers = Vec::new();
+    if quiet {
+        blockers.push("host quiet is on; ask the host operator to review it");
+    }
+    if !settings.unsolicited {
+        blockers.push("server opt-in is off (`/admin act on`)");
+    }
+    if !settings.learning_enabled {
+        blockers.push("learning is off (`/admin learning on`)");
+    }
+    if !generation {
+        blockers.push("generation provider is unavailable; ask the operator to check readiness");
+    }
+    let effective = if blockers.is_empty() {
+        "eligible for policy selection; hourly budget and channel cooldown still apply".into()
+    } else {
+        format!("blocked: {}", blockers.join("; "))
+    };
+    format!(
+        "Unsolicited requested: {} · Effective replies: {effective}. Budget: {}/h; cooldown: {}s (checked when acting).",
+        on_off(settings.unsolicited),
+        settings.unsolicited_per_hour,
+        settings.reply_cooldown_seconds
+    )
+}
+
+#[must_use]
+pub fn vision_status(enabled: bool, description: bool, ocr: bool) -> String {
+    let readiness = |available| {
+        if !enabled {
+            "blocked by server setting (`/admin vision on`)"
+        } else if available {
+            "provider eligible; checked again on use"
+        } else {
+            "provider unavailable"
+        }
+    };
+    format!(
+        "Vision requested: {} · Description: {} · OCR: {}",
+        on_off(enabled),
+        readiness(description),
+        readiness(ocr)
+    )
+}
+
 const fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
 }
@@ -318,6 +368,28 @@ const fn on_off(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vision_policy_and_operation_readiness_remain_distinct() {
+        assert!(vision_status(false, true, true).contains("blocked by server setting"));
+        let text = vision_status(true, true, false);
+        assert!(text.contains("Description: provider eligible"));
+        assert!(text.contains("OCR: provider unavailable"));
+    }
+
+    #[test]
+    fn requested_act_on_exposes_learning_and_quiet_blockers() {
+        let settings = GuildSettings {
+            unsolicited: true,
+            learning_enabled: false,
+            ..GuildSettings::default()
+        };
+        let text = unsolicited_status(&settings, true, false);
+        assert!(text.contains("requested: on"));
+        assert!(text.contains("learning is off"));
+        assert!(text.contains("host quiet"));
+        assert!(text.contains("provider"));
+    }
 
     #[test]
     fn protocol_binds_owner_guild_expiry_and_stays_within_discord_limit() {

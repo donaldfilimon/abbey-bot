@@ -91,7 +91,7 @@ impl MemberVoiceView {
                 "After everyone present agrees, use `/voice resume consent:true`."
             }
             MemberVoiceState::Active if input.caller_present => {
-                "Use `/voice leave` whenever you want processing to stop."
+                "Say “Abbey, what should we explore?” to start a reply. Use `/voice leave` whenever you want processing to stop."
             }
             MemberVoiceState::Presence if input.caller_can_manage => {
                 if input.caller_present {
@@ -202,6 +202,23 @@ impl AdminVoiceView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_voice_explains_wake_name_and_immediate_stop() {
+        let view = MemberVoiceView::project(MemberVoiceInput {
+            configured: true,
+            phase: Some(VoicePhase::Listening),
+            mode: VoiceMode::Local,
+            caller_agrees: true,
+            channel_id: Some(7),
+            caller_can_view_channel: true,
+            caller_present: true,
+            caller_can_manage: false,
+        });
+        assert!(view.next_action.starts_with("Say"));
+        assert!(view.next_action.contains("Abbey,"));
+        assert!(view.next_action.contains("/voice leave"));
+    }
 
     #[test]
     fn hidden_channel_never_renders_its_id_or_diagnostics() {

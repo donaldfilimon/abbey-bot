@@ -28,6 +28,8 @@ closed!(EventCode {
     TaskExit,
     DiscordReady,
     CommandsRegistered,
+    CommandFailure,
+    ResponseDelivery,
     PresenceApplied,
     ConnectorState,
     PersistenceAttempt,

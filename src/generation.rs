@@ -19,6 +19,8 @@ use crate::platform::OutboundMessage;
 use crate::provider::{ConversationEffects, ProviderConversation, ProviderId};
 use crate::runtime::AppState;
 
+mod capability_guidance;
+
 /// Progressive-reply pacing: post once this many characters have arrived…
 pub const STREAM_FIRST_POST_CHARS: usize = 60;
 /// …or this many seconds have passed since generation started, whichever first.
@@ -462,10 +464,6 @@ async fn generate_conversation<O: Outbound + Sync>(
     for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {
         let persona = access.persona();
         let prepared = ask.prepare(state, persona);
-        let system = match system_suffix.filter(|s| !s.trim().is_empty()) {
-            Some(suffix) => format!("{}\n\n{}", prepared.system_prompt, suffix.trim()),
-            None => prepared.system_prompt.clone(),
-        };
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
         let grounding = grounding_for_round(&prepared, &grounding_results);
@@ -475,6 +473,13 @@ async fn generate_conversation<O: Outbound + Sync>(
         } else {
             &[]
         };
+        let tool_names: Vec<_> = tools.iter().map(|tool| tool.name).collect();
+        let system = capability_guidance::system_prompt(
+            &prepared.system_prompt,
+            ask.scope,
+            &tool_names,
+            system_suffix,
+        );
         let (text, posted, calls) = loop {
             match conversation.reserve().await {
                 Ok(()) => {}

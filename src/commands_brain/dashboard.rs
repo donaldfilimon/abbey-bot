@@ -15,7 +15,7 @@ pub async fn admin_dashboard(ctx: Context<'_>) -> Result<(), Error> {
         expiry: runtime::now().saturating_add(crate::admin_dashboard::SESSION_SECONDS),
         page: crate::admin_dashboard::AdminPage::Overview,
     };
-    let input = dashboard_input(ctx.data(), guild.get(), None);
+    let input = dashboard_input(ctx.data(), guild.get(), ctx.channel_id().get(), None);
     ctx.send(
         poise::CreateReply::default()
             .content(clamp_message(crate::admin_dashboard::render(
@@ -30,6 +30,39 @@ pub async fn admin_dashboard(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Caller acknowledges privately and resolves fresh permissions before opening.
+pub(crate) async fn open_dashboard_component(
+    ctx: &serenity::all::Context,
+    interaction: &ComponentInteraction,
+    data: &crate::Data,
+    permissions: Permissions,
+) -> Result<(), Error> {
+    if !permissions.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR) {
+        return Err("Current Manage Server permission is required.".into());
+    }
+    let guild = interaction.guild_id.ok_or(NO_GUILD)?;
+    let session = crate::admin_dashboard::AdminSession {
+        owner: interaction.user.id.get(),
+        guild: guild.get(),
+        expiry: runtime::now().saturating_add(crate::admin_dashboard::SESSION_SECONDS),
+        page: crate::admin_dashboard::AdminPage::Overview,
+    };
+    let input = dashboard_input(data, guild.get(), interaction.channel_id.get(), None);
+    interaction
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .content(clamp_message(crate::admin_dashboard::render(
+                    session.page,
+                    &input,
+                )))
+                .components(dashboard_rows(&session))
+                .allowed_mentions(crate::gateway::no_mentions()),
+        )
+        .await?;
+    Ok(())
+}
+
 fn dashboard_settings(state: &AppState, guild_id: u64) -> GuildSettings {
     let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.to_string()));
     let mut stores = AppState::lock(&state.stores);
@@ -39,6 +72,7 @@ fn dashboard_settings(state: &AppState, guild_id: u64) -> GuildSettings {
 fn dashboard_input(
     data: &crate::Data,
     guild_id: u64,
+    channel_id: u64,
     result: Option<String>,
 ) -> crate::admin_dashboard::AdminViewInput {
     let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.to_string()));
@@ -57,21 +91,84 @@ fn dashboard_input(
             ),
         )
     };
+    let description = data
+        .state
+        .providers
+        .request_readiness(crate::provider::RequestClass::VisionDescribe)
+        .is_ok();
+    let ocr = data
+        .state
+        .providers
+        .request_readiness(crate::provider::RequestClass::VisionOcr)
+        .is_ok();
     let mut capabilities = vec!["memory"];
-    if data.state.providers.generation_available() {
+    if data
+        .state
+        .providers
+        .request_readiness(crate::provider::RequestClass::text(
+            data.state.providers.tools_enabled(),
+        ))
+        .is_ok()
+    {
         capabilities.push("generation");
     }
-    if data.state.providers.vision_available() {
-        capabilities.push("vision");
+    if settings.vision_enabled && description {
+        capabilities.push("image description");
+    }
+    if settings.vision_enabled && ocr {
+        capabilities.push("image OCR");
     }
     if data
         .voice
         .as_ref()
         .is_some_and(|voice| voice.config.guild_id == guild_id)
     {
-        capabilities.push("voice");
+        capabilities.push(
+            if data
+                .voice
+                .as_ref()
+                .is_some_and(|voice| voice.media_enabled(voice.current_epoch()))
+            {
+                "voice active"
+            } else {
+                "voice configured; not active"
+            },
+        );
     }
+    let now = runtime::now();
+    let tokens =
+        AppState::lock(&data.state.budget).tokens_left(&scoped, settings.unsolicited_per_hour, now);
+    let channel = guild::scoped_channel_id(PLATFORM, &channel_id.to_string());
+    let cooldown_ready = AppState::lock(&data.state.cooldown).permitted(
+        &channel,
+        settings.reply_cooldown_seconds,
+        now,
+    );
     crate::admin_dashboard::AdminViewInput {
+        effective_policy: format!(
+            "{}\n{}\nCurrent rate limits: {} · {} (snapshot; rechecked on action).",
+            crate::admin_dashboard::unsolicited_status(
+                &settings,
+                data.state.quiet,
+                data.state
+                    .providers
+                    .request_readiness(crate::provider::RequestClass::text(
+                        data.state.providers.tools_enabled()
+                    ))
+                    .is_ok()
+            ),
+            crate::admin_dashboard::vision_status(settings.vision_enabled, description, ocr),
+            if tokens >= 1.0 {
+                "hourly budget available"
+            } else {
+                "hourly budget exhausted"
+            },
+            if cooldown_ready {
+                "channel cooldown clear"
+            } else {
+                "channel cooldown active"
+            }
+        ),
         settings,
         epsilon,
         brain_summary,
@@ -296,15 +393,23 @@ pub async fn dispatch_admin_component(
     )
     .await;
     let (mut session, action, current) = match preparation {
-        Err(_) => return true,
+        Err(_) => {
+            crate::startup::command_errors::record_failure(
+                &data.state,
+                crate::observability::EventCode::ResponseDelivery,
+                crate::observability::OperationalErrorCategory::Unavailable,
+            );
+            return true;
+        }
         Ok(AdminPreparation::Rejected(error)) => {
-            edit_admin(ctx, interaction, error.message(), Vec::new()).await;
+            edit_admin(ctx, interaction, data, error.message(), Vec::new()).await;
             return true;
         }
         Ok(AdminPreparation::LookupUnavailable) => {
             edit_admin(
                 ctx,
                 interaction,
+                data,
                 "Discord could not confirm your current permission. Nothing changed.",
                 Vec::new(),
             )
@@ -315,6 +420,7 @@ pub async fn dispatch_admin_component(
             edit_admin(
                 ctx,
                 interaction,
+                data,
                 "Discord could not confirm that you currently have Manage Server.",
                 Vec::new(),
             )
@@ -424,7 +530,7 @@ pub async fn dispatch_admin_component(
                 )
                 .unwrap_or_default()
             };
-            let _ = interaction
+            let delivery = interaction
                 .edit_response(
                     &ctx.http,
                     EditInteractionResponse::new()
@@ -437,14 +543,16 @@ pub async fn dispatch_admin_component(
                         .allowed_mentions(crate::gateway::no_mentions()),
                 )
                 .await;
+            let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
             return true;
         }
         AdminEffect::None => result = Some("That setting already has the requested value.".into()),
     }
-    let input = dashboard_input(data, guild_id.get(), result);
+    let input = dashboard_input(data, guild_id.get(), interaction.channel_id.get(), result);
     edit_admin(
         ctx,
         interaction,
+        data,
         &crate::admin_dashboard::render(session.page, &input),
         dashboard_rows(&session),
     )
@@ -465,10 +573,11 @@ fn update_dashboard_setting(
 async fn edit_admin(
     ctx: &serenity::all::Context,
     interaction: &ComponentInteraction,
+    data: &crate::Data,
     content: &str,
     rows: Vec<CreateActionRow>,
 ) {
-    let _ = interaction
+    let delivery = interaction
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new()
@@ -477,4 +586,29 @@ async fn edit_admin(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
+    let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn failed_delivery_keeps_the_setting_change_and_the_original_failure() {
+        let state = AppState::in_memory();
+        let data = crate::Data { state, voice: None };
+        let mut mutations = 0;
+        update_dashboard_setting(&data, 7, |settings| {
+            settings.unsolicited = true;
+            mutations += 1;
+        });
+        let failure =
+            crate::startup::command_errors::delivery_result(&data.state, Err::<(), _>("transport"));
+        assert_eq!(failure, Err("transport"));
+        assert_eq!(mutations, 1);
+        assert!(dashboard_settings(&data.state, 7).unsolicited);
+        let view = dashboard_input(&data, 7, 8, Some("Unsolicited action is now on.".into()));
+        assert!(view.effective_policy.contains("learning is off"));
+        assert!(view.operation_result.unwrap().contains("now on"));
+    }
 }

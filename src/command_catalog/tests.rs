@@ -359,8 +359,8 @@ fn completed_voice_and_admin_features_are_advertised_by_current_policy() {
     );
     assert!(render_help(HelpSection::Voice, &input).contains("`/voice status`"));
     assert!(render_help(HelpSection::Voice, &input).contains("`/voice consent`"));
-    assert!(!render_help(HelpSection::Images, &input).contains("`/ocr`"));
-    assert!(!render_help(HelpSection::Conversation, &input).contains("`/persona ask`"));
+    assert!(render_help(HelpSection::Images, &input).contains("`/ocr`"));
+    assert!(render_help(HelpSection::Conversation, &input).contains("`/persona ask`"));
     assert!(render_help(HelpSection::Conversation, &input).contains("`/persona route`"));
 }
 #[test]
@@ -403,4 +403,70 @@ fn music_commands_require_management_and_presence_without_inference_capability()
             }
         }
     }
+}
+
+#[test]
+fn unconfigured_status_remains_executable_and_unavailable_help_remains_visible() {
+    let input = member();
+    assert!(eligible(
+        command(CommandKey::VoiceStatus),
+        &input,
+        EvaluationMode::Invocation
+    ));
+    assert!(render_help(HelpSection::Conversation, &input).contains("`/persona ask`"));
+    assert!(render_help(HelpSection::Images, &input).contains("`/ocr`"));
+}
+
+#[test]
+fn availability_distinguishes_exact_operations_and_policy() {
+    let mut input = member();
+    input.capabilities = vec![Capability::Generation, Capability::Ocr];
+    assert_eq!(
+        availability(command(CommandKey::Summarize), &input),
+        Availability::Ready
+    );
+    assert_eq!(
+        availability(command(CommandKey::PersonaAsk), &input),
+        Availability::Blocked(Blocker::Generation)
+    );
+    assert_eq!(
+        availability(command(CommandKey::Ocr), &input),
+        Availability::Ready
+    );
+    assert_eq!(
+        availability(command(CommandKey::DescribeImage), &input),
+        Availability::Blocked(Blocker::Vision)
+    );
+    input.vision_allowed = false;
+    assert_eq!(
+        availability(command(CommandKey::Ocr), &input),
+        Availability::Blocked(Blocker::VisionPolicy)
+    );
+    input
+        .provider_blockers
+        .push((Capability::ToolGeneration, Blocker::Busy));
+    assert_eq!(
+        availability(command(CommandKey::PersonaAsk), &input).message(),
+        "The provider is busy. Wait briefly and try again."
+    );
+    input.provider_blockers[0].1 = Blocker::Unknown;
+    assert!(
+        availability(command(CommandKey::PersonaAsk), &input)
+            .message()
+            .contains("unknown")
+    );
+    input.permissions.push(DiscordPermission::ManageServer);
+    assert_eq!(
+        availability(command(CommandKey::VoiceJoin), &input),
+        Availability::AccessBlocked(Blocker::VoicePresence)
+    );
+    input.caller_present_in_voice = Some(true);
+    assert_eq!(
+        availability(command(CommandKey::VoiceJoin), &input),
+        Availability::Blocked(Blocker::VoiceSetup)
+    );
+    assert_eq!(
+        availability(command(CommandKey::AdminDashboard), &member()),
+        Availability::AccessBlocked(Blocker::Permission)
+    );
 }

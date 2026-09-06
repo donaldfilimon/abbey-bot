@@ -63,7 +63,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "persona ask",
         BOTH,
         A0,
-        C1,
+        C8,
         Conversation,
         false,
         "Ask a question through the configured generation backend."
@@ -96,7 +96,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Ask Abbey",
         BOTH,
         A0,
-        C1,
+        C8,
         Conversation,
         true,
         "Ask about a selected message privately."
@@ -261,7 +261,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "ocr",
         BOTH,
         A0,
-        C2,
+        C9,
         Images,
         false,
         "Read the text in an image."
@@ -283,7 +283,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Abbey: read image text",
         BOTH,
         A0,
-        C2,
+        C9,
         Images,
         true,
         "Read text from the first supported attachment privately."
@@ -547,7 +547,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "voice status",
         GUILD,
         A0,
-        C4,
+        C0,
         Voice,
         true,
         "Read your privacy-bounded voice status."

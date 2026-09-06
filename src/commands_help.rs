@@ -1,14 +1,15 @@
 //! Thin Discord catalog binding and centrally dispatched private help.
+pub mod workflows;
 use crate::{Context, Data, Error, command_catalog as catalog, help_center, runtime};
 use catalog::{
     Capability, CommandKey, DiscordPermission, EligibilityInput, EvaluationMode, HelpSection,
     InteractionContext, SelectedVoiceMode,
 };
 use serenity::all::{
-    ButtonStyle, CommandDataOption, CommandDataOptionValue, ComponentInteraction,
-    ComponentInteractionDataKind, CreateActionRow, CreateButton, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind,
-    CreateSelectMenuOption, EditInteractionResponse, GuildId, Permissions, UserId,
+    CommandDataOption, CommandDataOptionValue, ComponentInteraction, ComponentInteractionDataKind,
+    CreateActionRow, CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
+    CreateSelectMenuKind, CreateSelectMenuOption, EditInteractionResponse, GuildId, Permissions,
+    UserId,
 };
 
 /// Attached to every executable adapter and read by the guard itself.
@@ -19,10 +20,13 @@ pub struct CatalogBinding {
 }
 
 impl CatalogBinding {
-    fn evaluate(self, input: &EligibilityInput) -> bool {
+    fn evaluate(self, input: &EligibilityInput) -> catalog::Availability {
         let spec = catalog::command(self.key);
-        self.eligibility == spec.eligibility
-            && catalog::eligible(spec, input, EvaluationMode::Invocation)
+        if self.eligibility != spec.eligibility {
+            catalog::Availability::AccessBlocked(catalog::Blocker::Permission)
+        } else {
+            catalog::availability(spec, input)
+        }
     }
 }
 /// The runtime seam used by every ordinary registered guard. Construct the
@@ -31,7 +35,7 @@ async fn acknowledged_eligibility<A, Load, L>(
     binding: CatalogBinding,
     acknowledgement: A,
     load: Load,
-) -> Result<bool, Error>
+) -> Result<catalog::Availability, Error>
 where
     A: std::future::Future<Output = Result<(), Error>>,
     Load: FnOnce() -> L,
@@ -144,18 +148,41 @@ pub fn runtime_input(
     guild: Option<u64>,
 ) -> EligibilityInput {
     let mut input = EligibilityInput::new(context);
-    let generation = data.state.providers.generation_available();
-    if generation {
-        input.capabilities.push(Capability::Generation);
-    }
-    let vision_allowed = guild.is_none_or(|guild| {
+    input.vision_allowed = guild.is_none_or(|guild| {
         runtime::AppState::lock(&data.state.stores)
             .guilds
             .get(&format!("discord:{guild}"))
             .is_none_or(|settings| settings.vision_enabled)
     });
-    if vision_allowed && data.state.providers.vision_available() {
-        input.capabilities.push(Capability::Vision);
+    use crate::provider::{RequestClass, RouteUnavailableReason};
+    for (capability, class) in [
+        (Capability::Generation, RequestClass::TextReadOnly),
+        (
+            Capability::ToolGeneration,
+            RequestClass::text(data.state.providers.tools_enabled()),
+        ),
+        (Capability::Vision, RequestClass::VisionDescribe),
+        (Capability::Ocr, RequestClass::VisionOcr),
+    ] {
+        match data.state.providers.request_readiness(class) {
+            Ok(()) => input.capabilities.push(capability),
+            Err(reason) => {
+                let blocker = match reason {
+                    RouteUnavailableReason::NoConfiguredProvider
+                    | RouteUnavailableReason::CapabilityUnavailable => match capability {
+                        Capability::Vision => catalog::Blocker::Vision,
+                        Capability::Ocr => catalog::Blocker::Ocr,
+                        _ => catalog::Blocker::Generation,
+                    },
+                    RouteUnavailableReason::BlockedPendingRequalification => {
+                        catalog::Blocker::Unknown
+                    }
+                    RouteUnavailableReason::Busy => catalog::Blocker::Busy,
+                    _ => catalog::Blocker::Unavailable,
+                };
+                input.provider_blockers.push((capability, blocker));
+            }
+        }
     }
     if let Some(voice) = data
         .voice
@@ -395,10 +422,10 @@ pub fn catalog_check(ctx: Context<'_>) -> poise::BoxFuture<'_, Result<bool, Erro
                 return Ok(false);
             }
         };
-        if !allowed {
-            ctx.say("This command is unavailable with the current permissions, context, or capabilities. Open /help to see available commands.").await?;
+        if allowed != catalog::Availability::Ready {
+            ctx.say(allowed.message()).await?;
         }
-        Ok(allowed)
+        Ok(allowed == catalog::Availability::Ready)
     })
 }
 pub fn modcall_access_allowed(permissions: Permissions) -> bool {
@@ -461,7 +488,12 @@ impl From<SectionChoice> for HelpSection {
         }
     }
 }
-fn help_rows(session: help_center::HelpSession, input: &EligibilityInput) -> Vec<CreateActionRow> {
+fn help_rows(
+    session: help_center::HelpSession,
+    guild: Option<u64>,
+    channel: u64,
+    input: &EligibilityInput,
+) -> Vec<CreateActionRow> {
     let mut rows = vec![CreateActionRow::SelectMenu(
         CreateSelectMenu::new(
             session.custom_id(),
@@ -480,17 +512,13 @@ fn help_rows(session: help_center::HelpSession, input: &EligibilityInput) -> Vec
         .max_values(1),
     )];
     if session.section == HelpSection::Start {
-        let buttons: Vec<_> = help_center::help_shortcuts(input)
-            .into_iter()
-            .map(|shortcut| {
-                CreateButton::new(session.navigate(shortcut.section).custom_id())
-                    .label(shortcut.label)
-                    .style(ButtonStyle::Secondary)
-            })
-            .collect();
-        if !buttons.is_empty() {
-            rows.push(CreateActionRow::Buttons(buttons));
-        }
+        rows.extend(workflows::rows(
+            session.owner,
+            guild,
+            channel,
+            session.expiry,
+            input,
+        ));
     }
     rows
 }
@@ -522,7 +550,12 @@ pub async fn help(
                     .content(crate::commands::clamp_message(catalog::render_help(
                         section, &input,
                     )))
-                    .components(help_rows(session, &input))
+                    .components(help_rows(
+                        session,
+                        ctx.guild_id().map(|guild| guild.get()),
+                        ctx.channel_id().get(),
+                        &input,
+                    ))
                     .ephemeral(true)
                     .allowed_mentions(crate::gateway::no_mentions()),
             )
@@ -577,6 +610,9 @@ pub async fn dispatch_component(
     let id = &interaction.data.custom_id;
     if !id.starts_with("abbey:") || crate::voice_consent::parse_button(id).is_some() {
         return false;
+    }
+    if id.starts_with("abbey:task:") {
+        return workflows::dispatch_component(ctx, interaction, data).await;
     }
     if id.starts_with("abbey:mem:") {
         return crate::commands_memory_browser::dispatch(ctx, interaction, data).await;
@@ -635,7 +671,14 @@ pub async fn dispatch_component(
     )
     .await;
     let (body, rows) = match preparation {
-        Err(_) => return true,
+        Err(_) => {
+            crate::startup::command_errors::record_failure(
+                &data.state,
+                crate::observability::EventCode::ResponseDelivery,
+                crate::observability::OperationalErrorCategory::Unavailable,
+            );
+            return true;
+        }
         Ok(HelpPreparation::Rejected(error)) => (error.message().to_string(), Vec::new()),
         Ok(HelpPreparation::PermissionsUnavailable) => (
             "Discord could not confirm the current permissions. Open /help to try again."
@@ -644,10 +687,15 @@ pub async fn dispatch_component(
         ),
         Ok(HelpPreparation::Ready(session, input)) => (
             catalog::render_help(session.section, &input),
-            help_rows(session, &input),
+            help_rows(
+                session,
+                interaction.guild_id.map(|guild| guild.get()),
+                interaction.channel_id.get(),
+                &input,
+            ),
         ),
     };
-    let _ = interaction
+    let delivery = interaction
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new()
@@ -656,6 +704,7 @@ pub async fn dispatch_component(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
+    let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
     true
 }
 

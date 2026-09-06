@@ -72,6 +72,43 @@ pub async fn send_summary(
     Ok(())
 }
 
+/// Open the caller's existing fact browser from an already acknowledged task.
+/// The task shell has checked its owner/context and fresh permissions.
+pub(crate) async fn open_self_component(
+    ctx: &serenity::all::Context,
+    interaction: &ComponentInteraction,
+    data: &Data,
+) -> Result<(), Error> {
+    let owner = interaction.user.id.get();
+    let scope = interaction
+        .guild_id
+        .map_or(MemoryScope::BotDm, |g| MemoryScope::Guild(g.get()));
+    let session = MemorySession::new(owner, owner, scope, crate::runtime::now())
+        .ok_or("invalid private browser session")?;
+    let guild = interaction.guild_id.map_or_else(
+        || format!("discord:dm:{owner}"),
+        |g| format!("discord:{}", g.get()),
+    );
+    let facts = data
+        .state
+        .memory_service()
+        .subject_snapshot(&guild, &format!("discord:{owner}"))
+        .0;
+    let page = browser::page(&facts, 0);
+    interaction
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .content(crate::commands::clamp_message(browser::render(
+                    owner, &page,
+                )))
+                .components(rows(session, &page))
+                .allowed_mentions(crate::gateway::no_mentions()),
+        )
+        .await?;
+    Ok(())
+}
+
 enum Preparation {
     Rejected(&'static str),
     Ready(MemorySession, Vec<String>),

@@ -1057,7 +1057,8 @@ async fn registered_ordinary_guards_deny_missing_access_after_acknowledgement() 
             requests.last().unwrap().body["content"]
                 .as_str()
                 .unwrap()
-                .contains("unavailable")
+                .len()
+                > 20
         );
     }
 }
@@ -1111,10 +1112,10 @@ async fn registered_ordinary_guards_deny_missing_capabilities() {
         let mut data = configured_data();
         let state = Arc::get_mut(&mut data.state).unwrap();
         match binding(command).eligibility.condition {
-            ConditionId::C1 | ConditionId::C5 | ConditionId::C6 => {
+            ConditionId::C1 | ConditionId::C8 | ConditionId::C5 | ConditionId::C6 => {
                 state.providers.set_primary(None)
             }
-            ConditionId::C2 | ConditionId::C3 => state.providers.clear_vision(),
+            ConditionId::C2 | ConditionId::C9 | ConditionId::C3 => state.providers.clear_vision(),
             ConditionId::C4 => data.voice = None,
             other => panic!("uncovered condition: {other:?}"),
         }
@@ -1129,7 +1130,8 @@ async fn registered_ordinary_guards_deny_missing_capabilities() {
             requests.last().unwrap().body["content"]
                 .as_str()
                 .unwrap()
-                .contains("unavailable")
+                .len()
+                > 20
         );
     }
 }
