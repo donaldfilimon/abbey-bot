@@ -893,3 +893,31 @@ merged, `Scripts/verify-all.sh` green twice, 2 local and 4 remote branches
 deleted at zero unique commits, and the live `AbbeyBot-wt-quasar-completion-20260906`
 worktree removed on Donald's explicit call while its session was still
 committing. Its CI and the `aae40b4` Linux verification remain outstanding there.
+
+#### Exact-SHA three-platform CI: GREEN on `d5f00da`
+
+Closing evidence for the red-main repair. `Rust` workflow run on `d5f00da`:
+Gate (Ubuntu) success, Gate (macOS) success, Gate (Windows) success.
+
+Reaching it took four commits, because each failure masked the next: `cargo fmt`
+short-circuited `check.sh`/`check.ps1` before clippy on every runner, and clippy
+short-circuited before the suite.
+
+1. `f45b7b2` — formatting, the `private_interfaces` denial on
+   `AppState::host_music`, and a stale voice-status assertion left behind when
+   `6a3000c` moved `voice_status`/`voice_diagnostics` to per-guild wording.
+2. `566a449` — `-D unused-mut` on the cfg-dependent `fs::DirBuilder` binding in
+   `voice_registry`, Windows-only.
+3. `d5f00da` — the two Windows-only test-portability defects that only became
+   visible once Windows first reached the suite: a hardcoded POSIX path literal
+   in `managed_env`, and an accepted socket inheriting the listener's
+   non-blocking mode in `pipeline::tests::memory_outcomes` (WSAEWOULDBLOCK).
+
+Standing lesson: the macOS gate cannot observe the Windows lane, and a failing
+early stage hides every later one, so "the Mac gate is green" says nothing about
+the platforms and nothing about stages after the first failure. Only the
+exact-SHA three-platform run closes this.
+
+Not established by this pass, and unchanged: installed artifact identity,
+provider qualification, live two-guild member/manager Discord checks, fresh
+unanimous consent and human-witnessed audible voice acceptance.
