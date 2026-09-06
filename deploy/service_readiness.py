@@ -142,7 +142,7 @@ def read_context(fd, start_ms, entry_ns, *, monotonic=time.monotonic_ns,
             deadline = min(deadline, context.deadline_monotonic_ns)
 
 
-def parse_pid_record(raw, uid):
+def parse_pid_record(raw, uid, *, allow_absent=False):
     """Accept one exact service root and one direct child PID; nested PIDs do not count."""
     try:
         if type(raw) is not bytes or len(raw) > STATUS_CAP:
@@ -172,6 +172,8 @@ def parse_pid_record(raw, uid):
                 closed = depth == 0
             if depth < 0:
                 raise ValueError
+        if closed and not pids and allow_absent:
+            return None
         if not closed or len(pids) != 1 or not 1 <= pids[0] <= MAX_PID:
             raise ValueError
         return pids[0]

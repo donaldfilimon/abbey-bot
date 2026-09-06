@@ -161,6 +161,14 @@ class Tests(unittest.TestCase):
         self.fails(lambda: r.parse_pid_record(root + b'\tpid = 2\n}', 502))
         self.fails(lambda: r.parse_pid_record(b'x' * (r.STATUS_CAP + 1), 501))
 
+    def test_optional_pid_requires_canonical_loaded_record(self):
+        root=b'gui/501/com.donaldfilimon.abbey-bot = {\n'
+        raw=root+b'\tlast exit code = 78\n}\n'
+        self.assertIsNone(r.parse_pid_record(raw,501,allow_absent=True))
+        self.fails(lambda:r.parse_pid_record(raw,501))
+        self.fails(lambda:r.parse_pid_record(root+b'\tpid = nope\n}\n',501,allow_absent=True))
+        self.fails(lambda:r.parse_pid_record(root+b'\tpid = 1\n\tpid = 2\n}\n',501,allow_absent=True))
+
     def test_success_five_seconds_two_pid_samples_each_and_optional_updates(self):
         def reader():
             return document(self.clock, telegram='degraded', last_persistence='partial')

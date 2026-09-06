@@ -41,7 +41,12 @@ class Fake:
         state = self.load()
         return state['active'] and state['pid'] == pid
     def absent(self, home, deadline):
-        return not self.load()['active']
+        return not self.load()['loaded']
+    def optional_pid(self, deadline):
+        state=self.load()
+        if state.get('mode') == 'missing_pid':
+            raise ReadinessError(FailureCode.LAUNCHD)
+        return state['pid'] if state['active'] else None
     def exit78(self, deadline):
         return self.load().get('mode') == 'exit78'
     def pid(self, deadline):
@@ -80,7 +85,7 @@ class Fake:
                 raise AssertionError('rollback raced the old helper')
             if state['scenario'] == 'stop_failure':
                 self.save(state); return 1
-            state['active'] = False; self.save(state)
+            state['active'] = False; state['loaded'] = False; self.save(state)
             if state['scenario'] == 'successor_uninstall':
                 path = home / '.local/share/abbey-bot/readiness.json'
                 doc = json.loads(path.read_text()); doc['pid'] += 10; doc['run_nonce'] = 'f'*64
@@ -90,7 +95,8 @@ class Fake:
         mode = state['scenario'] if state['starts'] == 1 else state.get('rollback_mode', 'success')
         state['mode'] = mode
         state['pid'] += 1
-        state['active'] = True
+        state['active'] = mode != 'exit78'
+        state['loaded'] = True
         state['started'] = state['ns']
         self.save(state)
         if mode == 'slow_bootstrap':
@@ -186,7 +192,7 @@ PrivateTree.directory = checked_directory
         self.write('.config/abbey-bot/env', ('DISCORD_TOKEN=' + CANARY + '\n').encode())
         self.statefile = self.home / 'fake-state.json'
         self.statefile.write_text(json.dumps({'ns': 0, 'scenario': scenario, 'rollback_mode': rollback,
-                                             'starts': 0, 'pid': 4242, 'active': prior, 'commands': []}))
+                                             'starts': 0, 'pid': 4242, 'active': prior, 'loaded': prior, 'commands': []}))
         self.write('Library/Logs/abbey-bot/abbey-bot.log', b'legacy untouched')
         if prior:
             self.write('.local/libexec/abbey-bot/abbey-bot', b'old binary', 0o700)
@@ -288,6 +294,16 @@ class Tests(unittest.TestCase):
             self.assertEqual(result.returncode,1)
             self.assertIn(b'rollback_ready',result.stderr)
             self.assertFalse((h.home/'.local/share/abbey-bot/install.lock').exists())
+
+    def test_loaded_failed_start_without_pid_can_update_or_uninstall(self):
+        for uninstall in (False,True):
+            with tempfile.TemporaryDirectory() as temp:
+                h=Harness(temp,prior=True)
+                value=h.state();value['active']=False;value['loaded']=True
+                h.statefile.write_text(json.dumps(value))
+                result=h.run(*(['--uninstall'] if uninstall else []));self.check_private(result,h)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(h.state()['commands'][0],'bootout')
 
     def test_malformed_baseline_fails_before_stop(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -139,6 +139,12 @@ class Production:
             return False
         raise TransactionError('launchd')
 
+    def optional_pid(self, deadline):
+        code, out, _err = self.status(deadline)
+        if code != 0:
+            raise TransactionError('launchd')
+        return parse_pid_record(out, os.getuid(), allow_absent=True)
+
     def exit78(self, deadline):
         code, out, _err = self.status(deadline)
         if code != 0:
@@ -317,20 +323,19 @@ def verify_lock(tree, state):
 def stop(home):
     deadline = SYSTEM.monotonic() + 25_000_000_000
     prior = capture(home)
-    if prior is None:
-        boot = read_optional_private(home, 'bootstrap')
-        prior = None if boot is None else {'pid': boot['pid']}
+    boot = read_optional_private(home, 'bootstrap')
+    known_pids = {value['pid'] for value in (prior, boot) if value is not None}
     unloaded = SYSTEM.absent(home, deadline)
-    if unloaded:
-        if prior is None:
-            return
-        pid = prior['pid']
-    else:
-        pid = SYSTEM.pid(deadline)
+    if not unloaded:
+        # A canonical loaded record without a PID is a valid failed-start state.
+        # Malformed/ambiguous records remain failures, never an absent process.
+        current = SYSTEM.optional_pid(deadline)
+        if current is not None:
+            known_pids.add(current)
         if SYSTEM.control('bootout', home, deadline) != 0:
             raise TransactionError('stop')
     while True:
-        stopped = not SYSTEM.alive(pid)
+        stopped = all(not SYSTEM.alive(pid) for pid in known_pids)
         unloaded = SYSTEM.absent(home, deadline)
         if stopped and unloaded:
             if SYSTEM.monotonic() > deadline:
