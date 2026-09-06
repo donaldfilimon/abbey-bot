@@ -949,6 +949,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_plan_without_a_topic_leaves_a_hand_written_topic_alone() {
+        // The archetype plans carry no topics. Reveal must not keep emitting
+        // an empty edit for a channel that already has one.
+        let plan = Plan::from(&crate::server::blueprint(
+            crate::server::Archetype::Community,
+        ));
+        let mut snapshot = empty_guild();
+        snapshot.channels.push(ChannelState {
+            id: 3_200,
+            name: "general".into(),
+            class: ChannelClass::Kind(ChannelKind::Text),
+            parent: None,
+            topic: Some("hand-written".into()),
+            overwrites: vec![],
+        });
+        let mut guild = FakeGuild::new(snapshot);
+        run_stage(
+            &plan,
+            &mut guild,
+            Scope {
+                stage: Stage::Additive,
+                category: None,
+            },
+        )
+        .await;
+        run_stage(
+            &plan,
+            &mut guild,
+            Scope {
+                stage: Stage::Reveal,
+                category: None,
+            },
+        )
+        .await;
+        let general = guild
+            .snapshot
+            .channels
+            .iter()
+            .find(|c| c.id == 3_200)
+            .unwrap();
+        assert_eq!(general.topic.as_deref(), Some("hand-written"));
+        assert!(
+            general.parent.is_some(),
+            "it was still moved into its category"
+        );
+    }
+
+    #[tokio::test]
     async fn apply_stops_at_the_first_failure_and_reports_what_landed() {
         let plan = mlai();
         let mut guild = FakeGuild::new(empty_guild());

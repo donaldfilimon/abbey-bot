@@ -111,7 +111,8 @@ variant and no role-permission edit, and a test enumerates the variants;
 marker is the channel's *only* overwrite) to visible, so a hand-gated channel
 is never opened or gated outside `--stage overwrites --category`. A plan role
 that matches an integration-managed role is a blocker in every stage (the live
-MLAI bot is named Abbey; so is a plan interest role). `blueprints/` holds the
+MLAI bot's role is named Abbey, which is why the plan's interest role is
+"Personas"; the first live dry run caught it). `blueprints/` holds the
 plan files; `include_str!` pins the MLAI one in tests, never a runtime path.
 
 **Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`, and

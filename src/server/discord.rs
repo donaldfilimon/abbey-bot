@@ -92,8 +92,17 @@ fn nonzero(id: u64, what: &str) -> Result<u64, String> {
 }
 
 fn describe_error(what: &str, error: &serenity::Error) -> String {
-    // serenity's Display carries the status and route, never the
-    // Authorization header, so this is safe to show an operator.
+    // The status and the request path are what an operator needs; the
+    // Authorization header is never part of serenity's error, and the query
+    // string is dropped in case a future route ever carries one.
+    if let serenity::Error::Http(serenity::http::HttpError::UnsuccessfulRequest(response)) = error {
+        return format!(
+            "{what}: HTTP {} on {}: {}",
+            response.status_code,
+            response.url.split('?').next().unwrap_or(""),
+            response.error.message
+        );
+    }
     format!("{what}: {error}")
 }
 
@@ -121,15 +130,15 @@ pub async fn snapshot(http: &Http, guild_id: GuildId) -> Result<GuildSnapshot, S
         .get_current_user()
         .await
         .map_err(|e| describe_error("Discord rejected the bot token", &e))?;
-    let member = http
-        .get_current_user_guild_member(guild_id)
-        .await
-        .map_err(|e| {
-            describe_error(
-                "the bot is not a member of that guild, or cannot read it",
-                &e,
-            )
-        })?;
+    // `GET /users/@me/guilds/{id}/member` is a user-token endpoint: Discord
+    // answers a bot with "Bots cannot use this endpoint" (seen on the first
+    // live dry run, 2026-09-06). Bots read their own membership by id.
+    let member = guild_id.member(http, me.id).await.map_err(|e| {
+        describe_error(
+            "the bot is not a member of that guild, or cannot read it",
+            &e,
+        )
+    })?;
     let guild = guild_id
         .to_partial_guild(http)
         .await
