@@ -232,5 +232,5 @@ pub fn begin(home: &Path) -> Result<ManagedService, ManagedStartupFailure> {
         fatal,
     })
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

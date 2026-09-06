@@ -178,6 +178,7 @@ pub struct ExecutableIdentity {
 }
 
 impl ExecutableIdentity {
+    #[cfg(unix)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -188,6 +189,7 @@ impl ExecutableIdentity {
     }
 
     #[must_use]
+    #[cfg(unix)]
     pub fn version_sha256(&self) -> &str {
         &self.version_sha256
     }

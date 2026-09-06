@@ -48,9 +48,10 @@ pub use domain::{
 pub use manifest::ProviderIdentityHashes;
 #[cfg(test)]
 pub use manifest::{
-    DeclaredCapabilities, PROVIDER_MANIFEST_VERSION, ProviderManifest, ProviderRecord,
-    QualifiedIsolation, publish_v2,
+    DeclaredCapabilities, PROVIDER_MANIFEST_VERSION, ProviderManifest, QualifiedIsolation,
 };
+#[cfg(all(test, unix))]
+pub use manifest::{ProviderRecord, publish_v2};
 pub use qualification::{
     CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, ProbeStatus, ProviderEvidence,
     ProviderIdentity, QUALIFICATION_VERSION, QualificationReport, QualificationTarget,

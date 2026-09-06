@@ -136,12 +136,15 @@ async fn discovery_boundary_and_candidate_shape_must_agree() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn validated_settings_map_to_safe_boundary_shapes_without_copying_values() {
+    #[cfg(unix)]
+    let (fm_binary, hybrid_binary) = ("/usr/bin/fm", "/usr/bin/hybrid");
+    #[cfg(windows)]
+    let (fm_binary, hybrid_binary) = (r"C:\private\bin\fm.exe", r"C:\private\bin\hybrid.exe");
     let config = super::super::config::ProviderConfig::from_iter([
-        ("ABBEY_PROVIDER_FM_BINARY", "/usr/bin/fm"),
-        ("ABBEY_PROVIDER_HYBRID_BINARY", "/usr/bin/hybrid"),
+        ("ABBEY_PROVIDER_FM_BINARY", fm_binary),
+        ("ABBEY_PROVIDER_HYBRID_BINARY", hybrid_binary),
         ("ABBEY_PROVIDER_HYBRID_ENDPOINT", "https://provider.invalid"),
         ("ABBEY_PROVIDER_REMOTE_ENDPOINT", "https://provider.invalid"),
     ])
@@ -154,7 +157,7 @@ fn validated_settings_map_to_safe_boundary_shapes_without_copying_values() {
         IsolationCapabilities::default(),
     );
     assert_eq!(fm.discovery, DiscoveryBoundary::OsManaged);
-    assert_eq!(fm.candidate_paths, [PathBuf::from("/usr/bin/fm")]);
+    assert_eq!(fm.candidate_paths, [PathBuf::from(fm_binary)]);
 
     let hybrid = DiscoveryRequest::from_settings(
         config
