@@ -32,6 +32,9 @@ struct DiscordFixture {
     permissions: Arc<AtomicU64>,
     fail_permissions: Arc<AtomicBool>,
     fail_acknowledgement: Arc<AtomicBool>,
+    hold_acknowledgement: Arc<AtomicBool>,
+    acknowledgement_entered: Arc<tokio::sync::Semaphore>,
+    acknowledgement_release: Arc<tokio::sync::Semaphore>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -63,11 +66,17 @@ impl DiscordFixture {
         let permissions = Arc::new(AtomicU64::new(Permissions::VIEW_CHANNEL.bits()));
         let fail_permissions = Arc::new(AtomicBool::new(false));
         let fail_acknowledgement = Arc::new(AtomicBool::new(false));
+        let hold_acknowledgement = Arc::new(AtomicBool::new(false));
+        let acknowledgement_entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let acknowledgement_release = Arc::new(tokio::sync::Semaphore::new(0));
         let server = {
             let requests = Arc::clone(&requests);
             let permissions = Arc::clone(&permissions);
             let fail_permissions = Arc::clone(&fail_permissions);
             let fail_acknowledgement = Arc::clone(&fail_acknowledgement);
+            let hold_acknowledgement = Arc::clone(&hold_acknowledgement);
+            let acknowledgement_entered = Arc::clone(&acknowledgement_entered);
+            let acknowledgement_release = Arc::clone(&acknowledgement_release);
             tokio::spawn(async move {
                 'connections: loop {
                     let (mut stream, _) = listener.accept().await.unwrap();
@@ -136,6 +145,10 @@ impl DiscordFixture {
                         route,
                         body,
                     });
+                    if is_acknowledgement && hold_acknowledgement.load(Ordering::SeqCst) {
+                        acknowledgement_entered.add_permits(1);
+                        acknowledgement_release.acquire().await.unwrap().forget();
+                    }
                     let failed = (is_permission_lookup && fail_permissions.load(Ordering::SeqCst))
                         || (is_acknowledgement && fail_acknowledgement.load(Ordering::SeqCst));
                     let (status, response) = if failed {
@@ -237,6 +250,9 @@ impl DiscordFixture {
             permissions,
             fail_permissions,
             fail_acknowledgement,
+            hold_acknowledgement,
+            acknowledgement_entered,
+            acknowledgement_release,
             server,
         }
     }
@@ -411,10 +427,10 @@ impl Invocation {
     }
 }
 
-fn command_by_key<'a>(
-    commands: &'a [poise::Command<Data, Error>],
+fn command_by_key(
+    commands: &[poise::Command<Data, Error>],
     key: CommandKey,
-) -> &'a poise::Command<Data, Error> {
+) -> &poise::Command<Data, Error> {
     leaves(commands)
         .into_iter()
         .find(|command| binding(command).key == key)
@@ -842,6 +858,70 @@ async fn registered_voice_join_and_resume_stop_when_acknowledgement_fails() {
 }
 
 #[tokio::test]
+async fn registered_voice_join_and_resume_do_not_mutate_lifecycle_while_acknowledgement_waits() {
+    let fixture = DiscordFixture::new().await;
+    fixture.actor_presence(true);
+    fixture.hold_acknowledgement.store(true, Ordering::SeqCst);
+    let data = configured_data();
+    let runtime = data.voice.as_ref().unwrap();
+    let commands = crate::application_commands();
+
+    for key in [CommandKey::VoiceJoin, CommandKey::VoiceResume] {
+        let command = command_by_key(&commands, key);
+        let invocation = Invocation::voice(command, Some(true));
+        let args = invocation.interaction.data.options();
+        let options = poise::FrameworkOptions::default();
+        let context = invocation.context_with_args(
+            &fixture,
+            command,
+            &options,
+            &data,
+            poise::CommandInteractionType::Command,
+            &args,
+        );
+        let before = runtime.snapshot().await;
+        let action = command.slash_action.unwrap()(context);
+        tokio::pin!(action);
+        tokio::select! {
+            permit = fixture.acknowledgement_entered.acquire() => permit.unwrap().forget(),
+            _ = &mut action => panic!("{} completed before held acknowledgement", command.qualified_name),
+        }
+        let waiting = runtime.snapshot().await;
+        assert_eq!(waiting.epoch, before.epoch, "{}", command.qualified_name);
+        assert_eq!(waiting.phase, before.phase, "{}", command.qualified_name);
+        assert_eq!(
+            waiting.media_enabled, before.media_enabled,
+            "{}",
+            command.qualified_name
+        );
+        assert_eq!(
+            waiting.start_pending, before.start_pending,
+            "{}",
+            command.qualified_name
+        );
+        assert_eq!(
+            waiting.consent_epoch, before.consent_epoch,
+            "{}",
+            command.qualified_name
+        );
+        assert_eq!(
+            waiting.participant_count, before.participant_count,
+            "{}",
+            command.qualified_name
+        );
+        assert_eq!(
+            fixture.take_requests().len(),
+            1,
+            "{}",
+            command.qualified_name
+        );
+        fixture.acknowledgement_release.add_permits(1);
+        let _ = action.await;
+        fixture.take_requests();
+    }
+}
+
+#[tokio::test]
 async fn registered_authorized_voice_leave_closes_pending_media_before_teardown_awaits() {
     let fixture = DiscordFixture::new().await;
     fixture.actor_presence(true);
@@ -852,12 +932,46 @@ async fn registered_authorized_voice_leave_closes_pending_media_before_teardown_
     let commands = crate::application_commands();
     let command = command_by_key(&commands, CommandKey::VoiceLeave);
 
-    // The inert fixture deliberately has no Songbird manager. The real adapter
-    // must still perform its synchronous authorized close before that awaited
-    // transition reports the missing manager.
-    assert!(invoke_voice_slash_fails(&fixture, command, &data, None).await);
+    fixture.hold_acknowledgement.store(true, Ordering::SeqCst);
+    let transition = Arc::new(crate::commands_voice::VoiceLeaveTransitionProbe::new());
+    fixture
+        .context
+        .data
+        .write()
+        .await
+        .insert::<crate::commands_voice::VoiceLeaveTransitionProbeKey>(Arc::clone(&transition));
+    let invocation = Invocation::voice(command, None);
+    let args = invocation.interaction.data.options();
+    let options = poise::FrameworkOptions::default();
+    let context = invocation.context_with_args(
+        &fixture,
+        command,
+        &options,
+        &data,
+        poise::CommandInteractionType::Command,
+        &args,
+    );
+    let action = command.slash_action.unwrap()(context);
+    tokio::pin!(action);
+    let (acknowledgement, teardown) = tokio::select! {
+        entered = async {
+            tokio::join!(
+                fixture.acknowledgement_entered.acquire(),
+                transition.entered.acquire()
+            )
+        } => entered,
+        _ = &mut action => panic!("voice leave completed before held branches entered"),
+    };
+    acknowledgement.unwrap().forget();
+    teardown.unwrap().forget();
+
+    // Both awaited branches have started and remain independently blocked.
+    // The real adapter must already have performed the synchronous close.
     assert!(!runtime.snapshot().await.start_pending);
     let requests = fixture.take_requests();
     assert_deferred_first(&requests, command);
     assert_eq!(requests.len(), 1);
+    fixture.acknowledgement_release.add_permits(1);
+    transition.release.add_permits(1);
+    assert!(action.await.is_err());
 }

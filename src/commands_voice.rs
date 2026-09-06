@@ -39,6 +39,44 @@ use acknowledgement::{
 use discord::*;
 use receive::{ReceiveHandlerInstall, install_receive_handlers};
 
+#[cfg(test)]
+pub(crate) struct VoiceLeaveTransitionProbe {
+    pub(crate) entered: tokio::sync::Semaphore,
+    pub(crate) release: tokio::sync::Semaphore,
+}
+
+#[cfg(test)]
+impl VoiceLeaveTransitionProbe {
+    pub(crate) fn new() -> Self {
+        Self {
+            entered: tokio::sync::Semaphore::new(0),
+            release: tokio::sync::Semaphore::new(0),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct VoiceLeaveTransitionProbeKey;
+
+#[cfg(test)]
+impl serenity::prelude::TypeMapKey for VoiceLeaveTransitionProbeKey {
+    type Value = Arc<VoiceLeaveTransitionProbe>;
+}
+
+#[cfg(test)]
+async fn hold_voice_leave_transition_for_test(ctx: &serenity::all::Context) {
+    let probe = ctx
+        .data
+        .read()
+        .await
+        .get::<VoiceLeaveTransitionProbeKey>()
+        .cloned();
+    if let Some(probe) = probe {
+        probe.entered.add_permits(1);
+        probe.release.acquire().await.unwrap().forget();
+    }
+}
+
 pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
@@ -860,6 +898,8 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
     // acknowledgement while Songbird lookup, transition-lock acquisition and
     // physical teardown run, so neither side delays the other.
     let transition_work = async {
+        #[cfg(test)]
+        hold_voice_leave_transition_for_test(ctx.serenity_context()).await;
         let manager = match songbird::get(ctx.serenity_context()).await {
             Some(manager) => manager,
             None => {
