@@ -238,6 +238,9 @@ pub struct AppState {
     /// This carries no participant, consent, media, provider, or timestamp
     /// detail and is never held while another process-state lock is held.
     pub voice_inspect: Arc<crate::inspect::VoiceInspectRegistry>,
+    /// `ABBEY_EPISODE_GATE_CONFIG`: the constitutional episode gate client.
+    /// `None` (the default) means no ledger write is ever attempted.
+    pub episode_gate: Option<Arc<crate::episode_gate::EpisodeGate>>,
 }
 
 /// Default wait for a generation slot before answering "busy".
@@ -489,6 +492,9 @@ impl AppState {
         let tools_enabled = !std::env::var("ABBEY_BOT_LLM_TOOLS")
             .is_ok_and(|value| value.trim().eq_ignore_ascii_case("off"));
         let provider_setup = provider_setup::from_env(backend.as_ref(), tools_enabled)?;
+        let episode_gate = crate::episode_gate::EpisodeGateConfig::from_env()
+            .map_err(StartupError)?
+            .map(|config| Arc::new(crate::episode_gate::EpisodeGate::new(config)));
         Ok(Arc::new(Self {
             stores: Mutex::new(stores),
             guilds: Mutex::new(GuildRegistry::new()),
@@ -514,6 +520,7 @@ impl AppState {
             persistence_sink: Arc::new(FsPersistenceSink),
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
+            episode_gate,
         }))
     }
 
@@ -553,6 +560,7 @@ impl AppState {
             persistence_sink,
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
+            episode_gate: None,
         })
     }
 

@@ -18,6 +18,11 @@
 //!   secondary routing; off by default. Enabled routes also require the
 //!   exact-bound owner-only capability manifest described in `.env.example`.
 //! - `ABBEY_QUIET` (optional) — `1` forbids unsolicited replies everywhere.
+//! - `ABBEY_EPISODE_GATE_CONFIG` (optional) — absolute path to a JSON file
+//!   that turns on the constitutional episode gate client (`episode_gate.rs`):
+//!   `/admin learning on|off` is then mirrored into the WDBX ledger through
+//!   the `abi` binary as a content-free `proposal`. Unset means no ledger
+//!   write is ever attempted. See `.env.example`.
 //! - `ABBEY_DATA_DIR` (optional) — where learning, memory, and config persist.
 //!   Unset means in-memory only.
 //! - `ABBEY_MESSAGE_CONTENT` (optional) — `1` requests the privileged
@@ -57,6 +62,7 @@ mod commands_voice;
 mod contracts;
 mod embedding;
 mod engine;
+mod episode_gate;
 mod gateway;
 mod generation;
 mod grounding;

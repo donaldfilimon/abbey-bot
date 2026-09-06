@@ -628,3 +628,25 @@ status: in_progress
   accepts the fixed one, and the package passes on both 6.3.2 and 6.4. The exact-head item stays
   open until a three-platform run is green at a head that carries this fix; the local gate is the
   Mac layer of the evidence ladder, and this is the recorded instance of why it is not the last rung.
+||||||| parent of cf6a1f1 (feat: mirror /admin learning toggles into the WDBX episode gate via the abi binary)
+
+## Route guild operations through the WDBX episode gate
+status: in_progress
+- 2026-09-06 first slice (Donald chose "subprocess to the abi binary" over a gRPC
+  client or a contract amendment): `src/episode_gate.rs` mirrors `/admin learning
+  on|off` into the constitutional ledger as a content-free `proposal` event via
+  `abi wdbx episode propose --json`, default-off behind `ABBEY_EPISODE_GATE_CONFIG`.
+  Pure builders (guild ref, keyed principal ids, request/operation ids, the write)
+  are unit-tested; the runner is tested against fake `abi` shell scripts (append,
+  refusal, hang, missing binary, environment isolation); the JSON transcription is
+  pinned byte-for-byte to a fixture generated from `abi-wdbx::v3::episode`.
+  The fixture was accepted by a real `abi-wdbx-gateway --episode-policy` through the real
+  `abi` CLI, invoked exactly as the bot's child would be (`env -i`, allowlist only, no
+  `ABI_WDBX_PATH`): `decision=appended`, nothing under `~/.abi` touched, and the replay refused
+  with `AlreadyExists: episode_replay`. The bot's own runner is proven only against fake
+  scripts, and no gateway is deployed.
+  Honest scope: wired and tested;
+  only the proposal stage is emitted (approval needs a distinct human approver the
+  bot cannot supply); DQN/memory-bank writes are *not* routed through the gate,
+  because the gate's vocabulary is operation lifecycle, not memory vectors.
+

@@ -79,6 +79,21 @@ at runtime), `contracts/` (`#[cfg(test)]`-only guard over the
 pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
 `recall.rs`, `vad.rs`, `offline_voice.rs`.
 
+`episode_gate.rs` (added 2026-09-06) is the bot's first caller of the WDBX v3
+episode gate and is **default-off** (`ABBEY_EPISODE_GATE_CONFIG` unset means
+byte-identical behaviour). It records exactly one thing, a content-free
+`proposal` that a guild administrator asked for `/admin learning on|off`, by
+running the `abi` binary (`abi wdbx episode propose --json`) with a cleared
+environment, an owner-only temp write file, a timeout, and capped output; the
+local toggle never waits on it. Approval/execution/terminal events belong to
+the constitutional host, so nothing here claims the ledger authorized the
+toggle. Its write vocabulary is a transcription pinned by
+`tests/fixtures/episode_write_proposal.json`, generated from `abi-wdbx`'s
+types; regenerate that fixture from the canonical crate if the v3 contract
+changes, never by hand. Principal ids are keyed wyhash digests of scoped ids;
+the gateway policy must key the guild as `discord-<guild id>` because the store
+admits only `[a-z0-9_.-]`.
+
 **Transcribe, never depend.** `wdbx.rs`, `embedding.rs`, `wyhash.rs`, and
 `persona.rs` carry local transcriptions of ABI formats or algorithms (golden
 vectors pin `wyhash`; the `wyhash` crate returns different values) rather than

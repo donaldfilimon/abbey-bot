@@ -19,6 +19,7 @@ use crate::ask;
 use crate::brain::telemetry::BrainView;
 use crate::commands::{PersonaChoice, clamp_message};
 use crate::engine;
+use crate::episode_gate::LearningToggleRequest;
 use crate::guild::{self, GuildSettings};
 use crate::llm;
 use crate::memory;
@@ -892,7 +893,7 @@ pub async fn admin_learning(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let on = state.is_on();
-    let Some(_) = update_settings(ctx, |s| s.learning_enabled = on) else {
+    let Some((g, _)) = update_settings(ctx, |s| s.learning_enabled = on) else {
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
@@ -901,6 +902,20 @@ pub async fn admin_learning(
         state.label()
     ))
     .await?;
+    // Mirror the request into the constitutional ledger when the operator
+    // configured the gate. The toggle above already applied; this never
+    // blocks or fails the command, and it logs its own outcome.
+    if let Some(gate) = ctx.data().state.episode_gate.clone() {
+        let request = LearningToggleRequest {
+            scoped_guild: g,
+            scoped_user: scoped_user(ctx.author()),
+            now: runtime::now(),
+            nonce: gate.next_nonce(),
+        };
+        tokio::spawn(async move {
+            gate.record_learning_toggle(request).await;
+        });
+    }
     Ok(())
 }
 
