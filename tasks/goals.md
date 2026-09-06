@@ -732,7 +732,17 @@ status: in_progress
   because the gate's vocabulary is operation lifecycle, not memory vectors.
 
 ## Build the MLAI server from a plan file (`--server-plan`)
-status: in_progress
+status: done
+- 2026-09-06 04:36: **OVERWRITES STAGE APPLIED, blueprint fully applied; goal closed.** Dry runs of
+  all eight categories: six already `changes (0)`, BUILD LOG and PRODUCTS one change each (deny
+  @everyone View Channel on #ci-and-deploys and #ops-console). Applied on Donald's yes, one run
+  per category, each `verified: 1 change(s) applied`, each followed by an independent
+  `changes (0)` dry run. Every stage of `blueprints/mlai-community.toml` (additive 03:06, reveal
+  04:33, overwrites 04:36) now matches the live guild. Transcripts (0600) in
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-{dry-run,apply}-overwrites-*-2026-09-06.txt`.
+  Residual, by design and unchanged: the engine's review notes (existing-role permission diffs
+  incl. @everyone missing Send Polls, and role order) are hand decisions the engine never makes
+  (`diff::Change` has no permission edit); they are Donald's, not a gap in this goal.
 - 2026-09-06 04:33: **STAGE REVEAL APPLIED to the live MLAI guild** on Donald's "confirm all".
   Fresh dry run first (`changes (52)`, 0 blockers, no deletes: overwrite sets/clears, role
   hoist/colour edits, topic edits, one forum and one announcement edit), then `--apply`:
