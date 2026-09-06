@@ -667,8 +667,9 @@ status: in_progress
   role blocks every stage. Preflight: Manage Channels/Manage Roles unless Administrator,
   bot top role above any role it edits, COMMUNITY for forum/announcement/stage, and the bot
   may only grant/deny permissions it holds. `--apply` re-reads and re-diffs to verify.
-- Evidence: 61 `server::` unit tests (fake guild proves every stage idempotent and that
-  `SetOverwrite` never removes another entry), gate green, and a read-only dry run against
+- Evidence: 62 `server::` unit tests (fake guild proves every stage idempotent and that
+  `SetOverwrite` never removes another entry), full `./check.sh` green on `233b2df` (1001
+  passed, 2 ignored, no other cargo process in the tree), and a read-only dry run against
   the live MLAI guild as the bot (33 additive changes, no blockers after renaming the
   colliding interest role to "Personas"). Two live findings fixed here: the `@me` guild-member
   route is user-token only, and `NEVER_FOR_EVERYONE` listed a name serenity never emits.
@@ -677,4 +678,8 @@ status: in_progress
   Stage 0 export must happen first. Role permissions, role order, Community settings,
   onboarding, AutoMod, and every deletion remain human steps by design. Forum tags and
   slowmode are creation-time only (not diffed afterwards).
+- 2026-09-06 03:3x: `233b2df` fixed a reveal non-idempotence the advisor caught (a plan with no
+  topic kept emitting an empty edit for a channel that had one, so `--apply` could never
+  verify clean on the topic-less archetype plans). The three commits `dac71a7`, `f74bb7a`,
+  `233b2df` are local only, not pushed.
 
