@@ -25,12 +25,9 @@ impl From<MusicPlayer> for Player {
 }
 
 async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
-    let runtime = ctx
-        .data()
-        .voice
-        .as_ref()
-        .ok_or("Abbey voice is not configured.")?
-        .clone();
+    let guild = ctx.guild_id().ok_or("This command requires a server.")?;
+    let runtime = ctx.data().voice_for(guild.get())
+        .ok_or("No voice destination is selected in this server. Join a voice channel and use `/voice join` first; listening still requires each participant's agreement.")?;
     crate::music::command_channel_gate(
         runtime.config.guild_id,
         runtime.config.music_command_channel_id,
@@ -61,9 +58,19 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
     Ok(runtime)
 }
 
-async fn execute(runtime: &VoiceRuntime, script: Script) -> Result<(), Error> {
+async fn execute(
+    runtime: &VoiceRuntime,
+    script: Script,
+    lease: crate::host_music::HostMusicLease,
+) -> Result<(), Error> {
+    if !lease.for_guild(runtime.config.guild_id) {
+        return Err("Host music ownership changed.".into());
+    }
     runtime
-        .spawn_result(move |cancel| execute_owned(script, cancel, None))?
+        .spawn_result(move |cancel| async move {
+            let _lease = lease;
+            execute_owned(script, cancel, None).await
+        })?
         .await
         .map_err(|_| "Player control ownership failed.")?
 }
@@ -201,9 +208,14 @@ pub async fn voice_pause(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let result = async {
         let runtime = authorized(ctx).await?;
+        let lease = ctx
+            .data()
+            .state
+            .host_music
+            .control(runtime.config.guild_id)?;
         runtime.music.stop("paused", PlaybackTermination::Stopped);
         if let Some(player) = runtime.music.player() {
-            execute(&runtime, player_control::pause(player)).await?;
+            execute(&runtime, player_control::pause(player), lease).await?;
         }
         Ok("Music paused; listening consent is unchanged.".into())
     }
@@ -277,14 +289,28 @@ pub async fn voice_volume(
     reply(ctx, result).await
 }
 async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Error> {
-    ctx.send(
-        poise::CreateReply::default()
-            .ephemeral(true)
-            .content(clamp_message(result.unwrap_or_else(|e| e.to_string())))
-            .allowed_mentions(crate::gateway::no_mentions()),
-    )
-    .await?;
-    Ok(())
+    if result.is_err() {
+        crate::gateway::interaction_outcomes::record_failure(
+            &ctx.data().state,
+            crate::observability::EventCode::CommandFailure,
+            crate::observability::OperationalErrorCategory::Unavailable,
+        );
+    }
+    let delivered = ctx
+        .send(
+            poise::CreateReply::default()
+                .ephemeral(true)
+                .content(clamp_message(result.unwrap_or_else(|e| e.to_string())))
+                .allowed_mentions(crate::gateway::no_mentions()),
+        )
+        .await;
+    match delivered {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+            Err(error.into())
+        }
+    }
 }
 
 /// Caller holds `transition`. Replacing a Decode driver is mandatory before any
@@ -318,11 +344,13 @@ async fn output_call(
     if snapshot.phase == VoicePhase::Failed {
         return Err("Voice failed; use /voice leave before starting music again.".into());
     }
-    let _ = manager.remove(guild).await;
-    manager.set_config(super::no_audio_songbird_config());
+    if manager.get(guild).is_some() {
+        manager.remove(guild).await?;
+    }
     let call = manager.get_or_insert(guild);
     {
         let mut call = call.lock().await;
+        call.set_config(super::no_audio_songbird_config());
         call.deafen(true).await?;
         call.mute(true).await?;
     }
@@ -350,6 +378,11 @@ async fn start(
 ) -> Result<String, Error> {
     let script = player_control::play(player, query)?;
     let client = tap_client()?;
+    let lease = ctx
+        .data()
+        .state
+        .host_music
+        .try_start(runtime.config.guild_id)?;
     let generation = runtime.music.begin(player);
     let setup = async {
         client.health().await?; // health never starts capture or requests TCC permission
@@ -359,8 +392,12 @@ async fn start(
         }
         let call = output_call(ctx.serenity_context(), &runtime).await?;
         let owner = runtime.clone();
+        let child_lease = lease.clone();
         runtime
-            .spawn_result(move |cancel| execute_owned(script, cancel, Some((owner, generation))))?
+            .spawn_result(move |cancel| async move {
+                let _lease = child_lease;
+                execute_owned(script, cancel, Some((owner, generation))).await
+            })?
             .await
             .map_err(|_| "Player control ownership failed.")??;
         if !runtime.music.current(generation) {
@@ -385,8 +422,10 @@ async fn start(
         _ => None,
     };
     let owner = Arc::clone(&runtime);
+    let state = Arc::clone(&ctx.data().state);
     owner.spawn_owned(async move {
         let result = run_music(&context, &runtime, generation, client, call, stream).await;
+        drop(lease);
         if runtime.music.current(generation) {
             let message = result
                 .err()
@@ -395,7 +434,7 @@ async fn start(
                 .music
                 .finish(generation, &message, PlaybackTermination::Errored);
             if let Some(interaction) = interaction {
-                let _ = interaction
+                let delivered = interaction
                     .create_followup(
                         &context.http,
                         CreateInteractionResponseFollowup::new()
@@ -404,6 +443,9 @@ async fn start(
                             .allowed_mentions(crate::gateway::no_mentions()),
                     )
                     .await;
+                if delivered.is_err() {
+                    crate::gateway::interaction_outcomes::delivery_failed(&state);
+                }
             }
         }
     })?;

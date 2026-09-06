@@ -132,7 +132,25 @@ pub struct VoiceConfig {
     retained_openai: Option<OpenAiVoiceConfig>,
 }
 
-#[derive(Default)]
+/// Destination-free voice policy used to provision one isolated runtime per
+/// guild. It contains provider and wake behavior, but no channel authority.
+#[derive(Clone, Debug)]
+pub struct VoiceTemplate {
+    backend: VoiceBackendConfig,
+    wake_word_required: bool,
+    wake_words: Vec<String>,
+    retained_local: Option<OfflineVoiceConfig>,
+    retained_openai: Option<OpenAiVoiceConfig>,
+}
+
+/// Parsed process configuration. A destination is optional so globally
+/// registered voice commands can provision the caller's guild on first use.
+pub struct VoiceEnvironment {
+    pub template: VoiceTemplate,
+    pub default: Option<VoiceConfig>,
+}
+
+#[derive(Clone, Default)]
 struct VoiceEnv {
     guild: Option<String>,
     channel: Option<String>,
@@ -152,9 +170,39 @@ struct VoiceEnv {
     wake_words: Option<String>,
 }
 
-impl VoiceConfig {
+impl VoiceEnvironment {
     pub fn from_env() -> Result<Option<Self>, String> {
-        Self::from_values(VoiceEnv {
+        Self::from_values(VoiceEnv::from_env())
+    }
+
+    fn from_values(values: VoiceEnv) -> Result<Option<Self>, String> {
+        let guild = nonblank(values.guild.clone());
+        let channel = nonblank(values.channel.clone());
+        if guild.is_some() || channel.is_some() {
+            let default = VoiceConfig::from_values(values)?
+                .expect("a complete destination always produces voice configuration");
+            return Ok(Some(Self {
+                template: default.template(),
+                default: Some(default),
+            }));
+        }
+        if nonblank(values.music_command_channel.clone()).is_some() {
+            return Err("ABBEY_MUSIC_COMMAND_CHANNEL_ID requires ABBEY_VOICE_GUILD_ID and ABBEY_VOICE_CHANNEL_ID".into());
+        }
+        let Some(mode) = nonblank(values.mode.clone()) else {
+            return Ok(None);
+        };
+        let mode = VoiceMode::parse(Some(mode))?;
+        Ok(Some(Self {
+            template: VoiceTemplate::from_values(&values, mode)?,
+            default: None,
+        }))
+    }
+}
+
+impl VoiceEnv {
+    fn from_env() -> Self {
+        Self {
             guild: std::env::var("ABBEY_VOICE_GUILD_ID").ok(),
             channel: std::env::var("ABBEY_VOICE_CHANNEL_ID").ok(),
             music_command_channel: std::env::var("ABBEY_MUSIC_COMMAND_CHANNEL_ID").ok(),
@@ -171,9 +219,82 @@ impl VoiceConfig {
             local_language: std::env::var("ABBEY_VOICE_LOCAL_LANGUAGE").ok(),
             wake_word_required: std::env::var("ABBEY_VOICE_WAKE_WORD_REQUIRED").ok(),
             wake_words: std::env::var("ABBEY_VOICE_WAKE_WORDS").ok(),
+        }
+    }
+}
+
+impl VoiceTemplate {
+    fn from_values(values: &VoiceEnv, mode: VoiceMode) -> Result<Self, String> {
+        let backend = match mode {
+            VoiceMode::Disabled => VoiceBackendConfig::Disabled,
+            VoiceMode::Local => VoiceBackendConfig::Local(build_local(values)?),
+            VoiceMode::OpenAi => VoiceBackendConfig::OpenAi(build_openai(values)?),
+        };
+        let retained_local = match mode {
+            VoiceMode::Local => None,
+            _ => build_local(values).ok(),
+        };
+        let retained_openai = match mode {
+            VoiceMode::OpenAi => None,
+            _ => build_openai(values).ok(),
+        };
+        Ok(Self {
+            backend,
+            wake_word_required: parse_bool(
+                values.wake_word_required.clone(),
+                true,
+                "ABBEY_VOICE_WAKE_WORD_REQUIRED",
+            )?,
+            wake_words: parse_wake_words(values.wake_words.clone()),
+            retained_local,
+            retained_openai,
         })
     }
 
+    #[must_use]
+    pub const fn mode(&self) -> VoiceMode {
+        self.backend.mode()
+    }
+
+    #[must_use]
+    pub fn backend_for(&self, mode: VoiceMode) -> Option<VoiceBackendConfig> {
+        match mode {
+            VoiceMode::Disabled => Some(VoiceBackendConfig::Disabled),
+            VoiceMode::Local => match &self.backend {
+                VoiceBackendConfig::Local(config) => Some(config.clone()),
+                _ => self.retained_local.clone(),
+            }
+            .map(VoiceBackendConfig::Local),
+            VoiceMode::OpenAi => match &self.backend {
+                VoiceBackendConfig::OpenAi(config) => Some(config.clone()),
+                _ => self.retained_openai.clone(),
+            }
+            .map(VoiceBackendConfig::OpenAi),
+        }
+    }
+
+    pub fn for_destination(
+        &self,
+        guild_id: u64,
+        channel_id: u64,
+    ) -> Result<VoiceConfig, &'static str> {
+        if guild_id == 0 || channel_id == 0 {
+            return Err("Voice requires a nonzero server and channel.");
+        }
+        Ok(VoiceConfig {
+            guild_id,
+            channel_id,
+            music_command_channel_id: None,
+            backend: self.backend.clone(),
+            wake_word_required: self.wake_word_required,
+            wake_words: self.wake_words.clone(),
+            retained_local: self.retained_local.clone(),
+            retained_openai: self.retained_openai.clone(),
+        })
+    }
+}
+
+impl VoiceConfig {
     fn from_values(values: VoiceEnv) -> Result<Option<Self>, String> {
         let music_command_channel_id = nonblank(values.music_command_channel.clone())
             .map(|value| snowflake(Some(value), "ABBEY_MUSIC_COMMAND_CHANNEL_ID"))
@@ -259,6 +380,17 @@ impl VoiceConfig {
                 .collect(),
             retained_local: None,
             retained_openai: None,
+        }
+    }
+
+    #[must_use]
+    pub fn template(&self) -> VoiceTemplate {
+        VoiceTemplate {
+            backend: self.backend.clone(),
+            wake_word_required: self.wake_word_required,
+            wake_words: self.wake_words.clone(),
+            retained_local: self.retained_local.clone(),
+            retained_openai: self.retained_openai.clone(),
         }
     }
 

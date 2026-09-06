@@ -87,3 +87,117 @@ Earlier final workflow results recovered after interruption: 61 help tests passe
 - Final correction validation: full Rust suite 1,222 passed, zero failed, five ignored. All-target warnings-denied Clippy passed after two small catalog lint corrections; the affected catalog suite was rerun on those final corrections: 18 passed, zero failed. Independent strict re-review and the narrow final recheck approved with no findings. Formatting, whitespace and Pages Liquid checks passed.
 - An external process committed/pushed the main correction slice as `543e3b671424194b57a30e3f1ce888a2cbb22123` during validation. This task preserves that commit and records only its final catalog lint correction and ledger in a follow-up. No push or installation was performed by this task during structural correction work.
 - Stable source handoff transfers all remaining aggregate release gates, hosted CI, installation and live acceptance to **Initialize Abbey bot**. Full strict release-gate and installed-artifact results must be recorded there; these Rust checks alone are not deployment evidence.
+
+## Final release sequence — updated September 6, 10:51 EDT
+
+This sequence incorporates the operator's requirement for dynamic multi-guild,
+multi-user behavior. The supplied operator and home-guild identities remain
+transient verification inputs; neither becomes source policy or an authority
+bypass. Existing source checks below are historical until a new stable candidate
+passes the complete gate. The current detailed receipts remain in
+`.superpowers/completion-20260906/delivery.json`.
+
+### 1. Finish integration and freeze ownership
+
+- [x] Preserve and publish the original Windows LF fixture correction.
+- [x] Independently review and commit the subsequent Windows test-cfg repair.
+- [x] Independently review and commit always-global registration with an optional
+  immediate home-guild copy, preserving the Activity command's supported metadata.
+- [ ] Complete the bounded guild-keyed voice registry and destination-free backend
+  template. Select each guild's channel from its authorized initiating manager.
+- [ ] Preserve the existing home consent ledger; isolate additional guild ledgers
+  in private directories without changing the consent serialization format.
+- [ ] Finish all slash, button, help, gateway and shutdown registry integration.
+  Close admission before draining all sessions under the existing shared budget.
+- [ ] Protect first-join preflight with cancellable guild reservations, require
+  completed leave before rebinding a channel, and prevent stale retirement from
+  orphaning a newer session.
+- [ ] Configure individual Songbird calls, and hold exclusive host-music ownership
+  through actual child and capture cleanup. A competing request fails before
+  changing the shared native player.
+- [ ] Update command/configuration/recovery documentation and both task ledgers.
+
+The existing five workflows, exact provider capability selection, authorization
+checks, seven model tools, consent semantics and persistence formats remain the
+release contract. No arbitrary natural-language administration or web dashboard
+is introduced.
+
+### 2. Review and validate the completed source
+
+- [ ] Run focused tests for changed permissions, member/manager/owner authority,
+  stale/malformed/expired controls, missing inputs, provider failure, and completed
+  mutations whose response delivery fails.
+- [ ] Prove guild/user isolation, concurrent session creation, consent separation,
+  pending-join cancellation, channel rebinding, closed admission, bounded capacity,
+  per-call configuration and competing host-music rejection.
+- [ ] Independently review all final diffs; resolve findings and rerun affected
+  checks. Read rendered workflow/recovery text as well as testing invariants.
+- [ ] Commit only reviewed changes on canonical `main`, then freeze the clean SHA.
+- [ ] Run `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` with the dedicated external
+  `CARGO_TARGET_DIR`. Record exact SHA, tracked-source digest, WDBX fixture digest,
+  exit result, test results and release-binary hash; verify source stayed stable.
+
+Any code, fixture, dependency or documentation change after this gate requires a
+new final candidate and appropriate renewed release validation. Previous test
+counts do not certify later edits.
+
+### 3. Publish and require all hosted platforms
+
+- [ ] Push canonical `main`, including both Windows repairs and integrated changes.
+- [ ] Require Ubuntu, macOS and Windows Rust CI to succeed for exactly the final
+  remote SHA. Fix any failure, review the fix, and repeat candidate validation.
+- [ ] Verify local HEAD, `origin/main`, hosted head SHA and gate SHA agree.
+  A running job or an older green SHA is not sufficient.
+
+### 4. Transactionally install the verified candidate
+
+- [ ] Revalidate the clean source and dedicated release artifact immediately before
+  invoking `deploy/install-launchd.sh` with the dedicated build target.
+- [ ] Let the installer select Cargo's reported executable and perform its existing
+  stop/stage/start/readiness transaction. Retain rollback evidence on failure.
+- [ ] Verify installed SHA-256 equals the candidate artifact, process identity is
+  current, and managed readiness observes Discord, scheduler and persistence.
+- [ ] Export the exact command payload from the final source; compare it with both
+  actual global and optional home-guild registration. Verify Activity preservation
+  and application-owner discovery without retaining actual Discord identities.
+
+Do not run the audio-sidecar installer, permission prompts or production capture
+endpoint as part of source validation.
+
+### 5. Qualify providers against the installed binary
+
+- [ ] Run the guarded synthetic primary provider probe with the installed hash and
+  intended configuration; record each supported capability separately.
+- [ ] Run the token-free synthetic local voice round trip against the same installed
+  binary. Remove scratch audio after checking its bounded result.
+- [ ] Record unsupported or unconfigured routes explicitly. Current v1 reports do
+  not attest immutable model bytes or satisfy the broader v2 publication and
+  complete model/manifest transaction requirements in the live protocol.
+
+### 6. Exercise actual Discord workflows and voice
+
+- [ ] Resolve two explicitly designated sandbox guilds and an ordinary-member tester
+  alongside a manager. A home-guild identity alone does not establish either.
+- [ ] In both guilds, exercise Conversation, Memory, Images, Voice & Music, and
+  Administration as member and manager. Verify expected authorization, private
+  ownership, current-state guidance, stale controls, and cross-guild/user isolation.
+- [ ] Use synthetic data and restore each changed test setting after its check.
+- [ ] Obtain current agreement from every voice participant before activation.
+  Exercise independent guild session state and immediate authorized stop behavior.
+- [ ] Obtain human confirmation of audible output, interruption, pause/resume and
+  leave. Synthetic audio success or a ready service does not supply this evidence.
+
+Follow `docs/live-test-protocol.md`; use only neutral Guild A/Guild B and role
+labels in evidence. Missing human observations remain NOT OBSERVED. Do not invent
+accounts, consent, audible results or permissions to close the checklist.
+
+### 7. Reconcile delivery and close out
+
+- [ ] Reconcile the canonical delivery record, task ledgers and live acceptance
+  notes with observed source, CI, installation, registration and probe results.
+- [ ] Keep engineering review logs separate from privacy-limited live evidence;
+  protect evidence directories/files with 0700/0600 permissions.
+- [ ] Report exact delivered SHA and CI links, installed artifact match, provider
+  results, completed live checks and any remaining human acceptance requirements.
+- [ ] Claim complete release acceptance only when the required observations exist;
+  describe a deployed candidate with pending human checks accurately.

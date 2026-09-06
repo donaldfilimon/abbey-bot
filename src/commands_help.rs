@@ -185,27 +185,22 @@ pub fn runtime_input(
         };
         input.readiness.insert(capability, readiness);
     }
-    if let Some(voice) = data
-        .voice
+    let voice = guild.and_then(|guild| data.voice_for(guild));
+    let config = voice
         .as_ref()
-        .filter(|voice| guild == Some(voice.config.guild_id))
-    {
+        .map(|v| v.config.template())
+        .or_else(|| guild.and_then(|_| data.state.voice_registry.template()));
+    if let Some(config) = config {
         input
             .readiness
             .insert(Capability::VoiceConfigured, CapabilityReadiness::Ready);
         let local_text = data.state.providers.local_voice_route().is_some();
-        if voice
-            .config
-            .backend_for(crate::voice::VoiceMode::Local)
-            .is_some()
-            && local_text
-        {
+        if config.backend_for(crate::voice::VoiceMode::Local).is_some() && local_text {
             input
                 .readiness
                 .insert(Capability::VoiceLocal, CapabilityReadiness::Ready);
         }
-        if voice
-            .config
+        if config
             .backend_for(crate::voice::VoiceMode::OpenAi)
             .is_some()
         {
@@ -213,11 +208,12 @@ pub fn runtime_input(
                 .readiness
                 .insert(Capability::VoiceOpenAi, CapabilityReadiness::Ready);
         }
-        input.selected_voice_mode = match voice.effective_mode() {
-            crate::voice::VoiceMode::Disabled => SelectedVoiceMode::Off,
-            crate::voice::VoiceMode::Local => SelectedVoiceMode::Local,
-            crate::voice::VoiceMode::OpenAi => SelectedVoiceMode::OpenAi,
-        };
+        input.selected_voice_mode =
+            match voice.as_ref().map_or(config.mode(), |v| v.effective_mode()) {
+                crate::voice::VoiceMode::Disabled => SelectedVoiceMode::Off,
+                crate::voice::VoiceMode::Local => SelectedVoiceMode::Local,
+                crate::voice::VoiceMode::OpenAi => SelectedVoiceMode::OpenAi,
+            };
     }
     input
 }
@@ -267,10 +263,7 @@ fn presence(
     guild: Option<GuildId>,
     actor: UserId,
 ) -> Option<bool> {
-    let voice = data
-        .voice
-        .as_ref()
-        .filter(|voice| guild.is_some_and(|guild| guild.get() == voice.config.guild_id))?;
+    let voice = data.voice_for(guild?.get())?;
     let guild = ctx.cache.guild(guild?)?;
     Some(
         guild

@@ -160,6 +160,8 @@ pub struct AppState {
     /// This carries no participant, consent, media, provider, or timestamp
     /// detail and is never held while another process-state lock is held.
     pub voice_inspect: Arc<crate::inspect::VoiceInspectRegistry>,
+    pub voice_registry: Arc<crate::voice_registry::VoiceRegistry>,
+    pub host_music: crate::host_music::HostMusic,
     /// `ABBEY_EPISODE_GATE_CONFIG`: the constitutional episode gate client.
     /// `None` (the default) means no ledger write is ever attempted.
     pub episode_gate: Option<Arc<crate::episode_gate::EpisodeGate>>,
@@ -357,6 +359,8 @@ impl AppState {
             persistence_sink: Arc::new(FsPersistenceSink),
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
+            voice_registry: Arc::new(crate::voice_registry::VoiceRegistry::default()),
+            host_music: crate::host_music::HostMusic::default(),
             episode_gate,
             checkpoints: Mutex::new(checkpoints),
             memory_queue: Mutex::new(Vec::new()),
@@ -398,6 +402,8 @@ impl AppState {
             persistence_sink,
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
+            voice_registry: Arc::new(crate::voice_registry::VoiceRegistry::default()),
+            host_music: crate::host_music::HostMusic::default(),
             episode_gate: None,
             checkpoints: Mutex::new(BTreeMap::new()),
             memory_queue: Mutex::new(Vec::new()),

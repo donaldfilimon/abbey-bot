@@ -11,54 +11,105 @@ pub(super) async fn start_voice(
             .await?;
         return Ok(());
     }
-    let Some(runtime) = ctx.data().voice.as_ref().cloned() else {
-        ctx.say("Abbey voice is not configured. Set both destination IDs and ABBEY_VOICE_MODE, then restart Abbey.")
-            .await?;
-        return Ok(());
-    };
     let Some(guild_id) = ctx.guild_id() else {
         ctx.say("This command only works inside a server.").await?;
         return Ok(());
     };
-    if guild_id.get() != runtime.config.guild_id {
-        ctx.say("Abbey voice is locked to a different server by deployment configuration.")
+    let Some(channel_id) = ctx.guild().and_then(|guild| {
+        guild
+            .voice_states
+            .get(&ctx.author().id)
+            .and_then(|voice| voice.channel_id)
+    }) else {
+        ctx.say("Join a voice channel yourself before starting Abbey voice; remote activation is not allowed.")
+            .await?;
+        return Ok(());
+    };
+    let existing = ctx.data().voice_for(guild_id.get());
+    if existing
+        .as_ref()
+        .is_some_and(|runtime| runtime.config.channel_id != channel_id.get())
+    {
+        ctx.say("Abbey already has a voice session prepared in another channel in this server. Use /voice leave before choosing another channel.")
             .await?;
         return Ok(());
     }
-    let channel_id = ChannelId::new(runtime.config.channel_id);
-    let (caller_present, participants) = match cached_participants(*ctx, guild_id, channel_id) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            ctx.say(error).await?;
+    // Capture the bound runtime's cancellation generation before any REST
+    // work. A registry reservation also protects a first join with no runtime.
+    let previous_operation = existing
+        .as_ref()
+        .map(|runtime| runtime.start_operation_token());
+    let reservation = match ctx.data().reserve_voice_join(guild_id.get()) {
+        Ok(reservation) => reservation,
+        Err(message) => {
+            ctx.say(message).await?;
             return Ok(());
         }
     };
-    if !caller_present {
-        ctx.say(format!(
-            "Join <#{channel_id}> yourself before starting Abbey voice; remote activation is not allowed."
-        ))
-        .await?;
-        return Ok(());
-    }
-
-    // Make this issued start visible to later stop/withdrawal operations
-    // before Discord's first await, without yet superseding a legitimate
-    // pending preflight. Publication happens only after remote channel and
-    // permission validation, if this lifecycle generation is still current.
-    let start_operation = runtime.start_operation_token();
     let channel = channel_id.to_channel(ctx.http()).await?;
     let Some(channel) = channel.guild() else {
-        ctx.say("The configured voice destination is not a server channel.")
+        ctx.say("The voice destination is not a server channel.")
             .await?;
         return Ok(());
     };
     if channel.guild_id != guild_id || channel.kind != ChannelType::Voice {
-        ctx.say("The configured destination must be a voice channel in this server; Stage channels are not supported.")
+        ctx.say("The destination must be a voice channel in this server; Stage channels are not supported.")
             .await?;
         return Ok(());
     }
-    if !bot_has_required_voice_permissions(ctx.serenity_context(), &channel) {
-        ctx.say("Abbey needs View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities in the configured voice channel; voice stayed off.")
+    let permissions = crate::commands_help::current_permissions(
+        ctx.serenity_context(),
+        guild_id,
+        channel_id,
+        ctx.author().id,
+    )
+    .await?;
+    if !permissions.intersects(
+        serenity::all::Permissions::MANAGE_GUILD | serenity::all::Permissions::ADMINISTRATOR,
+    ) {
+        ctx.say("Starting Abbey voice requires current Manage Server permission.")
+            .await?;
+        return Ok(());
+    }
+    if let Err(message) =
+        verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
+    {
+        ctx.say(message).await?;
+        return Ok(());
+    }
+    if !cached_participants(*ctx, guild_id, channel_id).is_ok_and(|(present, _)| present) {
+        ctx.say(
+            "Your voice channel changed while Discord validated the request; voice stayed off.",
+        )
+        .await?;
+        return Ok(());
+    }
+    // Provision only after current caller, channel and bot authorization. The
+    // new runtime stays media-closed while members save their consent choices.
+    let runtime = match ctx
+        .data()
+        .voice_for_join(guild_id.get(), channel_id.get(), &reservation)
+        .await
+    {
+        Ok(runtime) => runtime,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
+    let Some(start_operation) = previous_operation.or_else(|| reservation.operation_token()) else {
+        ctx.say("This voice start was cancelled before its session was prepared; no audio was captured.").await?;
+        return Ok(());
+    };
+    let (caller_present, participants) = match cached_participants(*ctx, guild_id, channel_id) {
+        Ok(snapshot) => snapshot,
+        Err(message) => {
+            ctx.say(message).await?;
+            return Ok(());
+        }
+    };
+    if !caller_present {
+        ctx.say("Your voice channel changed while the session was prepared; voice stayed off.")
             .await?;
         return Ok(());
     }
@@ -238,8 +289,8 @@ pub(super) async fn start_voice(
     // started. Construct conversational calls in Decode mode from the outset,
     // while setting self-mute and self-deafen before the gateway join so no
     // participant audio is delivered before consent and the public notice.
-    manager.set_config(initial_songbird_config(effective_mode));
     let prepared_call = manager.get_or_insert(guild_id);
+    configure_disconnected_call(&prepared_call, effective_mode).await;
     if let Err(error) = set_muted_self_deafened(&prepared_call).await {
         let _ = manager.remove(guild_id).await;
         runtime

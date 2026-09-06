@@ -79,7 +79,7 @@ pub async fn on_gateway_event(
             new,
             event,
         } if event.user.id == ctx.cache.current_user().id => {
-            let configured_channel = data.voice.as_ref().and_then(|runtime| {
+            let configured_channel = data.voice_for(event.guild_id.get()).and_then(|runtime| {
                 ctx.cache.guild(event.guild_id).and_then(|guild| {
                     guild
                         .channels
@@ -158,7 +158,10 @@ async fn handle_voice_control_message(
     message: &serenity::all::Message,
     data: &crate::Data,
 ) -> bool {
-    let Some(runtime) = data.voice.as_ref() else {
+    let Some(runtime) = message
+        .guild_id
+        .and_then(|guild| data.voice_for(guild.get()))
+    else {
         return false;
     };
     let bot_id = ctx.cache.current_user().id;
@@ -177,7 +180,7 @@ async fn handle_voice_control_message(
     let translated_text = crate::gateway::strip_bot_mention(&message.content, bot_id.get());
     let withdrawing = withdrawal_requested(&translated_text);
     let stop_call =
-        withdrawing && super::consent::caller_may_stop(ctx, runtime, message.author.id.get());
+        withdrawing && super::consent::caller_may_stop(ctx, &runtime, message.author.id.get());
     let save = withdrawing.then(|| {
         runtime.change_consent(
             message.author.id.get(),
@@ -193,7 +196,7 @@ async fn handle_voice_control_message(
     };
     if let Some(change) = save {
         if let Some(epoch) = change.epoch_to_stop {
-            let _ = stop_voice_for_withdrawal(ctx, runtime, epoch).await;
+            let _ = stop_voice_for_withdrawal(ctx, &runtime, epoch).await;
         }
         snapshot = runtime.snapshot().await;
         if let Some(updated) = authoritative_text_reply(&translated_text, &snapshot) {

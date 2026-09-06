@@ -36,18 +36,12 @@ fn can_access_voice_verification(
 }
 
 async fn voice_verification_runtime(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, &'static str> {
-    let runtime = ctx
-        .data()
-        .voice
-        .as_ref()
-        .cloned()
-        .ok_or("Abbey voice is not configured.")?;
     let guild_id = ctx
         .guild_id()
         .ok_or("This command only works inside a server.")?;
-    if guild_id.get() != runtime.config.guild_id {
-        return Err("Abbey voice is locked to a different server by deployment configuration.");
-    }
+    let runtime = ctx.data().voice_for(guild_id.get()).ok_or(
+        "No voice session is prepared in this server. A manager can use /voice join first.",
+    )?;
     let is_owner = ctx.framework().options().owners.contains(&ctx.author().id);
     let interaction_permissions = ctx
         .author_member()

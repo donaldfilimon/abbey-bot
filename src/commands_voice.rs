@@ -79,6 +79,12 @@ async fn hold_voice_leave_transition_for_test(ctx: &serenity::all::Context) {
     }
 }
 
+/// Select the exact disconnected guild call's decoder before joining. Changing
+/// Songbird's shared defaults here would race another guild's call creation.
+async fn configure_disconnected_call(call: &Arc<Mutex<songbird::Call>>, mode: VoiceMode) {
+    call.lock().await.set_config(initial_songbird_config(mode));
+}
+
 pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
@@ -171,19 +177,32 @@ pub async fn voice_resume(
 /// Stop processing synchronously and leave Discord voice.
 #[poise::command(slash_command, guild_only, ephemeral, rename = "leave")]
 pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
-    let Some(runtime) = ctx.data().voice.as_ref().cloned() else {
-        ctx.say("Abbey voice is not configured.").await?;
-        return Ok(());
-    };
     let Some(guild_id) = ctx.guild_id() else {
         ctx.say("This command only works inside a server.").await?;
         return Ok(());
     };
-    if guild_id.get() != runtime.config.guild_id {
-        ctx.say("Abbey voice is locked to a different server by deployment configuration.")
+    let Some(runtime) = ctx.data().voice_for(guild_id.get()) else {
+        let permissions = match ctx {
+            poise::Context::Application(application) => application
+                .interaction
+                .member
+                .as_deref()
+                .and_then(|member| member.permissions),
+            poise::Context::Prefix(_) => None,
+        };
+        if !can_stop_voice(false, permissions) {
+            ctx.say(
+                "Only a server manager can cancel a voice start before its channel is prepared.",
+            )
             .await?;
+            return Ok(());
+        }
+        // A first join may still be validating Discord before any runtime is
+        // published. Revoke its registry generation before this first await.
+        ctx.data().cancel_voice_join(guild_id.get());
+        ctx.say("Any pending voice start in this server was cancelled; no prepared voice session remains.").await?;
         return Ok(());
-    }
+    };
     let channel_id = ChannelId::new(runtime.config.channel_id);
     let caller = ctx.author().id;
     let present = ctx.guild().is_some_and(|guild| {
@@ -211,6 +230,7 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
     let Some(closed_media) = authorize_and_close_media(
         || can_stop_voice(present, interaction_permissions),
         || {
+            ctx.data().cancel_voice_join(guild_id.get());
             runtime.music.stop(
                 "voice leave",
                 crate::voice_session::PlaybackTermination::Stopped,
@@ -261,16 +281,19 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
             .disconnect("configured; disconnected by /voice leave")
             .await;
         let removed = manager.remove(guild_id).await;
-        drop(transition);
-        match removed {
+        let result = match removed {
             Ok(()) | Err(songbird::error::JoinError::NoCall) => {
                 if let Some(run) = verification_run {
                     let _ = runtime.note_verification_final_leave(run);
                 }
+                ctx.data()
+                    .retire_voice_after_leave(guild_id.get(), &runtime);
                 Ok(())
             }
             Err(error) => Err(error.into()),
-        }
+        };
+        drop(transition);
+        result
     };
     let (deferred, transition_result) =
         acknowledge_with_transition(closed_media, ctx.defer_ephemeral(), transition_work).await;
@@ -285,19 +308,14 @@ pub async fn voice_leave(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, guild_only, ephemeral, rename = "status")]
 pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(runtime) = ctx.data().voice.as_ref() else {
-        ctx.say("Abbey voice is off because no complete destination was configured at startup.")
+    let Some(runtime) = ctx
+        .guild_id()
+        .and_then(|guild| ctx.data().voice_for(guild.get()))
+    else {
+        ctx.say("No voice session is prepared in this server. A manager in a voice channel can use /voice join first.")
             .await?;
         return Ok(());
     };
-    if ctx
-        .guild_id()
-        .is_none_or(|guild| guild.get() != runtime.config.guild_id)
-    {
-        ctx.say("Abbey voice is locked to a different server by deployment configuration.")
-            .await?;
-        return Ok(());
-    }
     let effective_mode = runtime.effective_mode();
     let snapshot = runtime.snapshot().await;
     let channel_id = ChannelId::new(runtime.config.channel_id);
@@ -342,19 +360,14 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn voice_diagnostics(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(runtime) = ctx.data().voice.as_ref() else {
-        ctx.say("Abbey voice is off because no complete destination was configured at startup.")
+    let Some(runtime) = ctx
+        .guild_id()
+        .and_then(|guild| ctx.data().voice_for(guild.get()))
+    else {
+        ctx.say("No voice session is prepared in this server. A manager in a voice channel can use /voice join first.")
             .await?;
         return Ok(());
     };
-    if ctx
-        .guild_id()
-        .is_none_or(|guild| guild.get() != runtime.config.guild_id)
-    {
-        ctx.say("Abbey voice is locked to a different server by deployment configuration.")
-            .await?;
-        return Ok(());
-    }
     let snapshot = runtime.snapshot().await;
     let effective_mode = runtime.effective_mode();
     let effective_backend = runtime.effective_backend();
@@ -413,7 +426,7 @@ pub async fn voice_diagnostics(ctx: Context<'_>) -> Result<(), Error> {
         media_gate_open: snapshot.media_enabled,
         pending_start: snapshot.start_pending,
         selected_mode: effective_mode.label().into(),
-        configured_modes: selectable_modes_raw(runtime),
+        configured_modes: selectable_modes_raw(&runtime),
         consent_epoch: snapshot.consent_epoch,
         session_epoch: snapshot.epoch,
         participant_count: snapshot.participant_count,
@@ -452,20 +465,14 @@ pub async fn voice_mode(
     >,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(runtime) = ctx.data().voice.as_ref().cloned() else {
-        ctx.say("Abbey voice is not configured. Set both destination IDs and ABBEY_VOICE_MODE, then restart Abbey.")
+    let Some(runtime) = ctx
+        .guild_id()
+        .and_then(|guild| ctx.data().voice_for(guild.get()))
+    else {
+        ctx.say("No voice session is prepared in this server. A manager in a voice channel can use /voice join first.")
             .await?;
         return Ok(());
     };
-    let Some(guild_id) = ctx.guild_id() else {
-        ctx.say("This command only works inside a server.").await?;
-        return Ok(());
-    };
-    if guild_id.get() != runtime.config.guild_id {
-        ctx.say("Abbey voice is locked to a different server by deployment configuration.")
-            .await?;
-        return Ok(());
-    }
 
     let current = runtime.effective_mode();
     let Some(requested) = mode else {

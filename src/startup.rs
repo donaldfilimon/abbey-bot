@@ -196,9 +196,10 @@ pub(super) async fn run(
         missing_count = missing.len(),
         "operator env key presence (values withheld); present={present:?}; missing={missing:?}"
     );
-    let voice_is_local = voice_runtime
-        .as_ref()
-        .is_some_and(|runtime| runtime.config.mode() == voice::VoiceMode::Local);
+    let voice_is_local = state
+        .voice_registry
+        .template()
+        .is_some_and(|template| template.mode() == voice::VoiceMode::Local);
     let has_loopback_llm = state.providers.local_voice_route().is_some();
     if let Some(warning) = env_presence.local_voice_llm_gap(voice_is_local, has_loopback_llm) {
         tracing::warn!("{warning}");
@@ -223,11 +224,9 @@ pub(super) async fn run(
     }
     let mut writer = state.attach_service(supervisor.operations());
     let mut provider_writer = state.providers.attach_block_writer();
-    if let Some(voice) = &voice_runtime {
-        voice.attach_service(supervisor.operations());
-        if let Some(events) = state.operational_events() {
-            voice.attach_telemetry(events.clone());
-        }
+    state.voice_registry.attach_service(supervisor.operations());
+    if let Some(events) = state.operational_events() {
+        state.voice_registry.attach_telemetry(events.clone());
     }
 
     let intents = if std::env::var("ABBEY_MESSAGE_CONTENT")
@@ -465,9 +464,7 @@ pub(super) async fn run(
     debug_assert_eq!(supervisor.phase(), service::ServicePhase::Draining);
     let mut stages = [service::shutdown::StageOutcome::Completed; 4];
     terminal.budget = Some(started.budget);
-    if let Some(voice) = &voice_runtime {
-        voice.begin_draining();
-    }
+    let voice_runtimes = state.voice_registry.begin_draining();
     if let Some(status) = &managed_status {
         status.draining();
         let _ = status.refresh();
@@ -480,22 +477,33 @@ pub(super) async fn run(
             None,
         );
     }
-    if let Some(voice) = voice_runtime {
-        let guild_id = voice.config.guild_id;
+    if !voice_runtimes.is_empty() {
         let mut cleanup: std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<(), ()>> + Send>,
         > = Box::pin(async move {
-            service::shutdown::close_voice(
-                voice.disconnect("process shutdown stopped voice"),
-                async {
-                    let manager = songbird_manager.ok_or(())?;
-                    manager
-                        .remove(std::num::NonZeroU64::new(guild_id).ok_or(())?)
-                        .await
-                        .map_err(|_| ())
-                },
-            )
-            .await
+            let cleanups = voice_runtimes.into_iter().map(|voice| {
+                let manager = songbird_manager.clone();
+                async move {
+                    let guild_id = voice.config.guild_id;
+                    service::shutdown::close_voice(
+                        voice.disconnect("process shutdown stopped voice"),
+                        async {
+                            manager
+                                .ok_or(())?
+                                .remove(std::num::NonZeroU64::new(guild_id).ok_or(())?)
+                                .await
+                                .map_err(|_| ())
+                        },
+                    )
+                    .await
+                }
+            });
+            let results = futures_util::future::join_all(cleanups).await;
+            if results.iter().all(Result::is_ok) {
+                Ok(())
+            } else {
+                Err(())
+            }
         });
         match tokio::time::timeout_at(
             started.budget.stage(tokio::time::Instant::now()).deadline,

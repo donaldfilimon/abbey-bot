@@ -47,11 +47,11 @@ fn personal_status(runtime: &VoiceRuntime, user: u64, mode: VoiceMode) -> String
 #[poise::command(slash_command, guild_only, ephemeral, rename = "consent")]
 pub async fn voice_consent(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(runtime) = ctx.data().voice.as_ref().filter(|runtime| {
-        ctx.guild_id()
-            .is_some_and(|guild| guild.get() == runtime.config.guild_id)
-    }) else {
-        ctx.say("Voice choices are available only in Abbey's configured voice server.")
+    let Some(runtime) = ctx
+        .guild_id()
+        .and_then(|guild| ctx.data().voice_for(guild.get()))
+    else {
+        ctx.say("Ask a server manager in a voice channel to use `/voice join consent:true` first; audio stays off until every participant has saved their agreement.")
             .await?;
         return Ok(());
     };
@@ -61,7 +61,7 @@ pub async fn voice_consent(ctx: Context<'_>) -> Result<(), Error> {
             .content(clamp_message(format!(
                 "{}\n\n{}",
                 voice_consent::notice(mode, runtime.config.channel_id),
-                personal_status(runtime, ctx.author().id.get(), mode)
+                personal_status(&runtime, ctx.author().id.get(), mode)
             )))
             .components(buttons(mode)),
     )
@@ -80,10 +80,10 @@ pub async fn voice_consent(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn voice_notice(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let Some(runtime) = ctx.data().voice.as_ref().filter(|runtime| {
-        ctx.guild_id()
-            .is_some_and(|guild| guild.get() == runtime.config.guild_id)
-    }) else {
+    let Some(runtime) = ctx
+        .guild_id()
+        .and_then(|guild| ctx.data().voice_for(guild.get()))
+    else {
         ctx.say("Abbey voice is not configured in this server.")
             .await?;
         return Ok(());
@@ -139,11 +139,10 @@ pub(super) async fn component(
     if !interaction.data.custom_id.starts_with("abbey:voice:") {
         return false;
     }
-    let Some(runtime) = data.voice.as_ref().filter(|runtime| {
-        interaction
-            .guild_id
-            .is_some_and(|guild| guild.get() == runtime.config.guild_id)
-    }) else {
+    let Some(runtime) = interaction
+        .guild_id
+        .and_then(|guild| data.voice_for(guild.get()))
+    else {
         return false;
     };
     if interaction.message.author.id != ctx.cache.current_user().id || interaction.user.bot {
@@ -155,7 +154,7 @@ pub(super) async fn component(
         Choice::Withdraw | Choice::WithdrawSpoken => true,
     });
     let user = interaction.user.id.get();
-    let stop_call = allowed == Some(Choice::Withdraw) && caller_may_stop(ctx, runtime, user);
+    let stop_call = allowed == Some(Choice::Withdraw) && caller_may_stop(ctx, &runtime, user);
     // Negative authorization and the software gate happen before the first
     // await. The durable write is cancellation-independent and never delays
     // Discord's defer or the physical call teardown.
@@ -178,7 +177,7 @@ pub(super) async fn component(
         ),
         async {
             if let Some(epoch) = epoch_to_stop {
-                super::supervision::stop_voice_for_withdrawal(ctx, runtime, epoch).await;
+                super::supervision::stop_voice_for_withdrawal(ctx, &runtime, epoch).await;
             }
             match save {
                 Some(change) => match change.saved.await {

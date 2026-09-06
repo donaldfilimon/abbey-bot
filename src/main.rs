@@ -74,6 +74,7 @@ mod generation;
 mod grounding;
 mod guild;
 mod help_center;
+mod host_music;
 mod http_body;
 mod image_attachment;
 mod inspect;
@@ -115,6 +116,7 @@ mod voice_consent;
 mod voice_consent_store;
 mod voice_local;
 mod voice_openai;
+mod voice_registry;
 mod voice_self_test;
 mod voice_session;
 mod voice_views;
@@ -129,6 +131,64 @@ use serenity::all::{GatewayIntents, GuildId};
 pub struct Data {
     pub state: std::sync::Arc<runtime::AppState>,
     pub voice: Option<std::sync::Arc<voice_session::VoiceRuntime>>,
+}
+
+impl Data {
+    /// Registry lookup never falls back to another guild's default session.
+    pub(crate) fn voice_for(
+        &self,
+        guild: u64,
+    ) -> Option<std::sync::Arc<voice_session::VoiceRuntime>> {
+        if self.state.voice_registry.is_configured() {
+            self.state.voice_registry.get(guild)
+        } else {
+            self.voice
+                .as_ref()
+                .filter(|v| v.config.guild_id == guild)
+                .cloned()
+        }
+    }
+
+    pub(crate) fn reserve_voice_join(
+        &self,
+        guild: u64,
+    ) -> Result<voice_registry::JoinReservation, &'static str> {
+        if !self.state.voice_registry.is_configured() {
+            let runtime = self.voice.as_ref().filter(|v| v.config.guild_id == guild)
+                .ok_or("Voice is not configured. A service operator can configure a speech backend, then restart Abbey.")?;
+            self.state.voice_registry.configure(
+                runtime.config.template(),
+                Some(runtime.clone()),
+                self.state.data_dir.clone(),
+                self.state.voice_inspect.clone(),
+            )?;
+        }
+        self.state.voice_registry.reserve_join(guild)
+    }
+
+    pub(crate) fn cancel_voice_join(&self, guild: u64) {
+        self.state.voice_registry.cancel_join(guild);
+    }
+
+    pub(crate) async fn voice_for_join(
+        &self,
+        guild: u64,
+        channel: u64,
+        reservation: &voice_registry::JoinReservation,
+    ) -> Result<std::sync::Arc<voice_session::VoiceRuntime>, &'static str> {
+        self.state
+            .voice_registry
+            .get_or_create(guild, channel, reservation)
+            .await
+    }
+
+    pub(crate) fn retire_voice_after_leave(
+        &self,
+        guild: u64,
+        runtime: &std::sync::Arc<voice_session::VoiceRuntime>,
+    ) -> bool {
+        self.state.voice_registry.retire(guild, runtime)
+    }
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -282,20 +342,32 @@ fn startup_stop(
 
 fn initialize_state() -> Result<Data, Error> {
     let state = runtime::AppState::from_env()?;
-    let voice = voice::VoiceConfig::from_env()
-        .map_err(runtime::StartupError)?
+    let environment = voice::VoiceEnvironment::from_env().map_err(runtime::StartupError)?;
+    let voice = environment
+        .as_ref()
+        .and_then(|env| env.default.clone())
         .map(|config| {
             let consent = std::sync::Arc::new(voice_consent_store::ConsentStore::load(
                 state.data_dir.as_deref(),
                 config.guild_id,
             ));
-            voice_session::VoiceRuntime::new_with_inspect(
+            std::sync::Arc::new(voice_session::VoiceRuntime::new_with_inspect(
                 config,
                 state.voice_inspect.clone(),
                 consent,
+            ))
+        });
+    if let Some(environment) = environment {
+        state
+            .voice_registry
+            .configure(
+                environment.template,
+                voice.clone(),
+                state.data_dir.clone(),
+                state.voice_inspect.clone(),
             )
-        })
-        .map(std::sync::Arc::new);
+            .map_err(|error| runtime::StartupError(error.into()))?;
+    }
     Ok(Data { state, voice })
 }
 

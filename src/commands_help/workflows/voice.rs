@@ -7,12 +7,8 @@ pub(super) async fn render(
     interaction: &ComponentInteraction,
     data: &Data,
 ) -> String {
-    let Some(runtime) = data.voice.as_ref().filter(|v| {
-        interaction
-            .guild_id
-            .is_some_and(|g| g.get() == v.config.guild_id)
-    }) else {
-        return "**Voice & Music**\nNo voice destination is configured for this server. A manager can review `/voice status` and configure the service. Music needs that configured voice output and a working host player/audio sidecar. Opening this view starts neither music nor listening.".into();
+    let Some(runtime) = interaction.guild_id.and_then(|g| data.voice_for(g.get())) else {
+        return "**Voice & Music**\nNo voice session is bound in this server. A manager can join a voice channel and use `/voice join` to select it, then each participant can review `/voice consent` before listening starts. `/voice status` shows configuration guidance. Music also needs a working host player/audio sidecar. Opening this view starts neither music nor listening.".into();
     };
     let permissions = match super::super::current_permissions(ctx, GuildId::new(runtime.config.guild_id), ChannelId::new(runtime.config.channel_id), interaction.user.id).await {
         Ok(p) => p,

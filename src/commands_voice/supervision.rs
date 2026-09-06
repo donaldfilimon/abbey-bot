@@ -7,9 +7,8 @@ use serenity::all::{ChannelId, ChannelType, GuildId, VoiceState};
 
 use super::discord::{
     bot_has_required_voice_permissions, cached_bot_voice_state_from_serenity,
-    cached_participants_from_serenity, no_audio_songbird_config, pause_call_for_consent,
-    remove_call_for_consent, set_muted_self_deafened, wait_for_bot_voice_state,
-    wait_for_voice_session_gone,
+    cached_participants_from_serenity, pause_call_for_consent, remove_call_for_consent,
+    set_muted_self_deafened, wait_for_bot_voice_state, wait_for_voice_session_gone,
 };
 use crate::voice_session::{DiscordSessionEvent, VoicePhase, VoiceRuntime};
 
@@ -89,8 +88,8 @@ pub async fn autojoin_self_deafened(
     if let Some(old_session_id) = old_voice_session.as_deref() {
         wait_for_voice_session_gone(ctx, guild_id, old_session_id).await?;
     }
-    manager.set_config(no_audio_songbird_config());
     let prepared_call = manager.get_or_insert(guild_id);
+    super::configure_disconnected_call(&prepared_call, crate::voice::VoiceMode::Disabled).await;
     if let Err(error) = set_muted_self_deafened(&prepared_call).await {
         let _ = manager.remove(guild_id).await;
         return Err(format!(
@@ -192,15 +191,12 @@ pub(super) async fn on_voice_state_update(
     new: &VoiceState,
     data: &crate::Data,
 ) {
-    let Some(runtime) = data.voice.as_ref().cloned() else {
-        return;
-    };
     let Some(guild_id) = new.guild_id else {
         return;
     };
-    if guild_id.get() != runtime.config.guild_id {
+    let Some(runtime) = data.voice_for(guild_id.get()) else {
         return;
-    }
+    };
     let channel_id = ChannelId::new(runtime.config.channel_id);
     let bot_id = ctx.cache.current_user().id;
 
@@ -369,7 +365,7 @@ pub(super) async fn on_voice_permissions_changed(
     payload_revoked: bool,
     data: &crate::Data,
 ) {
-    let Some(runtime) = data.voice.as_ref().cloned() else {
+    let Some(runtime) = data.voice_for(affected_guild_id.get()) else {
         return;
     };
     let guild_id = GuildId::new(runtime.config.guild_id);

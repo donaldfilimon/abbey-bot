@@ -75,6 +75,34 @@ fn voice_is_off_without_a_destination() {
 }
 
 #[test]
+fn explicit_mode_without_a_destination_builds_only_a_dynamic_template() {
+    let environment = VoiceEnvironment::from_values(VoiceEnv {
+        mode: Some("disabled".into()),
+        ..VoiceEnv::default()
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(environment.template.mode(), VoiceMode::Disabled);
+    assert!(environment.default.is_none());
+}
+
+#[test]
+fn configured_destination_and_dynamic_template_share_one_backend_policy() {
+    let environment = VoiceEnvironment::from_values(music_destination())
+        .unwrap()
+        .unwrap();
+    let default = environment.default.unwrap();
+    assert_eq!(environment.template.mode(), default.mode());
+    assert_eq!(default.guild_id, 123);
+    assert_eq!(default.channel_id, 456);
+    let dynamic = environment.template.for_destination(789, 987).unwrap();
+    assert_eq!(dynamic.mode(), default.mode());
+    assert_eq!(dynamic.guild_id, 789);
+    assert_eq!(dynamic.channel_id, 987);
+    assert_eq!(dynamic.music_command_channel_id, None);
+}
+
+#[test]
 fn partial_destination_fails_closed() {
     let values = VoiceEnv {
         guild: Some("123".into()),

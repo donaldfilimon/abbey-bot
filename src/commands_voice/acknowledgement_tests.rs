@@ -109,3 +109,37 @@ fn unauthorized_voice_leave_never_closes_media() {
     assert!(closed.is_none());
     assert_eq!(*events.lock().unwrap(), ["authorize"]);
 }
+
+#[tokio::test]
+async fn initial_call_configuration_is_isolated_between_guilds() {
+    use super::{VoiceMode, configure_disconnected_call, no_audio_songbird_config};
+    use serenity::all::{GuildId, UserId};
+    use songbird::driver::DecodeMode;
+
+    let first = Arc::new(tokio::sync::Mutex::new(
+        songbird::Call::standalone_from_config(
+            GuildId::new(1),
+            UserId::new(3),
+            no_audio_songbird_config(),
+        ),
+    ));
+    let second = Arc::new(tokio::sync::Mutex::new(
+        songbird::Call::standalone_from_config(
+            GuildId::new(2),
+            UserId::new(3),
+            no_audio_songbird_config(),
+        ),
+    ));
+    configure_disconnected_call(&first, VoiceMode::Local).await;
+    assert!(matches!(
+        first.lock().await.config().decode_mode,
+        DecodeMode::Decode(_)
+    ));
+    assert_eq!(second.lock().await.config().decode_mode, DecodeMode::Pass);
+    configure_disconnected_call(&second, VoiceMode::Disabled).await;
+    assert!(matches!(
+        first.lock().await.config().decode_mode,
+        DecodeMode::Decode(_)
+    ));
+    assert_eq!(second.lock().await.config().decode_mode, DecodeMode::Pass);
+}
