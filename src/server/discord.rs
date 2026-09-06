@@ -97,6 +97,23 @@ fn describe_error(what: &str, error: &serenity::Error) -> String {
     format!("{what}: {error}")
 }
 
+fn edit_channel_builder<'a>(
+    parent: Option<u64>,
+    topic: &TopicEdit,
+    reason: &'a str,
+) -> Result<EditChannel<'a>, String> {
+    let mut edit = EditChannel::new().audit_log_reason(reason);
+    if let Some(parent) = parent {
+        edit = edit.category(ChannelId::new(nonzero(parent, "category")?));
+    }
+    match topic {
+        TopicEdit::Unchanged => {}
+        TopicEdit::Clear => edit = edit.topic(String::new()),
+        TopicEdit::Set(topic) => edit = edit.topic(topic.clone()),
+    }
+    Ok(edit)
+}
+
 /// Read everything `diff` needs, with REST only: the bot's own identity and
 /// membership, the guild's roles and features, and every channel.
 pub async fn snapshot(http: &Http, guild_id: GuildId) -> Result<GuildSnapshot, String> {
@@ -259,15 +276,7 @@ impl GuildWriter for DiscordWriter<'_> {
                 Ok(Some(channel.id.get()))
             }
             Op::EditChannel { id, parent, topic } => {
-                let mut edit = EditChannel::new().audit_log_reason(&self.reason);
-                if let Some(parent) = parent {
-                    edit = edit.category(ChannelId::new(nonzero(*parent, "category")?));
-                }
-                match topic {
-                    TopicEdit::Unchanged => {}
-                    TopicEdit::Clear => edit = edit.topic(String::new()),
-                    TopicEdit::Set(topic) => edit = edit.topic(topic.clone()),
-                }
+                let edit = edit_channel_builder(*parent, topic, &self.reason)?;
                 ChannelId::new(nonzero(*id, "channel")?)
                     .edit(self.http, edit)
                     .await
@@ -343,6 +352,25 @@ mod tests {
         let names = permission_names(bits);
         assert_eq!(permission_bits(&names).unwrap(), bits);
         assert!(names.contains(&"Moderate Members".to_string()));
+    }
+
+    #[test]
+    fn topic_edits_serialize_to_exact_discord_payloads() {
+        let payload = |topic| {
+            serde_json::to_value(edit_channel_builder(Some(77), &topic, "test").unwrap()).unwrap()
+        };
+
+        let unchanged = payload(TopicEdit::Unchanged);
+        assert_eq!(unchanged.get("parent_id"), Some(&serde_json::json!("77")));
+        assert!(unchanged.get("topic").is_none(), "{unchanged}");
+
+        let clear = payload(TopicEdit::Clear);
+        assert_eq!(clear.get("parent_id"), Some(&serde_json::json!("77")));
+        assert_eq!(clear.get("topic"), Some(&serde_json::json!("")));
+
+        let set = payload(TopicEdit::Set("exact topic".into()));
+        assert_eq!(set.get("parent_id"), Some(&serde_json::json!("77")));
+        assert_eq!(set.get("topic"), Some(&serde_json::json!("exact topic")));
     }
 
     #[test]

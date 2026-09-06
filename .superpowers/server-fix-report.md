@@ -39,3 +39,9 @@ Finished `dev` profile [unoptimized + debuginfo]
 ## Commit
 
 `fix: fail closed when server plan verification drifts`
+
+## Round 1 review follow-up
+
+- Extracted the production `TopicEdit` to Serenity `EditChannel` translation into `edit_channel_builder`; `DiscordWriter` now calls that boundary directly.
+- Added a network-free serialization regression over the real Serenity builder. It pins `Clear` to `"topic": ""`, `Set` to the exact supplied text, and `Unchanged` to an omitted `topic` field while all three retain the requested `parent_id`.
+- Focused validation: `cargo test --locked server::discord` passed all 7 tests; `cargo fmt --all -- --check` exited 0. The already-reported full gate at `f5537eb` passed 1,002 tests with 2 ignored and completed the release build; it was intentionally not repeated for this local adapter-test follow-up.
