@@ -13,9 +13,11 @@ fn parser_preserves_supported_quotes_exports_and_never_evaluates_shell_text() {
         values[std::ffi::OsStr::new("ABBEY_VOICE_INSTRUCTIONS")],
         "literal $(touch /never) `private`"
     );
+    // Derive the expectation the way the parser does. A hardcoded POSIX literal
+    // fails on Windows, where `Path::join` yields a backslash separator.
     assert_eq!(
         values[std::ffi::OsStr::new("ABBEY_DATA_DIR")],
-        "/fixture/.local/share/abbey-bot"
+        home.join(".local/share/abbey-bot").into_os_string()
     );
     assert_eq!(values[std::ffi::OsStr::new("HOME")], "/fixture");
 }

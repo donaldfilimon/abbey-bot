@@ -21,6 +21,11 @@ fn provider() -> (String, std::thread::JoinHandle<usize>) {
                 }
                 Err(error) => panic!("synthetic listener: {error}"),
             };
+            // Windows hands back an accepted socket in the listener's non-blocking
+            // mode, so the blocking reads below would fail with WouldBlock and
+            // `set_read_timeout` would not apply. Unix does not inherit it, where
+            // this is a no-op.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
