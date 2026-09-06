@@ -373,25 +373,40 @@ qualification identity into an eligible provider.
 
 An unchanged successful manifest cannot distinguish a new qualification run
 from a process restart. Preserve version-1 report fields and version-2 reader
-compatibility, and add an optional per-provider version-2
-`qualification_run_nonce`: exactly 64 lowercase hexadecimal characters encoding
-32 operating-system random bytes. The successful qualification publisher mints
-this witness only after validating the successful evidence it publishes. It is
-not a timestamp, filesystem identity, runtime circuit field, or score input.
-The five-key score-profile objects above do not change.
+compatibility, and add an optional per-provider version-2 witness group. All
+three fields must be present together or all absent:
+
+- `qualification_run_nonce`: exactly 64 lowercase hexadecimal characters
+  encoding 32 operating-system random bytes;
+- `qualification_generation`: a positive `u64`, strictly increasing for
+  successful publications of the exact provider identity;
+- `qualification_completed_unix_secs`: a `u64` completion timestamp sampled
+  after the successful qualification evidence is validated.
+
+The successful publisher supplies this group only after validation. Generation
+overflow, incomplete fields and malformed values fail closed. These fields
+are qualification provenance, not live circuit or score inputs. The five-key
+score-profile objects above do not change.
 
 A persisted block records the qualification witness for its exact provider and
-identity. A newly validated successful qualification with a different witness
-can clear that block. Changes to another provider's record, file timestamps,
-inode replacement, restart or rewriting identical evidence cannot clear it.
+identity, its recovery high-water mark and the time the block was observed.
+Recovery requires a different valid nonce, a strictly newer generation, and
+successful qualification completion strictly after the block. Future completion
+evidence at recovery is rejected. A clock regression conservatively retains the
+block until valid later evidence is available. Changes to another provider's
+record, file timestamps, inode replacement, restart, rewriting identical
+evidence, or replaying an older valid qualification cannot clear it. In
+particular, a qualification published after runtime startup but before the
+later failure does not prove recovery from that failure.
 Legacy version-2 records without a witness remain readable and initially
 eligible under existing rules; they cannot prove a new qualification to clear
 an existing block. Republishing through the current successful qualification
 writer supplies the witness. Version-1 reports use their validated canonical
-successful evidence, including their existing generation timestamp, without
+successful evidence, requiring their existing generation timestamp to be
+strictly newer than both the prior qualification and block observation, without
 changing the report wire format. An identical version-1 report is not evidence
 of a new attempt. Block-store recovery must preserve these distinctions and
-fail closed if evidence or durable publication is incomplete.
+fail closed if recovery evidence is absent or durable publication is incomplete.
 
 The current production self-test continues to publish version 1. The existing
 version-2 publication seam is test-only; its witness generation is producer

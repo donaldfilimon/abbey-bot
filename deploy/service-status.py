@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Invoke with python3 -I to isolate interpreter startup and the helper bundle."""
 import sys
+sys.dont_write_bytecode = True
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

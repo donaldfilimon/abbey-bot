@@ -149,6 +149,21 @@ class StatusTests(unittest.TestCase):
         host.document = read
         self.assertEqual(status.observe(host).kind, status.ObservationKind.UNAVAILABLE)
 
+    def test_final_identity_query_cannot_age_evidence_past_freshness(self):
+        for age, expected in ((28000, status.ObservationKind.READY),
+                              (29999, status.ObservationKind.UNAVAILABLE)):
+            document = {**READY, "published_at_unix_ms": READY["published_at_unix_ms"] - age}
+            host = Host([document, document])
+            original = host.service_pid
+            def pid(deadline):
+                result = original(deadline)
+                if host.calls.count("pid") == 3:
+                    host.clock += 2000
+                    host.elapsed += 2_000_000_000
+                return result
+            host.service_pid = pid
+            self.assertEqual(status.observe(host).kind, expected)
+
     def test_output_uses_per_field_closed_labels_and_no_canaries(self):
         base = status.ServiceObservation(status.ObservationKind.BOOTSTRAP_FAILED)
         for field in ("discord", "scheduler", "telegram", "slack", "persistence", "bootstrap_code"):
@@ -222,10 +237,12 @@ class StatusTests(unittest.TestCase):
             root = Path(directory)
             for name in names:
                 shutil.copyfile(deploy / name, root / name)
+            before = sorted(path.relative_to(root) for path in root.rglob("*"))
             args = [sys.executable, "-I", str(root / "service-status.py"), "--help"]
             result = subprocess.run(args, cwd="/", capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0)
             self.assertIn("Read-only current service evidence", result.stdout)
+            self.assertEqual(sorted(path.relative_to(root) for path in root.rglob("*")), before)
             (root / "service-protocol-v1.json").unlink()
             result = subprocess.run(args, cwd="/", capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 1)

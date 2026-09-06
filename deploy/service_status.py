@@ -94,7 +94,8 @@ def observe(host):
                     code = bootstrap["code"]
             if host.service_pid(deadline) != pid or host.alive(pid) is not True:
                 return unavailable
-        if host.monotonic() >= deadline:
+        if (host.monotonic() >= deadline
+                or not fresh(current["published_at_unix_ms"], 0, host.wall_ms())):
             return unavailable
         return ServiceObservation(kind, current["discord"], current["scheduler"],
                                   current["telegram"], current["slack"],

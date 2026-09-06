@@ -72,11 +72,16 @@ at most every 2 s, `StreamEnd::{Text,Calls}` is the tool-loop seam),
 segment under `ABBEY_DATA_DIR`, temp-file + rename writes; WDBX keys are
 `mem:{scoped_guild_id}:{vector_id}` with a scoped-user filter on read, which is
 the privacy boundary), `provider/` + `provider.rs` + `provider_self_test.rs`
-(`--provider-self-test` runs the legacy primary/FM probes only; the generic
-route catalog and discovery in `provider/` and the `ABBEY_PROVIDER_*` env
-family they parse are exercised by their own unit tests and are not yet wired
-into the CLI or the running bot, so setting those variables changes nothing
-at runtime), `contracts/` (`#[cfg(test)]`-only guard over the
+(`ProviderRuntime` owns executable legacy-configured Anthropic/OpenAI-compatible,
+qualified FM and configured vision routes, conversation-local pins, capacity,
+circuits and effect-aware fallback. `ABBEY_PROVIDER_ORDER` enables adaptive
+selection among implemented routes, `ABBEY_PROVIDER_DISABLED` excludes named
+routes, and `ABBEY_PROVIDER_STATE_DIR` selects private operational block state.
+Generic discovery and per-provider endpoint/model/credential settings describe
+future adapters and do not configure executable backends. FM qualification
+still uses `ABBEY_FM_CAPABILITY_MANIFEST`; the parsed generic
+`ABBEY_PROVIDER_MANIFEST` is not its runtime input. Provider self-test grammar
+remains `primary|fm|all --json`), `contracts/` (`#[cfg(test)]`-only guard over the
 pinned 81-artifact ABI corpus), `routing_signals.rs`, `grounding.rs`,
 `recall.rs`, `vad.rs`, `offline_voice.rs`.
 

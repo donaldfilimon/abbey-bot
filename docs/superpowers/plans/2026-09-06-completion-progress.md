@@ -121,10 +121,12 @@ The installer transaction and full fake-launchd matrix are being implemented.
 Managed Rust startup, lifecycle, logging, remaining UI and final strict/hosted
 verification and integration into canonical main are still outstanding.
 
-The local read-only status helper now has 14 passing offline tests, including
+The local read-only status helper now has 15 passing offline tests, including
 real safe-reader calls against synthetic fixed artifacts and relocated bundle
 checks. It reports two fresh identity samples and closed state labels, never
 installation acceptance. A bootstrap failure is attributed only when its
 identity matches fresh readiness evidence; missing identity evidence remains
-unverified. Independent review, README/gate wiring and the full shared installer
-regression remain pending, so the added operator plan is not yet closed.
+unverified. Independent review approved the source after fixing bytecode writes
+and rechecking freshness after the final service query. README/gate wiring and
+the full shared installer regression remain pending, so the added operator plan
+is not yet closed.
