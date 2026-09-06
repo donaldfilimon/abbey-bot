@@ -24,14 +24,20 @@ use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
 mod adapters;
 mod catalog;
+mod circuit;
 mod config;
 mod discovery;
 mod domain;
 mod manifest;
+mod manifest_scores;
 mod qualification;
 mod routing;
+#[cfg(test)]
+mod score_fixtures;
+mod scoring;
 pub use adapters::{FmCliAdapter, LocalServerAdapter};
 pub use catalog::{CatalogPolicy, ProviderCatalog};
+pub use circuit::{CircuitPhase, CircuitSnapshot, ProviderFailureKind, RetryAfter};
 pub use config::{ProviderConfig, ProviderConfigError, ProviderCredential, ProviderSettings};
 pub use discovery::{
     DiscoveryLimits, DiscoveryRequest, DiscoveryResult, ExecutableIdentity, discover,
@@ -52,7 +58,14 @@ pub use qualification::{
     VerifiedFmCapabilities, fm_identity, fm_manifest_identity, primary_identity, unix_now,
     verify_fm_manifest,
 };
-pub use routing::{AdaptiveRouter, RoutingSnapshot, TurnOutcome};
+pub use routing::{
+    AdaptiveRouter, ConversationRoute, RouteAdmission, RouteAttempt, RouteDecision,
+    RouteUnavailableReason, RoutingSnapshot,
+};
+pub use scoring::{
+    ExecutionLocality, NormalizedScore, ProviderScoreProfile, QualificationAttempt,
+    QualificationScoreEvidence, RequestClass, ScoreComponents, ScoreProducerPolicy,
+};
 
 const DEFAULT_FM_CLI: &str = "/usr/bin/fm";
 const DEFAULT_TIMEOUT_SECS: u64 = 300;

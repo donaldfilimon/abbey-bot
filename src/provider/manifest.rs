@@ -20,6 +20,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::qualification::{FIXTURE_VERSION, QUALIFICATION_VERSION, QualificationReport};
+use super::scoring::{
+    ExecutionLocality, ProviderScoreProfile, QualificationScoreEvidence, RequestClass,
+    ScoreProducerPolicy,
+};
 use super::{IsolationCapabilities, ProviderCapabilities, ProviderClass, ProviderId};
 
 pub const PROVIDER_MANIFEST_VERSION: u32 = 2;
@@ -152,21 +156,54 @@ impl From<IsolationCapabilities> for QualifiedIsolation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderRecord {
     pub version: u32,
     pub fixture_version: String,
-    #[serde(deserialize_with = "deserialize_canonical_provider_id")]
     pub provider_id: ProviderId,
     pub provider_class: ProviderClass,
     pub identity: ProviderIdentityHashes,
     pub declared_capabilities: DeclaredCapabilities,
     pub isolation_capabilities: QualifiedIsolation,
     pub qualification_status: QualificationStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_policy: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_profiles: Option<Vec<QualificationScoreEvidence>>,
 }
 
 impl ProviderRecord {
+    /// No score-bearing record may inherit a class omitted or rejected by its evidence.
+    /// Scoreless v2 has the same conservative projection as validated legacy v1.
+    pub fn score_profile(
+        &self,
+        class: RequestClass,
+        validated_locality: ExecutionLocality,
+    ) -> Result<ProviderScoreProfile, ManifestError> {
+        self.validate()?;
+        if self.qualification_status != QualificationStatus::Qualified {
+            return Err(ManifestError::NotQualified);
+        }
+        if !class.supported_by(self.declared_capabilities.as_provider_capabilities()) {
+            return Err(ManifestError::CapabilityMismatch);
+        }
+        match (&self.score_policy, &self.score_profiles) {
+            (None, None) => ScoreProducerPolicy::V1.compatibility(
+                class,
+                self.declared_capabilities.as_provider_capabilities(),
+                validated_locality,
+            ),
+            (Some(1), Some(profiles)) => ScoreProducerPolicy::V1.qualification(
+                profiles
+                    .iter()
+                    .find(|p| p.request_class == class)
+                    .ok_or(ManifestError::CapabilityMismatch)?,
+            ),
+            _ => return Err(ManifestError::InvalidQualification),
+        }
+        .map_err(|_| ManifestError::InvalidQualification)
+    }
     fn validate(&self) -> Result<(), ManifestError> {
         if self.version != PROVIDER_MANIFEST_VERSION {
             return Err(ManifestError::SchemaMismatch);
@@ -175,6 +212,23 @@ impl ProviderRecord {
             return Err(ManifestError::FixtureMismatch);
         }
         self.identity.validate()?;
+        match (&self.score_policy, &self.score_profiles) {
+            (None, None) => {}
+            (Some(1), Some(profiles)) => {
+                let mut seen = HashSet::new();
+                for profile in profiles {
+                    if !seen.insert(profile.request_class)
+                        || !profile
+                            .request_class
+                            .supported_by(self.declared_capabilities.as_provider_capabilities())
+                        || ScoreProducerPolicy::V1.qualification(profile).is_err()
+                    {
+                        return Err(ManifestError::InvalidQualification);
+                    }
+                }
+            }
+            _ => return Err(ManifestError::InvalidQualification),
+        }
         if matches!(self.qualification_status, QualificationStatus::Qualified)
             && !self.declared_capabilities.any()
         {
@@ -234,6 +288,82 @@ impl ProviderManifest {
 pub enum ManifestDocument {
     LegacyV1(Box<QualificationReport>),
     V2(ProviderManifest),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyScoreRoute {
+    Primary,
+    FmServer,
+    FmCli,
+}
+impl ManifestDocument {
+    /// The caller supplies the already-validated configured execution locality.
+    /// Image classes compare the separate historical image identity, never the text identity.
+    pub fn legacy_score_profile(
+        &self,
+        route: LegacyScoreRoute,
+        expected: &super::qualification::ProviderIdentity,
+        class: RequestClass,
+        locality: ExecutionLocality,
+        now_unix_secs: u64,
+    ) -> Result<ProviderScoreProfile, ManifestError> {
+        let Self::LegacyV1(report) = self else {
+            return Err(ManifestError::SchemaMismatch);
+        };
+        validate_legacy_report(report)?;
+        if expected.fixture_version != FIXTURE_VERSION {
+            return Err(ManifestError::FixtureMismatch);
+        }
+        if report.generated_unix_secs > now_unix_secs.saturating_add(300) {
+            return Err(ManifestError::InvalidQualification);
+        }
+        let target_matches = match route {
+            LegacyScoreRoute::Primary => report.target.includes_primary(),
+            LegacyScoreRoute::FmServer | LegacyScoreRoute::FmCli => report.target.includes_fm(),
+        };
+        if !report.overall_pass || !target_matches {
+            return Err(ManifestError::NotQualified);
+        }
+        if matches!(route, LegacyScoreRoute::FmServer | LegacyScoreRoute::FmCli) {
+            let cli = report.fm_cli.capabilities.capabilities();
+            if expected.mode.as_deref() != Some("system")
+                || !report.fm_cli.configured
+                || !(cli.text && cli.structured_output && cli.tools)
+            {
+                return Err(ManifestError::NotQualified);
+            }
+            if report.fm_cli.identity.as_ref() != Some(expected)
+                || ((cli.vision || cli.ocr)
+                    && report.fm_cli.vision_identity.as_ref() != Some(expected))
+            {
+                return Err(ManifestError::IdentityMismatch);
+            }
+            if route == LegacyScoreRoute::FmServer {
+                let server = report.fm_server.capabilities.capabilities();
+                if !(server.text && server.streaming) {
+                    return Err(ManifestError::CapabilityMismatch);
+                }
+            }
+        }
+        let evidence = match route {
+            LegacyScoreRoute::Primary => &report.primary,
+            LegacyScoreRoute::FmServer => &report.fm_server,
+            LegacyScoreRoute::FmCli => &report.fm_cli,
+        };
+        if !evidence.configured {
+            return Err(ManifestError::NotQualified);
+        }
+        let identity = match class {
+            RequestClass::VisionDescribe | RequestClass::VisionOcr => &evidence.vision_identity,
+            _ => &evidence.identity,
+        };
+        if identity.as_ref() != Some(expected) {
+            return Err(ManifestError::IdentityMismatch);
+        }
+        ScoreProducerPolicy::V1
+            .compatibility(class, evidence.capabilities.capabilities(), locality)
+            .map_err(|_| ManifestError::CapabilityMismatch)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,6 +493,27 @@ pub fn read_manifest(path: &Path) -> Result<ManifestDocument, ManifestError> {
     decode_manifest(&bytes)
 }
 
+/// Canonical writer shared by qualification publication and synthetic fixtures.
+/// Validation happens before atomic publication, so malformed new evidence cannot
+/// silently be serialized as a capability-only compatibility record.
+pub fn encode_v2(records: &[ProviderRecord]) -> Result<Vec<u8>, ManifestError> {
+    let mut ordered = records.to_vec();
+    for record in &mut ordered {
+        if let Some(profiles) = &mut record.score_profiles {
+            profiles.sort_by_key(|p| p.request_class);
+        }
+    }
+    ordered.sort_by(|left, right| left.provider_id.as_str().cmp(right.provider_id.as_str()));
+    validate_records(&ordered)?;
+    let mut encoded = serde_json::to_vec_pretty(&ordered).map_err(|_| ManifestError::Malformed)?;
+    encoded.push(b'\n');
+    if encoded.len() as u64 > MAX_PROVIDER_MANIFEST_BYTES {
+        return Err(ManifestError::Oversized);
+    }
+
+    Ok(encoded)
+}
+
 pub fn publish_v2(path: &Path, records: &[ProviderRecord]) -> Result<(), ManifestError> {
     #[cfg(not(unix))]
     {
@@ -380,15 +531,7 @@ pub fn publish_v2(path: &Path, records: &[ProviderRecord]) -> Result<(), Manifes
             validate_manifest_path(path, effective_user_id())?;
         }
 
-        let mut ordered = records.to_vec();
-        ordered.sort_by(|left, right| left.provider_id.as_str().cmp(right.provider_id.as_str()));
-        validate_records(&ordered)?;
-        let mut encoded =
-            serde_json::to_vec_pretty(&ordered).map_err(|_| ManifestError::PublishFailed)?;
-        encoded.push(b'\n');
-        if encoded.len() as u64 > MAX_PROVIDER_MANIFEST_BYTES {
-            return Err(ManifestError::Oversized);
-        }
+        let encoded = encode_v2(records)?;
 
         let (temporary_path, mut temporary) = create_temporary_manifest(parent)?;
         let mut cleanup = TemporaryFile::new(temporary_path.clone());
@@ -447,7 +590,9 @@ fn validate_records(records: &[ProviderRecord]) -> Result<(), ManifestError> {
     Ok(())
 }
 
-fn deserialize_canonical_provider_id<'de, D>(deserializer: D) -> Result<ProviderId, D::Error>
+pub(super) fn deserialize_canonical_provider_id<'de, D>(
+    deserializer: D,
+) -> Result<ProviderId, D::Error>
 where
     D: Deserializer<'de>,
 {

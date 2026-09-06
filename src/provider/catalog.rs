@@ -165,6 +165,28 @@ impl ProviderCatalog {
         self.apply_manifest_result(provider_id, qualification)
     }
 
+    /// Adaptive class admission adds score evidence to the existing exact identity gate.
+    /// Keeping this separate preserves legacy FM qualification until runtime cutover.
+    pub fn qualified_score_profile(
+        &self,
+        provider_id: &ProviderId,
+        manifest: &ProviderManifest,
+        identity: &ProviderIdentityHashes,
+        required: ProviderCapabilities,
+        class: super::scoring::RequestClass,
+        locality: super::scoring::ExecutionLocality,
+    ) -> Result<super::scoring::ProviderScoreProfile, ManifestError> {
+        let descriptor = self
+            .descriptor(provider_id)
+            .ok_or(ManifestError::QualificationMissing)?;
+        if !descriptor.eligibility.is_routable() {
+            return Err(ManifestError::NotQualified);
+        }
+        manifest
+            .exact_qualified_record(provider_id, descriptor.class, identity, required)?
+            .score_profile(class, locality)
+    }
+
     fn apply_manifest_result(
         &mut self,
         provider_id: &ProviderId,

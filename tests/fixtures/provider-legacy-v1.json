@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "fixture_version": "abbey-provider-fixtures-v1",
+  "generated_unix_secs": 0,
+  "target": "primary",
+  "overall_pass": true,
+  "primary": {
+    "configured": true,
+    "identity": {
+      "abbey_binary_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "os_build": "synthetic",
+      "fixture_version": "abbey-provider-fixtures-v1"
+    },
+    "capabilities": {
+      "text": {
+        "status": "pass"
+      },
+      "streaming": {
+        "status": "unsupported"
+      },
+      "structured_output": {
+        "status": "unsupported"
+      },
+      "tools": {
+        "status": "unsupported"
+      },
+      "vision": {
+        "status": "unsupported"
+      },
+      "ocr": {
+        "status": "unsupported"
+      }
+    }
+  },
+  "fm_server": {
+    "configured": false,
+    "capabilities": {
+      "text": {
+        "status": "skipped"
+      },
+      "streaming": {
+        "status": "skipped"
+      },
+      "structured_output": {
+        "status": "skipped"
+      },
+      "tools": {
+        "status": "skipped"
+      },
+      "vision": {
+        "status": "skipped"
+      },
+      "ocr": {
+        "status": "skipped"
+      }
+    }
+  },
+  "fm_cli": {
+    "configured": false,
+    "capabilities": {
+      "text": {
+        "status": "skipped"
+      },
+      "streaming": {
+        "status": "skipped"
+      },
+      "structured_output": {
+        "status": "skipped"
+      },
+      "tools": {
+        "status": "skipped"
+      },
+      "vision": {
+        "status": "skipped"
+      },
+      "ocr": {
+        "status": "skipped"
+      }
+    }
+  }
+}

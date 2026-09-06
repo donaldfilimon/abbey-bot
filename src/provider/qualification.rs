@@ -583,6 +583,8 @@ mod tests {
                 sandbox_attested: false,
             },
             qualification_status: QualificationStatus::Qualified,
+            score_policy: None,
+            score_profiles: None,
         }
     }
 

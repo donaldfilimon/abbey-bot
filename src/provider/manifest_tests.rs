@@ -38,6 +38,8 @@ fn record(id: &str, class: ProviderClass) -> ProviderRecord {
             sandbox_attested: true,
         },
         qualification_status: QualificationStatus::Qualified,
+        score_policy: None,
+        score_profiles: None,
     }
 }
 

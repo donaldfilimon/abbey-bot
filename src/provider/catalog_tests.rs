@@ -66,6 +66,8 @@ fn qualified_record(raw: &str, class: ProviderClass, sandbox_attested: bool) -> 
             sandbox_attested,
         },
         qualification_status: QualificationStatus::Qualified,
+        score_policy: None,
+        score_profiles: None,
     }
 }
 
@@ -357,4 +359,73 @@ async fn descriptor_iteration_is_stable_and_debug_is_path_free() {
     let rendered = format!("{catalog:?}");
     assert!(!rendered.contains("ENDPOINT"));
     assert!(!rendered.contains("CREDENTIAL"));
+}
+
+#[tokio::test]
+async fn adaptive_score_admission_keeps_class_evidence_separate_from_legacy_capabilities() {
+    use crate::provider::{ExecutionLocality, RequestClass};
+    let config = config(&[("ABBEY_PROVIDER_DISCOVERY", "local")]);
+    let mut catalog = ProviderCatalog::discover_configured(
+        &config,
+        [endpoint_request("local", ProviderClass::LocalServer, false)],
+        DiscoveryLimits::default(),
+    )
+    .await;
+    let mut record = qualified_record("local", ProviderClass::LocalServer, false);
+    let identity = record.identity.clone();
+    let evidence = crate::provider::score_fixtures::fixtures()
+        .profiles
+        .into_iter()
+        .find(|c| c.evidence.request_class == RequestClass::TextReadOnly)
+        .unwrap()
+        .evidence;
+    record.score_policy = Some(1);
+    record.score_profiles = Some(vec![evidence]);
+    let manifest = ProviderManifest::new(vec![record]).unwrap();
+    assert!(catalog.apply_manifest(
+        &id("local"),
+        &manifest,
+        &identity,
+        ProviderCapabilities::text_with_tools()
+    ));
+    assert!(
+        catalog
+            .qualified_score_profile(
+                &id("local"),
+                &manifest,
+                &identity,
+                ProviderCapabilities::text(),
+                RequestClass::TextReadOnly,
+                ExecutionLocality::SameHost
+            )
+            .is_ok()
+    );
+    assert_eq!(
+        catalog
+            .qualified_score_profile(
+                &id("local"),
+                &manifest,
+                &identity,
+                ProviderCapabilities::text_with_tools(),
+                RequestClass::TextWithTools,
+                ExecutionLocality::SameHost
+            )
+            .unwrap_err(),
+        ManifestError::CapabilityMismatch
+    );
+    let mut wrong = identity;
+    wrong.tool_schema_sha256 = "e".repeat(64);
+    assert_eq!(
+        catalog
+            .qualified_score_profile(
+                &id("local"),
+                &manifest,
+                &wrong,
+                ProviderCapabilities::text(),
+                RequestClass::TextReadOnly,
+                ExecutionLocality::SameHost
+            )
+            .unwrap_err(),
+        ManifestError::IdentityMismatch
+    );
 }
