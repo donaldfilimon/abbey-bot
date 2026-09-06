@@ -421,6 +421,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Clear only this channel's transcript."
     ),
     spec!(
+        AdminDashboard,
+        Slash,
+        "admin dashboard",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Open private administration controls."
+    ),
+    spec!(
         VoiceConsent,
         Slash,
         "voice consent",
@@ -530,17 +541,27 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         true,
         "Stop the current call immediately without deleting consent."
     ),
-    // Task 6 must supply a member-safe projection before changing this A4 to A0.
     spec!(
         VoiceStatus,
         Slash,
         "voice status",
         GUILD,
+        A0,
+        C4,
+        Voice,
+        true,
+        "Read your privacy-bounded voice status."
+    ),
+    spec!(
+        VoiceDiagnostics,
+        Slash,
+        "voice diagnostics",
+        GUILD,
         A4,
         C4,
         Voice,
         true,
-        "Read private operator voice diagnostics (member view planned)."
+        "Read private content-free operator voice diagnostics."
     ),
     spec!(
         VoiceMode,
@@ -576,33 +597,4 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Read the private local voice acceptance report."
     ),
 ];
-pub(super) const PLANNED: &[CommandSpec] = &[
-    CommandSpec {
-        status: ImplementationStatus::Planned,
-        ..spec!(
-            AdminDashboard,
-            Slash,
-            "admin dashboard",
-            GUILD,
-            A4,
-            C0,
-            Administration,
-            true,
-            "Planned: private administration controls."
-        )
-    },
-    CommandSpec {
-        status: ImplementationStatus::Planned,
-        ..spec!(
-            VoiceDiagnostics,
-            Slash,
-            "voice diagnostics",
-            GUILD,
-            A4,
-            C4,
-            Voice,
-            true,
-            "Planned: separate private operator voice diagnostics."
-        )
-    },
-];
+pub(super) const PLANNED: &[CommandSpec] = &[];

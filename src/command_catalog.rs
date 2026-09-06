@@ -238,7 +238,6 @@ impl HelpSection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImplementationStatus {
     Registered,
-    Planned,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -251,20 +250,6 @@ pub struct CommandSpec {
     pub description: &'static str,
     pub private: bool,
     pub status: ImplementationStatus,
-}
-impl CommandSpec {
-    /// Approved target policy, kept distinct from the temporary operator-only
-    /// status adapter until Task 6 supplies a safe member projection.
-    #[cfg(test)]
-    pub const fn target_eligibility(&self) -> EligibilityRule {
-        match self.key {
-            CommandKey::VoiceStatus => EligibilityRule {
-                access: AccessId::A0,
-                condition: ConditionId::C4,
-            },
-            _ => self.eligibility,
-        }
-    }
 }
 pub const fn registered_commands() -> &'static [CommandSpec] {
     REGISTERED
@@ -435,10 +420,6 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
 }
 #[cfg(test)]
 pub fn render_readme() -> String {
-    debug_assert_eq!(
-        command(CommandKey::VoiceStatus).target_eligibility().access,
-        AccessId::A0
-    );
     let mut out = "<!-- BEGIN GENERATED COMMAND CATALOG -->\n| Command | Context | Response | What it does |\n|---|---|---|---|\n".to_string();
     for spec in REGISTERED {
         let prefix = if spec.kind == CommandKind::Slash {
@@ -457,15 +438,7 @@ pub fn render_readme() -> String {
             spec.name, spec.description
         ));
     }
-    out.push_str("\nPlanned (not registered or shown as usable in help): ");
-    out.push_str(
-        &planned_commands()
-            .iter()
-            .map(|spec| format!("`{}`", spec.name))
-            .collect::<Vec<_>>()
-            .join(", "),
-    );
-    out.push_str(". Member-safe `/voice status` and typed voice-mode choices also remain Task 6 work; the current status is private and manager-only.\n<!-- END GENERATED COMMAND CATALOG -->");
+    out.push_str("\nThe member voice status, typed voice-mode choices, manager diagnostics, and classic administration dashboard are registered surfaces.\n<!-- END GENERATED COMMAND CATALOG -->");
     out
 }
 

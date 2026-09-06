@@ -50,6 +50,7 @@
 //! over REST instead, which is why [`profile::summarize`] states that
 //! presence is unavailable rather than guessing at it.
 
+mod admin_dashboard;
 mod ask;
 mod audio_tap;
 mod brain;
@@ -104,6 +105,7 @@ mod voice_local;
 mod voice_openai;
 mod voice_self_test;
 mod voice_session;
+mod voice_views;
 mod wdbx;
 mod webhook;
 mod wyhash;
@@ -342,13 +344,14 @@ async fn main() -> Result<(), Error> {
                     if let serenity::all::FullEvent::InteractionCreate {
                         interaction: serenity::all::Interaction::Component(interaction),
                     } = event
-                        && commands_help::dispatch_component(
-                            ctx,
-                            interaction,
-                            data,
-                            framework.options().owners.contains(&interaction.user.id),
-                        )
-                        .await
+                        && (commands_brain::dispatch_admin_component(ctx, interaction, data).await
+                            || commands_help::dispatch_component(
+                                ctx,
+                                interaction,
+                                data,
+                                framework.options().owners.contains(&interaction.user.id),
+                            )
+                            .await)
                     {
                         return Ok(());
                     }

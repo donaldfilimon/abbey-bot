@@ -11,8 +11,9 @@
 use std::time::Duration;
 
 use serenity::all::{
-    Attachment, ButtonStyle, CreateActionRow, CreateAttachment, CreateButton,
-    CreateInteractionResponse, CreateInteractionResponseMessage, User,
+    Attachment, ButtonStyle, ComponentInteraction, CreateActionRow, CreateAttachment, CreateButton,
+    CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
+    Permissions, User,
 };
 
 use crate::ask;
@@ -844,7 +845,8 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_brain",
         "admin_flush",
         "admin_export",
-        "admin_reset"
+        "admin_reset",
+        "admin_dashboard"
     )
 )]
 pub async fn admin(_ctx: Context<'_>) -> Result<(), Error> {
@@ -1117,6 +1119,444 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Open the owner- and guild-bound classic administration dashboard.
+#[poise::command(slash_command, guild_only, ephemeral, rename = "dashboard")]
+pub async fn admin_dashboard(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let Some(guild) = ctx.guild_id() else {
+        ctx.say(NO_GUILD).await?;
+        return Ok(());
+    };
+    let session = crate::admin_dashboard::AdminSession {
+        owner: ctx.author().id.get(),
+        guild: guild.get(),
+        expiry: runtime::now().saturating_add(crate::admin_dashboard::SESSION_SECONDS),
+        page: crate::admin_dashboard::AdminPage::Overview,
+    };
+    let input = dashboard_input(ctx.data(), guild.get(), None);
+    ctx.send(
+        poise::CreateReply::default()
+            .content(clamp_message(crate::admin_dashboard::render(
+                session.page,
+                &input,
+            )))
+            .components(dashboard_rows(&session))
+            .ephemeral(true)
+            .allowed_mentions(crate::gateway::no_mentions()),
+    )
+    .await?;
+    Ok(())
+}
+
+fn dashboard_settings(state: &AppState, guild_id: u64) -> GuildSettings {
+    let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.to_string()));
+    let mut stores = AppState::lock(&state.stores);
+    AppState::lock(&state.guilds).refresh(&scoped, &mut *stores)
+}
+
+fn dashboard_input(
+    data: &crate::Data,
+    guild_id: u64,
+    result: Option<String>,
+) -> crate::admin_dashboard::AdminViewInput {
+    let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.to_string()));
+    let settings = dashboard_settings(&data.state, guild_id);
+    let (epsilon, brain_summary) = {
+        let stores = AppState::lock(&data.state.stores);
+        let mut brains = AppState::lock(&data.state.brains);
+        let brain = brains.brain(&scoped, &*stores, runtime::now());
+        (
+            brain.epsilon(),
+            format!(
+                "Steps: {} · replay: {} · experiences: {}",
+                brain.step_count(),
+                brain.buffer_len(),
+                brains.experience_count(&scoped).unwrap_or(0)
+            ),
+        )
+    };
+    let mut capabilities = vec!["memory"];
+    if data.state.backend.is_some() {
+        capabilities.push("generation");
+    }
+    if data.state.vision.is_some() {
+        capabilities.push("vision");
+    }
+    if data
+        .voice
+        .as_ref()
+        .is_some_and(|voice| voice.config.guild_id == guild_id)
+    {
+        capabilities.push("voice");
+    }
+    crate::admin_dashboard::AdminViewInput {
+        settings,
+        epsilon,
+        brain_summary,
+        capabilities,
+        operation_result: result,
+    }
+}
+
+fn dashboard_rows(session: &crate::admin_dashboard::AdminSession) -> Vec<CreateActionRow> {
+    use crate::admin_dashboard::{AdminAction as A, AdminPage as P};
+    let nav = [
+        (P::Overview, "Overview"),
+        (P::Conversation, "Conversation"),
+        (P::Learning, "Learning"),
+        (P::Operations, "Operations"),
+    ]
+    .into_iter()
+    .map(|(page, label)| {
+        CreateButton::new(session.custom_id(A::View(page)))
+            .label(label)
+            .style(if page == session.page {
+                ButtonStyle::Primary
+            } else {
+                ButtonStyle::Secondary
+            })
+    })
+    .collect();
+    let action_rows = match session.page {
+        P::Conversation => vec![
+            vec![
+                CreateButton::new(session.custom_id(A::SetVision(true)))
+                    .label("Vision on")
+                    .style(ButtonStyle::Success),
+                CreateButton::new(session.custom_id(A::SetVision(false)))
+                    .label("Vision off")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetUnsolicited(true)))
+                    .label("Act on")
+                    .style(ButtonStyle::Success),
+                CreateButton::new(session.custom_id(A::SetUnsolicited(false)))
+                    .label("Act off")
+                    .style(ButtonStyle::Secondary),
+            ],
+            vec![
+                CreateButton::new(session.custom_id(A::SetPersona(crate::persona::Persona::Abbey)))
+                    .label("Persona Abbey")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetPersona(crate::persona::Persona::Aviva)))
+                    .label("Persona Aviva")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetPersona(crate::persona::Persona::Abi)))
+                    .label("Persona Abi")
+                    .style(ButtonStyle::Secondary),
+            ],
+            vec![
+                CreateButton::new(session.custom_id(A::SetCooldown(0)))
+                    .label("Cooldown 0s")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetCooldown(20)))
+                    .label("Cooldown 20s")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetCooldown(60)))
+                    .label("Cooldown 60s")
+                    .style(ButtonStyle::Secondary),
+            ],
+        ],
+        P::Learning => vec![
+            vec![
+                CreateButton::new(session.custom_id(A::SetLearning(true)))
+                    .label("Learning on")
+                    .style(ButtonStyle::Success),
+                CreateButton::new(session.custom_id(A::SetLearning(false)))
+                    .label("Learning off")
+                    .style(ButtonStyle::Secondary),
+            ],
+            vec![
+                CreateButton::new(session.custom_id(A::SetBudget(1)))
+                    .label("Budget 1/h")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetBudget(6)))
+                    .label("Budget 6/h")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new(session.custom_id(A::SetBudget(60)))
+                    .label("Budget 60/h")
+                    .style(ButtonStyle::Secondary),
+            ],
+        ],
+        P::Operations => vec![vec![
+            CreateButton::new(session.custom_id(A::Flush))
+                .label("Flush")
+                .style(ButtonStyle::Primary),
+            CreateButton::new(session.custom_id(A::Export))
+                .label("Export")
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(session.custom_id(A::RequestReset))
+                .label("Reset transcript…")
+                .style(ButtonStyle::Danger),
+        ]],
+        P::ConfirmReset => vec![vec![
+            CreateButton::new(session.custom_id(A::ConfirmReset))
+                .label("Confirm channel reset")
+                .style(ButtonStyle::Danger),
+            CreateButton::new(session.custom_id(A::View(P::Operations)))
+                .label("Cancel")
+                .style(ButtonStyle::Secondary),
+        ]],
+        P::Overview => Vec::new(),
+    };
+    let mut rows = vec![CreateActionRow::Buttons(nav)];
+    for actions in action_rows {
+        rows.push(CreateActionRow::Buttons(actions));
+    }
+    rows
+}
+
+/// Central admin protocol adapter. It always acknowledges before validation,
+/// permission REST reads, state reloads, or mutations.
+enum AdminPreparation {
+    Rejected(crate::admin_dashboard::Rejection),
+    PermissionDenied,
+    Ready(
+        crate::admin_dashboard::AdminSession,
+        crate::admin_dashboard::AdminAction,
+        GuildSettings,
+    ),
+}
+
+async fn acknowledged_admin_preparation<A, Validate, Load, L>(
+    acknowledgement: A,
+    validate: Validate,
+    load: Load,
+) -> Result<AdminPreparation, Error>
+where
+    A: std::future::Future<Output = Result<(), Error>>,
+    Validate: FnOnce() -> Result<
+        (
+            crate::admin_dashboard::AdminSession,
+            crate::admin_dashboard::AdminAction,
+        ),
+        crate::admin_dashboard::Rejection,
+    >,
+    Load: FnOnce() -> L,
+    L: std::future::Future<Output = Result<(Permissions, GuildSettings), Error>>,
+{
+    acknowledgement.await?;
+    let (session, action) = match validate() {
+        Ok(value) => value,
+        Err(error) => return Ok(AdminPreparation::Rejected(error)),
+    };
+    let (permissions, settings) = load().await?;
+    if !permissions.contains(Permissions::MANAGE_GUILD)
+        && !permissions.contains(Permissions::ADMINISTRATOR)
+    {
+        return Ok(AdminPreparation::PermissionDenied);
+    }
+    Ok(AdminPreparation::Ready(session, action, settings))
+}
+
+pub async fn dispatch_admin_component(
+    ctx: &serenity::all::Context,
+    interaction: &ComponentInteraction,
+    data: &crate::Data,
+) -> bool {
+    if !interaction.data.custom_id.starts_with("abbey:admin:") {
+        return false;
+    }
+    let preparation = acknowledged_admin_preparation(
+        async {
+            interaction
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Defer(
+                        CreateInteractionResponseMessage::new().ephemeral(true),
+                    ),
+                )
+                .await
+                .map_err(Error::from)
+        },
+        || {
+            if interaction.user.bot || interaction.message.author.id != ctx.cache.current_user().id
+            {
+                return Err(crate::admin_dashboard::Rejection::Malformed);
+            }
+            crate::admin_dashboard::AdminSession::parse(
+                &interaction.data.custom_id,
+                interaction.user.id.get(),
+                interaction.guild_id.map(|id| id.get()),
+                runtime::now(),
+            )
+        },
+        || async {
+            let guild_id = interaction
+                .guild_id
+                .ok_or("Administration guild is unavailable.")?;
+            let permissions = crate::commands_help::current_permissions(
+                ctx,
+                guild_id,
+                interaction.channel_id,
+                interaction.user.id,
+            )
+            .await?;
+            let settings = dashboard_settings(&data.state, guild_id.get());
+            Ok((permissions, settings))
+        },
+    )
+    .await;
+    let (mut session, action, current) = match preparation {
+        Err(_) => return true,
+        Ok(AdminPreparation::Rejected(error)) => {
+            edit_admin(ctx, interaction, error.message(), Vec::new()).await;
+            return true;
+        }
+        Ok(AdminPreparation::PermissionDenied) => {
+            edit_admin(
+                ctx,
+                interaction,
+                "Discord could not confirm that you currently have Manage Server.",
+                Vec::new(),
+            )
+            .await;
+            return true;
+        }
+        Ok(AdminPreparation::Ready(session, action, current)) => (session, action, current),
+    };
+    let guild_id = serenity::all::GuildId::new(session.guild);
+    let effect = crate::admin_dashboard::reduce(action, &current);
+    let mut result = None;
+    use crate::admin_dashboard::AdminEffect;
+    match effect {
+        AdminEffect::View(page) => session.page = page,
+        AdminEffect::SetLearning(value) => {
+            update_dashboard_setting(data, guild_id.get(), |s| s.learning_enabled = value);
+            result = Some(format!(
+                "Learning is now **{}**.",
+                if value { "on" } else { "off" }
+            ));
+            if let Some(gate) = data.state.episode_gate.clone() {
+                let request = LearningToggleRequest {
+                    scoped_guild: guild::scoped_guild_id(
+                        PLATFORM,
+                        Some(&guild_id.get().to_string()),
+                    ),
+                    scoped_user: guild::scoped_user_id(
+                        PLATFORM,
+                        &interaction.user.id.get().to_string(),
+                    ),
+                    now: runtime::now(),
+                    nonce: gate.next_nonce(),
+                };
+                tokio::spawn(async move {
+                    gate.record_learning_toggle(request).await;
+                });
+            }
+        }
+        AdminEffect::SetVision(value) => {
+            update_dashboard_setting(data, guild_id.get(), |s| s.vision_enabled = value);
+            result = Some(format!(
+                "Vision is now **{}**.",
+                if value { "on" } else { "off" }
+            ));
+        }
+        AdminEffect::SetUnsolicited(value) => {
+            update_dashboard_setting(data, guild_id.get(), |s| s.unsolicited = value);
+            result = Some(format!(
+                "Unsolicited action is now **{}**.",
+                if value { "on" } else { "off" }
+            ));
+        }
+        AdminEffect::SetPersona(value) => {
+            update_dashboard_setting(data, guild_id.get(), |s| s.default_persona = value);
+            result = Some(format!(
+                "Default persona is now **{}**.",
+                guild::persona_name(value)
+            ));
+        }
+        AdminEffect::SetCooldown(value) => {
+            update_dashboard_setting(data, guild_id.get(), |s| {
+                s.reply_cooldown_seconds = guild::clamp_cooldown(i64::from(value))
+            });
+            result = Some(format!("Reply cooldown is now **{value}s**."));
+        }
+        AdminEffect::SetBudget(value) => {
+            update_dashboard_setting(data, guild_id.get(), |s| {
+                s.unsolicited_per_hour = guild::clamp_budget(i64::from(value))
+            });
+            result = Some(format!("Unsolicited budget is now **{value}/h**."));
+        }
+        AdminEffect::Persist => result = Some(render_admin_flush(&data.state.persist_all())),
+        AdminEffect::ResetChannel => {
+            let scope =
+                guild::scoped_channel_id(PLATFORM, &interaction.channel_id.get().to_string());
+            result = Some(
+                if AppState::lock(&data.state.engine).reset(&scope) {
+                    "Conversation transcript for this channel cleared."
+                } else {
+                    "Conversation transcript for this channel was already clear."
+                }
+                .into(),
+            );
+        }
+        AdminEffect::Export => {
+            let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.get().to_string()));
+            let bytes = {
+                let stores = AppState::lock(&data.state.stores);
+                let mut brains = AppState::lock(&data.state.brains);
+                serde_json::to_vec_pretty(
+                    &brains
+                        .brain(&scoped, &*stores, runtime::now())
+                        .export_weights(),
+                )
+                .unwrap_or_default()
+            };
+            let _ = interaction
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new()
+                        .content("Brain snapshot attached privately.")
+                        .new_attachment(CreateAttachment::bytes(
+                            bytes,
+                            format!("{}-brain.json", scoped.replace(':', "-")),
+                        ))
+                        .components(dashboard_rows(&session))
+                        .allowed_mentions(crate::gateway::no_mentions()),
+                )
+                .await;
+            return true;
+        }
+        AdminEffect::None => result = Some("That setting already has the requested value.".into()),
+    }
+    let input = dashboard_input(data, guild_id.get(), result);
+    edit_admin(
+        ctx,
+        interaction,
+        &crate::admin_dashboard::render(session.page, &input),
+        dashboard_rows(&session),
+    )
+    .await;
+    true
+}
+
+fn update_dashboard_setting(
+    data: &crate::Data,
+    guild_id: u64,
+    mutate: impl FnOnce(&mut GuildSettings),
+) {
+    let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.to_string()));
+    let mut stores = AppState::lock(&data.state.stores);
+    AppState::lock(&data.state.guilds).update(&scoped, &mut *stores, mutate);
+}
+
+async fn edit_admin(
+    ctx: &serenity::all::Context,
+    interaction: &ComponentInteraction,
+    content: &str,
+    rows: Vec<CreateActionRow>,
+) {
+    let _ = interaction
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .content(clamp_message(content.to_owned()))
+                .components(rows)
+                .allowed_mentions(crate::gateway::no_mentions()),
+        )
+        .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1192,6 +1632,95 @@ mod tests {
             memory.context_menu_action,
             Some(poise::ContextMenuCommandAction::User(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn dashboard_adapter_acknowledges_before_validation_permission_and_reload() {
+        use std::sync::{Arc, Mutex};
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ack_events = Arc::clone(&events);
+        let validate_events = Arc::clone(&events);
+        let load_events = Arc::clone(&events);
+        let session = crate::admin_dashboard::AdminSession {
+            owner: 1,
+            guild: 2,
+            expiry: 3,
+            page: crate::admin_dashboard::AdminPage::Overview,
+        };
+        let prepared = acknowledged_admin_preparation(
+            async move {
+                ack_events.lock().unwrap().push("ack");
+                Ok(())
+            },
+            || {
+                validate_events.lock().unwrap().push("validate");
+                Ok((
+                    session,
+                    crate::admin_dashboard::AdminAction::SetLearning(true),
+                ))
+            },
+            || async move {
+                load_events.lock().unwrap().push("permissions+reload");
+                Ok((Permissions::MANAGE_GUILD, GuildSettings::default()))
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(prepared, AdminPreparation::Ready(..)));
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["ack", "validate", "permissions+reload"]
+        );
+    }
+
+    #[tokio::test]
+    async fn revoked_permission_fails_before_any_effect_is_reduced() {
+        let prepared = acknowledged_admin_preparation(
+            async { Ok(()) },
+            || {
+                Ok((
+                    crate::admin_dashboard::AdminSession {
+                        owner: 1,
+                        guild: 2,
+                        expiry: 3,
+                        page: crate::admin_dashboard::AdminPage::Learning,
+                    },
+                    crate::admin_dashboard::AdminAction::SetLearning(true),
+                ))
+            },
+            || async { Ok((Permissions::empty(), GuildSettings::default())) },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(prepared, AdminPreparation::PermissionDenied));
+    }
+
+    #[test]
+    fn dashboard_uses_classic_bounded_rows_and_private_registration() {
+        let command = admin_dashboard();
+        assert!(command.ephemeral);
+        for page in [
+            crate::admin_dashboard::AdminPage::Overview,
+            crate::admin_dashboard::AdminPage::Conversation,
+            crate::admin_dashboard::AdminPage::Learning,
+            crate::admin_dashboard::AdminPage::Operations,
+            crate::admin_dashboard::AdminPage::ConfirmReset,
+        ] {
+            let session = crate::admin_dashboard::AdminSession {
+                owner: u64::MAX,
+                guild: u64::MAX,
+                expiry: u64::MAX,
+                page,
+            };
+            let rows = dashboard_rows(&session);
+            assert!(rows.len() <= 5);
+            for row in rows {
+                let CreateActionRow::Buttons(buttons) = row else {
+                    panic!("dashboard must use classic button rows")
+                };
+                assert!(buttons.len() <= 5);
+            }
+        }
     }
 }
 

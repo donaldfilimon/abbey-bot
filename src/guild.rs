@@ -192,6 +192,24 @@ impl GuildRegistry {
         settings
     }
 
+    /// Reload the durable authority, replacing any cached snapshot.
+    /// Interactive administration uses this after acknowledgement so a stale
+    /// dashboard cannot overwrite a newer setting with an inverse toggle.
+    pub fn refresh(
+        &mut self,
+        scoped_guild_id: &str,
+        store: &mut dyn GuildConfigStore,
+    ) -> GuildSettings {
+        let settings = store.load(scoped_guild_id).unwrap_or_else(|| {
+            let defaults = GuildSettings::default();
+            store.save(scoped_guild_id, &defaults);
+            defaults
+        });
+        self.cache
+            .insert(scoped_guild_id.to_owned(), settings.clone());
+        settings
+    }
+
     /// Read settings without provisioning or hydrating the cache.
     ///
     /// Inspect-style observers use this boundary so an unknown guild remains

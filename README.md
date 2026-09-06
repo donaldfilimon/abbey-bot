@@ -75,6 +75,7 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/admin flush` | guild | private | Persist current state and report each result. |
 | `/admin export` | guild | private | Export the server's brain snapshot privately. |
 | `/admin reset` | guild | private | Clear only this channel's transcript. |
+| `/admin dashboard` | guild | private | Open private administration controls. |
 | `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
 | `/voice notice` | guild | private | Publish the member voice consent controls. |
 | `/voice play` | guild | private | Play native music and mirror eligible host audio; requires macOS. |
@@ -85,12 +86,13 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/voice join` | guild | private | Start voice after every participant's saved agreement. |
 | `/voice resume` | guild | private | Resume voice after current participant consent checks. |
 | `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |
-| `/voice status` | guild | private | Read private operator voice diagnostics (member view planned). |
+| `/voice status` | guild | private | Read your privacy-bounded voice status. |
+| `/voice diagnostics` | guild | private | Read private content-free operator voice diagnostics. |
 | `/voice mode` | guild | private | Read or select a fully configured voice mode. |
 | `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |
 | `/voice verify report` | guild | private | Read the private local voice acceptance report. |
 
-Planned (not registered or shown as usable in help): `admin dashboard`, `voice diagnostics`. Member-safe `/voice status` and typed voice-mode choices also remain Task 6 work; the current status is private and manager-only.
+The member voice status, typed voice-mode choices, manager diagnostics, and classic administration dashboard are registered surfaces.
 <!-- END GENERATED COMMAND CATALOG -->
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned
@@ -104,7 +106,8 @@ reply, without repeating the name. While she is still preparing an answer,
 use her name again to replace that question. New people
 joining pause the call; uncovered members agree, then a manager uses
 `/voice resume consent:true`. Already-saved choices still count. `/voice status`
-shows whether voice is active, awaiting consent, preparing a reply, or speaking.
+shows members only the coarse voice state, processing category, their own saved
+choice coverage, a visible configured channel, and one appropriate next action.
 Automatic voice-channel presence after a restart is muted and does not activate
 conversation. Ordinary speech does not cancel a reply still being prepared;
 speaking over audible playback stops it immediately.
@@ -639,9 +642,9 @@ transcription. Abbey must retain View Channel, Send Messages, Connect, Speak, St
 Use Embedded Activities and must not be server-muted/deafened/suppressed; startup rechecks those
 conditions around activation, and channel/role/member changes stop the media
 epoch if the call could become receive-only. `/voice leave` tears down both
-sides, while `/voice status`
-reports mode, phase, models, consent epoch, and bounded-queue counters without
-content or credentials. The local-only `/voice verify start|report` surface is
+sides. `/voice status` is the member-safe summary; Manage Server members use
+`/voice diagnostics` for phase, models, consent/session epochs, readiness, and
+bounded-queue counters without content or credentials. The local-only `/voice verify start|report` surface is
 further limited to the owner or an administrator. It keeps one ephemeral,
 redacted acceptance run across consent epochs and suppresses voice transcript
 commits while armed; a process restart clears it. In explicit `openai` backup
@@ -881,7 +884,7 @@ unsupported searches are refused. Player arguments never become script source.
 resumes that player with a fresh capture stream. `/voice stop-music` stops
 mirroring while leaving the native player alone. `/voice volume level:0..100`
 controls only the music track, which drops to 25% of that level while Abbey
-speaks. `/voice status` includes private music state. All music controls are
+speaks. `/voice diagnostics` includes private operational state. All music controls are
 private, manager-gated and require channel presence.
 
 Set `ABBEY_MUSIC_COMMAND_CHANNEL_ID` to a nonzero text channel ID to require
@@ -916,8 +919,8 @@ stop the music track and discard queued PCM. The client uses 20 ms stereo frames
 known termination stops playback immediately when observed. These are application
 bounds, not guarantees about Apple, TCP or Discord buffering. No silence is
 synthesized. Failure updates private status and attempts an ephemeral follow-up
-to the original command; after Discord's interaction token expires, `/voice status`
-is the remaining diagnostic surface. Audio is neither saved nor sent to STT.
+to the original command; after Discord's interaction token expires, managers
+can use `/voice diagnostics`. Audio is neither saved nor sent to STT.
 
 The offline suite uses synthetic PCM and fake HTTP sources. Source/build checks
 cannot prove permission, live capture exclusion, audible playback or ducking in

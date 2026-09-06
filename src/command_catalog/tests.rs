@@ -222,8 +222,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
     assert_eq!(keys.len(), 51);
-    assert_eq!(registered_commands().len(), 49);
-    assert_eq!(planned_commands().len(), 2);
+    assert_eq!(registered_commands().len(), 51);
+    assert!(planned_commands().is_empty());
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
         assert!(!access_allows(rule, &input));
@@ -233,22 +233,26 @@ fn catalog_identity_policy_and_description_data_are_valid() {
     }
 }
 #[test]
-fn planned_features_and_operator_voice_status_cannot_be_advertised_to_members() {
+fn completed_voice_and_admin_features_are_advertised_by_current_policy() {
     let mut input = member();
     input.capabilities = vec![Capability::VoiceConfigured, Capability::VoiceLocal];
     input.selected_voice_mode = SelectedVoiceMode::Local;
-    for spec in planned_commands() {
-        assert!(!eligible(spec, &input, EvaluationMode::Discoverability));
-    }
+    assert!(planned_commands().is_empty());
+    assert!(eligible(
+        command(CommandKey::VoiceStatus),
+        &input,
+        EvaluationMode::Discoverability
+    ));
+    assert!(!eligible(
+        command(CommandKey::VoiceDiagnostics),
+        &input,
+        EvaluationMode::Discoverability
+    ));
     assert_eq!(
         command(CommandKey::VoiceStatus).eligibility.access,
-        AccessId::A4
-    );
-    assert_eq!(
-        command(CommandKey::VoiceStatus).target_eligibility().access,
         AccessId::A0
     );
-    assert!(!render_help(HelpSection::Voice, &input).contains("`/voice status`"));
+    assert!(render_help(HelpSection::Voice, &input).contains("`/voice status`"));
     assert!(render_help(HelpSection::Voice, &input).contains("`/voice consent`"));
     assert!(!render_help(HelpSection::Images, &input).contains("`/ocr`"));
     assert!(!render_help(HelpSection::Conversation, &input).contains("`/persona ask`"));

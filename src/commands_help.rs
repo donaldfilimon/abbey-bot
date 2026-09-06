@@ -199,7 +199,7 @@ pub fn runtime_input(
     }
     input
 }
-async fn current_permissions(
+pub(crate) async fn current_permissions(
     ctx: &serenity::all::Context,
     guild: GuildId,
     channel: serenity::all::ChannelId,
