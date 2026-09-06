@@ -28,10 +28,13 @@ context, original expiry and current server permissions before reading a fresh
 snapshot; browsing performs no memory writes. The existing command factories,
 classic admin controls and Entry Point preservation remain registered.
 
-The recorded integration run passed 1,175 Rust tests with 4 intentional ignores.
-The fresh strict gate, canonical integration, hosted CI and
-live Discord UX acceptance remain pending. The historical statuses below belong
-to their earlier surfaces and do not establish deployment of these additions.
+The fresh WDBX-required strict gate passed on tested source `ff5d594` with
+1,183 Rust tests, zero failures and four intentional live ignores, warnings-denied
+all-target Clippy and locked release builds. Source implementation and review
+are complete. Canonical integration, push, exact-head hosted CI and live Discord
+UX acceptance remain separate pending layers. Final delivered identity/CI/cleanup
+proof belongs in canonical `.superpowers/completion-20260906/delivery.json`.
+The historical statuses below do not establish deployment of these additions.
 
 ## Already shipped
 

@@ -361,24 +361,33 @@ yet: no observed settle whose reward moved because of a typed outcome.
 
 ## 2026-09-06 integration follow-through
 
-Status: in progress. Source implements private guided help and the full-fact
-memory browser, scoped statistics and fixed operator advice, plus managed
-readiness/logging and retained service/voice/persistence ownership. The recorded
-integration snapshot passed 1,175 Rust tests with 4 intentional ignores and 26
-offline installer tests. The Rust results include the final review fixes; formatting and all-target
-Clippy also passed.
+Status: source complete; integration and hosted delivery in progress. The reviewed
+source implements guided help and private full-fact browsing, scoped statistics
+and fixed operator advice, plus managed readiness/logging and retained service,
+voice and persistence ownership. The fresh WDBX-required strict gate passed on
+tested source `ff5d594`: 1,183 Rust tests, zero failures, four intentional live
+ignores, warnings-denied all-target locked Clippy, formatting, 26 offline installer
+tests and the locked Rust release build and offline Swift release build. Deployment/Python, privacy, 81-artifact contracts,
+required WDBX, Linux TLS, module size and Swift groups of 12 and 16 passed.
+RustSec policy passed with four accepted vulnerabilities and three unmaintained
+warnings; this is not a clean audit.
 
-- Completed: reviewed module decomposition, pending-control authorization and
-  stale-button corrections, subprocess cancellation, and 19 compatible transitive
-  dependency updates.
-- Pending: fresh full strict gate and locked release for the resulting source.
-- Pending: reviewed integration into canonical main and exact-head hosted CI.
+- Completed: reviewed decomposition, 19 compatible transitive dependency updates,
+  source documentation and the fresh strict gate with the locked Rust release build and offline Swift release build.
+- Closed by review and passing regressions: per-press pending authorization,
+  ACK-before-gate ordering, stale displayed-row rejection, subprocess/music
+  cancellation ownership, startup/reconnect readiness and truthful shutdown events.
+- Pending: integration into canonical main, push and exact-head hosted CI.
+  Final SHA, CI and cleanup proof will be recorded in canonical
+  `.superpowers/completion-20260906/delivery.json` after observation.
+- Completed: all ten sanitized release entrypoint cases (five managed startup/
+  privacy/unsafe-log and five legacy argument/no-backend cases), without requests.
 - Pending separately: installed artifact identity and managed transaction
-  acceptance, qualified provider identity, live two-guild Discord/UI checks,
-  unanimous current participant consent and human-witnessed voice acceptance.
-- Preserve historical live evidence and recovery material. Source validation
-  does not authorize or establish a live transition.
+  acceptance, provider qualification, live two-guild Discord/UI
+  checks, fresh unanimous consent and human-witnessed voice acceptance.
+- Historical live evidence and recovery material remain preserved. This source
+  validation pass performed no live transition.
 
 See `docs/live-test-protocol.md` for lifecycle/status semantics and
-`docs/MLAI-LIVE-ACCEPTANCE.md` for dated live observations. Root owns the detailed
-Superpowers plan progress; this entry does not mark its pending tasks complete.
+`docs/MLAI-LIVE-ACCEPTANCE.md` for dated live observations. The source verification
+above belongs to the tested revision, not a later documentation-only commit.

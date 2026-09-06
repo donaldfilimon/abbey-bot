@@ -1,14 +1,18 @@
-> **Source-only update 2026-09-06 — modernization integration, no live transition:**
-> The completion worktree contains the guided menu/memory browser and managed
-> readiness, logging and lifecycle changes. The recorded integration run passed
-> **1,175 Rust tests, 4 intentional ignores**; the offline installer suite passed
-> **26 tests** using temporary fixtures. The fresh strict
-> gate, locked release and exact-head hosted CI remain pending. This pass did not
-> install or restart a service, qualify a provider, change Discord settings,
-> activate voice or observe audible output. All dated live evidence below is
-> preserved as historical evidence for its recorded artifact and configuration;
-> it does not qualify the new managed contract. Follow
-> [the live protocol](live-test-protocol.md) before promoting any layer.
+> **Source-only update 2026-09-06 — strict source gate complete, no live transition:**
+> Tested source `ff5d594` passed the fresh WDBX-required strict gate using an
+> external build target: **1,183 Rust tests passed, zero failed, four live tests
+> intentionally ignored**, warnings-denied all-target Clippy, 26 offline installer
+> tests and the locked Rust release build and offline Swift release build. Deployment/Python, privacy, 81-artifact
+> contracts, required WDBX, TLS, module-size and Swift checks passed. The RustSec
+> policy retains four accepted vulnerabilities and three unmaintained warnings;
+> it is not a clean audit. Canonical integration, push and exact-head hosted CI
+> remain pending, with final delivery proof reserved for canonical
+> `.superpowers/completion-20260906/delivery.json`. This pass did not install or
+> restart a service, qualify a provider, change Discord settings, activate voice
+> or observe audible output. The dated live evidence below remains historical
+> for its recorded artifact and configuration; it does not qualify the new
+> managed contract. Follow [the live protocol](live-test-protocol.md) before
+> promoting any layer.
 
 > **Update 2026-09-04 ~19:07 ET — community redesign saved and blueprint repair installed:** Native Discord onboarding now uses eight defaults (six chattable), three participation tasks, a rewritten Abbey welcome, and public interest mappings. Help is a default; ABI/WDBX are optional. The Community Guidelines resource now contains the existing screening standards and useful channel links; Help posting guidance was improved. A full client reload and roleless newcomer preview verified saved content and navigation. Two archives remain outside onboarding; custom Guide banner requires Level 2 (current Level 1). No channel deletion, private-channel opening, or member-role grant occurred.
 >

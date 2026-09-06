@@ -234,8 +234,8 @@ Task 11 Python source closure: reviewed installer work through `a241dd4` and gat
 - [x] Preserve voice epoch, media-gate, cancellation, leave, and actor-reap ordering during movement.
 - [x] In a separate lockfile commit, apply compatible patch/minor updates that retain Rust 1.98 and current Serenity/Poise/Songbird/Reqwest/Symphonia compatibility groups.
 - [x] Retain the reviewed OpenMLS patch and four explicit RustSec records unless compatible upstream changes genuinely remove them; add no OpenSSL/native-TLS graph.
-- [ ] Update README, roadmap, live protocol, goals/todo, readiness/logging runbook, and mirrored AGENTS.md/CLAUDE.md with claim-honest evidence.
-- [ ] Run focused tests after each movement, then the strict full gate with required sibling WDBX conformance and a fresh external target directory.
+- [x] Update README, roadmap, live protocol, goals/todo and readiness/logging runbook with claim-honest evidence; verify mirrored AGENTS.md/CLAUDE.md bodies remain aligned (no guidance edit required).
+- [x] Run focused tests after each movement, then the strict full gate with required sibling WDBX conformance and a fresh external target directory: tested `ff5d594`, 1,183 Rust passes, zero failures, four intentional live ignores, all-target locked Clippy and the locked Rust release build and offline Swift release build.
 - [x] Dispatch final whole-branch architecture/security review; fix all Critical/Important findings and record rulings.
 - [ ] Follow the current machine integration policy: merge reviewed committed work into canonical `main`, remove this task's worktree and branch, then push from canonical. Require exact-head Ubuntu/macOS/Windows CI and record the final main/push/cleanup evidence. Preserve independently owned worktrees.
-- [ ] Do not perform real launchd, provider, Discord, connector, or voice acceptance without fresh authorization; record them as separate pending layers.
+- [x] Preserve the live-operation boundary: no real launchd, provider, Discord, connector or voice acceptance was performed by this source task; those acceptance layers remain pending separately.

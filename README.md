@@ -29,15 +29,27 @@ on every press and reject stale proposal indexes. Subprocess and music operation
 retain cancellation ownership through child cleanup. Every production Rust module
 passes the under-1,000-line gate; 19 compatible transitive dependencies are updated.
 
-The integrated baseline passed 1,175 Rust tests with four intentional ignores.
-The later extraction run passed 1,178 tests with one source-location fixture
-failure; that fixture was corrected and its focused rerun passed. Cancellation
-regressions, all-target Clippy, 26 offline installer tests and the exact RustSec
-policy check passed. The policy retains four accepted vulnerabilities and three
-unmaintained-package warnings; it is not a clean audit. The fresh strict gate,
-locked release, canonical integration and exact-head hosted CI remain pending.
-No installation, provider qualification, Discord interaction or audible voice
-acceptance was performed by this source-validation pass.
+The fresh WDBX-required strict gate passed on tested source
+`ff5d594877d16844930f8687d229accd3fa645d0` using an external build target:
+**1,183 Rust tests passed, zero failed, and four live tests were intentionally
+ignored**. Formatting, warnings-denied all-target locked Clippy, deployment and
+Python checks (including 26 offline installer tests), privacy, the 81-artifact
+contract corpus, required sibling WDBX conformance, Linux TLS, module size,
+RustSec policy, Swift test groups of 12 and 16, and the locked Rust release build and offline Swift release build passed.
+The Rust release build completed in 3m12s and the gate ended `== ok ==`.
+Ten final release entrypoint cases also passed in sanitized scratch environments:
+five managed startup/privacy/unsafe-log cases and five legacy argument/no-backend
+cases, without provider or Discord requests.
+The RustSec policy retains four accepted vulnerabilities and three
+unmaintained-package warnings; it is not a clean audit.
+
+Source implementation, independent review and the strict source gate are complete.
+Canonical integration, push and exact-head hosted CI remain pending. Final delivery
+identity and cleanup proof will be recorded in canonical
+`.superpowers/completion-20260906/delivery.json`; this documentation does not claim
+that its later commit was the tested revision. No installation, provider
+qualification, Discord interaction or audible voice acceptance was performed by
+this source-validation pass.
 
 The following older table is a historical baseline. Its source result does not
 qualify the current integration, and newer live observations remain dated in

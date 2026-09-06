@@ -174,11 +174,16 @@ Discord or voice result.
 
 ## Managed lifecycle and status observation
 
-This section describes the new managed source contract, not a record of live
-acceptance. As of the 2026-09-06 integration snapshot, 1,175 Rust tests passed
-with 4 intentional ignores and 26 offline installer tests passed. The final
-post-review strict gate, locked release and exact-head hosted CI are pending;
-stages 0–6 still require their own evidence.
+This section describes the managed source contract, not a record of live
+acceptance. The fresh WDBX-required strict gate passed on tested source
+`ff5d594`: 1,183 Rust tests passed with zero failures and four intentional live
+ignores, alongside 26 offline installer tests, all-target locked Clippy and
+the locked Rust release build and offline Swift release build. Deployment/Python, privacy, 81-artifact contracts,
+required WDBX, TLS, module-size and Swift checks passed. The RustSec policy
+retains four accepted vulnerabilities and three unmaintained warnings; this
+is not a clean audit. Canonical integration, push and exact-head hosted CI
+remain pending; stages 0–6 require their own evidence. Final delivery proof
+will be recorded in canonical `.superpowers/completion-20260906/delivery.json`.
 
 The launchd installer validates private environment syntax before stopping the
 prior service. It installs direct `--managed-service` arguments and accepts a
@@ -220,9 +225,9 @@ Queue acceptance is not a durability receipt. The implemented shutdown producer
 uses `ShutdownFinalizing`/`Started` before final cleanup; it must not describe
 that row as completed shutdown. The root's final shutdown report can attest
 completion only after observed joins and component outcomes. A log row cannot
-prove its own writer's future retirement. These changes passed the integrated
-Rust suite and Clippy; the fresh strict delivery gate remains pending. Historical
-legacy logs are not rewritten.
+prove its own writer's future retirement. These changes passed independent review
+and the fresh strict source gate on
+`ff5d594`. Historical legacy logs are not rewritten.
 
 ## 6 — complete managed-service acceptance
 

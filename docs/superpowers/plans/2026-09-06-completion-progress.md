@@ -4,13 +4,56 @@ This record tracks the request to finish the server-plan implementation, command
 
 ## Checkout and delivery
 
-The canonical Rust checkout is `~/dev/active/abbey-bot`. Another session committed and continued editing the server-plan engine while this session inspected it. This work therefore uses `codex/completion-20260906` in the sibling `abbey-bot-wt-completion-20260906`, based on `dac71a7`. Canonical `95d907f` was merged into the isolated branch as `149f157`; topic-preservation semantics were reconciled in `97c999b` and are under focused review. Final changes must still be integrated into canonical main. This session's worktree and branch must be removed after integration and before push/closeout under the machine policy.
+The canonical Rust checkout is `~/dev/active/abbey-bot`. The concurrent
+server-plan edits observed at the start of this task were historical ownership
+evidence and justified the isolated `codex/completion-20260906` branch in
+`abbey-bot-wt-completion-20260906`. The current worktree inventory contains only
+canonical main and this task's worktree. Earlier canonical server changes were
+integrated and independently reviewed; the old command-center branch is already
+an ancestor of main and requires no second merge. The earlier separately owned
+worktree observation is historical, not a claim that it still exists.
 
-The older `codex/command-center-20260904` branch is already an ancestor of main. Its uncommitted earlier catalog/help implementation remains preserved in its separately owned worktree. Current main supersedes its product behavior; restoring those old files would regress later changes. There is no reason to merge its committed history again.
+Source work and fresh strict verification are complete. Integration into
+canonical main, removal of this task's worktree/branch, push and exact-head
+Ubuntu/macOS/Windows CI remain pending. Their final identities and cleanup proof
+will be written after observation to canonical ignored
+`.superpowers/completion-20260906/delivery.json`. The tested source below must not
+be confused with a later documentation-only commit or the final delivered SHA.
 
 Hosted baseline `2b916aad4e7d3861818a757e7b5d6900073cb763` passed all three Rust gate jobs in GitHub Actions run `34014242106`. This is baseline evidence only; it does not certify subsequent commits.
 
 ## Current verification
+
+The fresh `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` gate passed on tested
+source `ff5d594877d16844930f8687d229accd3fa645d0` using a fresh external build
+target. It completed with **1,183 Rust tests passed, zero failures and four
+intentional live ignores**, warnings-denied all-target locked Clippy, formatting,
+deployment/Python checks including 26 offline installer tests, privacy, the
+81-artifact contract corpus, required sibling WDBX conformance, Linux TLS,
+module-size/suppression checks, RustSec policy and Swift test groups of 12 and
+16. The locked Rust release build and offline Swift release build passed; the Rust release build finished in 3m12s and
+`check.log` ended `== ok ==`. The RustSec policy retains four accepted
+vulnerabilities and three unmaintained-package warnings; this is not a clean
+audit. All ten final release entrypoint cases passed: five managed startup/
+privacy/unsafe-log cases and five legacy argument/no-backend cases, using
+sanitized scratch HOME/environment and making no provider or Discord requests.
+The preserved release artifact has SHA-256
+`5869fe9251b8744a839f3bbdfb7313b472a265a547decd27f192154c3af8d132`
+and lives at canonical `.superpowers/completion-20260906/artifacts/abbey-bot`.
+The gate log and `release-acceptance.json` are preserved under the same canonical
+completion directory’s `validation` directory.
+
+Independent review and regression tests closed pending-control authorization,
+acknowledgement-before-gate ordering, displayed-row/index intent, pre-cancelled
+subprocess and music ownership, starting/reconnect readiness refresh, and
+shutdown-event truth findings. The root reports observed shutdown completion;
+`ShutdownFinalizing`/`Started` never claims its writer's future retirement.
+
+No installation, provider qualification, Discord/connector interaction or
+human-audible consented voice acceptance is implied or performed by this gate.
+Those live layers remain separate from source completion and hosted delivery.
+
+## Historical verification checkpoints
 
 At `f5537eb`, `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` completed with exit 0 using the canonical sibling WDBX checkout. It passed formatting, deployment/Python/plist checks, privacy, contracts, TLS/RustSec debt checks, WDBX parity, synthetic Swift audio tests and release build, Clippy, 1,002 Rust tests with zero failures and two ignored live tests, and the locked Rust release build. The intermediate gate reused an existing Cargo target directory; the final closeout still requires the plan's fresh external target directory.
 
@@ -22,19 +65,19 @@ The ignored local records are `.superpowers/baseline-strict-gate.log` and `.supe
 
 | Area | Current evidence | Remaining work |
 |---|---|---|
-| Server-plan engine | Canonical bot-member/blueprint fixes merged at `149f157`; `97c999b` preserves omitted topics and creates forum tags atomically; 68 server tests and all-target Clippy pass | Focused review and final integrated delivery validation |
-| Task 1 specifications | All three approved design documents present and read | Preserve as binding requirements |
-| Task 2 persistence | Existing `d000b41` / `2c8fee7` implementation and full-gate evidence cover truth table, canonical-before-projection ordering, atomic failure handling and reporting | Preserve authority during lifecycle/observability work |
-| Task 3 compatibility | Existing acknowledgement, Entry Point, backend, tool, manifest, state and CLI tests pass | Closed by `5b06446` / `b002bd6`: controlled actual adapter ordering, literal consent fixture and README correction; focused tests, all-targets Clippy and independent review pass |
-| Task 4 catalog/help | Existing `e39e13c` delivery, current parity and dispatch tests pass | Preserve during new surface registration |
-| Task 5 memory/image menus | `4045ab1` implements shared card, memory USER menu, two image MESSAGE menus, bounded decoded attachment selection and registered-action privacy/state tests; independent review approved | Final integrated gate and live registration/interaction acceptance remain separate |
-| Task 6 voice/admin UX | `12de8cc` / `ccdd6f7` / `aa65ffb` deliver member voice privacy, diagnostics, typed modes and the full dashboard; actual dispatcher/reset/export/provider-isolation tests and all-target Clippy pass; review approved | Preserve these boundaries during runtime/lifecycle work; final integrated gate and live acceptance remain |
-| Task 7 router | `0fafed3` implements pure normalized scoring, strict compatible manifests, circuit/Retry-After policy and conversation-owned fallback; 114 focused tests and all-target Clippy pass | Independent review approved; production integration remains Task 8 |
-| Task 8 provider runtime | Runtime authority, failover/effect boundaries and compatibility integration implemented and reviewed | Final lifecycle integration and strict delivery gate |
-| Task 9 lifecycle | Supervised actors, retained operations/writers and four-stage shutdown integrated; full 1,167-test suite passed before final review fixes | Post-review verification, integration commit and strict delivery gate |
-| Task 10 observability | Private managed artifacts, closed events, migration and bounded logs integrated and reviewed | Final startup heartbeat/event truth checks, integration commit and strict delivery gate |
-| Task 11 installer | Shared identity-bound readiness validation, transaction recovery and 26 passing offline installer tests | Final integrated gate; real installation remains separate |
-| Task 12 closeout | Reviewed server extraction committed at `9632416`; seven size-gate fixtures pass | Size ratchet, remaining decomposition, compatible dependency refresh, documentation, final review, fresh strict gate, exact-head CI and integration cleanup |
+| Server-plan engine | Canonical topic/forum/permission changes and behavior-neutral extraction independently reviewed; covered by the final strict source gate | Canonical delivery and any new live acceptance remain separate |
+| Task 1 specifications | All approved designs and supplemental rulings applied | Source complete; preserve binding requirements |
+| Task 2 persistence | Component truth, canonical-before-projection ordering, retained writers and final snapshot covered by strict gate | Source complete; live durability acceptance remains separate |
+| Task 3 compatibility | Registered command/Entry Point, provider, tool, manifest, state and CLI contracts reviewed and tested | Source complete; ten sanitized final release entrypoint cases passed |
+| Task 4 catalog/help | Guided help, catalog parity and actual private dispatch tests pass | Source complete; live registration/UX acceptance remains separate |
+| Task 5 memory/image menus | Shared card, private four-fact browser and image menus reviewed; actual permission/expiry/attachment tests pass | Source complete; live registration/interaction acceptance remains separate |
+| Task 6 voice/admin UX | Member privacy, typed modes, diagnostics and classic dashboard reviewed; actual adapter regressions pass | Source complete; consented live voice remains separate |
+| Task 7 router | Normalized scoring, manifests, circuit policy and conversation-owned fallback reviewed and integrated | Source complete; exact-provider live qualification remains separate |
+| Task 8 provider runtime | Runtime authority, failover/effect boundaries and cancellation ownership reviewed and covered by strict gate | Source complete; provider qualification remains separate |
+| Task 9 lifecycle | Retained actors/writers, readiness refresh and four-stage shutdown reviewed; final strict source gate passed | Source complete; managed runtime acceptance remains separate |
+| Task 10 observability | Private artifacts, closed events, migration, bounded logs and finalization truth reviewed; strict gate passed | Source complete; installed managed evidence remains separate |
+| Task 11 installer | Identity-bound readiness, private environment parity and transaction recovery reviewed; 26 offline installer tests pass | Source complete; actual installation remains separate |
+| Task 12 closeout | Decomposition, size ratchet, 19 compatible transitive updates, docs, final review and fresh strict release gate complete | Canonical integration, worktree/branch cleanup, push and exact-head three-platform CI pending |
 
 WDBX episode integration remains proposal-only and default-off. Approval/execution events belong to the constitutional host; neither admin controls nor a successful proposal imply ledger authorization. The broader live acceptance ledger remains separate from these source tasks.
 
@@ -242,3 +285,22 @@ and three unmaintained warnings, not a clean audit. Canonical main and origin/ma
 remain clean at `4bbce84` after a fresh fetch. Seventy-one review reports have been
 preserved in canonical `.superpowers/completion-20260906/review-checkpoint-87feb87`.
 The fresh external-target strict gate is the next delivery boundary.
+
+## Final source verification and remaining delivery
+
+The fresh strict gate described in Current verification completed on `ff5d594`.
+All source and documentation tasks are complete, including the reviewed
+permission/ACK/stale-button, cancellation, readiness and shutdown corrections.
+The historical intermediate failures above were corrected and the final full
+gate passed; they are retained as the evidence trail, not current blockers.
+AGENTS.md and CLAUDE.md bodies were compared and remain identical below their
+respective header lines, so no mirrored guidance edit was needed. No new tracked
+Markdown file was added for closeout, preserving the reviewed Pages inventory.
+
+Canonical main integration, this task's worktree/branch cleanup, push and
+exact-head CI remain pending. Root observed all ten sanitized final release CLI
+cases passing; their result and artifact identity are recorded above. The final delivered SHA, hosted CI and
+cleanup receipt will live in canonical ignored
+`.superpowers/completion-20260906/delivery.json`, after those actions complete.
+Live installation, provider, Discord, connector and voice acceptance stay
+explicitly separate. No overall hosted/live completion is claimed.
