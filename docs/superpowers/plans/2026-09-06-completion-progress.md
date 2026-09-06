@@ -227,3 +227,18 @@ The fixture still read the old brain-command file; correcting that include path
 preserved its namespace and its focused rerun passed. This is not a claim of a
 second full-suite run after the one-line fixture correction. All extraction
 slices passed independent body/literal and responsibility review.
+
+Cancellation correction `87feb87` passed the three pre-cancelled regressions,
+20 provider tests with one intentional ignore, 18 episode tests, two helper
+regressions and all-target Clippy. The independent review cleared both spawn
+boundaries and retained kill/wait behavior.
+
+Dependency commit `0ce40bf` updates 19 transitive versions only. Locked metadata
+contains 513 packages; direct compatibility groups, Rust 1.98, the local OpenMLS
+patch and accepted-debt file remain unchanged. Independent review verified all
+19 downloaded archive checksums and the one Syn dependency edge. The Linux TLS
+gate passed; the RustSec policy gate retained exactly four accepted vulnerabilities
+and three unmaintained warnings, not a clean audit. Canonical main and origin/main
+remain clean at `4bbce84` after a fresh fetch. Seventy-one review reports have been
+preserved in canonical `.superpowers/completion-20260906/review-checkpoint-87feb87`.
+The fresh external-target strict gate is the next delivery boundary.

@@ -801,8 +801,10 @@ integration snapshot passed 1,175 Rust tests with 4 intentional ignores and 26
 offline installer tests. The Rust results include the final review fixes; formatting and all-target
 Clippy also passed.
 
-- Pending: module decomposition, fresh full strict gate
-  and locked release for the resulting source.
+- Completed: reviewed module decomposition, pending-control authorization and
+  stale-button corrections, subprocess cancellation, and 19 compatible transitive
+  dependency updates.
+- Pending: fresh full strict gate and locked release for the resulting source.
 - Pending: reviewed integration into canonical main and exact-head hosted CI.
 - Pending separately: installed artifact identity and managed transaction
   acceptance, qualified provider identity, live two-guild Discord/UI checks,

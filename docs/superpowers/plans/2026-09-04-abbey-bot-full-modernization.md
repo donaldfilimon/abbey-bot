@@ -232,10 +232,10 @@ Task 11 Python source closure: reviewed installer work through `a241dd4` and gat
 - [x] Move provider, runtime, command, brain-command, voice-command, local/offline voice, and voice-session responsibilities into focused modules without behavior changes.
 - [x] Keep every production Rust file below 1,000 lines; flag files above 800 for review; add a size ratchet and forbid module-wide dead-code/import allowances.
 - [x] Preserve voice epoch, media-gate, cancellation, leave, and actor-reap ordering during movement.
-- [ ] In a separate lockfile commit, apply compatible patch/minor updates that retain Rust 1.98 and current Serenity/Poise/Songbird/Reqwest/Symphonia compatibility groups.
-- [ ] Retain the reviewed OpenMLS patch and four explicit RustSec records unless compatible upstream changes genuinely remove them; add no OpenSSL/native-TLS graph.
+- [x] In a separate lockfile commit, apply compatible patch/minor updates that retain Rust 1.98 and current Serenity/Poise/Songbird/Reqwest/Symphonia compatibility groups.
+- [x] Retain the reviewed OpenMLS patch and four explicit RustSec records unless compatible upstream changes genuinely remove them; add no OpenSSL/native-TLS graph.
 - [ ] Update README, roadmap, live protocol, goals/todo, readiness/logging runbook, and mirrored AGENTS.md/CLAUDE.md with claim-honest evidence.
 - [ ] Run focused tests after each movement, then the strict full gate with required sibling WDBX conformance and a fresh external target directory.
-- [ ] Dispatch final whole-branch architecture/security review; fix all Critical/Important findings and record rulings.
+- [x] Dispatch final whole-branch architecture/security review; fix all Critical/Important findings and record rulings.
 - [ ] Follow the current machine integration policy: merge reviewed committed work into canonical `main`, remove this task's worktree and branch, then push from canonical. Require exact-head Ubuntu/macOS/Windows CI and record the final main/push/cleanup evidence. Preserve independently owned worktrees.
 - [ ] Do not perform real launchd, provider, Discord, connector, or voice acceptance without fresh authorization; record them as separate pending layers.

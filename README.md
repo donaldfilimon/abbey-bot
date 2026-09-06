@@ -22,13 +22,19 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 
 ## Current source progress (2026-09-06)
 
-The completion worktree implements guided private help, the member memory menu
-and full-fact browser, scoped statistics, fixed operator recovery advice, and
-managed service readiness, logging and task ownership. The latest recorded Rust
-run passed **1,175 tests with 4 intentional ignores**; the offline launchd
-installer suite passed **26 tests**. These are source-test results from the
-integration work, including the final review fixes. Formatting and all-target
-Clippy also passed. The final strict gate,
+The reviewed source implements guided private help, the member memory menu and
+full-fact browser, scoped statistics, fixed operator recovery advice, and managed
+readiness, logging and task ownership. Pending-memory controls refresh permission
+on every press and reject stale proposal indexes. Subprocess and music operations
+retain cancellation ownership through child cleanup. Every production Rust module
+passes the under-1,000-line gate; 19 compatible transitive dependencies are updated.
+
+The integrated baseline passed 1,175 Rust tests with four intentional ignores.
+The later extraction run passed 1,178 tests with one source-location fixture
+failure; that fixture was corrected and its focused rerun passed. Cancellation
+regressions, all-target Clippy, 26 offline installer tests and the exact RustSec
+policy check passed. The policy retains four accepted vulnerabilities and three
+unmaintained-package warnings; it is not a clean audit. The fresh strict gate,
 locked release, canonical integration and exact-head hosted CI remain pending.
 No installation, provider qualification, Discord interaction or audible voice
 acceptance was performed by this source-validation pass.
