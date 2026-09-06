@@ -223,6 +223,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Read your standing privately; moderators may choose a member."
     ),
     spec!(
+        MemoryMenu,
+        UserContext,
+        "Abbey: memory",
+        GUILD,
+        A1,
+        C0,
+        Memory,
+        true,
+        "Read the selected member's bounded memory card privately."
+    ),
+    spec!(
         Summarize,
         Slash,
         "summarize",
@@ -254,6 +265,28 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         Images,
         false,
         "Read the text in an image."
+    ),
+    spec!(
+        DescribeImage,
+        MessageContext,
+        "Abbey: describe image",
+        BOTH,
+        A0,
+        C2,
+        Images,
+        true,
+        "Describe the first supported attachment privately."
+    ),
+    spec!(
+        ReadImage,
+        MessageContext,
+        "Abbey: read image text",
+        BOTH,
+        A0,
+        C2,
+        Images,
+        true,
+        "Read text from the first supported attachment privately."
     ),
     spec!(
         Stats,
@@ -544,48 +577,6 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
     ),
 ];
 pub(super) const PLANNED: &[CommandSpec] = &[
-    CommandSpec {
-        status: ImplementationStatus::Planned,
-        ..spec!(
-            MemoryMenu,
-            UserContext,
-            "Abbey: memory",
-            GUILD,
-            A1,
-            C0,
-            Memory,
-            true,
-            "Planned: a private member memory card."
-        )
-    },
-    CommandSpec {
-        status: ImplementationStatus::Planned,
-        ..spec!(
-            DescribeImage,
-            MessageContext,
-            "Abbey: describe image",
-            BOTH,
-            A0,
-            C2,
-            Images,
-            true,
-            "Planned: describe a selected image attachment privately."
-        )
-    },
-    CommandSpec {
-        status: ImplementationStatus::Planned,
-        ..spec!(
-            ReadImage,
-            MessageContext,
-            "Abbey: read image text",
-            BOTH,
-            A0,
-            C2,
-            Images,
-            true,
-            "Planned: read a selected image attachment privately."
-        )
-    },
     CommandSpec {
         status: ImplementationStatus::Planned,
         ..spec!(

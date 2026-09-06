@@ -32,8 +32,8 @@ pub(super) const MAX_DECODED_IMAGE_DIMENSION: u32 = 8_192;
 /// limit before allocating it.
 const MAX_DECODED_IMAGE_ALLOC: u64 = 96 << 20;
 
-pub(super) const UNSUPPORTED_IMAGE_PUBLIC: &str = "That attachment is not a supported image. Upload a JPEG, PNG, WebP, or GIF file; convert HEIC, AVIF, JXL, SVG, and PDF files first.";
-pub(super) const INVALID_IMAGE_PUBLIC: &str = "I couldn't decode that image safely. Re-export it as a normal JPEG, PNG, WebP, or GIF no larger than 8192 by 8192 pixels and try again.";
+pub(crate) const UNSUPPORTED_IMAGE_PUBLIC: &str = "That attachment is not a supported image. Upload a JPEG, PNG, WebP, or GIF file; convert HEIC, AVIF, JXL, SVG, and PDF files first.";
+pub(crate) const INVALID_IMAGE_PUBLIC: &str = "I couldn't decode that image safely. Re-export it as a normal JPEG, PNG, WebP, or GIF no larger than 8192 by 8192 pixels and try again.";
 pub(super) const OVERSIZED_IMAGE_PUBLIC: &str =
     "That image is too large. Keep the file at or under 10 MB and try again.";
 const BUSY_IMAGE_PUBLIC: &str =
@@ -68,14 +68,14 @@ pub(super) async fn prepare_data_url(bytes: Vec<u8>) -> Result<String, VisionErr
     prepare_data_url_with_limiter(bytes, global_limiter()).await
 }
 
-pub(super) struct PreparedImage {
+pub(crate) struct PreparedImage {
     pub bytes: Vec<u8>,
     pub extension: &'static str,
 }
 
 /// Validate and normalize bytes for a file-based provider. The exact same
 /// decoder and allocation ceilings protect both the remote and FM transports.
-pub(super) async fn prepare_file_bytes(bytes: Vec<u8>) -> Result<PreparedImage, VisionError> {
+pub(crate) async fn prepare_file_bytes(bytes: Vec<u8>) -> Result<PreparedImage, VisionError> {
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err(VisionError::invalid_image(
             format!(

@@ -222,8 +222,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
     assert_eq!(keys.len(), 51);
-    assert_eq!(registered_commands().len(), 46);
-    assert_eq!(planned_commands().len(), 5);
+    assert_eq!(registered_commands().len(), 49);
+    assert_eq!(planned_commands().len(), 2);
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
         assert!(!access_allows(rule, &input));

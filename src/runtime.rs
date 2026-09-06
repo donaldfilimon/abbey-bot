@@ -102,7 +102,7 @@ pub fn fresh_brain() -> DqnAgent {
 fn attachment_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
-        .redirect(reqwest::redirect::Policy::limited(3))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("static attachment client configuration is valid")
 }

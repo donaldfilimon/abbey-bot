@@ -57,9 +57,12 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/pending dismiss` | guild, bot DM | private | Dismiss a proposed replacement and keep both facts. |
 | `/recall` | guild, bot DM | private | Read your facts and standing, or an authorized member's. |
 | `/reputation` | guild, bot DM | private | Read your standing privately; moderators may choose a member. |
+| `Abbey: memory` | guild | private | Read the selected member's bounded memory card privately. |
 | `/summarize` | guild, bot DM | public | Summarize the recent conversation through the backend. |
 | `/see` | guild, bot DM | public | Describe an image; an optional question also needs generation. |
 | `/ocr` | guild, bot DM | public | Read the text in an image. |
+| `Abbey: describe image` | guild, bot DM | private | Describe the first supported attachment privately. |
+| `Abbey: read image text` | guild, bot DM | private | Read text from the first supported attachment privately. |
 | `/stats` | guild, bot DM | private | Read command usage and learning statistics. |
 | `/admin show` | guild | private | Read this server's settings. |
 | `/admin persona` | guild | private | Set the server's default persona. |
@@ -87,7 +90,7 @@ the independently vendored Abbey contract corpus and each consumer's own gate.
 | `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |
 | `/voice verify report` | guild | private | Read the private local voice acceptance report. |
 
-Planned (not registered or shown as usable in help): `Abbey: memory`, `Abbey: describe image`, `Abbey: read image text`, `admin dashboard`, `voice diagnostics`. Member-safe `/voice status` and typed voice-mode choices also remain Task 6 work; the current status is private and manager-only.
+Planned (not registered or shown as usable in help): `admin dashboard`, `voice diagnostics`. Member-safe `/voice status` and typed voice-mode choices also remain Task 6 work; the current status is private and manager-only.
 <!-- END GENERATED COMMAND CATALOG -->
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned

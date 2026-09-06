@@ -36,6 +36,7 @@ struct DiscordFixture {
     acknowledgement_entered: Arc<tokio::sync::Semaphore>,
     acknowledgement_release: Arc<tokio::sync::Semaphore>,
     server: tokio::task::JoinHandle<()>,
+    address: std::net::SocketAddr,
 }
 
 fn user(id: u64) -> User {
@@ -117,28 +118,44 @@ impl DiscordFixture {
                     let is_acknowledgement = body["type"] == 5;
                     let is_permission_lookup = method == "GET";
                     let is_callback = route.ends_with("/callback");
-                    let response = if is_permission_lookup && route.contains("/members/") {
+                    let (content_type, response) = if method == "GET" && route == "/fixture.png" {
+                        let mut encoded = std::io::Cursor::new(Vec::new());
+                        ::image::DynamicImage::new_rgb8(2, 2)
+                            .write_to(&mut encoded, ::image::ImageFormat::Png)
+                            .unwrap();
+                        ("image/png", encoded.into_inner())
+                    } else if method == "POST" && route == "/v1/chat/completions" {
+                        (
+                            "application/json",
+                            json!({"choices":[{"message":{"content":"x".repeat(3_000)}}]})
+                                .to_string()
+                                .into_bytes(),
+                        )
+                    } else if is_permission_lookup && route.contains("/members/") {
                         let mut member = Member::default();
                         member.user = user(ACTOR);
                         member.guild_id = GuildId::new(GUILD);
-                        serde_json::to_value(member).unwrap()
+                        ("application/json", serde_json::to_vec(&member).unwrap())
                     } else if is_permission_lookup && route.contains("/guilds/") {
-                        serde_json::to_value(guild(Permissions::from_bits_retain(
-                            permissions.load(Ordering::SeqCst),
-                        )))
-                        .unwrap()
+                        (
+                            "application/json",
+                            serde_json::to_vec(&guild(Permissions::from_bits_retain(
+                                permissions.load(Ordering::SeqCst),
+                            )))
+                            .unwrap(),
+                        )
                     } else if is_permission_lookup && route.contains("/channels/") {
                         let mut channel = GuildChannel::default();
                         channel.id = ChannelId::new(CHANNEL);
                         channel.guild_id = GuildId::new(GUILD);
-                        serde_json::to_value(channel).unwrap()
+                        ("application/json", serde_json::to_vec(&channel).unwrap())
                     } else if is_callback {
-                        Value::Null
+                        ("application/json", Vec::new())
                     } else {
                         assert!(route.contains("/webhooks/"), "unexpected route: {route}");
                         let mut message = Message::default();
                         message.content = body["content"].as_str().unwrap_or_default().into();
-                        serde_json::to_value(message).unwrap()
+                        ("application/json", serde_json::to_vec(&message).unwrap())
                     };
                     requests.lock().unwrap().push(Request {
                         method,
@@ -154,19 +171,22 @@ impl DiscordFixture {
                     let (status, response) = if failed {
                         (
                             "403 Forbidden",
-                            json!({"code": 50013, "message": "fixture denied"}).to_string(),
+                            json!({"code": 50013, "message": "fixture denied"})
+                                .to_string()
+                                .into_bytes(),
                         )
                     } else if is_callback {
-                        ("204 No Content", String::new())
+                        ("204 No Content", Vec::new())
                     } else {
-                        ("200 OK", response.to_string())
+                        ("200 OK", response)
                     };
                     let reply = format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         response.len()
                     );
                     // Failed permission joins may cancel other already-issued requests.
                     let _ = stream.write_all(reply.as_bytes()).await;
+                    let _ = stream.write_all(&response).await;
                 }
             })
         };
@@ -254,6 +274,7 @@ impl DiscordFixture {
             acknowledgement_entered,
             acknowledgement_release,
             server,
+            address,
         }
     }
 
@@ -286,6 +307,10 @@ impl Drop for DiscordFixture {
 }
 
 fn configured_data() -> Data {
+    configured_data_at(None)
+}
+
+fn configured_data_at(address: Option<std::net::SocketAddr>) -> Data {
     let mut data = Data {
         state: runtime::AppState::in_memory(),
         voice: None,
@@ -295,10 +320,19 @@ fn configured_data() -> Data {
         endpoint: "http://127.0.0.1:1".into(),
         model: "fixture".into(),
     });
+    if address.is_some() {
+        state.attachments = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+    }
     state.vision = Some(crate::vision::ConfiguredVision::Remote(
         crate::vision::RemoteVision {
             config: crate::vision::VisionConfig {
-                base_url: "http://127.0.0.1:1/v1".into(),
+                base_url: address.map_or_else(
+                    || "http://127.0.0.1:1/v1".into(),
+                    |a| format!("http://{a}/v1"),
+                ),
                 model: "fixture".into(),
                 api_key: String::new(),
             },
@@ -478,6 +512,49 @@ async fn check(
         .unwrap()
 }
 
+async fn invoke_user_menu(
+    fixture: &DiscordFixture,
+    command: &poise::Command<Data, Error>,
+    data: &Data,
+    target: User,
+) {
+    let invocation = Invocation::new(command, true, None);
+    let options = poise::FrameworkOptions::default();
+    let context = invocation.context(
+        fixture,
+        command,
+        &options,
+        data,
+        poise::CommandInteractionType::Command,
+    );
+    let Some(poise::ContextMenuCommandAction::User(action)) = command.context_menu_action else {
+        panic!("expected user menu")
+    };
+    assert!(action(context, target).await.is_ok());
+}
+
+async fn invoke_message_menu(
+    fixture: &DiscordFixture,
+    command: &poise::Command<Data, Error>,
+    data: &Data,
+    target: Message,
+    in_guild: bool,
+) {
+    let invocation = Invocation::new(command, in_guild, None);
+    let options = poise::FrameworkOptions::default();
+    let context = invocation.context(
+        fixture,
+        command,
+        &options,
+        data,
+        poise::CommandInteractionType::Command,
+    );
+    let Some(poise::ContextMenuCommandAction::Message(action)) = command.context_menu_action else {
+        panic!("expected message menu")
+    };
+    assert!(action(context, target).await.is_ok());
+}
+
 fn assert_deferred_first(requests: &[Request], command: &poise::Command<Data, Error>) {
     assert_eq!(requests[0].method, "POST", "{}", command.qualified_name);
     assert!(requests[0].route.ends_with("/callback"));
@@ -486,6 +563,108 @@ fn assert_deferred_first(requests: &[Request], command: &poise::Command<Data, Er
         requests[0].body["data"]["flags"].as_u64().unwrap_or(0) & 64 != 0,
         command.ephemeral
     );
+}
+
+fn assert_private_no_mentions_reply(requests: &[Request]) -> &str {
+    assert_eq!(requests[0].body["type"], 5);
+    assert_ne!(
+        requests[0].body["data"]["flags"].as_u64().unwrap_or(0) & 64,
+        0
+    );
+    let reply = requests
+        .iter()
+        .find(|request| request.route.contains("/webhooks/"))
+        .expect("private follow-up");
+    assert_eq!(reply.body["allowed_mentions"]["parse"], json!([]));
+    reply.body["content"].as_str().unwrap()
+}
+
+#[tokio::test]
+async fn registered_memory_menu_shares_card_and_a1_denial_without_mutation() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    let guild = format!("discord:{GUILD}");
+    let actor = format!("discord:{ACTOR}");
+    data.state
+        .memory_service()
+        .remember(&guild, &actor, "likes Rust", 1)
+        .unwrap();
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::MemoryMenu);
+    let before = runtime::AppState::lock(&data.state.stores).clone();
+
+    invoke_user_menu(&fixture, command, &data, user(ACTOR)).await;
+    let requests = fixture.take_requests();
+    let content = assert_private_no_mentions_reply(&requests);
+    assert!(content.contains("likes Rust"));
+    assert!(content.contains("standing 0.50"));
+    assert_eq!(*runtime::AppState::lock(&data.state.stores), before);
+    assert_eq!(
+        runtime::AppState::lock(&data.state.rewards).pending_len(),
+        0
+    );
+
+    invoke_user_menu(&fixture, command, &data, user(OTHER)).await;
+    let denied = fixture.take_requests();
+    assert!(denied.iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|text| text.contains("only your own memory"))
+    }));
+    assert_eq!(*runtime::AppState::lock(&data.state.stores), before);
+}
+
+#[tokio::test]
+async fn registered_image_menus_invoke_provider_privately_without_state_mutation() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data_at(Some(fixture.address));
+    let commands = crate::application_commands();
+    let attachment: serenity::all::Attachment = serde_json::from_value(json!({
+        "id":"1", "filename":"misleading.txt", "size":100,
+        "url":format!("http://{}/fixture.png", fixture.address),
+        "proxy_url":"https://ignored.invalid/proxy"
+    }))
+    .unwrap();
+    let mut message = Message::default();
+    message.content = "https://ignored.invalid/body.png".into();
+    message.attachments.push(attachment);
+    let before = runtime::AppState::lock(&data.state.stores).clone();
+
+    for key in [CommandKey::DescribeImage, CommandKey::ReadImage] {
+        let command = command_by_key(&commands, key);
+        invoke_message_menu(&fixture, command, &data, message.clone(), false).await;
+        let requests = fixture.take_requests();
+        let content = assert_private_no_mentions_reply(&requests);
+        assert!(content.contains('x'));
+        assert!(content.chars().count() <= 2_000);
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.route == "/fixture.png")
+        );
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request.route.contains("ignored.invalid"))
+        );
+        assert_eq!(*runtime::AppState::lock(&data.state.stores), before);
+        assert_eq!(
+            runtime::AppState::lock(&data.state.rewards).pending_len(),
+            0
+        );
+    }
+
+    let command = command_by_key(&commands, CommandKey::DescribeImage);
+    invoke_message_menu(&fixture, command, &data, Message::default(), true).await;
+    let requests = fixture.take_requests();
+    let content = assert_private_no_mentions_reply(&requests);
+    assert!(content.contains("no supported image attachment"));
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.route == "/v1/chat/completions")
+    );
+    assert_eq!(*runtime::AppState::lock(&data.state.stores), before);
 }
 
 #[tokio::test]
@@ -675,7 +854,12 @@ async fn registered_self_memory_guards_need_no_permission_rest() {
         .into_iter()
         .filter(|command| binding(command).eligibility.access == AccessId::A1)
     {
-        for in_guild in [false, true] {
+        let contexts: &[bool] = if command.guild_only {
+            &[true]
+        } else {
+            &[false, true]
+        };
+        for &in_guild in contexts {
             for subject in [None, Some(ACTOR)] {
                 assert!(
                     check(&fixture, command, &data, in_guild, subject).await,

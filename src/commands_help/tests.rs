@@ -72,7 +72,13 @@ fn recursive_poise_catalog_and_runtime_binding_parity() {
             catalog_check as for<'a> fn(Context<'a>) -> poise::BoxFuture<'a, Result<bool, Error>>
         ));
     }
-    assert!(!seen.contains(&CommandKey::MemoryMenu));
+    for key in [
+        CommandKey::MemoryMenu,
+        CommandKey::DescribeImage,
+        CommandKey::ReadImage,
+    ] {
+        assert!(seen.contains(&key));
+    }
 }
 #[test]
 fn discord_payload_contexts_parent_permissions_and_limits() {

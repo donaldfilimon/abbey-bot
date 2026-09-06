@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serenity::all::{
     Attachment, ButtonStyle, CreateActionRow, CreateAttachment, CreateButton,
-    CreateInteractionResponse, CreateInteractionResponseMessage, Permissions, User, UserId,
+    CreateInteractionResponse, CreateInteractionResponseMessage, User,
 };
 
 use crate::ask;
@@ -74,28 +74,44 @@ impl OnOff {
 // Memory
 // ---------------------------------------------------------------------------
 
-fn can_access_memory_subject(
-    actor: UserId,
-    subject: UserId,
-    permissions: Option<Permissions>,
-) -> bool {
-    let mut input = crate::command_catalog::EligibilityInput::new(
-        crate::command_catalog::InteractionContext::Guild,
-    );
-    input.self_subject = Some(actor == subject);
-    input.permissions = crate::commands_help::permissions_input(permissions.unwrap_or_default());
-    crate::command_catalog::access_allows(crate::command_catalog::AccessId::A1.rule(), &input)
+async fn memory_subject_authorized(ctx: Context<'_>, subject: &User) -> bool {
+    let permissions = if subject.id == ctx.author().id {
+        Vec::new()
+    } else {
+        crate::commands_help::permissions_input(
+            ctx.author_member()
+                .await
+                .and_then(|member| member.permissions)
+                .unwrap_or_default(),
+        )
+    };
+    crate::memory_card::subject_authorized(ctx.author().id.get(), subject.id.get(), &permissions)
 }
 
-async fn memory_subject_authorized(ctx: Context<'_>, subject: &User) -> bool {
-    if subject.id == ctx.author().id {
-        return can_access_memory_subject(ctx.author().id, subject.id, None);
-    }
-    let permissions = ctx
-        .author_member()
-        .await
-        .and_then(|member| member.permissions);
-    can_access_memory_subject(ctx.author().id, subject.id, permissions)
+fn memory_card(state: &AppState, guild: &str, subject: &User) -> String {
+    let user = scoped_user(subject);
+    let (facts, pending) = state.memory_service().subject_snapshot(guild, &user);
+    let standing = {
+        let stores = AppState::lock(&state.stores);
+        AppState::lock(&state.social).reputation(&user, guild, &*stores)
+    };
+    crate::memory_card::render(&crate::memory_card::MemoryCard {
+        subject_id: subject.id.get(),
+        facts: &facts,
+        pending: &pending,
+        standing,
+    })
+}
+
+async fn send_private_no_mentions(ctx: Context<'_>, content: String) -> Result<(), Error> {
+    ctx.send(
+        poise::CreateReply::default()
+            .content(clamp_message(content))
+            .ephemeral(true)
+            .allowed_mentions(crate::gateway::no_mentions()),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Store a durable fact about a member (yourself by default).
@@ -548,28 +564,23 @@ pub async fn recall(
         ctx.say(CROSS_USER_MEMORY_DENIED).await?;
         return Ok(());
     }
-    let u = scoped_user(subject);
-    let state = &ctx.data().state;
-    let facts = state.memory_service().facts(&g, &u);
-    let reputation = {
-        let stores = AppState::lock(&state.stores);
-        AppState::lock(&state.social).reputation(&u, &g, &*stores)
+    send_private_no_mentions(ctx, memory_card(&ctx.data().state, &g, subject)).await
+}
+
+/// Right-click a guild member and read the same bounded card as `/recall`.
+#[poise::command(context_menu_command = "Abbey: memory", guild_only, ephemeral)]
+pub async fn memory_context_menu(ctx: Context<'_>, user: User) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say(NO_GUILD).await?;
+        return Ok(());
     };
-    let mut out = format!(
-        "**<@{}>** — standing {reputation:.2} (0 = poor, 1 = excellent)\n",
-        subject.id.get()
-    );
-    if facts.is_empty() {
-        out.push_str("No facts on record.");
-    } else {
-        for f in facts {
-            out.push_str("• ");
-            out.push_str(&f);
-            out.push('\n');
-        }
+    if !memory_subject_authorized(ctx, &user).await {
+        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+        return Ok(());
     }
-    ctx.say(clamp_message(out)).await?;
-    Ok(())
+    let guild = guild::scoped_guild_id(PLATFORM, Some(&guild_id.get().to_string()));
+    send_private_no_mentions(ctx, memory_card(&ctx.data().state, &guild, &user)).await
 }
 
 /// Your standing privately, or another member when authorized.
@@ -1152,34 +1163,6 @@ mod tests {
     }
 
     #[test]
-    fn memory_subject_access_is_self_service_or_runtime_moderated() {
-        let actor = UserId::new(10);
-        let other = UserId::new(20);
-        assert!(can_access_memory_subject(actor, actor, None));
-        assert!(!can_access_memory_subject(actor, other, None));
-        assert!(!can_access_memory_subject(
-            actor,
-            other,
-            Some(Permissions::VIEW_CHANNEL)
-        ));
-        assert!(can_access_memory_subject(
-            actor,
-            other,
-            Some(Permissions::MANAGE_MESSAGES)
-        ));
-        assert!(can_access_memory_subject(
-            actor,
-            other,
-            Some(Permissions::MANAGE_GUILD)
-        ));
-        assert!(can_access_memory_subject(
-            actor,
-            other,
-            Some(Permissions::ADMINISTRATOR)
-        ));
-    }
-
-    #[test]
     fn facts_are_whitespace_normalized_and_character_bounded() {
         assert_eq!(
             memory::validated_fact("  Donald\nlikes\tRust.  "),
@@ -1194,6 +1177,21 @@ mod tests {
             memory::validated_fact(&"🦀".repeat(memory::MAX_FACT_CHARS + 1)),
             Err("Keep one remembered fact to 300 characters or fewer.")
         );
+    }
+
+    #[test]
+    fn memory_read_adapters_are_private_and_have_the_required_contexts() {
+        let reputation = reputation();
+        assert!(reputation.ephemeral);
+        assert!(!reputation.guild_only);
+
+        let memory = memory_context_menu();
+        assert!(memory.ephemeral);
+        assert!(memory.guild_only);
+        assert!(matches!(
+            memory.context_menu_action,
+            Some(poise::ContextMenuCommandAction::User(_))
+        ));
     }
 }
 

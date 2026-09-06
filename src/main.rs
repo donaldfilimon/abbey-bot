@@ -58,6 +58,7 @@ mod command_catalog;
 mod command_registration_tests;
 mod commands;
 mod commands_brain;
+mod commands_context;
 mod commands_help;
 mod commands_voice;
 #[cfg(test)]
@@ -71,9 +72,11 @@ mod grounding;
 mod guild;
 mod help_center;
 mod http_body;
+mod image_attachment;
 mod inspect;
 mod llm;
 mod memory;
+mod memory_card;
 mod moderation;
 mod music;
 mod offline_voice;
@@ -688,6 +691,9 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands::whois(),
         commands::profile_context_menu(),
         commands::ask_context_menu(),
+        commands_brain::memory_context_menu(),
+        commands_context::describe_image(),
+        commands_context::read_image_text(),
         commands::perms(),
         commands::modcall(),
         commands::server(),

@@ -280,6 +280,11 @@ async fn invocation_input(
         if let Some(CommandDataOptionValue::User(subject)) = option(options, "user") {
             input.self_subject = Some(*subject == ctx.author().id);
         }
+        if let Some(serenity::all::ResolvedTarget::User(subject, _)) =
+            application.interaction.data.target()
+        {
+            input.self_subject = Some(subject.id == ctx.author().id);
+        }
         input.follow_up_absent = Some(option(options, "question").is_none());
     }
     if need_permissions && let Some(guild) = ctx.guild_id() {
