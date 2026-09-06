@@ -733,6 +733,14 @@ status: in_progress
 
 ## Build the MLAI server from a plan file (`--server-plan`)
 status: in_progress
+- 2026-09-06 04:33: **STAGE REVEAL APPLIED to the live MLAI guild** on Donald's "confirm all".
+  Fresh dry run first (`changes (52)`, 0 blockers, no deletes: overwrite sets/clears, role
+  hoist/colour edits, topic edits, one forum and one announcement edit), then `--apply`:
+  `verified: 52 change(s) applied; the guild now matches stage reveal of the plan.` An
+  independent dry run afterwards reports `changes (0)`. Transcripts (0600, outside the repo):
+  `~/Archive/2026-09-06-mlai-discord-snapshot/mlai-{dry-run-reveal-2026-09-06-0433,apply-reveal-2026-09-06,dry-run-reveal-after-2026-09-06}.txt`.
+  Review notes the engine leaves by design (role permission diffs, role order) are unchanged.
+  Remaining stage: overwrites (per category, `--category`).
 - 2026-09-06: `server/{plan,observe,diff,apply,discord,run}` + `blueprints/mlai-community.toml`
   land the engine the 2026-09-04 design asked for, with the boundary moved into the type
   system: `diff::Change` has no delete variant and no role-permission edit (a test enumerates
