@@ -678,7 +678,7 @@ status: in_progress
   Stage 0 export must happen first. Role permissions, role order, Community settings,
   onboarding, AutoMod, and every deletion remain human steps by design. Forum tags and
   slowmode are creation-time only (not diffed afterwards).
-- 2026-09-06 03:3x: `233b2df` fixed a reveal non-idempotence the advisor caught (a plan with no
+- 2026-09-06 03:0x: `233b2df` fixed a reveal non-idempotence the advisor caught (a plan with no
   topic kept emitting an empty edit for a channel that had one, so `--apply` could never
   verify clean on the topic-less archetype plans). The three commits `dac71a7`, `f74bb7a`,
   `233b2df` are local only, not pushed.
