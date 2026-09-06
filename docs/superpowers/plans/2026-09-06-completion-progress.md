@@ -51,3 +51,9 @@ WDBX episode integration remains proposal-only and default-off. Approval/executi
 A concurrent checkout wrote into the initially reused Cargo target directory. Task 3 therefore forced a rebuild and verified the expected worktree test binary and exact new test counts. Subsequent work uses this isolated checkout's own target directory. The final gate still requires a fresh external target; no shared cached binary may substitute for exact-source evidence.
 
 Task 5 validation: the full locked Rust suite passed 1,015 tests with two ignored before the final two registered-action fixtures were added. Those two fixtures and final all-targets Clippy passed afterward. This is not a claim that the full integrated suite has run at the new merged head.
+
+## Expanded user direction at 03:21 EDT
+
+The user explicitly requested all Rust/service modernization, better menus/UI/UX/logging, parallel brainstorming and implementation, builds and integration into main. The selected design is `docs/superpowers/specs/2026-09-06-guided-ux-operator-status-design.md`. Two additional plans cover guided help/private complete fact browsing and scoped statistics/operator status/recovery. They finish before the original Task 12 final checks. The new plans were selected under the user's delegated instruction to brainstorm and implement ideas; no separate user document review is claimed.
+
+Task 6 source is committed at `12de8cc` and under review. Findings require an epsilon dashboard action, a completed private reply on permission lookup failure, and actual dispatcher tests for reset/export/current authorization. Task 7 pure provider policy is being implemented independently; compilation and commits remain coordinated across workers.

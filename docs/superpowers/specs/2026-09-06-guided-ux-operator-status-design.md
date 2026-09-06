@@ -1,7 +1,7 @@
 # Guided Discord UX and operator status
 
 Date: 2026-09-06
-Status: concrete design for user review; additional feature implementation pending approval.
+Status: selected for implementation under the user's 03:21 EDT instruction to brainstorm and implement the ideas. The written design records the agent's selected approach; it does not claim a separate user review of this document.
 Scope: the Abbey Rust bot and its deployment helpers. This extends the approved 2026-09-04 modernization; it does not replace its provider, lifecycle, privacy, consent, compatibility, or delivery requirements.
 
 ## User intent and approaches

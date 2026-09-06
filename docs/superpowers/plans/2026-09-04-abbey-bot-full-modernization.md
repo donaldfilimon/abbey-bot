@@ -211,6 +211,8 @@ Task 5 source closure: `4045ab1`; shared memory card, three private menus, decod
 
 ### Task 12: Behavior-Neutral Decomposition, Dependency Refresh, and Closeout
 
+**Additional dependencies selected 2026-09-06:** Complete `2026-09-06-guided-help-memory-browser.md` and `2026-09-06-operator-status-recovery.md` before this final integrated gate. They implement the user-requested brainstorming additions and preserve the existing compatibility/privacy contracts.
+
 **Files:** Split oversized Rust modules by responsibility; update lockfile/gates/docs/ledgers.
 
 **Interfaces:** Preserve crate-private re-exports and all deliberate interfaces above.
