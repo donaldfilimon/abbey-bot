@@ -226,15 +226,15 @@ Discord or voice result.
 ## Managed lifecycle and status observation
 
 This section describes the managed source contract, not a record of live
-acceptance. The fresh WDBX-required strict gate passed on tested source
+acceptance. The earlier modernization WDBX-required strict gate passed on tested source
 `ff5d594`: 1,183 Rust tests passed with zero failures and four intentional live
 ignores, alongside 26 offline installer tests, all-target locked Clippy and
 the locked Rust release build and offline Swift release build. Deployment/Python, privacy, 81-artifact contracts,
 required WDBX, TLS, module-size and Swift checks passed. The RustSec policy
 retains four accepted vulnerabilities and three unmaintained warnings; this
-is not a clean audit. Canonical integration, push and exact-head hosted CI
-remain pending; stages 0–6 require their own evidence. Final delivery proof
-will be recorded in canonical `.superpowers/completion-20260906/delivery.json`.
+is not a clean audit. Those counts do not validate the later command-workflow
+redesign. Stages 0–6 require their own evidence, recorded by tested revision in
+canonical `.superpowers/completion-20260906/delivery.json`.
 
 The launchd installer validates private environment syntax before stopping the
 prior service. It installs direct `--managed-service` arguments and accepts a

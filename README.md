@@ -20,39 +20,41 @@ a home-grown Swift Discord library, not either bot. The Rust and Swift products
 share no application code; cross-language agreement is established only through
 the independently vendored Abbey contract corpus and each consumer's own gate.
 
-## Current source progress (2026-09-06)
+## Command-workflow release (2026-09-06)
 
-The reviewed source implements guided private help, the member memory menu and
-full-fact browser, scoped statistics, fixed operator recovery advice, and managed
-readiness, logging and task ownership. Pending-memory controls refresh permission
-on every press and reject stale proposal indexes. Subprocess and music operations
-retain cancellation ownership through child cleanup. Every production Rust module
-passes the under-1,000-line gate; 19 compatible transitive dependencies are updated.
+The reviewed redesign adds the five private help workflows, exact provider
+capability and execution-mode readiness, current authorization on controls, and
+content-free delivery-failure observation. Requested administration settings are
+shown alongside effective policy blockers; voice status remains reachable when
+unconfigured and active status includes wake-name and stop guidance. The existing
+slash commands, seven model tools, persistence formats and consent semantics are
+preserved.
 
-The fresh WDBX-required strict gate passed on tested source
-`ff5d594877d16844930f8687d229accd3fa645d0` using an external build target:
-**1,183 Rust tests passed, zero failed, and four live tests were intentionally
-ignored**. Formatting, warnings-denied all-target locked Clippy, deployment and
-Python checks (including 26 offline installer tests), privacy, the 81-artifact
-contract corpus, required sibling WDBX conformance, Linux TLS, module size,
-RustSec policy, Swift test groups of 12 and 16, and the locked Rust release build and offline Swift release build passed.
-The Rust release build completed in 3m12s and the gate ended `== ok ==`.
-Ten final release entrypoint cases also passed in sanitized scratch environments:
-five managed startup/privacy/unsafe-log cases and five legacy argument/no-backend
-cases, without provider or Discord requests.
-The RustSec policy retains four accepted vulnerabilities and three
-unmaintained-package warnings; it is not a clean audit.
+The implementation handoff is `5724bf6`. Its integrated Rust suite passed 1,222
+tests with zero failures and five intentional ignores (four live tests and one
+operator-only command-payload exporter). After the final two catalog lint fixes,
+the affected 18-test catalog suite and warnings-denied all-target Clippy passed.
+Independent behavioral and structural reviews approved the workflow corrections.
+These implementation checks are distinct from the aggregate release gate.
 
-Source implementation, independent review and the strict source gate are complete.
-Canonical integration, push and exact-head hosted CI remain pending. Final delivery
-identity and cleanup proof will be recorded in canonical
-`.superpowers/completion-20260906/delivery.json`; this documentation does not claim
-that its later commit was the tested revision. No installation, provider
-qualification, Discord interaction or audible voice acceptance was performed by
-this source-validation pass.
+The launchd installer now stages the executable reported by Cargo, including an
+external target directory, and retains private artifact validation and verified
+rollback. Offline regressions cover stale in-tree output and unsafe candidates.
+Permission-rejection fixtures explicitly set their intended public mode so an
+owner-only release umask cannot silently make them safe.
 
-The following older table is a historical baseline. Its source result does not
-qualify the current integration, and newer live observations remain dated in
+The required release gate is `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` against a
+stable candidate in a dedicated target. Canonical
+`.superpowers/completion-20260906/delivery.json` records that gate's exact revision,
+final remote CI, installed artifact, registration comparison and provider probes
+as separate observations. The [live protocol](docs/live-test-protocol.md) defines
+the two-guild member/manager workflow matrix and human voice acceptance. Guild
+registration alone does not establish DM availability.
+
+Earlier modernization evidence, including the 1,183-test strict gate at
+`ff5d594`, remains historical evidence and does not validate later edits. The
+RustSec policy retains four accepted vulnerabilities and three unmaintained
+warnings; it is not a clean audit. Dated live observations remain in
 [the live acceptance record](docs/MLAI-LIVE-ACCEPTANCE.md).
 
 ## Historical baseline (2026-09-03)

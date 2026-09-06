@@ -794,7 +794,7 @@ status: done
 
 ## 2026-09-06 full modernization integration
 
-Status: source complete; integration and hosted delivery in progress. The reviewed
+Historical modernization checkpoint; its results belong to `ff5d594`. The reviewed
 source implements guided help and private full-fact browsing, scoped statistics
 and fixed operator advice, plus managed readiness/logging and retained service,
 voice and persistence ownership. The fresh WDBX-required strict gate passed on
@@ -810,12 +810,12 @@ warnings; this is not a clean audit.
 - Closed by review and passing regressions: per-press pending authorization,
   ACK-before-gate ordering, stale displayed-row rejection, subprocess/music
   cancellation ownership, startup/reconnect readiness and truthful shutdown events.
-- Pending: integration into canonical main, push and exact-head hosted CI.
-  Final SHA, CI and cleanup proof will be recorded in canonical
-  `.superpowers/completion-20260906/delivery.json` after observation.
+- At that checkpoint, canonical integration, push and exact-head hosted CI were
+  not yet established. Current release observations are maintained separately in
+  `.superpowers/completion-20260906/delivery.json`.
 - Completed: all ten sanitized release entrypoint cases (five managed startup/
   privacy/unsafe-log and five legacy argument/no-backend cases), without requests.
-- Pending separately: installed artifact identity and managed transaction
+- That checkpoint did not establish installed artifact identity or managed transaction
   acceptance, provider qualification, live two-guild Discord/UI
   checks, fresh unanimous consent and human-witnessed voice acceptance.
 - Historical live evidence and recovery material remain preserved. This source
@@ -824,3 +824,28 @@ warnings; this is not a clean audit.
 See `docs/live-test-protocol.md` for lifecycle/status semantics and
 `docs/MLAI-LIVE-ACCEPTANCE.md` for dated live observations. The source verification
 above belongs to the tested revision, not a later documentation-only commit.
+
+### Command-workflow follow-through
+
+The reviewed workflow implementation was handed off at `5724bf6`. It includes
+all five help tasks, typed capability readiness shared with execution, canonical
+availability decisions, shared delivery observation outside startup, effective
+administration guidance and active voice wake/stop instructions. Independent
+behavioral and structural reviews approved the corrections. The integrated Rust
+suite passed 1,222 tests with zero failures and five intentional ignores before
+the final small catalog lint fixes; the affected 18-test catalog suite and
+warnings-denied all-target Clippy then passed on the handoff source.
+
+The release slice also fixes selection of Cargo's actual external-target binary
+and makes two deliberately insecure permission fixtures independent of umask.
+It preserves the Windows fixture line-ending repair. Final strict-gate, exact
+remote-SHA CI, transactional installation, registered-schema and installed-provider
+results are revision-bound observations in the canonical delivery record, rather
+than conclusions inherited from the earlier test counts. The earlier delivery
+record is preserved privately as historical evidence.
+
+Live acceptance is tracked by role and workflow in two operator-supplied sandbox
+guilds. Member access, manager access, global/DM command scope, current unanimous
+voice agreement and human audible confirmation each need their own observation.
+No source test or synthetic speech probe substitutes for those checks. See
+`docs/live-test-protocol.md` for the workflow matrix and restoration requirements.
