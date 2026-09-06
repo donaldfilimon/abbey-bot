@@ -88,7 +88,7 @@ fn representative_guided_output_is_readable() {
     for section in [HelpSection::Start, HelpSection::Memory, HelpSection::Images] {
         let rendered = render_help(section, &input);
         match section {
-            HelpSection::Start => assert!(rendered.contains("Task buttons open guidance")),
+            HelpSection::Start => assert!(rendered.contains("Task buttons open private workflows")),
             HelpSection::Memory => {
                 assert!(rendered.contains("Open the member menu, then Apps"));
                 assert!(!rendered.contains("message menu"));

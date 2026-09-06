@@ -84,6 +84,9 @@ async fn input(
         Some(guild) => super::current_permissions(ctx, guild, channel, user).await?,
         None => Permissions::empty(),
     };
+    if guild.is_some() && !permissions.contains(Permissions::VIEW_CHANNEL) {
+        return Err("current channel access denied".into());
+    }
     let mut input = super::runtime_input(
         data,
         if guild.is_some() {
@@ -107,16 +110,18 @@ fn edit(body: String) -> EditInteractionResponse {
         .allowed_mentions(crate::gateway::no_mentions())
 }
 
-fn delivery_failed() {
-    tracing::warn!(
-        category = "interaction_delivery",
-        "task response delivery failed"
+fn delivery_failed(data: &Data) {
+    crate::startup::command_errors::record_failure(
+        &data.state,
+        crate::observability::EventCode::ResponseDelivery,
+        crate::observability::OperationalErrorCategory::Unavailable,
     );
 }
 
 async fn reject_component(
     ctx: &serenity::all::Context,
     interaction: &ComponentInteraction,
+    data: &Data,
     message: &str,
 ) {
     if interaction
@@ -295,8 +300,8 @@ fn image_guidance(input: &catalog::EligibilityInput) -> String {
     )
 }
 
-fn modal_question(interaction: &ModalInteraction) -> Option<&str> {
-    let [row] = interaction.data.components.as_slice() else {
+fn modal_question(components: &[serenity::all::ActionRow]) -> Option<&str> {
+    let [row] = components else {
         return None;
     };
     let [ActionRowComponent::InputText(field)] = row.components.as_slice() else {
@@ -352,7 +357,11 @@ async fn run_modal(
         Ok(s)
             if s.action == Action::Conversation
                 && !interaction.user.bot
-                && context_valid(interaction.context, interaction.guild_id) =>
+                && interaction.application_id.get() == ctx.cache.current_user().id.get()
+                && interaction
+                    .message
+                    .as_ref()
+                    .is_some_and(|m| m.author.id == ctx.cache.current_user().id) =>
         {
             s
         }
@@ -363,7 +372,7 @@ async fn run_modal(
             return Ok(());
         }
     };
-    let Some(question) = modal_question(interaction) else {
+    let Some(question) = modal_question(&interaction.data.components) else {
         interaction.edit_response(&ctx.http, edit("Enter a question of 1–2,000 characters. Open `/help` → Talk with Abbey to try again.".into())).await?;
         return Ok(());
     };
@@ -423,3 +432,17 @@ async fn run_modal(
     .await?;
     Ok(())
 }
+
+/// The acknowledgement owns the right to construct permission and domain work.
+async fn acknowledged<A, Load, Work, T>(acknowledgement: A, load: Load) -> Result<T, Error>
+where
+    A: std::future::Future<Output = Result<(), Error>>,
+    Load: FnOnce() -> Work,
+    Work: std::future::Future<Output = Result<T, Error>>,
+{
+    drop(acknowledgement);
+    load().await
+}
+
+#[cfg(test)]
+mod tests;

@@ -439,7 +439,7 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
         text.push_str("No commands in this section are currently available to you.\n");
     }
     if section == HelpSection::Start && !crate::help_center::help_shortcuts(input).is_empty() {
-        text.push_str("\nTask buttons open guidance; they do not run commands.\n");
+        text.push_str("\nTask buttons open private workflows. Use the section menu for the command reference.\n");
     }
     match (member_menu, message_menu) {
         (true, true) => {

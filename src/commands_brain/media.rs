@@ -135,7 +135,7 @@ pub async fn ocr(
 ) -> Result<(), Error> {
     ctx.defer().await?;
     let state = &ctx.data().state;
-    let Some(vision_client) = state.vision() else {
+    let Some(vision_client) = state.vision_for(true) else {
         ctx.say(
             crate::commands_help::provider_recovery(
                 ctx,

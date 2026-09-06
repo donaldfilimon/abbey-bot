@@ -612,8 +612,15 @@ impl ProviderRuntime {
     }
     /// Snapshot-only request-class projection. No reservation, network call or qualification.
     pub fn request_readiness(&self, class: RequestClass) -> Result<(), RouteUnavailableReason> {
-        if self.available(class, false) {
+        if self
+            .order
+            .iter()
+            .any(|id| self.eligible(id, class) && self.entries[id].slots.available_permits() > 0)
+        {
             return Ok(());
+        }
+        if self.available(class, false) {
+            return Err(RouteUnavailableReason::Busy);
         }
         if self.order.is_empty() {
             return Err(RouteUnavailableReason::NoConfiguredProvider);

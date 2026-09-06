@@ -491,7 +491,13 @@ impl AppState {
         self.providers.generation_label()
     }
     pub fn vision(&self) -> Option<&ProviderRuntime> {
-        self.providers.vision_available().then_some(&self.providers)
+        self.vision_for(false)
+    }
+    pub fn vision_for(&self, ocr: bool) -> Option<&ProviderRuntime> {
+        self.providers
+            .request_readiness(crate::provider::RequestClass::image(ocr))
+            .is_ok()
+            .then_some(&self.providers)
     }
     fn provider_inspect(&self) -> Vec<crate::inspect::ProviderRouteInspect> {
         self.providers.inspect_snapshot()

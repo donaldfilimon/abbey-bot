@@ -21,29 +21,38 @@ fn guided_button_payloads_follow_eligibility_and_keep_the_original_expiry() {
                     &input,
                 ))
                 .unwrap();
-                let expected = help_center::help_shortcuts(&input);
                 assert_eq!(
                     rows.as_array().unwrap().len(),
-                    if section == HelpSection::Start && !expected.is_empty() {
-                        2
-                    } else {
-                        1
-                    }
+                    if section == HelpSection::Start { 2 } else { 1 }
                 );
                 let menu = &rows[0]["components"][0];
                 assert_eq!(menu["type"], 3);
                 assert_eq!(menu["options"].as_array().unwrap().len(), 8);
                 if let Some(buttons) = rows[1]["components"].as_array() {
-                    assert!(buttons.len() <= 3);
-                    for (button, shortcut) in buttons.iter().zip(expected) {
+                    let expected = if context == InteractionContext::Guild {
+                        vec!["ask", "memory", "images", "voice"]
+                    } else {
+                        vec!["ask", "memory", "images"]
+                    };
+                    assert_eq!(buttons.len(), expected.len());
+                    for (button, action) in buttons.iter().zip(expected) {
                         assert_eq!(button["type"], 2);
-                        assert_eq!(button["label"], shortcut.label);
                         assert!(button.get("url").is_none());
                         let id = button["custom_id"].as_str().unwrap();
                         assert!(id.is_ascii() && id.len() <= 100);
-                        let parsed = help_center::validate(id, u64::MAX, 1100).unwrap();
-                        assert_eq!(parsed.section, shortcut.section);
-                        assert_eq!(parsed.expiry, session.expiry);
+                        let guild = if context == InteractionContext::Guild {
+                            "123"
+                        } else {
+                            "d"
+                        };
+                        assert_eq!(
+                            id,
+                            format!(
+                                "abbey:task:v1:{}:{guild}:456:{}:{action}",
+                                u64::MAX,
+                                session.expiry
+                            )
+                        );
                     }
                 }
             }
@@ -162,6 +171,8 @@ fn discord_payload_contexts_parent_permissions_and_limits() {
     for section in HelpSection::ALL {
         let rows = help_rows(
             help_center::HelpSession::new(u64::MAX, 1000, section).unwrap(),
+            Some(8),
+            9,
             &EligibilityInput::new(InteractionContext::Guild),
         );
         let json = serde_json::to_value(rows).unwrap();

@@ -1053,12 +1053,14 @@ async fn registered_ordinary_guards_deny_missing_access_after_acknowledgement() 
             "{}",
             command.qualified_name
         );
+        let body = requests.last().unwrap().body["content"].as_str().unwrap();
         assert!(
-            requests.last().unwrap().body["content"]
-                .as_str()
-                .unwrap()
-                .len()
-                > 20
+            [
+                catalog::Blocker::Permission.message(),
+                catalog::Blocker::VoicePresence.message()
+            ]
+            .contains(&body),
+            "{body}"
         );
     }
 }
@@ -1126,13 +1128,15 @@ async fn registered_ordinary_guards_deny_missing_capabilities() {
         );
         let requests = fixture.take_requests();
         assert_deferred_first(&requests, command);
-        assert!(
-            requests.last().unwrap().body["content"]
-                .as_str()
-                .unwrap()
-                .len()
-                > 20
-        );
+        let reason = match binding(command).eligibility.condition {
+            ConditionId::C1 | ConditionId::C8 => catalog::Blocker::Generation,
+            ConditionId::C2 | ConditionId::C3 => catalog::Blocker::Vision,
+            ConditionId::C9 => catalog::Blocker::Ocr,
+            ConditionId::C4 => catalog::Blocker::VoiceSetup,
+            ConditionId::C5 | ConditionId::C6 => catalog::Blocker::VoiceMode,
+            _ => unreachable!(),
+        };
+        assert_eq!(requests.last().unwrap().body["content"], reason.message());
     }
 }
 
@@ -2322,4 +2326,21 @@ async fn pending_old_index_never_targets_a_shifted_proposal() {
             .subject_snapshot("discord:123", "discord:790"),
         before
     );
+}
+
+#[tokio::test]
+async fn actual_unconfigured_voice_status_reaches_explanatory_handler() {
+    let fixture = DiscordFixture::new().await;
+    let mut data = configured_data();
+    data.voice = None;
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::VoiceStatus);
+    assert!(!invoke_voice_slash_fails(&fixture, command, &data, None).await);
+    let requests = fixture.take_requests();
+    assert_deferred_first(&requests, command);
+    assert!(requests.iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|body| body.contains("not configured"))
+    }));
 }

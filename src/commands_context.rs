@@ -103,7 +103,7 @@ pub async fn describe_image(ctx: Context<'_>, message: Message) -> Result<(), Er
 pub async fn read_image_text(ctx: Context<'_>, message: Message) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let state = &ctx.data().state;
-    let Some(vision_client) = state.vision() else {
+    let Some(vision_client) = state.vision_for(true) else {
         private_reply(
             ctx,
             crate::commands_help::provider_recovery(

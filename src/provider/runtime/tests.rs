@@ -296,7 +296,15 @@ async fn reserved_half_open_cancellation_leaves_a_probe_available() {
     clock.0.store(60000, Ordering::Relaxed);
     let mut probe = runtime.begin(false, false);
     probe.reserve().await.unwrap();
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextReadOnly),
+        Err(RouteUnavailableReason::Busy)
+    );
     drop(probe);
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextReadOnly),
+        Ok(())
+    );
     let mut another = runtime.begin(false, false);
     another.reserve().await.unwrap();
 }
@@ -803,12 +811,72 @@ fn readiness_is_request_specific_and_never_invokes_adapters() {
         Err(RouteUnavailableReason::CapabilityUnavailable)
     );
     assert_eq!(image.calls.load(Ordering::Relaxed), 0);
-    let adapter = fake(&mut runtime, "text", vec![], vec![], false);
+    let mut state = crate::runtime::AppState::in_memory();
+    Arc::get_mut(&mut state).unwrap().providers = runtime;
+    assert!(state.vision_for(true).is_some());
+    assert!(state.vision_for(false).is_none());
+    assert!(state.vision().is_none());
+    let runtime = &mut Arc::get_mut(&mut state).unwrap().providers;
+    let adapter = fake(runtime, "text", vec![], vec![], false);
     for tools in [false, true] {
         runtime.tools_enabled = tools;
         let class = RequestClass::text(runtime.tools_enabled());
         assert_eq!(runtime.begin(true, false).class, class);
         assert_eq!(runtime.request_readiness(class), Ok(()));
     }
+    assert_eq!(adapter.calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn readiness_reports_occupied_capacity_without_reserving_or_loading() {
+    let mut runtime = ProviderRuntime::empty();
+    fake(&mut runtime, "primary", vec![], vec![], false);
+    let id = ProviderId::parse("primary").unwrap();
+    let permit = runtime.entries[&id].slots.try_acquire().unwrap();
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextReadOnly),
+        Err(RouteUnavailableReason::Busy)
+    );
+    drop(permit);
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextReadOnly),
+        Ok(())
+    );
+}
+
+#[test]
+fn read_only_provider_does_not_admit_tool_conversation() {
+    let mut runtime = ProviderRuntime::empty();
+    let adapter = fake(&mut runtime, "primary", vec![], vec![], false);
+    runtime.register(
+        adapter.id.clone(),
+        "synthetic text",
+        ProviderClass::LocalServer,
+        ProviderCapabilities {
+            text: true,
+            ..ProviderCapabilities::default()
+        },
+        ExecutionLocality::SameHost,
+        ProviderProvenance::Configuration,
+        true,
+        config_identity(b"read-only"),
+        Some(adapter.clone()),
+        None,
+        false,
+        false,
+    );
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextReadOnly),
+        Ok(())
+    );
+    assert_eq!(
+        runtime.request_readiness(RequestClass::TextWithTools),
+        Err(RouteUnavailableReason::CapabilityUnavailable)
+    );
+    runtime.tools_enabled = false;
+    assert_eq!(
+        runtime.request_readiness(runtime.begin(true, false).class),
+        Ok(())
+    );
     assert_eq!(adapter.calls.load(Ordering::Relaxed), 0);
 }

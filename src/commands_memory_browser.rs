@@ -216,7 +216,10 @@ pub async fn dispatch(
     )
     .await;
     let (body, controls) = match preparation {
-        Err(_) => return true,
+        Err(_) => {
+            let _ = crate::startup::command_errors::delivery_result(&data.state, Err::<(), _>(()));
+            return true;
+        }
         Ok(Preparation::Rejected(message)) => (message.to_string(), Vec::new()),
         Ok(Preparation::Ready(session, facts)) => {
             let page = browser::page(&facts, session.page);
@@ -226,7 +229,7 @@ pub async fn dispatch(
             )
         }
     };
-    let _ = interaction
+    let delivery = interaction
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new()
@@ -235,6 +238,7 @@ pub async fn dispatch(
                 .components(controls),
         )
         .await;
+    let _ = crate::startup::command_errors::delivery_result(&data.state, delivery);
     true
 }
 
