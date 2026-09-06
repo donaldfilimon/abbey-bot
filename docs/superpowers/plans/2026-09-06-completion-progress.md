@@ -29,7 +29,7 @@ The ignored local records are `.superpowers/baseline-strict-gate.log` and `.supe
 | Task 4 catalog/help | Existing `e39e13c` delivery, current parity and dispatch tests pass | Preserve during new surface registration |
 | Task 5 memory/image menus | `4045ab1` implements shared card, memory USER menu, two image MESSAGE menus, bounded decoded attachment selection and registered-action privacy/state tests; independent review approved | Final integrated gate and live registration/interaction acceptance remain separate |
 | Task 6 voice/admin UX | `12de8cc` / `ccdd6f7` / `aa65ffb` deliver member voice privacy, diagnostics, typed modes and the full dashboard; actual dispatcher/reset/export/provider-isolation tests and all-target Clippy pass; review approved | Preserve these boundaries during runtime/lifecycle work; final integrated gate and live acceptance remain |
-| Task 7 router | Older pure router exists | Implement binding normalized scoring, full circuit/Retry-After table and conversation-local fallback semantics |
+| Task 7 router | `0fafed3` implements pure normalized scoring, strict compatible manifests, circuit/Retry-After policy and conversation-owned fallback; 114 focused tests and all-target Clippy pass | Independent review in progress; production integration remains Task 8 |
 | Task 8 provider runtime | Legacy production paths still separate | One runtime authority and conversation effect tracking, preserving legacy compatibility |
 | Task 9 lifecycle | Persistence result exists; scheduler/connector ownership remains incomplete | Supervision, cancellation, serialized persistence and one bounded shutdown |
 | Task 10 observability | Managed readiness/events/logging contract not implemented | Strict identity/schema/privacy, bootstrap failure channel, bounded JSONL and managed startup ordering |
@@ -57,3 +57,18 @@ Task 5 validation: the full locked Rust suite passed 1,015 tests with two ignore
 The user explicitly requested all Rust/service modernization, better menus/UI/UX/logging, parallel brainstorming and implementation, builds and integration into main. The selected design is `docs/superpowers/specs/2026-09-06-guided-ux-operator-status-design.md`. Two additional plans cover guided help/private complete fact browsing and scoped statistics/operator status/recovery. They finish before the original Task 12 final checks. The new plans were selected under the user's delegated instruction to brainstorm and implement ideas; no separate user document review is claimed.
 
 Task 6 review is approved at `aa65ffb`. The source fixes include the epsilon dashboard action, completed private permission-failure replies, actual reset/export/authorization tests, protected cross-guild state canaries, and independently counted fake provider endpoints. Task 7 pure provider policy is being implemented independently; compilation and commits remain coordinated across workers.
+
+## Shutdown feasibility clarification
+
+The binding service spec now records a narrow 2026-09-06 ruling under the user's
+delegated service modernization instruction. The 20-second/four-stage policy is
+a cooperative cleanup budget including abort, reap, required I/O, and runtime
+waiting. Pinned Tokio does not cancel a started blocking filesystem operation.
+Final outcomes distinguish completed persistence, an attempt that could not
+start, and an attempt whose completion is unknown. An outstanding writer stays
+owned and prevents a competing final write; the exceptional path uses an explicit
+process-lifetime boundary with failure status instead of an indefinite runtime
+Drop wait. Process exit is not claimed as successful joining or a universal OS
+deadline. Whole-framework admission, consent writes, child processes, nested
+voice work, and observability I/O are included. No live latency or durability
+measurement has been performed. Implementation and review remain pending.

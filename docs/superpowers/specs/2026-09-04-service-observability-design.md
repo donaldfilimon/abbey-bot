@@ -109,8 +109,9 @@ write is allowed.
 `/admin flush`, the scheduled persistence actor, startup privacy rewrite, and
 shutdown consume the same report. The command renders all component outcomes
 without paths. Scheduled calls emit one categorized event. Shutdown includes
-the final report in `ShutdownReport` and never emits `Complete` unless both
-durable components committed.
+the completed report in `FinalPersistOutcome::Completed` when observed, or the
+explicit not-started/incomplete outcome defined below. It never emits `Complete`
+unless both durable components committed.
 
 ## Service Supervisor
 
@@ -128,7 +129,11 @@ The lifecycle types are:
   `DiscordClientFailed`, `SupervisedTaskFailed(TaskName)`, or
   `OperationalInvariantFailed`.
 - `ShutdownReport`: reason, per-stage fixed outcomes, aborted/reaped task names,
-  total monotonic duration, and the one final `PersistReport`.
+  total monotonic duration, outstanding resource categories, and one
+  `FinalPersistOutcome`: `Completed(PersistReport)`, `NotStarted(reason)`, or
+  `Incomplete(reason, known_component_progress)`. `PersistReport` continues to
+  describe completed transactions only; unknown publication or durability must
+  never be fabricated as a completed report.
 - `SchedulerIntervals`: injectable learn, reward-settle, reputation-flush,
   persistence, and summary intervals. Production retains 30 seconds, 30
   seconds, 60 seconds, five minutes, and ten minutes respectively.
@@ -158,8 +163,14 @@ All periodic and command-triggered persistence requests pass through one
 serialized persistence worker owned by the Scheduler/supervisor boundary.
 Requests may coalesce while one write is active, but each waiter receives the
 report for the write satisfying it. Persistence never overlaps itself, and the
-final shutdown snapshot begins only after periodic requests are stopped and
-quiesced.
+final shutdown snapshot begins only after all accepted mutation work is
+quiesced. The request frontend, snapshot authority, and writer have separate
+ownership. Root retains the writer through final persistence after stopping
+ordinary producers. The actual sink operation retains serialization ownership
+until it returns, even if its waiter is canceled. Owned snapshot data, not an
+`Arc<AppState>` or mutation callback, crosses into blocking sink work. A request
+accepted after snapshot N cannot receive N's older report. An unfinished older
+write prevents starting a competing final write.
 
 Learning, settlement, reputation flush, and summary behavior retain their
 existing pure authorities and intervals. The actor changes ownership and
@@ -178,22 +189,83 @@ The first event atomically fixes one `ShutdownReason` and enters draining.
 Simultaneous later triggers are observed only as categorized secondary facts;
 they cannot run a second shutdown or persistence path.
 
-Shutdown has a 20-second overall monotonic deadline. In order, each stage gets
-at most five seconds and never more than the overall time remaining:
+Shutdown has a 20-second overall **cooperative cleanup budget**, measured from
+selection of the first root trigger, before any draining publication or log
+write. In order, each stage gets at most five seconds and never more than the
+overall time remaining:
 
 1. close voice media/cancel voice work and leave;
 2. shut down Discord shards;
-3. cancel, join, then abort and reap supervised tasks;
-4. perform exactly one final serialized persistence attempt.
+3. cancel, join, then abort and reap accepted operations and supervised producers;
+4. perform at most one final serialized persistence attempt and retire its writer.
+
+Abort, reap, result categorization, required I/O, and runtime waiting all count
+inside these budgets. Each stage reserves time for abort/reap; no unaccounted
+await follows an expired stage. A timeout records `TimedOut`; an abort request
+is never evidence that a task was joined. Root retains cleanup handles outside
+stage futures, including nested voice work, so timing out a waiter cannot lose
+ownership. Final persistence is never repeated by `Drop`, the Discord return
+path, or a second signal.
+
+Admission closes atomically with operation registration when root transitions
+from `Running` to `Draining`, before stage one. The media gate and eligibility
+for new voice starts close synchronously. Application ownership covers the
+entire Poise framework dispatch, including initialization forwarding, Ready,
+commands, components, error callbacks, and post-command interaction recording.
+A wrapper around Serenity's public `Framework` registers accepted work before
+it executes and retains its joinable handle; the outer library dispatch only
+performs bounded registration. Shard shutdown alone does not join framework
+callbacks. Connector pipeline work, summaries, scheduler work, command-created
+episode proposals/children, and voice work require the same complete ownership.
 
 Before stage four, no accepted command, connector event, scheduler tick, voice
-turn, reward settlement, or summary may mutate the snapshot authorities. If a
-stage exceeds its budget, shutdown records `TimedOut`, performs its safe abort
-or reap action, and continues within the overall deadline. Aborted task handles
-are awaited so no owned task survives process cleanup. Final persistence is
-attempted once even when an earlier stage fails, subject to the remaining
-overall budget; it is never repeated by `Drop`, the Discord return path, or a
-second signal.
+turn, reward settlement, or summary may mutate snapshot authorities. Root may
+enter `Frozen` only after all such accepted work is joined and the preceding
+writer is idle. The final flush and consistent snapshot happen once in that
+state; no other mutation is admitted. Failure to establish quiescence or writer
+availability yields `NotStarted` with a fixed reason. A transaction started
+without observed completion yields `Incomplete`; only observed component
+completion can populate known progress. A rename without an acknowledged final
+sync is not proof of durability. A completed transaction retains the existing
+canonical-before-WDBX `PersistReport` truth table unchanged.
+
+### Feasibility ruling recorded 2026-09-06
+
+This narrow clarification is selected under the user's instruction to modernize
+and implement the service. It replaces an infeasible unconditional promise of
+both bounded cleanup and complete reaping of synchronous OS I/O. Pinned Tokio
+1.53.1 documents that aborting a started `spawn_blocking` operation has no effect,
+runtime `Drop` waits for blocking work indefinitely, and timed runtime shutdown
+stops waiting while work can continue. Serenity 0.12.5 independently spawns
+framework dispatches. These source facts require the ownership and reporting
+boundaries above; they are not measurements of the live service.
+
+Started canonical persistence, independent voice-consent persistence, readiness,
+and logging I/O stay owned until observed completion or the terminal process
+boundary. Consent's format and fail-closed pending-marker semantics remain
+unchanged. Child process cleanup retains a kill/wait owner; `kill_on_drop` alone
+is not observed reaping. Reports distinguish outstanding OS I/O, application
+tasks, and children instead of calling all work canceled.
+
+A synchronous process entry explicitly owns the Tokio runtime and invokes one
+async root runner. A terminal envelope retains the typed result and outstanding
+resources. The normal path reports only observed joins and completed writes.
+The exceptional path uses at most the remaining runtime-wait allowance, then
+crosses an explicit process termination boundary with a fixed failure exit
+status, avoiding an implicit unbounded runtime `Drop`. It must never resume
+reusable application code with an outstanding writer. `shutdown_timeout` or
+`shutdown_background` cannot turn outstanding work into a joined result.
+Process termination is terminal containment, not successful reaping or a
+universal deadline guarantee for OS scheduling, kernel calls, or process exit.
+There is no indefinite durability wait or new persistence subprocess subsystem.
+
+Readiness and operational output use the same remaining budget. A stuck writer
+may prevent saving the final event: distinguish the in-memory terminal outcome
+and exit status from a durably recorded event. A stale draining file is allowed
+when cleanup cannot complete; identity, liveness, and freshness still reject it
+after termination. Source tests prove cooperative scheduling, ownership, and
+truthful outcomes; live shutdown latency and production-volume durability remain
+separate acceptance evidence.
 
 ## Run Identity and Startup Order
 
@@ -317,6 +389,12 @@ The version-1 wire schema has exactly these required keys and JSON types:
 | `slack` | string enum | `disabled`, `starting`, `connected`, `degraded`, or `stopped` |
 | `last_persistence` | string enum | `not_attempted`, `memory_only`, `complete`, `partial`, or `failed` |
 
+`last_persistence` describes the last completed transaction, or `not_attempted`
+when none has completed. A final `NotStarted` or `Incomplete` outcome does not
+replace it with fabricated success or failure; terminal details belong to
+`ShutdownReport`, and the phase remains draining. The version-1 wire enum stays
+unchanged.
+
 All keys are required, `null` is never accepted, and unknown or duplicate keys
 fail closed in both Rust and Python. Booleans, floats, numeric strings, leading
 plus signs, uppercase/mixed-case hex, and out-of-range integers are rejected.
@@ -359,7 +437,9 @@ allows at most two seconds of future wall-clock skew and no more than 30
 seconds of age. The five-second stability phase resamples and reapplies this
 predicate; it does not freeze the first wall-clock value.
 
-On shutdown the process publishes `draining` before cancellation. It removes a
+On shutdown root closes admission/media eligibility immediately and attempts
+to publish `draining` before asynchronous cancellation, charging publication to
+the overall cleanup budget and applying the unfinished-I/O ruling above. It removes a
 readiness file only after re-reading it and proving both PID and nonce equal the
 current `RunIdentity`; it never removes a successor's file. A crash may leave a
 stale file, which the checker rejects by process/identity/freshness checks.
@@ -522,11 +602,16 @@ Focused source tests cover:
 
 - every `PersistReport` truth-table row, canonical-before-WDBX ordering, old
   file survival under temporary/write/sync/rename failures, safe type checks,
-  command/scheduler/shutdown rendering, and exactly one final report;
+  command/scheduler/shutdown rendering, and one final outcome with at most one
+  final transaction, including not-started and unknown-completion cases;
 - paused scheduler cadence, `Skip` behavior, serialized/coalesced persistence,
   cancellation during connector I/O/backoff, degraded retry, unexpected return
   and panic, simultaneous root triggers, all shutdown budgets, abort/reap, and
-  post-final-snapshot quiescence;
+  post-final-snapshot quiescence; complete framework admission races and callback
+  ownership; cancellation-independent writer serialization; retained consent and
+  child resources; and an injected terminal runtime/process boundary. Controlled
+  blocking-thread tests always release and join their fixture, and do not claim
+  real filesystem deadlines;
 - legacy interaction deserialization and canonical privacy rewrite, accurate
   sub-second total latency, monotonic interval timing, secret/private canary
   exclusion, and initialization before credential access;

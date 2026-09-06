@@ -168,14 +168,16 @@ Task 6 source closure: `12de8cc`, `ccdd6f7`, `aa65ffb`; member voice privacy, ty
 
 **Files:** Add service supervisor/persistence worker; refactor scheduler, connector loops, and main shutdown ownership; update dependencies/tests.
 
-**Interfaces:** Produces `ServiceSupervisor`, `TaskName`, `TaskExit`, `ShutdownReason`, `ShutdownReport`, `SchedulerIntervals`, and cancellation-aware connector functions.
+**Interfaces:** Produces `ServiceSupervisor`, `TaskName`, `TaskExit`, `ShutdownReason`, `ShutdownReport`, `FinalPersistOutcome`, `SchedulerIntervals`, complete framework admission ownership, and cancellation-aware connector functions.
 
 - [ ] Add direct `tokio-util` dependency and use `CancellationToken`.
 - [ ] Replace detached scheduler loops with one named actor using `MissedTickBehavior::Skip` and serialized persistence requests.
 - [ ] Make Telegram and Slack configuration explicit, secret-redacted, cancellable around I/O/backoff, and timeout-bounded.
 - [ ] Treat external connector outages as degraded retries; treat unexpected task exit/panic as readiness-fatal.
 - [ ] Replace duplicate signal/client-return shutdown paths with one root `tokio::select!`.
-- [ ] Enforce 20-second overall shutdown with five-second voice, shard, task, and final-persistence budgets and exactly one final persist.
+- [ ] Apply the service spec's 2026-09-06 feasibility ruling: 20-second cooperative cleanup budget with five-second stages including abort/reap/I/O/runtime waiting; at most one final transaction with completed/not-started/incomplete outcomes, retained resource ownership, and an explicit exceptional process-lifetime boundary.
+- [ ] Atomically close and drain whole-framework/connector/summary/voice admission before freezing the snapshot; keep the actual serial writer owned through cancellation and prevent an older write from overtaking final publication.
+- [ ] Preserve independent consent persistence and explicitly own episode children; never equate timeout, abort, or kill request with completed joining.
 - [ ] Test paused scheduler cadence, cancellation, task panic/return, connector I/O/backoff cancellation, simultaneous shutdown triggers, abort/reap, and post-final-snapshot quiescence.
 - [ ] Commit the reviewed lifecycle slice.
 
@@ -189,7 +191,7 @@ Task 6 source closure: `12de8cc`, `ccdd6f7`, `aa65ffb`; member voice privacy, ty
 - [ ] Use monotonic millisecond timing for owned intervals and Discord timestamp milliseconds for total interaction latency.
 - [ ] Generate a 256-bit OS-random lowercase-hex per-run nonce and hash the running executable; never trust env-supplied identity.
 - [ ] Publish owner-only atomic readiness at the fixed managed path using the exact shared version-1 key/type/enum schema, freshness predicate, PID range, and unknown-field rejection.
-- [ ] Publish ready only after state rewrite, scheduler start, Discord ready, registration, and presence; publish draining and remove only the same PID/nonce file.
+- [ ] Publish ready only after state rewrite, scheduler start, Discord ready, registration, and presence; publish draining and remove only the same PID/nonce file within Task 9's cleanup budget, reporting unfinished I/O without claiming durable terminal evidence.
 - [ ] Select managed mode only with `--managed-service`; add the independent fixed bootstrap status/exit-78 failure channel before managed JSONL initialization.
 - [ ] Add managed JSONL rotation: 8 MiB active file, five archives, 16 KiB event cap, directory 0700, files 0600, pre-write rotation, no symlinks/unexpected types.
 - [ ] Preserve foreground human-readable stderr and leave the legacy `abbey-bot.log` untouched.
