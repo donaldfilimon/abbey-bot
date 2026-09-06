@@ -52,9 +52,36 @@ impl ProviderFixture {
         let calls = Arc::new(AtomicU64::new(0));
         let server_calls = Arc::clone(&calls);
         let server = tokio::spawn(async move {
-            loop {
+            'connections: loop {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 server_calls.fetch_add(1, Ordering::SeqCst);
+                // Consume the request before closing the response socket. An
+                // unread request body can turn our intended schema failure
+                // into a TCP reset and select transport recovery instead.
+                let mut bytes = Vec::new();
+                loop {
+                    let mut buffer = [0; 4096];
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    if count == 0 {
+                        continue 'connections;
+                    }
+                    bytes.extend_from_slice(&buffer[..count]);
+                    assert!(
+                        bytes.len() <= 1024 * 1024,
+                        "bounded provider fixture request"
+                    );
+                    if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let length = headers
+                            .lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .map_or(0, |(_, value)| value.trim().parse::<usize>().unwrap());
+                        if bytes.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
                 let response = b"{}";
                 let reply = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2134,7 +2161,7 @@ async fn registered_image_failure_uses_typed_private_member_guidance() {
     invoke_message_menu(&fixture, command, &data, message, false).await;
     let requests = fixture.take_requests();
     let content = assert_private_no_mentions_reply(&requests);
-    assert!(content.contains("Ask a server manager"));
+    assert!(content.contains("Ask a server manager"), "{content}");
     for forbidden in [
         "logs",
         "credentials",
