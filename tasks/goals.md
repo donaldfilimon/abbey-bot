@@ -79,6 +79,41 @@ status: in_progress
   acceptance in this section is blocked one layer earlier than stated:
   `docs/live-test-protocol.md:35-41` requires green exact-SHA three-platform CI before stage 0,
   and that CI is currently **red**, not merely unrun (see the Complete Abbey section).
+
+- **2026-09-06 20:5x — the CI precondition above is CLEARED; nothing else about this goal moved.**
+  `docs/live-test-protocol.md:3-5` is the actual gate ("Begin only after the final
+  provider-routing commit equals `origin/main` and Ubuntu, macOS, and Windows CI are green for
+  that exact SHA"); the `:35-41` citation in the correction above points at the launchd
+  transaction paragraph instead, so read line 3 as the requirement. That gate now holds:
+  `HEAD == origin/main == a40e035`, and its `Rust` workflow is **success on all three platforms**
+  (Gate (Windows), Gate (macOS), Gate (Ubuntu)). It was genuinely red earlier today and took four
+  commits to clear, each failure masking the next because the gate short-circuits at the first
+  stage on every runner: `f45b7b2` (formatting, a `private_interfaces` denial on
+  `AppState::host_music`, and a voice-status assertion left behind when `6a3000c` moved
+  `voice_status`/`voice_diagnostics` to per-guild wording), `566a449` (a Windows-only
+  `-D unused-mut` on the cfg-dependent `fs::DirBuilder` binding in `voice_registry`), and
+  `d5f00da` (two Windows-only test-portability defects that only became visible once Windows
+  first reached the suite). This is a **precondition**, not progress: it permits stage 0 to
+  begin and is not evidence that any stage ran.
+
+  The precondition is SHA-bound. Any later push to `main` invalidates it until that new SHA is
+  green on all three platforms again; do not carry `a40e035`'s result forward.
+
+- **2026-09-06 — the referenced voice PRs are all merged, and the work is present in source.**
+  The line above saying #82's "merge is Donald's" is stale: #76 merged 2026-09-04, #79
+  2026-09-04, #85 2026-09-04, #82 2026-09-05, and `abbey-bot` has no open PRs. Verified in the
+  tree rather than inferred from PR state: `VoicePhase::accepts_backend_change`
+  (`voice_session.rs:67`, used by `voice_session/activation.rs:104` and covered at
+  `voice_session/tests.rs:262,276`), the per-fixture songbird `Scheduler::new`
+  (`voice_local/turn_tests.rs:172`), `available_local`/`available_openai` (`voice.rs:401,409`),
+  and the single `voice::contains_wake_name` (`voice.rs:595`) with `ABBEY_VOICE_WAKE_WORDS`
+  (`voice.rs:221`). No new live evidence follows from any of it.
+
+  **Still pending, unchanged, and not startable from this machine alone:** provider
+  qualification, installed artifact identity, two-guild isolation, unanimous current consent, a
+  human-witnessed audible wake/reply, barge-in, membership-change pause, renewed consent, written
+  stop, and final leave with no remaining media. Every one needs two operator-supplied sandbox
+  guilds, consenting test users, and a person listening. No source check substitutes for them.
 - **2026-09-04 evidence toward this goal, not closure: `/voice mode` is switchable at runtime in
   draft PR #76.** Before it, `VoiceConfig::from_values` retained only the selected backend, so
   after startup the process held no credentials for any other mode; the command early-returned on
