@@ -31,7 +31,7 @@ The architecture reference is `docs/spec/botarchitecture.md` — Swift/Vapor/Dis
 
 ## Plans
 
-Located in `docs/superpowers/plans/` (5 plans):
+Located in `docs/superpowers/plans/` (6 plans):
 
 - `2026-08-19-guild-learning-loop.md` — per-guild opt-in, hourly budget, BrainStats, ABBEY_QUIET precedence
 - `2026-08-19-finishing.md` — completion checklist for the 2026-08-19 spec slice

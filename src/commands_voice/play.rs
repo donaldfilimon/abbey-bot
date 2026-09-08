@@ -1,4 +1,5 @@
 //! Native-player and Songbird adapters for an independently owned music output.
+use crate::runtime::AppState;
 use crate::{
     Context, Error,
     audio_tap::{AudioTapClient, PcmBuffer, TapStream},
@@ -6,7 +7,9 @@ use crate::{
     player_control::{self, Player, Script},
     voice_session::{PlaybackTermination, VoicePhase, VoiceRuntime},
 };
-use serenity::all::{ChannelId, CreateInteractionResponseFollowup, GuildId, Permissions};
+use serenity::all::{
+    ChannelId, ComponentInteraction, CreateInteractionResponseFollowup, GuildId, Permissions,
+};
 use songbird::input::RawAdapter;
 use std::{sync::Arc, time::Duration};
 
@@ -65,6 +68,30 @@ pub(super) async fn execute_script_for_ux(
     lease: crate::host_music::HostMusicLease,
 ) -> Result<(), Error> {
     execute(runtime, script, lease).await
+}
+
+/// Classic UX Play defaults: selected player, else Spotify (parity with `/voice play` omit).
+pub(super) fn ux_empty_play_player(selected: Option<Player>) -> Player {
+    selected.unwrap_or(Player::Spotify)
+}
+
+/// Empty-query play/resume for classic UX Play — same path as `/voice play` with omitted query.
+pub(super) async fn start_empty_for_ux(
+    ctx: &serenity::all::Context,
+    state: &std::sync::Arc<AppState>,
+    interaction: &ComponentInteraction,
+    runtime: Arc<VoiceRuntime>,
+) -> Result<String, Error> {
+    let player = ux_empty_play_player(runtime.music.player());
+    start_inner(
+        ctx,
+        state,
+        runtime,
+        player,
+        "",
+        Some(TerminalFollowup::Component(Box::new(interaction.clone()))),
+    )
+    .await
 }
 
 async fn execute(
@@ -379,19 +406,45 @@ async fn output_call(
     Ok(call)
 }
 
+enum TerminalFollowup {
+    Command(Box<serenity::all::CommandInteraction>),
+    Component(Box<ComponentInteraction>),
+}
+
 async fn start(
     ctx: Context<'_>,
     runtime: Arc<VoiceRuntime>,
     player: Player,
     query: &str,
 ) -> Result<String, Error> {
+    let followup = match ctx {
+        poise::Context::Application(app) => {
+            Some(TerminalFollowup::Command(Box::new(app.interaction.clone())))
+        }
+        _ => None,
+    };
+    start_inner(
+        ctx.serenity_context(),
+        &ctx.data().state,
+        runtime,
+        player,
+        query,
+        followup,
+    )
+    .await
+}
+
+async fn start_inner(
+    ctx: &serenity::all::Context,
+    state: &std::sync::Arc<AppState>,
+    runtime: Arc<VoiceRuntime>,
+    player: Player,
+    query: &str,
+    followup: Option<TerminalFollowup>,
+) -> Result<String, Error> {
     let script = player_control::play(player, query)?;
     let client = tap_client()?;
-    let lease = ctx
-        .data()
-        .state
-        .host_music
-        .try_start(runtime.config.guild_id)?;
+    let lease = state.host_music.try_start(runtime.config.guild_id)?;
     let generation = runtime.music.begin(player);
     let setup = async {
         client.health().await?; // health never starts capture or requests TCC permission
@@ -399,7 +452,7 @@ async fn start(
         if !runtime.music.current(generation) {
             return Err::<_, Error>("Music start cancelled.".into());
         }
-        let call = output_call(ctx.serenity_context(), &runtime).await?;
+        let call = output_call(ctx, &runtime).await?;
         let owner = runtime.clone();
         let child_lease = lease.clone();
         runtime
@@ -425,13 +478,9 @@ async fn start(
             return Err(e);
         }
     };
-    let context = ctx.serenity_context().clone();
-    let interaction = match ctx {
-        poise::Context::Application(app) => Some(app.interaction.clone()),
-        _ => None,
-    };
+    let context = ctx.clone();
     let owner = Arc::clone(&runtime);
-    let state = Arc::clone(&ctx.data().state);
+    let state = Arc::clone(state);
     owner.spawn_owned(async move {
         let result = run_music(&context, &runtime, generation, client, call, stream).await;
         drop(lease);
@@ -442,16 +491,19 @@ async fn start(
             runtime
                 .music
                 .finish(generation, &message, PlaybackTermination::Errored);
-            if let Some(interaction) = interaction {
-                let delivered = interaction
-                    .create_followup(
-                        &context.http,
-                        CreateInteractionResponseFollowup::new()
-                            .ephemeral(true)
-                            .content(clamp_message(message))
-                            .allowed_mentions(crate::gateway::no_mentions()),
-                    )
-                    .await;
+            if let Some(followup) = followup {
+                let builder = CreateInteractionResponseFollowup::new()
+                    .ephemeral(true)
+                    .content(clamp_message(message))
+                    .allowed_mentions(crate::gateway::no_mentions());
+                let delivered = match followup {
+                    TerminalFollowup::Command(interaction) => {
+                        interaction.create_followup(&context.http, builder).await
+                    }
+                    TerminalFollowup::Component(interaction) => {
+                        interaction.create_followup(&context.http, builder).await
+                    }
+                };
                 if delivered.is_err() {
                     crate::gateway::interaction_outcomes::delivery_failed(&state);
                 }
@@ -581,6 +633,26 @@ async fn connect_tap(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ux_empty_play_reuses_selected_or_spotify_and_empty_query_script() {
+        assert_eq!(super::ux_empty_play_player(None), Player::Spotify);
+        assert_eq!(
+            super::ux_empty_play_player(Some(Player::Music)),
+            Player::Music
+        );
+        assert_eq!(
+            super::ux_empty_play_player(Some(Player::Spotify)),
+            Player::Spotify
+        );
+        for player in [
+            super::ux_empty_play_player(None),
+            super::ux_empty_play_player(Some(Player::Music)),
+        ] {
+            let script = player_control::play(player, "").expect("empty query is supported");
+            assert_eq!(script.argument, "");
+        }
+    }
+
     fn fixture_runtime() -> Arc<VoiceRuntime> {
         Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
             1,
