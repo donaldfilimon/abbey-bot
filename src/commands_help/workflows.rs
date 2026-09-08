@@ -139,6 +139,8 @@ pub(super) async fn dispatch_component(
     data: &Data,
 ) -> bool {
     let session = if interaction.user.bot
+        || interaction.application_id.get() != ctx.cache.current_user().id.get()
+        || interaction.message.channel_id != interaction.channel_id
         || interaction.message.author.id != ctx.cache.current_user().id
         || !matches!(interaction.data.kind, ComponentInteractionDataKind::Button)
         || !context_valid(interaction.context, interaction.guild_id)
@@ -321,7 +323,17 @@ pub async fn dispatch_modal(
                 .await
                 .map_err(Error::from)
         },
-        || run_modal(ctx, interaction, data),
+        || async {
+            if run_modal(ctx, interaction, data).await.is_err() {
+                crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+                // Generation (including any tool effects) must never be replayed
+                // to recover delivery. Only replace the deferred response.
+                interaction.edit_response(&ctx.http, edit(
+                    "The task could not finish delivering its result. Any completed actions were not retried. Open `/help` and review the current state before trying again.".into()
+                )).await?;
+            }
+            Ok(())
+        },
     )
     .await;
     if result.is_err() {
@@ -347,10 +359,10 @@ async fn run_modal(
             if s.action == Action::Conversation
                 && !interaction.user.bot
                 && interaction.application_id.get() == ctx.cache.current_user().id.get()
-                && interaction
-                    .message
-                    .as_ref()
-                    .is_some_and(|m| m.author.id == ctx.cache.current_user().id) =>
+                && interaction.message.as_ref().is_some_and(|m| {
+                    m.author.id == ctx.cache.current_user().id
+                        && m.channel_id == interaction.channel_id
+                }) =>
         {
             s
         }

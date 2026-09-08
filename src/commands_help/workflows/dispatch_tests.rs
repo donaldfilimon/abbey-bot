@@ -6,6 +6,7 @@ fn task(fixture: &DiscordFixture, action: &str) -> ComponentInteraction {
     let session = help_center::HelpSession::new(ACTOR, runtime::now(), HelpSection::Start).unwrap();
     let mut interaction = help_component(fixture, session, false, true);
     interaction.context = Some(DiscordContext::Guild);
+    interaction.application_id = ApplicationId::new(fixture.context.cache.current_user().id.get());
     interaction.data.custom_id = format!(
         "abbey:task:v1:{ACTOR}:{GUILD}:{CHANNEL}:{}:{action}",
         session.expiry
@@ -130,4 +131,146 @@ async fn modal_uses_real_generation_privately_without_committing_the_transcript(
         format!("{:?}", *runtime::AppState::lock(&data.state.engine)),
         before
     );
+}
+
+#[tokio::test]
+async fn workflow_modal_rejects_foreign_context_and_malformed_inputs_before_io() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data_at(Some(fixture.address));
+    for case in 0..14 {
+        let mut interaction = modal(&fixture);
+        match case {
+            0 => interaction.message.as_mut().unwrap().channel_id = ChannelId::new(CHANNEL + 1),
+            1 => interaction.user.bot = true,
+            2 => interaction.user.id = UserId::new(OTHER),
+            3 => interaction.data.custom_id = interaction.data.custom_id.replace(":ask", ":memory"),
+            4 => interaction.data.custom_id = interaction.data.custom_id.replace(":v1:", ":v2:"),
+            5 => interaction.data.components.clear(),
+            6 => interaction
+                .data
+                .components
+                .push(interaction.data.components[0].clone()),
+            7 => interaction.application_id = ApplicationId::new(OTHER),
+            8 => interaction.message = None,
+            9 => {
+                interaction.data.custom_id = format!(
+                    "abbey:task:v1:{ACTOR}:{GUILD}:{CHANNEL}:{}:ask",
+                    runtime::now()
+                )
+            }
+            case => {
+                let serenity::all::ActionRowComponent::InputText(field) =
+                    &mut interaction.data.components[0].components[0]
+                else {
+                    panic!("question fixture");
+                };
+                match case {
+                    10 => field.custom_id = "foreign".into(),
+                    11 => field.value = Some(" \n ".into()),
+                    12 => field.value = Some("x".repeat(2001)),
+                    _ => field.value = None,
+                }
+            }
+        }
+        assert!(workflows::dispatch_modal(&fixture.context, &interaction, &data).await);
+        let requests = fixture.take_requests();
+        assert_eq!(
+            requests.len(),
+            2,
+            "case {case}: only acknowledgement and rejection allowed"
+        );
+        let body = assert_private_help_response(&requests);
+        assert!(body["content"].as_str().unwrap().chars().count() <= 2000);
+    }
+}
+
+#[tokio::test]
+async fn workflow_foreign_or_malformed_button_never_opens_input() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    for case in 0..6 {
+        let mut interaction = task(&fixture, "ask");
+        match case {
+            0 => interaction.application_id = ApplicationId::new(OTHER),
+            1 => interaction.message.channel_id = ChannelId::new(CHANNEL + 1),
+            2 => interaction.message.author.id = UserId::new(OTHER),
+            3 => {
+                interaction.data.kind = ComponentInteractionDataKind::StringSelect {
+                    values: vec!["ask".into()],
+                }
+            }
+            4 => interaction.context = Some(DiscordContext::BotDm),
+            _ => interaction.user.bot = true,
+        }
+        assert!(dispatch_component(&fixture.context, &interaction, &data, false).await);
+        let requests = fixture.take_requests();
+        assert_eq!(requests.len(), 1, "case {case}");
+        assert_eq!(requests[0].body["type"], 4);
+        assert_eq!(requests[0].body["data"]["flags"], 64);
+    }
+}
+
+#[tokio::test]
+async fn workflow_admin_rechecks_authority_after_acknowledgement() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    fixture.permissions.store(
+        (Permissions::VIEW_CHANNEL | Permissions::MANAGE_GUILD).bits(),
+        Ordering::SeqCst,
+    );
+    fixture.hold_acknowledgement.store(true, Ordering::SeqCst);
+    let interaction = task(&fixture, "admin");
+    let action = dispatch_component(&fixture.context, &interaction, &data, false);
+    tokio::pin!(action);
+    tokio::select! {
+        entered = fixture.acknowledgement_entered.acquire() => entered.unwrap().forget(),
+        _ = &mut action => panic!("completed before acknowledgement"),
+    }
+    fixture
+        .permissions
+        .store(Permissions::VIEW_CHANNEL.bits(), Ordering::SeqCst);
+    fixture.acknowledgement_release.add_permits(1);
+    assert!(action.await);
+    let requests = fixture.take_requests();
+    let body = assert_private_help_response(&requests);
+    assert!(
+        body["content"]
+            .as_str()
+            .unwrap()
+            .contains("current Discord access")
+    );
+    assert_eq!(body["components"], json!([]));
+}
+
+#[tokio::test]
+async fn workflow_modal_delivery_failure_explains_without_replaying_generation() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data_at(Some(fixture.address));
+    fixture.fail_next_edit.store(true, Ordering::SeqCst);
+    assert!(workflows::dispatch_modal(&fixture.context, &modal(&fixture), &data).await);
+    let requests = fixture.take_requests();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.route == "/v1/chat/completions")
+            .count(),
+        1
+    );
+    let edits: Vec<_> = requests.iter().filter(|r| r.method == "PATCH").collect();
+    assert_eq!(edits.len(), 2);
+    let body = edits[1].body["content"].as_str().unwrap();
+    assert!(body.contains("delivering"));
+    assert!(body.chars().count() <= 2000);
+    assert_eq!(edits[1].body["allowed_mentions"]["parse"], json!([]));
+}
+
+#[tokio::test]
+async fn workflow_failed_modal_ack_never_runs_permission_or_generation_work() {
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data_at(Some(fixture.address));
+    fixture.fail_acknowledgement.store(true, Ordering::SeqCst);
+    assert!(workflows::dispatch_modal(&fixture.context, &modal(&fixture), &data).await);
+    let requests = fixture.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body["type"], 5);
 }

@@ -33,6 +33,7 @@ struct DiscordFixture {
     permissions: Arc<AtomicU64>,
     fail_permissions: Arc<AtomicBool>,
     fail_acknowledgement: Arc<AtomicBool>,
+    fail_next_edit: Arc<AtomicBool>,
     hold_acknowledgement: Arc<AtomicBool>,
     acknowledgement_entered: Arc<tokio::sync::Semaphore>,
     acknowledgement_release: Arc<tokio::sync::Semaphore>,
@@ -134,6 +135,7 @@ impl DiscordFixture {
         let permissions = Arc::new(AtomicU64::new(Permissions::VIEW_CHANNEL.bits()));
         let fail_permissions = Arc::new(AtomicBool::new(false));
         let fail_acknowledgement = Arc::new(AtomicBool::new(false));
+        let fail_next_edit = Arc::new(AtomicBool::new(false));
         let hold_acknowledgement = Arc::new(AtomicBool::new(false));
         let acknowledgement_entered = Arc::new(tokio::sync::Semaphore::new(0));
         let acknowledgement_release = Arc::new(tokio::sync::Semaphore::new(0));
@@ -142,6 +144,7 @@ impl DiscordFixture {
             let permissions = Arc::clone(&permissions);
             let fail_permissions = Arc::clone(&fail_permissions);
             let fail_acknowledgement = Arc::clone(&fail_acknowledgement);
+            let fail_next_edit = Arc::clone(&fail_next_edit);
             let hold_acknowledgement = Arc::clone(&hold_acknowledgement);
             let acknowledgement_entered = Arc::clone(&acknowledgement_entered);
             let acknowledgement_release = Arc::clone(&acknowledgement_release);
@@ -229,12 +232,15 @@ impl DiscordFixture {
                         message.content = body["content"].as_str().unwrap_or_default().into();
                         ("application/json", serde_json::to_vec(&message).unwrap())
                     };
+                    let edit_failed =
+                        method == "PATCH" && fail_next_edit.swap(false, Ordering::SeqCst);
                     requests.lock().unwrap().push(Request {
                         method,
                         route,
                         body,
                     });
-                    let failed = (is_permission_lookup && fail_permissions.load(Ordering::SeqCst))
+                    let failed = edit_failed
+                        || (is_permission_lookup && fail_permissions.load(Ordering::SeqCst))
                         || (is_acknowledgement && fail_acknowledgement.load(Ordering::SeqCst));
                     let (status, response) = if failed {
                         (
@@ -350,6 +356,7 @@ impl DiscordFixture {
             permissions,
             fail_permissions,
             fail_acknowledgement,
+            fail_next_edit,
             hold_acknowledgement,
             acknowledgement_entered,
             acknowledgement_release,
