@@ -1471,3 +1471,66 @@ established** here: the crate sets no `remap-path-prefix` or `trim-paths`, so
 a build from another path cannot reproduce the hash, and no commit id of this
 repository is embedded in the binary. Installed-artifact identity
 qualification stays open, as does everything human-witnessed. No status flips.
+
+#### Tip `062470f` (#119): the re-clear that #118's rule predicted, and the merge window is 26 minutes, not 35 (2026-09-08 13:0x EDT)
+
+The entry above closes by naming its own successor: "any later push to `main`,
+including the merge of the PR carrying this entry, moves the tip and re-opens
+item 3 for the new SHA." That push is `062470f` (the squash of #119), and this
+records its result rather than leaving the prediction hanging.
+
+**Measured.** `Rust` run `34235523975`, `headSha`
+`062470f3242d38336b9e9428a8109ab641d0ad21`, conclusion **success**, 14:00:36 to
+14:26:21 UTC. Per job: Gate (Windows) 14:00:40 to 14:26:20, Gate (Ubuntu)
+14:00:40 to 14:22:23, Gate (macOS) 14:00:43 to 14:17:45. Windows ran 25 minutes
+40 seconds, so it reached the suite rather than short-circuiting on an early
+stage — checked deliberately, because this section's own standing lesson is that
+a failing early stage hides every later one and a workflow-level `success` alone
+does not prove the suite ran. Method: `gh run view <id> --json
+headSha,status,conclusion,jobs`, reading per-job conclusions and timestamps.
+`origin/main` was `062470f` at 13:0x EDT after an explicit `git fetch`; the
+shared checkout was one commit behind at that reading and was not moved, since
+its HEAD belongs to whoever is typing in it.
+
+**Item 3 of stage 0 therefore holds for `062470f`, and for no other SHA.** Items
+1 and 3 hold; item 2 (an isolated strict gate on exactly this SHA) was not run
+this pass and is not claimed. `977fb3c`'s green does not transfer here, exactly
+as `eeb717b`'s did not transfer to it.
+
+**Two consecutive `main` heads have now completed, which had not happened since
+`eeb717b`.** `977fb3c` at 12:40:45 and `062470f` at 14:26:21. `062470f` is also
+the first head whose run started *and* finished with #118's standing rule
+already in the tree, and it merged alone rather than in a stack. That is weak
+evidence the rule is being followed, not proof it works — one uncontested merge
+would have completed under the old regime too. The cascade is broken; whether it
+stays broken is a question for the next burst.
+
+**Correction to the sizing of the "hold merges for one window" lever.** The
+07:1x entry sized that window off `eeb717b`'s 35 minutes 2 seconds. The three
+completed runs since are shorter: `2ca73d9` 30m30s, `977fb3c` 25m11s,
+`062470f` 25m45s. So the hold a head actually needs is about **26 minutes**,
+with Windows the critical path in every case (it finished last in all three).
+Thirty-five minutes was an overestimate by roughly a third, which matters because
+it made the lever look more expensive than it is. Re-measure rather than reusing
+either figure; runner performance is not a constant.
+
+**Working-tree hygiene, recorded because it will recur.** `tasks/todo.md` was
+found in the shared checkout truncated from 490 lines to a single `/` character,
+mtime 12:46:45 EDT, unstaged, with a clean index. That is the redirect-clobber
+signature: this machine's `~/.zshrc` was replaced on 2026-09-02 with a stock
+oh-my-zsh template that does not set `noclobber`, so `cmd > tracked-file` now
+silently overwrites where the old config made it fail. Recovered with `git
+restore tasks/todo.md`, verified back at 490 lines; nothing was lost, because
+HEAD held the content. Nothing outside the working tree was affected and no
+commit was needed. A separate nested worktree, `abbey-bot/abbey-bot-wt-check`,
+was removed the same pass: detached at `df1f5d8` (an ancestor of `main`), clean,
+idle since 06:59, and confirmed unowned by an `lsof -d cwd` sweep over every
+`claude`/`codex`/`cargo` process. Nested worktrees are a hazard specifically
+because the repo's own `scripts/check-*.py` walk the tree and would recurse into
+a second full copy of it; keep them siblings.
+
+Still not established, and unchanged (no status flips to done): installed
+artifact identity qualification, provider qualification, live two-guild
+member/manager Discord checks, fresh unanimous consent, human-witnessed audible
+voice acceptance, Portal Activity URL map (P0), OAuth secret host (P2),
+Components V2 (crate-blocked), and episode-gate human approval.
