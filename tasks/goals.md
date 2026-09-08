@@ -1316,8 +1316,12 @@ Rust run on `main` to reach a conclusion is `eeb717b` (`34179977713`, success,
 02:25:04 to 03:00:06 UTC, 35 minutes end to end; the Windows lane alone is
 about 25). Every run since has been cancelled by the next merge, ten in a
 row: `9abab67`, `df6a3b6`, `85d0e18`, `143fc79`, `1b4822d`, `b6358c7`,
-`6f678ac`, `7137d86`, `3c740eb`, `52562c9`. That covers 19 commits and 6
-merged PRs. At this reading `df1f5d8`'s run (`34217913098`) started 10:54:40
+`6f678ac`, `7137d86`, `3c740eb`, `52562c9`. That covers 19 commits: nine
+merged PRs (#103, #104 and #106 squashed; #105, #107, #108, #109, #110 and
+#112 as merge commits) plus two direct pushes (`85d0e18`, `b6358c7`), counted
+with `git log --first-parent eeb717b..origin/main`, because `--merges` alone
+misses the squashes and an earlier draft of this entry said "6 merged PRs" on
+that basis. At this reading `df1f5d8`'s run (`34217913098`) started 10:54:40
 UTC and is 16 minutes in, so any merge before roughly 11:30 UTC cancels it too.
 
 What this changes. The rule recorded on 2026-09-04 ("the evidence is the run
@@ -1327,10 +1331,16 @@ several concurrent sessions land more often than every 35 minutes, which is
 faster than the `cancel-in-progress` group lets a run complete. So stage 0 of
 `docs/live-test-protocol.md` has been un-clearable for every `main` head since
 03:00 UTC, including the head the live service was redeployed from at 06:28
-ET. Nothing here says `main` is broken; the merged PRs each ran the matrix on
-their own branches. It says `main` itself carries no three-platform evidence
-at any SHA newer than `eeb717b`, and will not until a head survives 35
-minutes unmerged.
+ET. Nothing here says `main` is broken. Measured on the PR branches rather
+than assumed (`gh run list --workflow Rust`, non-`main` heads, 11:18 UTC):
+seven of the nine merged PRs had a green Rust run at the exact head that
+merged (`f36f646`, `874a929`, `6f5fbba`, `1a4b3b8`, `7595a9d`, `9301016`,
+`fd50529`). The other two, #109 (`0bf6a3d`) and #112 (`506869a`), were merged
+at 10:54 UTC with their branch runs still in progress, and both runs were
+still running at 11:18, so neither of those heads is proven green or proven
+broken. Either way `main` itself carries no three-platform evidence at any
+SHA newer than `eeb717b`, and will not until a head survives 35 minutes
+unmerged.
 
 Levers, all Donald's decision and none taken here: hold merges for one
 35-minute window so a head completes; or change the workflow's concurrency
