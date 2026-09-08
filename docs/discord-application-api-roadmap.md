@@ -47,6 +47,7 @@ The historical statuses below do not establish deployment of these additions.
 | Activity client (`ready()` + channel/guild UI + participants) | Live on Pages after merge | `activity/` → `https://donaldfilimon.github.io/abbey-bot/activity/` |
 | Stream (`1<<9`) + Use Embedded Activities (`1<<39`) overwrite gap-fill; `/voice` fail-closed on missing bits | Live | `src/commands_voice/discord.rs`, `docs/activities.md` |
 | `/pending list` classic Confirm/Dismiss buttons + collector | Live (code) | `src/commands_brain.rs` (P1; Components V2 blocked on crates) |
+| `/admin show` + dashboard classic page String Select | Live (code) | `src/commands_brain.rs`, `src/admin_dashboard.rs` (P1 leftover) |
 | Context menus: "Abbey: profile" (USER), "Ask Abbey" (MESSAGE) | Live (code) | `src/commands.rs`, registered in `src/main.rs` |
 | Configurable wake names (`ABBEY_VOICE_WAKE_WORDS`) | Live (code) | `src/voice.rs`; falls back to the default list rather than leaving Abbey unaddressable |
 
@@ -64,7 +65,7 @@ Relative to Discord Application + Interactions surface. Source: live checkout + 
 |---|---|---|
 | Chat-input `/` commands | **Done** | Full set in `src/main.rs` (persona, voice, admin, memory, vision, …) |
 | Context menus (USER / MESSAGE) | **Done** | `commands::profile_context_menu` (USER), `commands::ask_context_menu` (MESSAGE) |
-| Buttons / selects / modals | **Partial** | `/pending list` Confirm/Dismiss Action Rows (classic); slash confirm/dismiss remain |
+| Buttons / selects / modals | **Partial** | `/pending list` Confirm/Dismiss buttons; `/admin show` + dashboard page String Select; slash confirm/dismiss remain |
 | Components V2 layouts | **Blocked (crates)** | serenity 0.12.5 / poise 0.6.2 expose classic Action Rows only — no Container/Section/IS_COMPONENTS_V2 builders |
 | Interaction HTTP endpoint | **N/A (by design)** | Gateway + poise defer/follow-up only |
 | Entry Point `launch` preserve | **Done** | `register_globally_keeping_entry_point` |
@@ -133,14 +134,31 @@ Improve interaction surfaces that already ride the bot token (no OAuth secret).
   three-second window. Component button handlers acknowledge via
   `UpdateMessage` (or ephemeral `Message` on auth failure).
 - **Not in this slice:** `/voice` consent button (keep explicit
-  `consent:true` slash gate + public notice), `/admin show` selects, modals,
-  context menus — follow-ups once Components V2 lands or classic UX still wins.
+  `consent:true` slash gate + public notice), Components V2 layouts, modals —
+  follow-ups once Components V2 lands or classic UX still wins.
+
+### Acceptance note (2026-09-07) — `/admin show` classic page select
+
+- **Shipped path:** `/admin show` stays Manage-Server + ephemeral, still prints
+  `guild::render_settings`, and now attaches a classic String Select
+  (`abbey:admin:v1:…:page-select`) whose option values are navigable
+  `View(...)` slugs. Choosing a page reuses the existing admin dashboard
+  dispatcher (ack → owner/guild/expiry bind → fresh Manage Server check →
+  render + page actions). Dashboard navigation itself uses the same select
+  (frees the former four-button nav row). Action rows remain classic buttons.
+- **Fail-closed:** non-nav option values, wrong component kinds, foreign
+  owner/guild, expiry, and missing Manage Server reject without mutation.
+- **Unchanged:** Entry Point `launch` preservation; `/voice` `consent:true`
+  slash gate + public notice (no consent button replacement); no secrets in
+  git; never bot Go Live. Components V2 still crate-blocked on serenity
+  0.12.5 / poise 0.6.2.
 
 **Done when:** at least one high-traffic command path uses Components V2 (or
 documents why serenity/poise cannot yet), and interaction timeout / ephemeral
 policy is consistent in code + a short acceptance note.
 
-**Status:** met via classic components + crate-blocker note (this section).
+**Status:** met via classic components (`/pending list` buttons + `/admin show`
+/ dashboard page select) + crate-blocker note (this section).
 
 ---
 
