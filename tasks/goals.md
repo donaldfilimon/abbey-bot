@@ -169,6 +169,17 @@ status: in_progress
   wake/reply, barge-in, membership-change pause, renewed consent, written stop,
   and final leave with no remaining media.
 
+- **2026-09-08 06:1x EDT — PR #105 MERGED on `main` (source landed); NOT
+  live-accepted.** After #104 design lock (`df6a3b6`) and intermediate docs tip
+  `85d0e18` (addressed #104 design-review findings; docs-only), PR #105
+  (`feat(voice): classic Action Row UX Phases A+B+C`) merged as
+  `1b4822d1a3b017b65be6cf0afccf8b85e10890c5` (merge of `6f5fbba` into tip after
+  #106). **Source is on `main`.** That is **not** live acceptance: human-witnessed
+  audible wake/reply, barge-in, consent, two-guild isolation, and related
+  human-gated boxes stay open. Live Abbey **redeploy is in flight separately** —
+  **do not** claim installed artifact identity from this ledger pass. Tip Gate
+  for `1b4822d` was not three-platform green at write time (see tip subsection).
+
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
@@ -349,6 +360,19 @@ status: in_progress
     `poise 0.6.2` (classic Action Rows only); #104 deliberately stayed classic.
   - Telegram/Slack live tokens; unobserved `/forget`, `/ocr`, post-deploy `/see`;
     an actual `OverBudget` refusal. None of these flip this goal to `done`.
+
+- **2026-09-08 06:1x EDT — residual inventory restated after #106 + #105 merge;
+  no status flip.** Tip of `main` is now
+  `1b4822d1a3b017b65be6cf0afccf8b85e10890c5` (#105 merge). #106 (`143fc79`) and
+  intermediate docs tip `85d0e18` sit beneath it. #105 source landing does
+  **not** close any of:
+  - **Portal Activity URL map (P0)**
+  - **OAuth secret host (P2)**
+  - **Components V2** (crate-blocked; classic Action Rows only)
+  - Telegram/Slack live tokens; unobserved `/forget`, `/ocr`, post-deploy `/see`;
+    an actual `OverBudget` refusal.
+  Voice classic UX A→B→C is **merged source** on `main`, with live redeploy in
+  flight and **no** installed-artifact or human-witnessed acceptance claim.
 
 
 ## Self-learning hardening (continuation of "improve all")
@@ -776,6 +800,17 @@ status: in_progress
   unanimous consent, human-witnessed audible voice. Voice A→B→C implementation
   is in flight elsewhere and is **not** recorded as shipped here.
 
+- **2026-09-08 06:1x EDT — `#106` then `#105` on `main`; source landed, live
+  acceptance not closed.** `143fc79` is the #106 ledger squash. `1b4822d` is the
+  #105 merge (classic Action Row UX Phases A+B+C source). Parent chain now:
+  `1b4822d` → `143fc79` → `85d0e18` → `df6a3b6` → `9abab67` → `eeb717b` (last
+  completed three-platform **success** on record). Exact-SHA three-platform CI
+  for tip `1b4822d` is **not** claimed green — see tip subsection. #105 is
+  **merged source**, not live-accepted: redeploy in flight; do **not** claim
+  installed artifact identity; human-witnessed voice boxes stay open. Residuals
+  unchanged: provider qualification, two-guild checks, consent, Portal Activity
+  P0, OAuth P2, Components V2 crate-block, episode-gate human approval.
+
 
 ## Route guild operations through the WDBX episode gate
 status: in_progress
@@ -911,6 +946,11 @@ status: in_progress
   gateway observation in this file. Approval remains a distinct human step the
   bot cannot supply; proposal-only stage is what is live. This `/goal continue`
   does not re-probe launchd or claim a new transaction.
+
+- **2026-09-08 06:1x EDT — episode approval residual restated; no status flip.**
+  Still proposal-only; human approval is a distinct step the bot cannot supply.
+  This `/goal continue` does not re-probe launchd, claim a new transaction, or
+  invent WDBX progress beyond what is already recorded.
 
 
 ## Build the MLAI server from a plan file (`--server-plan`)
@@ -1185,3 +1225,35 @@ provider qualification, live two-guild member/manager Discord checks, fresh
 unanimous consent, human-witnessed audible voice acceptance, Portal Activity
 URL map (P0), OAuth secret host (P2), Components V2 (crate-blocked), and
 episode-gate human approval.
+
+#### Tip `1b4822d` (#105 merge) — three-platform Gate NOT yet re-cleared (2026-09-08 06:1x EDT)
+
+Executed as `/goal continue` after #106 landed and #105 merged on `main`. Tip of
+`origin/main` at this writing is `1b4822d1a3b017b65be6cf0afccf8b85e10890c5`
+(merge of PR #105, classic Action Row UX Phases A+B+C). Intermediate docs tip
+`85d0e18` addressed PR #104 design review findings (docs-only) between `df6a3b6`
+and #106. Parent chain: `1b4822d` → `143fc79` (#106 ledger) → `85d0e18` →
+`df6a3b6` → `9abab67` → `eeb717b` (last SHA with a completed three-platform
+**success** on record, run `34179977713`).
+
+**#105 status:** **MERGED** (source on `main`). Quality review had been PASS on
+the PR rollup before merge. This is **not** live acceptance. Live Abbey redeploy
+is in flight separately — **do not** claim installed artifact identity. Human-
+witnessed audible voice acceptance (and related human-gated boxes) remain open.
+
+**Honest CI claim for `1b4822d`:** Rust workflow run `34214591720`
+(`headSha 1b4822d…`) was **`in_progress`** when this ledger entry was written —
+Gate (Ubuntu), Gate (macOS), and Gate (Windows) all `in_progress`, no job
+`conclusion` yet. Therefore this tip does **not** clear
+`docs/live-test-protocol.md` stage 0, and the SHA-bound precondition is **not
+yet re-cleared** for `1b4822d`. Do not carry `eeb717b`'s green forward.
+
+Method: `gh run view 34214591720 --json status,conclusion,headSha,jobs` and
+`gh pr view 105 --json state,mergeCommit,mergedAt`. No local gate was run and
+none is claimed.
+
+Still not established, and unchanged: installed artifact identity (redeploy in
+flight), provider qualification, live two-guild member/manager Discord checks,
+fresh unanimous consent, human-witnessed audible voice acceptance, Portal
+Activity URL map (P0), OAuth secret host (P2), Components V2 (crate-blocked),
+and episode-gate human approval.
