@@ -1534,3 +1534,40 @@ artifact identity qualification, provider qualification, live two-guild
 member/manager Discord checks, fresh unanimous consent, human-witnessed audible
 voice acceptance, Portal Activity URL map (P0), OAuth secret host (P2),
 Components V2 (crate-blocked), and episode-gate human approval.
+
+#### Tip `14de816` (#120) — three-platform Gate SUCCESS; evening `/goal continue` (2026-09-08 18:5x EDT)
+
+Executed as `/goal continue`. Tip of `origin/main` at this writing is
+`14de816b876364dea97a32aa15fc7ce00792abcb` (docs agents refresh, #120). Tip
+Rust Gate is three-platform **SUCCESS** on that exact SHA: run
+`34277747713` (Gate macOS, Gate Ubuntu, Gate Windows all `success`).
+
+**Today's landings (#113–#125, including #120) followed tip-Gate cadence** —
+merge only after the tip's Rust Gate completes, per the standing rule in
+`AGENTS.md`/`CLAUDE.md` (#118): **no merge stack while tip Rust Gate is
+`in_progress`**.
+
+**Live Abbey binary:** last redeploy was for #124 (`dda4270`) — PID **49552**,
+binary SHA-256 prefix **`f952e705`**. Later tips through `14de816` are
+docs-only, so **no further redeploy** is required for those.
+
+**Still Donald / still open (no status flips):**
+
+- **P0 — Portal Activity URL map:** PREFIX `/`, TARGET
+  `donaldfilimon.github.io/abbey-bot/activity` (no scheme, no `index.html`);
+  Desktop + Web; Office Hours rocket → Abbey `ready()` in the **discordsays**
+  iframe.
+- **Human Play acceptance** still open.
+
+**Cross-repo brief (recorded, not actioned here):**
+
+- **wdnx** #29 / #30 open, blocked by GitHub Actions billing lock; Dependabot
+  #23–#28 held.
+- **abbey** #105 open (ollama list probe harden).
+- **ABI** runner MacBook-arm64 reported back online.
+
+Still not established, and unchanged: installed artifact identity
+qualification, provider qualification, live two-guild member/manager Discord
+checks, fresh unanimous consent, human-witnessed audible voice acceptance,
+Portal Activity URL map (P0), OAuth secret host (P2), Components V2
+(crate-blocked), and episode-gate human approval.

@@ -251,6 +251,14 @@ a green source gate is not semantic, deployment, or live evidence.
         was the first, at 11:59:57 UTC, and was superseded 74 seconds later. Strict local gate on a detached worktree of `977fb3c` (own `CARGO_TARGET_DIR`, `ABBEY_REQUIRE_WDBX_CONFORMANCE=1`): `CHECK_SH_EXIT=0`, 1277 passed, 13:10 UTC. No box change.
         The live binary is now PID 36845 / SHA-256 prefix `5ae576c0` (source SHA unproven);
         live-acceptance layers below stay open.
+      - 2026-09-08 18:5x: exact tip `14de816` (#120) is three-platform **SUCCESS** on
+        Rust run `34277747713` (Gate macOS / Ubuntu / Windows all `success`).
+        Today's landings #113–#125 followed tip-Gate cadence under the #118
+        standing rule (no merge stack while tip Gate `in_progress`). Live Abbey
+        last binary redeploy was for #124 (`dda4270`, PID 49552, SHA-256 prefix
+        `f952e705`); later tips are docs-only — no further redeploy required for
+        those. Box stays SHA-bound (this tip only). Human Play acceptance and
+        live-acceptance layers below stay open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
@@ -307,6 +315,17 @@ a green source gate is not semantic, deployment, or live evidence.
   `7137d86` not claimed green (run `34215740641` in_progress / cancelled
   chain at write time). Residuals unchanged: Portal Activity P0, OAuth P2,
   Components V2 crate-blocked, provider qualification, episode approval.
+- 2026-09-08 18:5x annotation (not a tick): Tip `14de816` (#120) Rust Gate
+  three-platform **SUCCESS** (run `34277747713`). #113–#125 landed under
+  tip-Gate cadence. Live Abbey last binary redeploy for #124 (`dda4270`) —
+  PID **49552**, SHA-256 prefix **`f952e705`**; later tips docs-only, no further
+  redeploy required for those. **P0 still Donald:** Portal Activity URL map
+  PREFIX `/`, TARGET `donaldfilimon.github.io/abbey-bot/activity` (no scheme,
+  no `index.html`); Desktop+Web; Office Hours rocket → `ready()` in discordsays
+  iframe. **Human Play acceptance still open.** Cross-repo: wdnx #29/#30 open
+  (Actions billing lock); Dependabot #23–#28 held; abbey #105 open (ollama list
+  probe harden); ABI runner MacBook-arm64 reported back online. No live-
+  residual status flips.
 Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
 If participant consent or an authorized manager is unavailable these stay pending; source tests,
 provider logs, and historical consent are explicitly not acceptable substitutes.
