@@ -1436,9 +1436,13 @@ deploy/privacy/Pages/contracts/security checks, the offline audio-tap build
 and tests, warnings-denied locked clippy, `1277 passed; 0 failed; 5 ignored`,
 the locked release build, and the WDBX cross-repository fixture parity line
 (`sha256=a4ec232c…`) against the sibling's golden projection. That release
-binary hashes `9687df5d…`, which is not expected to match the live
-`5ae576c0…` because the crate embeds build paths; the comparison is
-uninformative, not a mismatch finding. (4) Any later push to
+binary hashes `9687df5d…`; the installed live binary hashes `5ae576c0…`.
+Those are different artifacts: **installed-artifact identity did not match
+the tested release**, so per stage 1 of the protocol the live binary cannot
+stand in for the recorded hash in any later foreground or managed check.
+Whether it was built from the same source is a separate, unanswered
+question, because the crate embeds build paths and a hash difference alone
+cannot show a source difference. (4) Any later push to
 `main`, including the merge of the PR carrying this entry, moves the tip and
 re-opens item 3 for the new SHA under the #118 rule; the evidence here is for
 `977fb3c` and no other.
