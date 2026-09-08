@@ -62,12 +62,16 @@ pub(super) fn rows(
     }
 }
 
-/// The facts a button press and a modal submission must both prove before their
-/// `custom_id` is even parsed: a human sent it, it addresses this application,
+/// The facts a button press and a modal submission must both prove before any
+/// permission or provider work: a human sent it, it addresses this application,
 /// and it descends from a message this bot authored in the channel it arrived
-/// in. Button-only requirements (component kind, interaction context) stay at
-/// the button site. One definition, because the two copies this replaced had
-/// already drifted apart once (`b6358c7`).
+/// in. The two paths reach this differently, and the order is not the same:
+/// the button site checks it before `protocol::validate` parses the
+/// `custom_id`, while the modal site parses first and applies this as a match
+/// guard on the result. That is safe because `validate` is pure, bounded
+/// string parsing that performs no I/O. Button-only requirements (component
+/// kind, interaction context) stay at the button site. One definition, because
+/// the two copies this replaced had already drifted apart once (`b6358c7`).
 fn authentic_origin(
     ctx: &serenity::all::Context,
     user: &serenity::all::User,
