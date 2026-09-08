@@ -830,35 +830,33 @@ status: in_progress
   bot cannot supply); DQN/memory-bank writes are *not* routed through the gate,
   because the gate's vocabulary is operation lifecycle, not memory vectors.
 
-- **2026-09-08 04:4x — STALE BULLET CORRECTED: the gateway IS bootstrapped and the
-  gate IS live. Do not re-report it as pending.** An earlier bullet in this section
-  reads "Not done, by rule: nothing added to the live env file, no launchd bootstrap
-  of the gateway agent, no bot restart; those are the named stop and wait for
-  Donald's yes." That was true when written. Donald's yes was given afterwards and
-  the deployment happened, so a session reading this section's tail would wrongly
-  conclude the named stop is still open and could redo approved work. Corrected by
-  appending per the ledger contract; the original bullet is left intact as history.
-  Measured 2026-09-08 04:4x, read-only, nothing started, stopped or reloaded:
-  - `launchctl list | grep -i abbey` shows `com.donaldfilimon.abbey-wdbx-gateway`
-    loaded (pid 10660, last exit 0) beside `com.donaldfilimon.abbey-bot`
-    (pid 64772, last exit 0) and the `abbey-mlx-audio` sidecar. Pids are ephemeral;
-    the loaded-ness is the durable fact.
-  - `sh deploy/check-launchd-env.sh ~/.config/abbey-bot/env` reports
-    `present: ABBEY_EPISODE_GATE_CONFIG`. This is the authoritative surface and the
-    only one that tells the truth here: the generated plist carries only `RUST_LOG`
-    by design, and `main.rs` injects the env file with `set_var` after exec, so both
-    the plist and `ps eww` report this variable as unset and both are wrong.
-  - Scope confirmed still MLAI-only: `~/.config/abbey-bot/episode-gate.json` lists
-    exactly one guild, `discord:1275617641620443146`, with `policy_version`
-    `abbey_mlai_v1`, `contract_revision` 2, `evidence_level` `c0`, endpoint
-    `127.0.0.1:50051`. Read with the `token_file` field redacted; no secret was
-    printed or copied.
-  What this does NOT establish, so the goal stays `in_progress`: the still-open
-  residuals named above are unchanged — no end-to-end test against the live gateway
-  from this repo, only the proposal stage is emitted (approval needs a distinct human
-  approver the bot cannot supply), DQN/memory-bank vector writes remain deliberately
-  outside the gate, and `operational` retention still emits no `forgets` on checkpoint
-  replacement. A loaded agent is not an accepted transaction.
+- **2026-09-08 04:4x — gate continuity re-measured; NOT a new finding, and a
+  correction to how I first wrote it.** I initially filed this as "stale bullet
+  corrected", claiming this section still said the gateway was never
+  bootstrapped. That was my error: the 2026-09-06 04:3x **GATE ON FOR MLAI,
+  LIVE** bullet above already records the bootstrap, Donald's four yeses and the
+  `launchctl kickstart -k` restart at 04:30:24 EDT. I had read only this
+  section's last 35 lines, and its bullets are not in time order, so an earlier
+  "not done, waiting for Donald's yes" line sitting near the tail read as
+  current. The lesson is the ledger contract's own: read the whole section, not
+  its tail.
+  What is genuinely new is continuity, two days on. Measured read-only, nothing
+  started, stopped or reloaded: `com.donaldfilimon.abbey-wdbx-gateway` is still
+  loaded at **the same pid 10660** recorded on 2026-09-06, last exit 0, beside
+  `com.donaldfilimon.abbey-bot` (pid 64772, exit 0). So the gateway has not
+  crashed, been respawned or been reinstalled since it went live.
+  `sh deploy/check-launchd-env.sh ~/.config/abbey-bot/env` still reports
+  `present: ABBEY_EPISODE_GATE_CONFIG`, and scope is unchanged at MLAI-only:
+  `~/.config/abbey-bot/episode-gate.json` lists exactly one guild,
+  `discord:1275617641620443146`, `policy_version` `abbey_mlai_v1`,
+  `contract_revision` 2, `evidence_level` `c0`. Read with `token_file` redacted;
+  no secret printed or copied.
+  Residuals unchanged, so the goal stays `in_progress`: no end-to-end test
+  against the live gateway from this repo, proposal stage only (approval needs a
+  distinct human approver the bot cannot supply), DQN/memory-bank vector writes
+  deliberately outside the gate, and `operational` retention still emitting no
+  `forgets` on checkpoint replacement. A loaded agent is not an accepted
+  transaction.
 
 ## Build the MLAI server from a plan file (`--server-plan`)
 status: done

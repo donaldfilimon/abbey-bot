@@ -209,6 +209,11 @@ a green source gate is not semantic, deployment, or live evidence.
       pre-stabilization `origin/main` at `9716f00` passed those source lanes in Actions run
       `33218303755`. That run proves only the pre-stabilization baseline; the final pushed head
       requires its own exact-head run.
+      - 2026-09-08 04:4x: **that exact-head requirement is now satisfied on current `main`.**
+        Run `34179977713` at `headSha eeb717b` is green on Gate (macOS), Gate (Ubuntu) and
+        Gate (Windows). The Windows lane was verified at step level, not just workflow level,
+        and genuinely reached the suite over a 24m35s run rather than short-circuiting at fmt.
+        This closes the CI rung only; every live-acceptance layer below stays open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
@@ -282,6 +287,16 @@ provider logs, and historical consent are explicitly not acceptable substitutes.
       explicitly not audit-clean; the malformed-CRL panic remains visible. Any changed/additional
       vulnerability fails closed. Keep `derivative`, `instant`, and `proc-macro-error2` as separate
       informational warnings.
+      - 2026-09-08 04:4x re-review: **trigger NOT met, stays unchecked.** Serenity's latest on
+        crates.io is still `0.12.5` (2025-12-20), so no compatible edge exists, and
+        `security/rustsec-accepted-debt.json` still binds exactly these four to
+        `rustls-webpki 0.102.8`. GitHub's Dependabot count on the default branch independently
+        agrees at four (1 high, 1 moderate, 2 low).
+      - **Do not try to discharge this by bumping poise.** `poise 0.7.0` shipped 2026-09-06 but
+        requires `serenity ^0.12.5`, and `songbird 0.6.0` requires only `serenity ^0.12.0`.
+        `cargo tree --locked --offline -i rustls@0.22.4` shows the chain descends from Serenity
+        alone: `serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> tokio-rustls 0.25.0 ->
+        rustls 0.22.4`. Serenity is the sole blocker, and it also gates Components V2.
 - [ ] Treat the existing manually launched process as untouched and unqualified (see 2026-09-04 reconciliation: now a launchd service, still unqualified). Current source,
       provider/model qualification, installed artifact, foreground Discord, consented voice,
       managed deployment, and real Windows runtime remain separate pending evidence layers.
