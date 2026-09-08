@@ -307,6 +307,7 @@ per-command consent decision are not.
 - Never store Stripe/Discord payment secrets in the repo.
 - Monetization must not weaken consent, privacy, or brand boundaries
   (Abbey / Intelligence Without Limits — not Quesar on companion surfaces).
+- **Design (2026-09-08):** monetization draft locked in [`docs/superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md`](superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md) — reuse existing type-5 SKU `1293228939929452574` (rename/clarify joke name → Abbey Guild Pro); map `voice_ux_pro` / `activity_access` / `admin_workflow`; storefront publish is a Donald Portal step; **no live charges** in phase 1; Quesar pilot page stays separate (never IWL).
 
 ---
 
