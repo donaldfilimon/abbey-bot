@@ -137,6 +137,8 @@ Improve interaction surfaces that already ride the bot token (no OAuth secret).
   `consent:true` slash gate + public notice), Components V2 layouts, modals —
   follow-ups once Components V2 lands or classic UX still wins.
 
+- **Design (2026-09-08):** classic voice Action Row UX locked in [`docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md`](superpowers/specs/2026-09-08-voice-classic-ux-design.md) (A status → B leave confirm → C play); implementation waits for writing-plans + Gate-phased PRs. Consent remains slash-only.
+
 ### Acceptance note (2026-09-07) — `/admin show` classic page select
 
 - **Shipped path:** `/admin show` stays Manage-Server + ephemeral, still prints
