@@ -226,6 +226,15 @@ a green source gate is not semantic, deployment, or live evidence.
         parent greens do not transfer. Voice classic UX **design** is locked on
         main via #104; A→B→C implementation is in flight elsewhere and is not
         claimed shipped. Live-acceptance layers below stay open.
+      - 2026-09-08 06:1x: **tip `1b4822d` has NOT re-cleared the SHA-bound rung.**
+        After #106 (`143fc79`) and #105 merge (`1b4822d`, voice classic UX
+        A→B→C source), Rust run `34214591720` at `headSha 1b4822d` was still
+        `in_progress` (macOS/Ubuntu/Windows all in_progress, no job
+        conclusions). Last completed three-platform success on record remains
+        `eeb717b` / run `34179977713`. Box stays unticked; parent greens do not
+        transfer. #105 is **merged source** on `main`, not live-accepted;
+        redeploy in flight — do not claim installed artifact identity.
+        Live-acceptance layers below stay open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
@@ -266,6 +275,14 @@ a green source gate is not semantic, deployment, or live evidence.
   two-guild isolation, consent, human-witnessed audible wake/reply, barge-in,
   installed artifact identity. Portal Activity map, OAuth secret host, and
   Components V2 crate-block remain operator/crate residuals outside these boxes.
+- 2026-09-08 06:1x annotation (not a tick): PR #105 **MERGED** at
+  `1b4822d1a3b017b65be6cf0afccf8b85e10890c5` — classic Action Row UX Phases
+  A+B+C **source on `main`**. **Not** live-accepted: human-witnessed voice
+  boxes below stay open. Live Abbey redeploy is in flight separately — **do
+  not** claim installed artifact identity. Tip Gate for `1b4822d` not claimed
+  green (run `34214591720` in_progress at write time). Residuals unchanged:
+  Portal Activity P0, OAuth P2, Components V2 crate-blocked, provider
+  qualification, two-guild isolation, consent, episode approval.
 Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
 If participant consent or an authorized manager is unavailable these stay pending; source tests,
 provider logs, and historical consent are explicitly not acceptable substitutes.
