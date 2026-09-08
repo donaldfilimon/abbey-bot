@@ -26,6 +26,10 @@ either file. `README.md` owns commands, configuration and feature details;
   the `cancel-in-progress` group means a merge burst leaves about half of
   `main`'s SHAs with a cancelled run (15 of the last 30 on 2026-09-08). The
   evidence is the run at the final head.
+- Do **not** stack merges onto `main` while the tip SHA's three-platform Rust
+  Gate is still `in_progress`. Each merge cancels in-flight tip evidence
+  (`cancel-in-progress`). Open improve PRs in parallel; leave merge to a
+  human/parent after the tip Gate succeeds.
 
 ## Verification
 
