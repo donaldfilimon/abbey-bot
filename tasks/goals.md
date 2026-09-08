@@ -1308,6 +1308,38 @@ fresh unanimous consent, human-witnessed audible voice acceptance, Portal
 Activity URL map (P0), OAuth secret host (P2), Components V2 (crate-blocked),
 and episode-gate human approval.
 
+#### The final-head rule has produced no completed `main` run since 03:00 UTC (2026-09-08 07:1x EDT)
+
+Measured, not inferred, and it explains why both "NOT yet re-cleared" subsections
+above are still true: `gh run list --branch main --workflow Rust`. The last
+Rust run on `main` to reach a conclusion is `eeb717b` (`34179977713`, success,
+02:25:04 to 03:00:06 UTC, 35 minutes end to end; the Windows lane alone is
+about 25). Every run since has been cancelled by the next merge, ten in a
+row: `9abab67`, `df6a3b6`, `85d0e18`, `143fc79`, `1b4822d`, `b6358c7`,
+`6f678ac`, `7137d86`, `3c740eb`, `52562c9`. That covers 19 commits and 6
+merged PRs. At this reading `df1f5d8`'s run (`34217913098`) started 10:54:40
+UTC and is 16 minutes in, so any merge before roughly 11:30 UTC cancels it too.
+
+What this changes. The rule recorded on 2026-09-04 ("the evidence is the run
+at the final head, which is the one that matters") assumes a final head
+eventually finishes. For the last eight hours it has not, because merges from
+several concurrent sessions land more often than every 35 minutes, which is
+faster than the `cancel-in-progress` group lets a run complete. So stage 0 of
+`docs/live-test-protocol.md` has been un-clearable for every `main` head since
+03:00 UTC, including the head the live service was redeployed from at 06:28
+ET. Nothing here says `main` is broken; the merged PRs each ran the matrix on
+their own branches. It says `main` itself carries no three-platform evidence
+at any SHA newer than `eeb717b`, and will not until a head survives 35
+minutes unmerged.
+
+Levers, all Donald's decision and none taken here: hold merges for one
+35-minute window so a head completes; or change the workflow's concurrency
+group so `main` runs are not cancelled (keep `cancel-in-progress` for PR
+branches); or enable branch protection, which the 2026-09-04 entry already
+records as his call. Until one of these happens, every "NOT yet re-cleared"
+subsection stays true by construction, and no live-acceptance rung that
+requires stage 0 can be started honestly.
+
 #### Tip `7137d86` (#107 ledger + #108 agents) — three-platform Gate NOT claimed green (2026-09-08 06:4x EDT)
 
 Executed as `/goal continue` after live Action Row UX redeploy. Tip of
