@@ -9,8 +9,9 @@ either file. `README.md` owns commands, configuration and feature details;
 
 ## Working in this checkout
 
-- Other agents (Claude and Codex; note `.codex/`) work this same checkout
-  concurrently, and HEAD belongs to whoever is typing in it. Never `git checkout`
+- Other agents work this same checkout concurrently (a `.codex/` directory is
+  present, and the reflog shows checkouts and commits that are not yours), and
+  HEAD belongs to whoever is typing in it. Never `git checkout`
   here. Push refs, read another ref's files with `git show <ref>:<path>`, and
   when you need a second branch checked out, `git worktree add` it under your
   scratch directory, then remove it when done.
@@ -22,8 +23,9 @@ either file. `README.md` owns commands, configuration and feature details;
   correct by appending, never by editing history.
 - CI evidence is SHA-bound. The three-platform run counts only for the exact
   `headSha` it ran on; a parent's green run says nothing about the child, and
-  the `cancel-in-progress` group means a merge burst leaves most `main` SHAs
-  with a cancelled run. The evidence is the run at the final head.
+  the `cancel-in-progress` group means a merge burst leaves about half of
+  `main`'s SHAs with a cancelled run (15 of the last 30 on 2026-09-08). The
+  evidence is the run at the final head.
 
 ## Verification
 
