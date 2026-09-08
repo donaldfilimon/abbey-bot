@@ -6,6 +6,10 @@ edit both bodies together. No gate enforces the mirror, so verify it yourself
 with `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)` before committing
 either file. `README.md` owns commands, configuration and feature details;
 `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
+`.cursor/agents/abbey-reviewer.md` is a third, Cursor-side restatement of the
+Boundaries below and it drifts (it still describes a `gateway.rs` file and a
+five-file Discord shell); trust this file over it, and fix it at the same time
+if you change a rule it repeats.
 
 ## Working in this checkout
 
@@ -13,8 +17,13 @@ either file. `README.md` owns commands, configuration and feature details;
   present, and the reflog shows checkouts and commits that are not yours), and
   HEAD belongs to whoever is typing in it. Never `git checkout`
   here. Push refs, read another ref's files with `git show <ref>:<path>`, and
-  when you need a second branch checked out, `git worktree add` it under your
-  scratch directory, then remove it when done.
+  when you need a second branch checked out, `git worktree add` it **beside**
+  the repo (`../abbey-bot-wt-<topic>`, which is where the live ones sit), then
+  remove it when done. Never create one inside the repo root. `.gitignore`
+  covers `/abbey-bot-wt-*` as a backstop, because a nested worktree is an
+  embedded repo that `git add -A` would otherwise commit into this tree as a
+  gitlink; but the ignore also hides it from `git status`, so the placement
+  rule is the real protection, not the pattern.
 - `tasks/goals.md` is the goal ledger and `tasks/todo.md` its checklists. The
   ledger is append-ordered by writing session, not by time, so the newest text
   in a section is not the newest state and a stale "not done" line can sit at
@@ -30,6 +39,27 @@ either file. `README.md` owns commands, configuration and feature details;
   Gate is still `in_progress`. Each merge cancels in-flight tip evidence
   (`cancel-in-progress`). Open improve PRs in parallel; leave merge to a
   human/parent after the tip Gate succeeds.
+
+## Layout and local run
+
+`src/` is the entire product: one binary crate, ~240 files, no library target
+and no workspace. Everything else is support — `deploy/` the launchd installers
+plus the Python tests that gate them, `scripts/` the `check-*.py` gates and
+their `test-check-*.py` twins, `contracts/` the frozen transcription corpus and
+its lockfile, `blueprints/` the guild server plans, `activity/` the Discord
+Activity web client published to Pages, `tools/abbey-audio-tap/` the macOS Swift
+sidecar, `docs/spec/` the ported design, `tasks/` the ledger. `tests/` holds
+**only fixtures**: there is no integration-test target, and `tests/fixtures/*`
+is data read by inline `#[cfg(test)]` modules and by the `scripts/check-*.py`
+and `deploy/*.py` gates.
+
+Run it locally with `./launch.sh` (`run_bot.sh` execs the same script). It
+sources `~/.config/abbey-bot/env` first and then repo `.env`, which **overrides**
+— a stale repo `.env` silently beats the deployed credentials. Check
+`launchctl list` for `abbey` before starting one: the deployed service is
+managed and normally running, the repo `.env` here does set `DISCORD_TOKEN`, and
+if the two resolve to the same identity Discord delivers to both sessions. README `## Running` owns
+the flags, `## Deploying` the service.
 
 ## Verification
 
@@ -97,10 +127,18 @@ section it ports. Read that header before the code.
   decision path run in tests behind a recording `Outbound`. Check it in one
   line before adding a module:
   `grep -rlE '^\s*use (serenity|poise)' src/` must list only the modules
-  above plus test-only files (today the sole extra hit is
-  `command_registration_tests.rs`). A new decision module belongs off that
-  list, with its Discord edge in a `commands*` file, so the grep is the
-  boundary check to run before the first import.
+  above plus test-only files (on 2026-09-08, four: `command_registration_tests.rs`,
+  `commands_help/dispatch_tests.rs`, `commands_help/workflows/dispatch_tests.rs`,
+  `commands_voice/acknowledgement_tests.rs`). A new decision module belongs off
+  that list, with its Discord edge in a `commands*` file, so the grep is the
+  boundary check to run before the first import. It is necessary and not
+  sufficient: it matches `use` lines only, so a module reaching serenity through
+  a path-qualified attribute never appears in it — `voice_session/playback.rs`
+  is listed as shell above and is invisible to that grep because it writes
+  `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds ten
+  files, every one of them either test-only or already inside a module listed
+  above — so the wide pattern confirms there is no leak today, at the cost of
+  noise. Read the new module either way.
 - **Inbound path.** A native event becomes a `platform::SocialEvent`; `pipeline`
   decides *whether* Abbey speaks (triage, intent, 18-dimension state encoding,
   the guild's policy, cooldown, hourly budget) and `generation` decides *how*
@@ -142,6 +180,8 @@ section it ports. Read that header before the code.
   and Dev Portal enablement. Fetch member/permission facts over REST, not cache.
   Acting moderation consults `hierarchy_blocker`; match overwrites by snowflake,
   not display name, and use `get_permission_names()`, not `Debug` flag output.
+  Every `Action::Timeout` is constructed through the `MAX_TIMEOUT_MINUTES` clamp
+  in `moderation.rs` (Discord's 28-day ceiling); do not build one around it.
 - DMs scope as `network:dm:user`, never one shared DM guild. Recall filters both
   scoped guild and user; persistence uses U+001F, not colon-splitting scoped IDs.
   Browser navigation rechecks current authorization before a fresh fact snapshot.
@@ -179,7 +219,14 @@ section it ports. Read that header before the code.
 - Server plans are dry-run by default; `--apply` mutates and re-verifies, stopping
   on failure without rollback. Keep `Change` additive (no deletes/role-permission
   edits), reveal only engine-hidden channels, and scope overwrite stages to one
-  category. No mass Member grants without Donald.
+  category. No mass Member grants without Donald. Discord itself rewrites text
+  and forum channel names and leaves voice names alone, so the plan engine
+  compares through `server::normalize_text_name` gated on
+  `ChannelKind::normalizes_name` — a diff that ignores that reports permanent
+  phantom drift.
+- A green assertion over rendered user-visible text is not evidence that it
+  reads well. Print the rendered string and read it before shipping. (There is
+  no `proptest`/`quickcheck` dependency here; these are hand-rolled loops.)
 
 ## Learned User Preferences
 

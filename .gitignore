@@ -15,3 +15,8 @@ tasks/session-log.md
 # Agent scratch (superpowers brainstorm output), not source
 .superpowers/
 .playwright-mcp/
+
+# Worktrees belong beside the repo (../abbey-bot-wt-<topic>), not inside it.
+# This is only a backstop: a nested one is an embedded repo, and `git add -A`
+# would otherwise commit it into this tree as a gitlink.
+/abbey-bot-wt-*
