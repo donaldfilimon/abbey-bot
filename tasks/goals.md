@@ -228,6 +228,31 @@ status: in_progress
   aliases, patched and unaffected ranges, categories, severity metadata, and dependency identity.
   The malformed-CRL panic advisory stays visible. Any added, missing, or changed vulnerability
   fails closed. The `cargo-audit` 0.22.2 pin is report-format tooling, not accepted debt.
+- **2026-09-08 04:4x — the Serenity/Rustls re-review trigger was checked and is NOT met.**
+  This section standing-orders a re-review "when Serenity publishes a compatible
+  Rustls/WebSocket edge or any accepted advisory evidence changes". Discharged
+  with a measured negative rather than left implicit. Serenity's latest release
+  on crates.io is still `0.12.5` (published 2025-12-20), so no edge exists and
+  the four accepted records stay correctly accepted. Verified unchanged:
+  `security/rustsec-accepted-debt.json` still binds exactly `RUSTSEC-2026-0049`,
+  `-0098`, `-0099`, `-0104`, all to `rustls-webpki 0.102.8`, and the pinned
+  chain still resolves to `serenity 0.12.5`, `tokio-tungstenite 0.21.0`,
+  `rustls 0.22.4`, `rustls-webpki 0.102.8`.
+- **Correction, and it saves a wasted upgrade: the "serenity 0.12.x / poise 0.6.x"
+  framing of this blocker is misleading, because poise is not a blocker at all.**
+  `poise 0.7.0` was published 2026-09-06 and is available, but it requires
+  `serenity ^0.12.5`, so adopting it cannot clear the TLS debt and cannot unlock
+  Components V2. `songbird 0.6.0` likewise requires only `serenity ^0.12.0`.
+  `cargo tree --locked --offline -i rustls@0.22.4` shows the whole chain descends
+  from Serenity alone: `serenity 0.12.5 -> tokio-tungstenite 0.21.0 ->
+  tokio-rustls 0.25.0 -> rustls 0.22.4`; poise and songbird only reach it
+  *through* serenity. **Serenity is the sole blocker.** A future session must not
+  bump poise expecting either outcome. Whether to adopt `poise 0.7.0` on its own
+  merits is an open decision for Donald, not implied by this finding, and no
+  version change was made here (`Cargo.toml` and `Cargo.lock` verified clean).
+  Note `AGENTS.md`/`CLAUDE.md` still carry the "pinned serenity 0.12.x / poise
+  0.6.x" wording for Components V2; correcting those mirrored twins is a separate
+  documentation change and was deliberately not made in this ledger-scoped pass.
 - The unrelated informational unmaintained warnings for `derivative`, `instant`, and
   `proc-macro-error2` are reported separately. Re-review is required when Serenity publishes a
   compatible Rustls/WebSocket edge or any accepted advisory evidence changes; no local
@@ -664,6 +689,49 @@ status: in_progress
   open until a three-platform run is green at a head that carries this fix; the local gate is the
   Mac layer of the evidence ladder, and this is the recorded instance of why it is not the last rung.
 
+- **2026-09-08 04:4x — the standing `voice_session.rs` follow-up rests on a STALE
+  line count, and that changes its priority rather than just its wording.** The
+  bullet above defers moving the mode-switching cluster to
+  `src/voice_session/mode.rs` and gives the reason as "`src/voice_session.rs` is
+  1283 lines". Measured now: it is **887 lines**. Decomposition already happened
+  around it, and `src/voice_session/` now holds `activation.rs`, `control.rs`, a
+  `control/` directory, `music.rs`, `ownership.rs`, `playback.rs`,
+  `verification.rs` and `tests.rs`. `python3 scripts/check-rust-module-size.py`
+  reports the whole tree passing, with `voice_session.rs` in the 800–1000
+  review-advisory band (alongside `commands.rs` 854, `provider.rs` 962,
+  `provider/manifest.rs` 900, `offline_voice.rs` 818), not in violation of the
+  <1000 hard rule.
+  So the move is no longer needed to satisfy any gate; it is an optional tidy.
+  The mode cluster is still in place (`ModeSwitchRefusal` at :247,
+  `effective_mode` at :416) and `mode.rs` still does not exist, so the follow-up
+  is genuinely undone — it is the justification that expired, not the work.
+  The original blocking condition IS now clear: the follow-up was held "until the
+  in-flight music feature stops editing the same file", and both
+  `src/voice_session/music.rs` and `src/voice_session.rs` were last touched
+  2026-09-06 (`c22a4e6` / `df0a5ad`), with the tree idle at this reading (no
+  source file modified in 60 minutes, no `cargo`/`rustc` running, no merge or
+  rebase in progress).
+  **Deliberately not performed in this pass, and this is a named stop, not an
+  oversight.** It is a pure move inside consent- and epoch-sensitive voice code
+  whose only remaining motive is tidiness; it cannot be closed by the Mac gate
+  alone and would need its own three-platform run, which this ledger records four
+  separate times as the rung that actually catches things. Whether that CI cycle
+  is worth an optional decomposition is Donald's call, not a gap to be quietly
+  filled by a session whose mandate was ledger continuation.
+- **The exact-head item in this section was satisfied at `eeb717b`, which is the
+  parent of this ledger commit and not whatever `main` becomes when it lands.**
+  Its closing sentence reads "The exact-head item stays open until a
+  three-platform run is green at a head that carries this fix". `b9df963` is an
+  ancestor of `eeb717b` (`merge-base --is-ancestor` verified), and `eeb717b` is
+  green on macOS, Ubuntu and Windows (run `34179977713`, recorded under the
+  modernization goal below). So the three fixes that pass carries — the
+  `mode: disabled` music fixture, `README.md text eol=lf`, and the explicit
+  `(DispatchQueue?, DeferredSource?)` binding — are confirmed on a green
+  three-platform head. Scope, corrected after review: this is SHA-bound per
+  lines 99–100 and `docs/live-test-protocol.md` stage 0, so the head produced by
+  merging this PR needs its own run and inherits nothing from `eeb717b`. It also
+  closes that CI rung only and establishes nothing about live acceptance.
+
 ## Route guild operations through the WDBX episode gate
 status: in_progress
 - 2026-09-06 first slice (Donald chose "subprocess to the abi binary" over a gRPC
@@ -764,6 +832,34 @@ status: in_progress
   only the proposal stage is emitted (approval needs a distinct human approver the
   bot cannot supply); DQN/memory-bank writes are *not* routed through the gate,
   because the gate's vocabulary is operation lifecycle, not memory vectors.
+
+- **2026-09-08 04:4x — gate continuity re-measured; NOT a new finding, and a
+  correction to how I first wrote it.** I initially filed this as "stale bullet
+  corrected", claiming this section still said the gateway was never
+  bootstrapped. That was my error: the 2026-09-06 04:3x **GATE ON FOR MLAI,
+  LIVE** bullet above already records the bootstrap, Donald's four yeses and the
+  `launchctl kickstart -k` restart at 04:30:24 EDT. I had read only this
+  section's last 35 lines, and its bullets are not in time order, so an earlier
+  "not done, waiting for Donald's yes" line sitting near the tail read as
+  current. The lesson is the ledger contract's own: read the whole section, not
+  its tail.
+  What is genuinely new is continuity, two days on. Measured read-only, nothing
+  started, stopped or reloaded: `com.donaldfilimon.abbey-wdbx-gateway` is still
+  loaded at **the same pid 10660** recorded on 2026-09-06, last exit 0, beside
+  `com.donaldfilimon.abbey-bot` (pid 64772, exit 0). So the gateway has not
+  crashed, been respawned or been reinstalled since it went live.
+  `sh deploy/check-launchd-env.sh ~/.config/abbey-bot/env` still reports
+  `present: ABBEY_EPISODE_GATE_CONFIG`, and scope is unchanged at MLAI-only:
+  `~/.config/abbey-bot/episode-gate.json` lists exactly one guild,
+  `discord:1275617641620443146`, `policy_version` `abbey_mlai_v1`,
+  `contract_revision` 2, `evidence_level` `c0`. Read with `token_file` redacted;
+  no secret printed or copied.
+  Residuals unchanged, so the goal stays `in_progress`: no end-to-end test
+  against the live gateway from this repo, proposal stage only (approval needs a
+  distinct human approver the bot cannot supply), DQN/memory-bank vector writes
+  deliberately outside the gate, and `operational` retention still emitting no
+  `forgets` on checkpoint replacement. A loaded agent is not an accepted
+  transaction.
 
 ## Build the MLAI server from a plan file (`--server-plan`)
 status: done
@@ -956,3 +1052,57 @@ exact-SHA three-platform run closes this.
 Not established by this pass, and unchanged: installed artifact identity,
 provider qualification, live two-guild member/manager Discord checks, fresh
 unanimous consent and human-witnessed audible voice acceptance.
+
+#### Three-platform CI: GREEN on `eeb717b`, the pre-merge parent of this commit (2026-09-08 04:3x EDT)
+
+**This is parent-SHA evidence and it does NOT clear stage 0 for the head that
+results from landing this ledger commit.** Corrected after review: an earlier
+draft of this entry called it "the current standing CI observation", which
+contradicts the SHA-bound rule this very file states at lines 99–100 ("Any later
+push to `main` invalidates it until that new SHA is green on all three platforms
+again") and the stage 0 requirement in `docs/live-test-protocol.md`, which asks
+for the Ubuntu, macOS and Windows job results whose `headSha` is *exactly* the
+SHA under test. Merging this PR produces a new `main` SHA for which `eeb717b`'s
+run is, by that rule, only the parent's result. That new head needs its own
+three-platform run before anything here is treated as current, and this entry
+must not be carried forward to it.
+
+What it does establish, scoped precisely: `eeb717b` — the tree as it stood
+before this ledger commit, and the head that carries #97–#102 — is green on all
+three platforms. In that narrow sense it supersedes `d5f00da`, which is 16
+commits behind and predates `main` going red and being repaired, so `d5f00da`
+describes neither `eeb717b` nor anything later.
+
+Measured, not inferred. `Rust` workflow run `34179977713`, `headSha`
+`eeb717b370c0ac37e24b89acac274c79dd8255a2`, which was `main` and level with
+`origin/main` at the time of reading (`rev-list --left-right --count
+main...origin/main` = `0 0`), and is the parent of this ledger commit:
+
+- Gate (macOS) success, Gate (Ubuntu) success, Gate (Windows) success.
+- The Windows lane genuinely reached the suite rather than short-circuiting:
+  its `Gate — fmt, privacy, locks, clippy, tests, release build` step succeeded
+  over a 24m35s run (02:25:25Z to 02:50:00Z). Checked because this section's own
+  standing lesson is that an early failing stage hides every later one, so a
+  workflow-level `success` alone is not sufficient evidence.
+- Method: `gh run view <id> --json headSha,conclusion,jobs`, reading per-job and
+  per-step conclusions. No local gate was run and none is claimed; per the
+  standing lesson the Mac gate cannot observe the Windows lane.
+
+This closes the red-`main` episode opened by `6a3000c` and repaired across
+`f45b7b2`, `566a449`, `d5f00da`, and later `dd102dc` (#101, the redundant
+`must_use` on `resolve_select_action` that turned `main` red again after the
+`/admin show` page-select work landed in #99).
+
+Branch hygiene the same session: all six local branches whose upstreams were
+`gone` were deleted after proving each merge was a content no-op
+(`git merge-tree --write-tree main <branch>` equalled `main`'s tree for all six,
+plus a per-file byte compare). The work had landed as squash merges #97, #98,
+#99, #101, #102, so no merge commits were created. The only branch-only lines
+anywhere were four roadmap lines on `feature/p3-forum-helpers`, which #99 had
+deliberately rewritten. Ancestry alone would have misled here: none of the six
+was an ancestor of `main`.
+
+Still not established by this pass, and unchanged: installed artifact identity,
+provider qualification, live two-guild member/manager Discord checks, fresh
+unanimous consent and human-witnessed audible voice acceptance. Those are live
+observations; no source test, CI run or synthetic probe substitutes for them.
