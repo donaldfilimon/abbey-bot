@@ -137,10 +137,11 @@ async fn modal_uses_real_generation_privately_without_committing_the_transcript(
 async fn workflow_modal_rejects_foreign_context_and_malformed_inputs_before_io() {
     let fixture = DiscordFixture::new().await;
     let data = configured_data_at(Some(fixture.address));
-    for case in 0..14 {
+    for case in 0..15 {
         let mut interaction = modal(&fixture);
         match case {
             0 => interaction.message.as_mut().unwrap().channel_id = ChannelId::new(CHANNEL + 1),
+            14 => interaction.message.as_mut().unwrap().author.id = UserId::new(OTHER),
             1 => interaction.user.bot = true,
             2 => interaction.user.id = UserId::new(OTHER),
             3 => interaction.data.custom_id = interaction.data.custom_id.replace(":ask", ":memory"),
