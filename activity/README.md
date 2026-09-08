@@ -20,3 +20,11 @@ from the official SDK package: install deps in this folder and run the `build`
 script (esbuild bundles `src/main.js` → `app.js`). Keep behavior in sync.
 
 See `docs/activities.md` for rocket launch, Portal URL mapping, and P2 OAuth.
+
+## Plain-browser vs iframe
+
+Opening the Pages URL above is a static smoke check. `app.js` labels that path
+**Pages shell only** / **No Discord parent (plain browser)** and never claims
+Portal URL mapping is done. Real `ready()` only happens inside the Discord
+Activity iframe after rocket launch (and after Donald maps Portal).
+

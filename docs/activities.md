@@ -159,12 +159,17 @@ Unit coverage: `python3 deploy/test-check-activity-url-map.py`.
 **After Donald clicks Portal**, verify like this:
 
 1. Plain browser: open the Pages URL above — confirms GitHub Pages is serving
-   `activity/` (shell HTML/JS). This alone does **not** mean Portal is mapped.
+   `activity/` (shell HTML/JS). The client status should read **Pages shell only**
+   / **No Discord parent (plain browser)**. This alone does **not** mean Portal
+   is mapped.
 2. In Discord: Office Hours → rocket → Abbey. Confirm Abbey `ready()` inside the
    **discordsays iframe** (not only a browser tab). First load may take ~1 min
-   while Pages + proxy cache.
-3. Do **not** mark P0 done from the checker PASS lines. The checker never sees
-   Portal state; only Donald's iframe confirmation closes the operator gate.
+   while Pages + proxy cache. If the iframe shows **ready() timeout**, treat it
+   as a wait/cache/map troubleshooting hint — not as automated Portal proof either
+   way.
+3. Do **not** mark P0 done from the checker PASS lines (including the local
+   `activity client copy markers` check). The checker never sees Portal state;
+   only Donald's iframe confirmation closes the operator gate.
 
 ## Related
 

@@ -38,6 +38,15 @@ REQUIRED_ACTIVITY_ASSETS = (
     "activity/app.js",
 )
 
+# Local Pages-shell UX markers in activity/app.js (no network; not Portal proof).
+REQUIRED_APP_JS_MARKERS = (
+    "Pages shell only",
+    "No Discord parent (plain browser)",
+    "does not prove Developer Portal URL mapping",
+    "ready() timeout",
+    "claims Portal is done",
+)
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -221,12 +230,99 @@ def check_contract_constants() -> list[CheckResult]:
     return results
 
 
+def check_activity_client_copy_markers(root: pathlib.Path) -> list[CheckResult]:
+    """Require truthful plain-browser / ready()-timeout copy in activity/app.js.
+
+    Operators open the Pages URL as a smoke check. The client must distinguish
+    that smoke from Discord iframe ready(), and must never claim Portal mapping
+    is done from a plain browser tab. This is a local string contract only.
+    """
+    relative = "activity/app.js"
+    path = root.joinpath(*relative.split("/"))
+    results: list[CheckResult] = []
+    if not path.is_file():
+        results.append(
+            CheckResult(
+                name="activity client copy markers",
+                ok=False,
+                detail=f"{relative} missing",
+            )
+        )
+        return results
+
+    try:
+        body = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        results.append(
+            CheckResult(
+                name="activity client copy markers",
+                ok=False,
+                detail=f"unreadable: {exc}",
+            )
+        )
+        return results
+
+    missing = [marker for marker in REQUIRED_APP_JS_MARKERS if marker not in body]
+    # Guard against accidental "Portal is done" / "mapping complete" claims.
+    forbidden = (
+        "Portal is done",
+        "Portal mapping is live",
+        "URL mapping complete",
+        "Portal confirmed",
+    )
+    # The required marker includes the negative phrase "claims Portal is done";
+    # only flag bare positive claims that are not part of that negation.
+    hits = []
+    for phrase in forbidden:
+        if phrase == "Portal is done":
+            # allow the required negation "...claims Portal is done"
+            if "claims Portal is done" in body:
+                # strip that occurrence for a crude positive-claim scan
+                scan = body.replace("claims Portal is done", "")
+            else:
+                scan = body
+            if phrase in scan:
+                hits.append(phrase)
+        elif phrase in body:
+            hits.append(phrase)
+
+    if missing:
+        results.append(
+            CheckResult(
+                name="activity client copy markers",
+                ok=False,
+                detail="missing: " + ", ".join(missing),
+            )
+        )
+    elif hits:
+        results.append(
+            CheckResult(
+                name="activity client copy markers",
+                ok=False,
+                detail="forbidden Portal-done claim: " + ", ".join(hits),
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="activity client copy markers",
+                ok=True,
+                detail=(
+                    f"{len(REQUIRED_APP_JS_MARKERS)} plain-browser/ready-timeout "
+                    "markers present; no Portal-done claim"
+                ),
+            )
+        )
+    return results
+
+
 def run_checks(root: pathlib.Path | None = None) -> list[CheckResult]:
     base = ROOT if root is None else root
     results: list[CheckResult] = []
     results.extend(check_contract_constants())
     results.extend(check_required_assets(base))
     results.append(check_pages_markdown_inventory(base))
+    results.extend(check_activity_client_copy_markers(base))
     return results
 
 

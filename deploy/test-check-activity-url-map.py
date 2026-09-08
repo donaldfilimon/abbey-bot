@@ -103,6 +103,25 @@ class AssetAndInventoryTests(unittest.TestCase):
             inventory = MODULE.check_pages_markdown_inventory(root)
             self.assertFalse(inventory.ok)
 
+    def test_activity_client_copy_markers_pass_on_repo(self) -> None:
+        results = MODULE.check_activity_client_copy_markers(ROOT)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].ok, results[0].detail)
+
+    def test_activity_client_copy_markers_fail_without_plain_browser_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            activity = root / "activity"
+            activity.mkdir()
+            (activity / "app.js").write_text(
+                "// stub without plain-browser or ready-timeout copy\n",
+                encoding="utf-8",
+            )
+            results = MODULE.check_activity_client_copy_markers(root)
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].ok)
+            self.assertIn("missing:", results[0].detail)
+
 
 class CliTests(unittest.TestCase):
     def test_main_passes_on_repo(self) -> None:
@@ -134,6 +153,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("canonical TARGET constant", names)
         self.assertIn("asset activity/app.js", names)
         self.assertIn("pages markdown inventory", names)
+        self.assertIn("activity client copy markers", names)
 
 
 if __name__ == "__main__":

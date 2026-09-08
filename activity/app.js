@@ -334,18 +334,57 @@
     await tryAuthorizeFlow(tokenPath);
   }
 
+  function showPlainBrowserSmoke() {
+    // Pages browser check only — never claim Portal URL mapping from this tab.
+    setText(
+      els.status,
+      'Pages shell only \u2014 ready() needs the Discord Activity iframe (rocket launch).'
+    );
+    setText(els.auth, 'No Discord parent (plain browser)');
+    setText(
+      els.hint,
+      'This tab proves GitHub Pages is serving activity/. It does not prove Developer Portal URL mapping. Launch Abbey from the Discord rocket in a voice channel to complete ready(). Conversational voice still needs /voice join consent:true \u2014 this Activity never fakes Go Live or claims Portal is done.'
+    );
+    setText(els.participants, '\u2014');
+    setMode('waiting');
+  }
+
+  function showReadyTimeout() {
+    if (state.ready) return;
+    setText(
+      els.status,
+      'Waiting for Discord ready() \u2014 parent frame present, READY never arrived.'
+    );
+    setText(els.auth, 'ready() timeout');
+    setText(
+      els.hint,
+      'Embedded App parent exists but ready() did not complete. Often a cold Pages/proxy cache, missing frame_id, or Portal URL map still unset/mismatched. This client cannot see Portal state \u2014 do not treat this message as proof the map is wrong or done. Retry rocket launch after ~1 min; only Donald confirming Abbey inside the discordsays iframe closes the operator gate.'
+    );
+    setMode('waiting');
+  }
+
   renderContext();
   setMode('waiting');
   setText(els.auth, 'Connecting\u2026');
   setText(els.participants, '\u2014');
 
   if (!source) {
-    setText(
-      els.status,
-      'Abbey \u2014 open from the Discord rocket in a voice channel (plain browser tabs have no Embedded App parent).'
-    );
-    setText(els.auth, 'No Discord parent');
-    setMode('waiting');
+    showPlainBrowserSmoke();
+    window.__abbeyActivity = {
+      clientId: CLIENT_ID,
+      channelId: channelId,
+      guildId: guildId,
+      instanceId: instanceId,
+      getMode: function () {
+        return state.mode;
+      },
+      isAuthenticated: function () {
+        return state.authenticated;
+      },
+      isReady: function () {
+        return state.ready;
+      },
+    };
     return;
   }
 
@@ -363,6 +402,10 @@
     '*'
   );
 
+  setTimeout(function () {
+    if (!state.ready) showReadyTimeout();
+  }, 8000);
+
   window.__abbeyActivity = {
     clientId: CLIENT_ID,
     channelId: channelId,
@@ -373,6 +416,9 @@
     },
     isAuthenticated: function () {
       return state.authenticated;
+    },
+    isReady: function () {
+      return state.ready;
     },
   };
 })();

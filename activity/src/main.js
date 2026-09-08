@@ -182,11 +182,16 @@ async function setupAuthenticated(discordSdk, tokenPath) {
 
 async function main() {
   if (window.parent === window) {
+    // Pages browser check only — never claim Portal URL mapping from this tab.
     setText(
       els.status,
-      'Abbey \u2014 open from the Discord rocket in a voice channel (plain browser tabs have no Embedded App parent).',
+      'Pages shell only \u2014 ready() needs the Discord Activity iframe (rocket launch).',
     );
-    setText(els.auth, 'No Discord parent');
+    setText(els.auth, 'No Discord parent (plain browser)');
+    setText(
+      els.hint,
+      'This tab proves GitHub Pages is serving activity/. It does not prove Developer Portal URL mapping. Launch Abbey from the Discord rocket in a voice channel to complete ready(). Conversational voice still needs /voice join consent:true \u2014 this Activity never fakes Go Live or claims Portal is done.',
+    );
     setMode('waiting');
     return;
   }
@@ -200,14 +205,32 @@ async function main() {
   } catch (err) {
     setText(
       els.status,
-      'Abbey \u2014 open from the Discord rocket (SDK needs frame_id / instance_id / platform).',
+      'Waiting for Discord ready() \u2014 SDK init failed (often missing frame_id / instance_id / platform).',
     );
     setText(els.auth, err?.message || 'SDK init failed');
+    setText(
+      els.hint,
+      'Embedded App parent may exist but the SDK could not start. Often a cold Pages/proxy cache or Portal URL map still unset/mismatched. This client cannot see Portal state \u2014 do not treat this message as proof the map is wrong or done. Retry rocket launch after ~1 min; only Donald confirming Abbey inside the discordsays iframe closes the operator gate.',
+    );
     setMode('waiting');
     return;
   }
 
+  const readyWatchdog = setTimeout(() => {
+    setText(
+      els.status,
+      'Waiting for Discord ready() \u2014 parent frame present, READY never arrived.',
+    );
+    setText(els.auth, 'ready() timeout');
+    setText(
+      els.hint,
+      'Embedded App parent exists but ready() did not complete. Often a cold Pages/proxy cache, missing frame_id, or Portal URL map still unset/mismatched. This client cannot see Portal state \u2014 do not treat this message as proof the map is wrong or done. Retry rocket launch after ~1 min; only Donald confirming Abbey inside the discordsays iframe closes the operator gate.',
+    );
+    setMode('waiting');
+  }, 8000);
+
   await discordSdk.ready();
+  clearTimeout(readyWatchdog);
   setText(els.status, 'Abbey is ready in this voice Activity.');
   setText(els.channel, formatChannel(discordSdk.channelId, null));
   setText(els.guild, formatGuild(discordSdk.guildId, discordSdk.channelId));
