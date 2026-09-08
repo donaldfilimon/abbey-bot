@@ -103,6 +103,37 @@ async fn input(
     Ok((input, permissions))
 }
 
+/// Post-deferral authorization, shared so the two entrypoints cannot drift.
+///
+/// A press only claims what was true at render time, so both halves run again
+/// after the deferral, in this order: live Discord permissions first, then the
+/// control's own identity/scope/expiry envelope. Renders nothing itself — the
+/// caller owns that, since the two interaction kinds are distinct types.
+async fn authorized(
+    ctx: &serenity::all::Context,
+    data: &Data,
+    custom_id: &str,
+    session: Session,
+    guild: Option<serenity::all::GuildId>,
+    channel: serenity::all::ChannelId,
+    user: serenity::all::UserId,
+) -> Result<(catalog::EligibilityInput, Permissions), &'static str> {
+    let (input, permissions) = input(ctx, data, guild, channel, user)
+        .await
+        .map_err(|_| PERMISSIONS_UNCONFIRMED)?;
+    protocol::validate(
+        custom_id,
+        session.owner,
+        session.guild,
+        session.channel,
+        crate::runtime::now(),
+    )?;
+    Ok((input, permissions))
+}
+
+const PERMISSIONS_UNCONFIRMED: &str =
+    "Discord could not confirm your current permissions. Open `/help` to try again.";
+
 fn edit(body: String) -> EditInteractionResponse {
     EditInteractionResponse::new()
         .content(crate::commands::clamp_message(body))
@@ -215,33 +246,25 @@ async fn run_component(
     data: &Data,
     session: Session,
 ) -> Result<(), Error> {
-    let (input, permissions) = match input(
+    let (input, permissions) = match authorized(
         ctx,
         data,
+        &interaction.data.custom_id,
+        session,
         interaction.guild_id,
         interaction.channel_id,
         interaction.user.id,
     )
     .await
     {
-        Ok(input) => input,
-        Err(_) => {
-            interaction.edit_response(&ctx.http, edit("Discord could not confirm your current permissions. Open `/help` to try again.".into())).await?;
+        Ok(authorized) => authorized,
+        Err(message) => {
+            interaction
+                .edit_response(&ctx.http, edit(message.into()))
+                .await?;
             return Ok(());
         }
     };
-    if let Err(message) = protocol::validate(
-        &interaction.data.custom_id,
-        session.owner,
-        session.guild,
-        session.channel,
-        crate::runtime::now(),
-    ) {
-        interaction
-            .edit_response(&ctx.http, edit(message.into()))
-            .await?;
-        return Ok(());
-    }
     // Guidance/read-only launchers remain discoverable while a provider is down.
     if !catalog::eligible(
         catalog::command(command(session.action)),
@@ -377,33 +400,25 @@ async fn run_modal(
         interaction.edit_response(&ctx.http, edit("Enter a question of 1–2,000 characters. Open `/help` → Talk with Abbey to try again.".into())).await?;
         return Ok(());
     };
-    let (input, _) = match input(
+    let (input, _) = match authorized(
         ctx,
         data,
+        &interaction.data.custom_id,
+        session,
         interaction.guild_id,
         interaction.channel_id,
         interaction.user.id,
     )
     .await
     {
-        Ok(input) => input,
-        Err(_) => {
-            interaction.edit_response(&ctx.http, edit("Discord could not confirm your current permissions. Open `/help` to try again.".into())).await?;
+        Ok(authorized) => authorized,
+        Err(message) => {
+            interaction
+                .edit_response(&ctx.http, edit(message.into()))
+                .await?;
             return Ok(());
         }
     };
-    if let Err(message) = protocol::validate(
-        &interaction.data.custom_id,
-        session.owner,
-        session.guild,
-        session.channel,
-        crate::runtime::now(),
-    ) {
-        interaction
-            .edit_response(&ctx.http, edit(message.into()))
-            .await?;
-        return Ok(());
-    }
     let availability =
         catalog::availability(catalog::command(catalog::CommandKey::PersonaAsk), &input);
     if !catalog::eligible(
