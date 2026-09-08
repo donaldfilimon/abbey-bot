@@ -175,27 +175,34 @@ fn dashboard_input(
     }
 }
 
+/// Classic String Select that opens a dashboard page (shared by `/admin show`
+/// and the dashboard itself). Option values are `View(...)` slugs; the menu
+/// custom id carries [`AdminAction::SelectPage`].
+pub(super) fn page_select_row(session: &crate::admin_dashboard::AdminSession) -> CreateActionRow {
+    use crate::admin_dashboard::{AdminAction as A, AdminPage};
+    CreateActionRow::SelectMenu(
+        CreateSelectMenu::new(
+            session.custom_id(A::SelectPage),
+            CreateSelectMenuKind::String {
+                options: AdminPage::NAV
+                    .into_iter()
+                    .map(|page| {
+                        CreateSelectMenuOption::new(page.label(), A::View(page).slug())
+                            .default_selection(page == session.page)
+                    })
+                    .collect(),
+            },
+        )
+        .placeholder("Choose an administration page")
+        .min_values(1)
+        .max_values(1),
+    )
+}
+
 pub(super) fn dashboard_rows(
     session: &crate::admin_dashboard::AdminSession,
 ) -> Vec<CreateActionRow> {
     use crate::admin_dashboard::{AdminAction as A, AdminPage as P};
-    let nav = [
-        (P::Overview, "Overview"),
-        (P::Conversation, "Conversation"),
-        (P::Learning, "Learning"),
-        (P::Operations, "Operations"),
-    ]
-    .into_iter()
-    .map(|(page, label)| {
-        CreateButton::new(session.custom_id(A::View(page)))
-            .label(label)
-            .style(if page == session.page {
-                ButtonStyle::Primary
-            } else {
-                ButtonStyle::Secondary
-            })
-    })
-    .collect();
     let action_rows = match session.page {
         P::Conversation => vec![
             vec![
@@ -288,7 +295,7 @@ pub(super) fn dashboard_rows(
         ]],
         P::Overview => Vec::new(),
     };
-    let mut rows = vec![CreateActionRow::Buttons(nav)];
+    let mut rows = vec![page_select_row(session)];
     for actions in action_rows {
         rows.push(CreateActionRow::Buttons(actions));
     }
@@ -367,12 +374,20 @@ pub async fn dispatch_admin_component(
             {
                 return Err(crate::admin_dashboard::Rejection::Malformed);
             }
-            crate::admin_dashboard::AdminSession::parse(
+            let (session, action) = crate::admin_dashboard::AdminSession::parse(
                 &interaction.data.custom_id,
                 interaction.user.id.get(),
                 interaction.guild_id.map(|id| id.get()),
                 runtime::now(),
-            )
+            )?;
+            let action = match &interaction.data.kind {
+                ComponentInteractionDataKind::Button => action,
+                ComponentInteractionDataKind::StringSelect { values } => {
+                    crate::admin_dashboard::resolve_select_action(action, values)?
+                }
+                _ => return Err(crate::admin_dashboard::Rejection::Malformed),
+            };
+            Ok((session, action))
         },
         || async {
             let guild_id = interaction

@@ -3,9 +3,10 @@ use super::*;
 use catalog::{AccessId, ConditionId};
 use serde_json::{Value, json};
 use serenity::all::{
-    ApplicationId, Cache, ChannelId, CommandInteraction, GatewayIntents, Guild, GuildChannel,
-    GuildCreateEvent, Member, Message, Role, RoleId, Shard, ShardId, ShardInfo, ShardManager,
-    ShardManagerOptions, ShardMessenger, ShardRunner, ShardRunnerOptions, User,
+    ApplicationId, Cache, ChannelId, CommandInteraction, ComponentInteractionDataKind,
+    GatewayIntents, Guild, GuildChannel, GuildCreateEvent, Member, Message, Role, RoleId, Shard,
+    ShardId, ShardInfo, ShardManager, ShardManagerOptions, ShardMessenger, ShardRunner,
+    ShardRunnerOptions, User,
 };
 use std::sync::{
     Arc, Mutex,
@@ -392,6 +393,31 @@ fn admin_component(
     serde_json::from_value(json!({
         "id": "901", "application_id": "321",
         "data": {"custom_id": session.custom_id(action), "component_type": 2},
+        "guild_id": GUILD.to_string(), "channel_id": channel.to_string(),
+        "message": message, "user": user(ACTOR), "token": "offline-component",
+        "version": 1, "locale": "en-US", "entitlements": [], "attachment_size_limit": 1048576
+    }))
+    .unwrap()
+}
+
+fn admin_page_select(
+    fixture: &DiscordFixture,
+    session: &crate::admin_dashboard::AdminSession,
+    page: crate::admin_dashboard::AdminPage,
+    channel: u64,
+) -> serenity::all::ComponentInteraction {
+    use crate::admin_dashboard::AdminAction;
+    let mut message = Message::default();
+    message.id = serenity::all::MessageId::new(900);
+    message.channel_id = ChannelId::new(channel);
+    message.author = fixture.context.cache.current_user().clone().into();
+    serde_json::from_value(json!({
+        "id": "901", "application_id": "321",
+        "data": {
+            "custom_id": session.custom_id(AdminAction::SelectPage),
+            "component_type": 3,
+            "values": [AdminAction::View(page).slug()]
+        },
         "guild_id": GUILD.to_string(), "channel_id": channel.to_string(),
         "message": message, "user": user(ACTOR), "token": "offline-component",
         "version": 1, "locale": "en-US", "entitlements": [], "attachment_size_limit": 1048576
@@ -1821,6 +1847,57 @@ async fn actual_admin_dispatch_never_reads_or_mutates_before_acknowledgement() {
     assert_eq!(fixture.take_requests().len(), 1);
     let settings = crate::runtime::AppState::lock(&data.state.stores).guilds["discord:123"].clone();
     assert!(settings.vision_enabled);
+}
+
+#[tokio::test]
+async fn actual_admin_page_select_opens_dashboard_page_fail_closed() {
+    use crate::admin_dashboard::{AdminAction, AdminPage, AdminSession};
+    let fixture = DiscordFixture::new().await;
+    fixture
+        .permissions
+        .store(Permissions::MANAGE_GUILD.bits(), Ordering::SeqCst);
+    let data = configured_data();
+    let session = AdminSession {
+        owner: ACTOR,
+        guild: GUILD,
+        expiry: runtime::now() + 900,
+        page: AdminPage::Overview,
+    };
+
+    let interaction = admin_page_select(&fixture, &session, AdminPage::Learning, CHANNEL);
+    assert!(
+        crate::commands_brain::dispatch_admin_component(&fixture.context, &interaction, &data)
+            .await
+    );
+    let requests = fixture.take_requests();
+    assert_eq!(requests[0].body["type"], 5);
+    assert!(requests.iter().any(|request| {
+        request.body["content"]
+            .as_str()
+            .is_some_and(|body| body.contains("Administration · Learning"))
+    }));
+    assert!(requests.iter().any(|request| {
+        let rendered = request.body["components"].to_string();
+        rendered.contains("page-select") && rendered.contains("learning-on")
+    }));
+
+    // Non-nav option value on the select sentinel fails closed (no mutation).
+    let mut bad = admin_page_select(&fixture, &session, AdminPage::Conversation, CHANNEL);
+    bad.data.custom_id = session.custom_id(AdminAction::SelectPage);
+    if let ComponentInteractionDataKind::StringSelect { values } = &mut bad.data.kind {
+        *values = vec!["confirm-reset".into()];
+    } else {
+        panic!("expected string select");
+    }
+    assert!(crate::commands_brain::dispatch_admin_component(&fixture.context, &bad, &data).await);
+    assert!(fixture.take_requests().iter().any(|request| {
+        request.body["content"].as_str().is_some_and(|body| {
+            body.contains("stale")
+                || body.contains("someone else")
+                || body.contains("expired")
+                || body.contains("Open `/admin dashboard`")
+        })
+    }));
 }
 
 #[tokio::test]

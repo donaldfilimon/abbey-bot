@@ -1,4 +1,6 @@
-use super::dashboard::{AdminPreparation, acknowledged_admin_preparation, dashboard_rows};
+use super::dashboard::{
+    AdminPreparation, acknowledged_admin_preparation, dashboard_rows, page_select_row,
+};
 use super::*;
 use crate::persist::{PersistComponentOutcome, PersistErrorCategory, PersistReport};
 
@@ -139,6 +141,9 @@ async fn revoked_permission_fails_before_any_effect_is_reduced() {
 fn dashboard_uses_classic_bounded_rows_and_private_registration() {
     let command = admin_dashboard();
     assert!(command.ephemeral);
+    let show = admin_show();
+    assert!(show.ephemeral);
+    assert!(show.guild_only);
     for page in [
         crate::admin_dashboard::AdminPage::Overview,
         crate::admin_dashboard::AdminPage::Conversation,
@@ -154,11 +159,18 @@ fn dashboard_uses_classic_bounded_rows_and_private_registration() {
         };
         let rows = dashboard_rows(&session);
         assert!(rows.len() <= 5);
-        for row in rows {
+        let CreateActionRow::SelectMenu(_) = &rows[0] else {
+            panic!("dashboard navigation must be a classic String Select")
+        };
+        for row in &rows[1..] {
             let CreateActionRow::Buttons(buttons) = row else {
-                panic!("dashboard must use classic button rows")
+                panic!("dashboard actions must use classic button rows")
             };
             assert!(buttons.len() <= 5);
         }
+        let show_row = page_select_row(&session);
+        let CreateActionRow::SelectMenu(_) = show_row else {
+            panic!("/admin show must attach a classic page select")
+        };
     }
 }

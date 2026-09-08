@@ -11,8 +11,9 @@
 use std::time::Duration;
 
 use serenity::all::{
-    Attachment, ButtonStyle, ComponentInteraction, CreateActionRow, CreateAttachment, CreateButton,
-    CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
+    Attachment, ButtonStyle, ComponentInteraction, ComponentInteractionDataKind, CreateActionRow,
+    CreateAttachment, CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, EditInteractionResponse,
     Permissions, User,
 };
 
@@ -205,16 +206,38 @@ fn update_settings(
     Some((g, settings))
 }
 
-/// Show current settings.
+/// Show current settings with a classic page select into the admin dashboard.
 #[poise::command(slash_command, guild_only, ephemeral, rename = "show")]
 pub async fn admin_show(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    let Some(guild) = ctx.guild_id() else {
+        ctx.say(NO_GUILD).await?;
+        return Ok(());
+    };
     let Some((g, settings)) = update_settings(ctx, |_| {}) else {
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
-    ctx.say(clamp_message(guild::render_settings(&g, &settings)))
-        .await?;
+    let session = crate::admin_dashboard::AdminSession {
+        owner: ctx.author().id.get(),
+        guild: guild.get(),
+        expiry: runtime::now().saturating_add(crate::admin_dashboard::SESSION_SECONDS),
+        page: crate::admin_dashboard::AdminPage::Overview,
+    };
+    let body = format!(
+        "{}
+
+Choose a page to open the classic administration dashboard.",
+        guild::render_settings(&g, &settings)
+    );
+    ctx.send(
+        poise::CreateReply::default()
+            .content(clamp_message(body))
+            .components(vec![dashboard::page_select_row(&session)])
+            .ephemeral(true)
+            .allowed_mentions(crate::gateway::no_mentions()),
+    )
+    .await?;
     Ok(())
 }
 

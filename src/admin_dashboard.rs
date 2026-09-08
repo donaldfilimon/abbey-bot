@@ -14,8 +14,31 @@ pub enum AdminPage {
     ConfirmReset,
 }
 
+impl AdminPage {
+    /// Navigable dashboard pages exposed by the classic page select.
+    pub const NAV: [Self; 4] = [
+        Self::Overview,
+        Self::Conversation,
+        Self::Learning,
+        Self::Operations,
+    ];
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Conversation => "Conversation",
+            Self::Learning => "Learning",
+            Self::Operations => "Operations",
+            Self::ConfirmReset => "Confirm reset",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdminAction {
+    /// Classic String Select sentinel: option values carry `View(...)` slugs.
+    SelectPage,
     View(AdminPage),
     SetLearning(bool),
     SetVision(bool),
@@ -89,6 +112,7 @@ impl AdminAction {
     #[must_use]
     pub const fn slug(self) -> &'static str {
         match self {
+            Self::SelectPage => "page-select",
             Self::View(AdminPage::Overview) => "view-overview",
             Self::View(AdminPage::Conversation) => "view-conversation",
             Self::View(AdminPage::Learning) => "view-learning",
@@ -120,6 +144,7 @@ impl AdminAction {
 
     fn parse(value: &str) -> Option<Self> {
         Some(match value {
+            "page-select" => Self::SelectPage,
             "view-overview" => Self::View(AdminPage::Overview),
             "view-conversation" => Self::View(AdminPage::Conversation),
             "view-learning" => Self::View(AdminPage::Learning),
@@ -206,6 +231,7 @@ impl AdminSession {
         }
         let page = match action {
             AdminAction::View(page) => page,
+            AdminAction::SelectPage => AdminPage::Overview,
             AdminAction::RequestReset | AdminAction::ConfirmReset => AdminPage::ConfirmReset,
             AdminAction::SetLearning(_) => AdminPage::Learning,
             AdminAction::SetVision(_)
@@ -227,10 +253,35 @@ impl AdminSession {
     }
 }
 
+/// Resolve a classic String Select choice into a concrete admin action.
+///
+/// The select menu custom id carries [`AdminAction::SelectPage`]; the chosen
+/// option value must be a navigable `View(...)` slug. Anything else fails closed.
+#[must_use]
+pub fn resolve_select_action(
+    action: AdminAction,
+    values: &[String],
+) -> Result<AdminAction, Rejection> {
+    match action {
+        AdminAction::SelectPage => match values {
+            [value] => match AdminAction::parse(value) {
+                Some(resolved @ AdminAction::View(page)) if AdminPage::NAV.contains(&page) => {
+                    Ok(resolved)
+                }
+                _ => Err(Rejection::Malformed),
+            },
+            _ => Err(Rejection::Malformed),
+        },
+        _ => Err(Rejection::Malformed),
+    }
+}
+
 #[must_use]
 pub fn reduce(action: AdminAction, settings: &GuildSettings) -> AdminEffect {
     match action {
         AdminAction::View(page) => AdminEffect::View(page),
+        // SelectPage is remapped via resolve_select_action before reduce.
+        AdminAction::SelectPage => AdminEffect::None,
         AdminAction::RequestReset => AdminEffect::View(AdminPage::ConfirmReset),
         AdminAction::SetLearning(value) if settings.learning_enabled != value => {
             AdminEffect::SetLearning(value)
@@ -456,6 +507,42 @@ mod tests {
         assert_eq!(
             reduce(AdminAction::ConfirmReset, &settings),
             AdminEffect::ResetChannel
+        );
+    }
+
+    #[test]
+    fn page_select_resolves_only_navigable_views() {
+        let session = AdminSession {
+            owner: 7,
+            guild: 8,
+            expiry: 9,
+            page: AdminPage::Overview,
+        };
+        let id = session.custom_id(AdminAction::SelectPage);
+        assert!(id.len() <= 100);
+        assert_eq!(
+            AdminSession::parse(&id, 7, Some(8), 9).unwrap().1,
+            AdminAction::SelectPage
+        );
+        assert_eq!(
+            resolve_select_action(AdminAction::SelectPage, &["view-conversation".into()]).unwrap(),
+            AdminAction::View(AdminPage::Conversation)
+        );
+        assert_eq!(
+            resolve_select_action(AdminAction::SelectPage, &["confirm-reset".into()]),
+            Err(Rejection::Malformed)
+        );
+        assert_eq!(
+            resolve_select_action(AdminAction::SelectPage, &[]),
+            Err(Rejection::Malformed)
+        );
+        assert_eq!(
+            resolve_select_action(AdminAction::Flush, &["view-overview".into()]),
+            Err(Rejection::Malformed)
+        );
+        assert_eq!(
+            reduce(AdminAction::SelectPage, &GuildSettings::default()),
+            AdminEffect::None
         );
     }
 }
