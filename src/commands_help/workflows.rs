@@ -62,6 +62,29 @@ pub(super) fn rows(
     }
 }
 
+/// The facts a button press and a modal submission must both prove before any
+/// permission or provider work: a human sent it, it addresses this application,
+/// and it descends from a message this bot authored in the channel it arrived
+/// in. The two paths reach this differently, and the order is not the same:
+/// the button site checks it before `protocol::validate` parses the
+/// `custom_id`, while the modal site parses first and applies this as a match
+/// guard on the result. That is safe because `validate` is pure, bounded
+/// string parsing that performs no I/O. Button-only requirements (component
+/// kind, interaction context) stay at the button site. One definition, because
+/// the two copies this replaced had already drifted apart once (`b6358c7`).
+fn authentic_origin(
+    ctx: &serenity::all::Context,
+    user: &serenity::all::User,
+    application: serenity::all::ApplicationId,
+    message: Option<&serenity::all::Message>,
+    channel: serenity::all::ChannelId,
+) -> bool {
+    let bot = ctx.cache.current_user().id;
+    !user.bot
+        && application.get() == bot.get()
+        && message.is_some_and(|m| m.author.id == bot && m.channel_id == channel)
+}
+
 fn context_valid(
     context: Option<serenity::all::InteractionContext>,
     guild: Option<serenity::all::GuildId>,
@@ -169,11 +192,13 @@ pub(super) async fn dispatch_component(
     interaction: &ComponentInteraction,
     data: &Data,
 ) -> bool {
-    let session = if interaction.user.bot
-        || interaction.application_id.get() != ctx.cache.current_user().id.get()
-        || interaction.message.channel_id != interaction.channel_id
-        || interaction.message.author.id != ctx.cache.current_user().id
-        || !matches!(interaction.data.kind, ComponentInteractionDataKind::Button)
+    let session = if !authentic_origin(
+        ctx,
+        &interaction.user,
+        interaction.application_id,
+        Some(&interaction.message),
+        interaction.channel_id,
+    ) || !matches!(interaction.data.kind, ComponentInteractionDataKind::Button)
         || !context_valid(interaction.context, interaction.guild_id)
     {
         Err(protocol::STALE)
@@ -380,12 +405,13 @@ async fn run_modal(
     let session = match session {
         Ok(s)
             if s.action == Action::Conversation
-                && !interaction.user.bot
-                && interaction.application_id.get() == ctx.cache.current_user().id.get()
-                && interaction.message.as_ref().is_some_and(|m| {
-                    m.author.id == ctx.cache.current_user().id
-                        && m.channel_id == interaction.channel_id
-                }) =>
+                && authentic_origin(
+                    ctx,
+                    &interaction.user,
+                    interaction.application_id,
+                    interaction.message.as_deref(),
+                    interaction.channel_id,
+                ) =>
         {
             s
         }
