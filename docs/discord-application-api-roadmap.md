@@ -309,6 +309,19 @@ per-command consent decision are not.
   (Abbey / Intelligence Without Limits — not Quesar on companion surfaces).
 - **Design (2026-09-08):** monetization draft locked in [`docs/superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md`](superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md) — reuse existing type-5 SKU `1293228939929452574` (rename/clarify joke name → Abbey Guild Pro); map `voice_ux_pro` / `activity_access` / `admin_workflow`; storefront publish is a Donald Portal step; **no live charges** in phase 1; Quesar pilot page stays separate (never IWL).
 
+### Phase-1 status (2026-09-08) — docs only, no live charges
+
+| Item | Status | Link |
+|---|---|---|
+| Design (SKU reuse + three entitlements) | Draft on docs branch / PR #127 | [`2026-09-08-monetization-guild-pro-quesar-design.md`](superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md) |
+| Implementation plan (TDD for future `premium_entitlements`) | Docs PR | [`2026-09-08-monetization-guild-pro-quesar.md`](superpowers/plans/2026-09-08-monetization-guild-pro-quesar.md) |
+| Portal / billing / Activity map checklist | Operator | [`docs/ops/monetization-portal-checklist.md`](ops/monetization-portal-checklist.md) |
+| Storefront / live charges | **Out** — `storefront_available=false`; do not publish | Checklist non-goals |
+| `ABBEY_ENTITLEMENT_ENFORCE` | Default **off**; no production deny in phase 1 | Plan Task 4 |
+| Quesar pilot CTA | Other repo (`mlai-website-app`) | Plan Task 5 |
+
+Do **not** merge while tip Gate may be billing-locked. Rust entitlement enforcement is phase 2+ after Donald Portal publish decision.
+
 ---
 
 ## Out of scope / never
