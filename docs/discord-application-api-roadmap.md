@@ -137,7 +137,15 @@ Improve interaction surfaces that already ride the bot token (no OAuth secret).
   `consent:true` slash gate + public notice), Components V2 layouts, modals —
   follow-ups once Components V2 lands or classic UX still wins.
 
-- **Design (2026-09-08):** classic voice Action Row UX locked in [`docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md`](superpowers/specs/2026-09-08-voice-classic-ux-design.md) (A status → B leave confirm → C play); implementation waits for writing-plans + Gate-phased PRs. Consent remains slash-only.
+- **Design (2026-09-08):** classic voice Action Row UX locked in [`docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md`](superpowers/specs/2026-09-08-voice-classic-ux-design.md) (A status → B leave confirm → C play). Consent remains slash-only.
+
+### Acceptance note (2026-09-08) — classic voice Action Row UX (A/B/C)
+
+- **Shipped path:** after successful `/voice join|resume consent:true`, Abbey follows up with a classic Status Action Row (`Refresh` + `Leave`). Leave swaps to Confirm/Cancel without teardown; Confirm runs the existing leave path once. When a playable voice session exists, Play/Stop/Skip appear on the status surface.
+- **Protocol:** short custom ids `abbey:v:{sid}:{act}` with acts `ref|leave|ok|cancel|play|stop|skip`; guild/user/channel/expiry live in the server-side session store under `ABBEY_DATA_DIR` (`voice-ux-sessions.json`), not in the custom id.
+- **Fail-closed:** wrong user/guild/expired/missing/malformed → ephemeral deny and zero voice mutations; authorized clicks ack with `UpdateMessage` (or Defer+edit for leave teardown).
+- **Unchanged:** `consent:true` stays slash-only (never a consent button; buttons never start STT); no Components V2 / Portal / bot Go Live in this slice.
+
 
 ### Acceptance note (2026-09-07) — `/admin show` classic page select
 

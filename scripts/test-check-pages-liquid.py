@@ -439,6 +439,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/plans/2026-09-06-dynamic-command-workflows.md",
             "docs/superpowers/plans/2026-09-06-guided-help-memory-browser.md",
             "docs/superpowers/plans/2026-09-06-operator-status-recovery.md",
+            "docs/superpowers/plans/2026-09-08-voice-classic-ux.md",
             "docs/superpowers/specs/2026-08-19-guild-learning-loop-design.md",
             "docs/superpowers/specs/2026-08-19-reply-quality-speed-design.md",
             "docs/superpowers/specs/2026-08-19-tools-design.md",

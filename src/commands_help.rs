@@ -613,6 +613,9 @@ pub async fn dispatch_component(
     if !id.starts_with("abbey:") || crate::voice_consent::parse_button(id).is_some() {
         return false;
     }
+    if id.starts_with(crate::voice_ux::CUSTOM_ID_PREFIX) {
+        return false;
+    }
     if id.starts_with("abbey:task:") {
         return workflows::dispatch_component(ctx, interaction, data).await;
     }

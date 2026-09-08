@@ -29,6 +29,7 @@ mod receive;
 mod start;
 mod supervision;
 use start::start_voice;
+mod ux;
 mod verification;
 
 #[cfg(test)]
@@ -88,6 +89,7 @@ async fn configure_disconnected_call(call: &Arc<Mutex<songbird::Call>>, mode: Vo
 pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
+pub use ux::dispatch_ux_component;
 pub use verification::voice_verify;
 
 const INPUT_QUEUE_FRAMES: usize = 64;

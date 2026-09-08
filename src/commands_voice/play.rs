@@ -58,6 +58,15 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
     Ok(runtime)
 }
 
+/// Component-safe native player control used by classic voice UX Skip.
+pub(super) async fn execute_script_for_ux(
+    runtime: &VoiceRuntime,
+    script: Script,
+    lease: crate::host_music::HostMusicLease,
+) -> Result<(), Error> {
+    execute(runtime, script, lease).await
+}
+
 async fn execute(
     runtime: &VoiceRuntime,
     script: Script,

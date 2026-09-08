@@ -161,6 +161,7 @@ pub struct AppState {
     /// detail and is never held while another process-state lock is held.
     pub voice_inspect: Arc<crate::inspect::VoiceInspectRegistry>,
     pub voice_registry: Arc<crate::voice_registry::VoiceRegistry>,
+    pub voice_ux: Arc<crate::voice_ux_store::VoiceUxStore>,
     pub host_music: crate::host_music::HostMusic,
     /// `ABBEY_EPISODE_GATE_CONFIG`: the constitutional episode gate client.
     /// `None` (the default) means no ledger write is ever attempted.
@@ -355,6 +356,9 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             attachments: attachment_client(),
+            voice_ux: Arc::new(crate::voice_ux_store::VoiceUxStore::load(
+                data_dir.as_deref(),
+            )),
             data_dir,
             persistence_sink: Arc::new(FsPersistenceSink),
             self_ids: Mutex::new(Vec::new()),
@@ -398,6 +402,9 @@ impl AppState {
             engine: Mutex::new(Engine::new()),
             quiet: false,
             attachments: attachment_client(),
+            voice_ux: Arc::new(crate::voice_ux_store::VoiceUxStore::load(
+                data_dir.as_deref(),
+            )),
             data_dir,
             persistence_sink,
             self_ids: Mutex::new(Vec::new()),

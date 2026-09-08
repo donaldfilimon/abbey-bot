@@ -39,6 +39,20 @@ pub fn play(player: Player, query: &str) -> Result<Script, &'static str> {
     })
 }
 
+pub fn next(player: Player) -> Script {
+    Script {
+        source: match player {
+            Player::Spotify => {
+                "on run argv\ntell application id \"com.spotify.client\" to next track\nend run"
+            }
+            Player::Music => {
+                "on run argv\ntell application id \"com.apple.Music\" to next track\nend run"
+            }
+        },
+        argument: String::new(),
+    }
+}
+
 pub fn pause(player: Player) -> Script {
     Script {
         source: match player {
@@ -66,6 +80,17 @@ mod tests {
             script
                 .source
                 .contains("search library playlist 1 for (item 1 of argv) only names")
+        );
+    }
+    #[test]
+    fn next_track_golden() {
+        assert_eq!(
+            next(Player::Spotify).source,
+            "on run argv\ntell application id \"com.spotify.client\" to next track\nend run"
+        );
+        assert_eq!(
+            next(Player::Music).source,
+            "on run argv\ntell application id \"com.apple.Music\" to next track\nend run"
         );
     }
     #[test]
