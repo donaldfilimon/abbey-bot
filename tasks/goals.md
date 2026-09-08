@@ -150,6 +150,26 @@ status: in_progress
   scheduler-internal mechanism is not pinned. PR #85 gives each fixture a private `Scheduler`
   (8 of 8 parallel runs clean, full suite 835 passed). Test-only; the actor is unchanged.
 
+- **2026-09-08 05:5x EDT — voice classic Action Row UX design is locked on `main`;
+  implementation has not shipped.** Squash #104 (`df6a3b6`) landed
+  `docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md` plus minimal
+  pointers in `docs/superpowers/README.md` and
+  `docs/discord-application-api-roadmap.md`. Locked decisions: phased classic
+  Action Rows **A** (post-join status Refresh+Leave) → **B** (leave Confirm/Cancel,
+  no teardown until Confirm) → **C** (Play/Stop/Skip when playable); short custom
+  ids `abbey:v:{sid}:{act}` with a server-side session store under
+  `ABBEY_DATA_DIR`; fail-closed like `/admin` / `/pending`; `consent:true` stays
+  **slash-only**. Explicit non-goals: Components V2, Portal/OAuth, bot Go Live,
+  consent via components. **Implementation requires a separate writing-plans
+  pass and Gate-phased PRs per the spec** — design lock is not code delivery.
+  A→B→C Rust work is in flight on another branch (`feat/voice-classic-ux-abc`);
+  this ledger does **not** claim it shipped. Live acceptance residuals for this
+  goal are unchanged: provider qualification, installed artifact identity,
+  two-guild isolation, unanimous current consent, human-witnessed audible
+  wake/reply, barge-in, membership-change pause, renewed consent, written stop,
+  and final leave with no remaining media.
+
+
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
 - Captured 2026-08-19 from the approved Rust specification program; specs copied to
@@ -317,6 +337,19 @@ status: in_progress
   `deploy/test-smoke-mlx-vlm-tool-deltas.py`, and `deploy/test-patch-mlx-vlm-tool-encoding.py`;
   `check.ps1` runs none of the three. Its header documents only the POSIX/plist omission, so a
   green Windows gate covers less than a green POSIX gate. Recorded, not changed.
+
+- **2026-09-08 05:5x EDT — residual inventory still open on this goal (no status
+  flip).** After #103 (ledger) and #104 (voice classic UX **design**), the
+  operator/human-gated work this section still does not claim done:
+  - **Portal Activity URL map (P0)** — Developer Portal click; bot tokens cannot
+    set it (`docs/discord-application-api-roadmap.md` / `docs/activities.md`).
+  - **OAuth secret host (P2)** — authorize / authenticated channel name /
+    `setActivity` wait on an operator-hosted exchange; secret never in git/Pages.
+  - **Components V2** — still crate-blocked on pinned `serenity 0.12.5` /
+    `poise 0.6.2` (classic Action Rows only); #104 deliberately stayed classic.
+  - Telegram/Slack live tokens; unobserved `/forget`, `/ocr`, post-deploy `/see`;
+    an actual `OverBudget` refusal. None of these flip this goal to `done`.
+
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
@@ -732,6 +765,18 @@ status: in_progress
   merging this PR needs its own run and inherits nothing from `eeb717b`. It also
   closes that CI rung only and establishes nothing about live acceptance.
 
+- **2026-09-08 05:5x EDT — `#103` and `#104` landed on `main`; neither closes
+  live acceptance.** `9abab67` is the #103 ledger squash (green three-platform
+  evidence bound to parent `eeb717b`, Serenity re-review negative, stale
+  `voice_session` line-count correction). `df6a3b6` is the #104 voice classic
+  UX **design** squash (docs-only; A→B→C Action Row UX locked). Exact-SHA
+  three-platform CI for tip `df6a3b6` is **not** claimed green in this pass —
+  see the modernization CI subsection. Residuals unchanged: installed artifact
+  identity, provider qualification, two-guild member/manager checks, fresh
+  unanimous consent, human-witnessed audible voice. Voice A→B→C implementation
+  is in flight elsewhere and is **not** recorded as shipped here.
+
+
 ## Route guild operations through the WDBX episode gate
 status: in_progress
 - 2026-09-06 first slice (Donald chose "subprocess to the abi binary" over a gRPC
@@ -860,6 +905,13 @@ status: in_progress
   deliberately outside the gate, and `operational` retention still emitting no
   `forgets` on checkpoint replacement. A loaded agent is not an accepted
   transaction.
+
+- **2026-09-08 05:5x EDT — episode approval residual restated; no status flip.**
+  Continuity from the 04:4x re-measurement still holds as the last measured
+  gateway observation in this file. Approval remains a distinct human step the
+  bot cannot supply; proposal-only stage is what is live. This `/goal continue`
+  does not re-probe launchd or claim a new transaction.
+
 
 ## Build the MLAI server from a plan file (`--server-plan`)
 status: done
@@ -1106,3 +1158,30 @@ Still not established by this pass, and unchanged: installed artifact identity,
 provider qualification, live two-guild member/manager Discord checks, fresh
 unanimous consent and human-witnessed audible voice acceptance. Those are live
 observations; no source test, CI run or synthetic probe substitutes for them.
+
+
+#### Tip `df6a3b6` (#104 design) — three-platform Gate NOT yet re-cleared (2026-09-08 05:5x EDT)
+
+Executed as `/goal continue` after #103/#104 landed. Tip of `origin/main` at
+this writing is `df6a3b6cca406ce2e87ae515d9336b2afd755240` (voice classic UX
+design squash #104). Parent chain: `df6a3b6` → `9abab67` (#103 ledger) →
+`eeb717b` (last SHA with a completed three-platform **success** on record).
+
+**Honest CI claim for `df6a3b6`:** Rust workflow run `34212047816`
+(`headSha df6a3b6…`) was still **`in_progress`** when this ledger entry was
+written — Gate (macOS), Gate (Ubuntu), and Gate (Windows) all `in_progress`,
+no job `conclusion` yet. Therefore this tip does **not** clear
+`docs/live-test-protocol.md` stage 0, and the SHA-bound precondition is **not
+yet re-cleared** for `df6a3b6`. Do not carry `eeb717b`'s green forward to this
+tip or to `9abab67`.
+
+Method: `gh run view 34212047816 --json status,conclusion,headSha,jobs`. No
+local gate was run and none is claimed. The #103 push run on `main` was
+observed `cancelled` when #104 landed (`34212033633`), which is exactly why
+parent-SHA greens never transfer.
+
+Still not established, and unchanged by #103/#104: installed artifact identity,
+provider qualification, live two-guild member/manager Discord checks, fresh
+unanimous consent, human-witnessed audible voice acceptance, Portal Activity
+URL map (P0), OAuth secret host (P2), Components V2 (crate-blocked), and
+episode-gate human approval.

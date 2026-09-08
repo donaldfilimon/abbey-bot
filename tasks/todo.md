@@ -218,6 +218,14 @@ a green source gate is not semantic, deployment, or live evidence.
         stage 0 the three job results must carry the exact SHA under test, so the head that
         results from merging needs its own run and cannot inherit this one. Closes the CI rung
         for `eeb717b` only; every live-acceptance layer below stays open.
+      - 2026-09-08 05:5x: **tip `df6a3b6` has NOT re-cleared the SHA-bound rung.**
+        After #103 (`9abab67`) and #104 (`df6a3b6`) landed, Rust run `34212047816`
+        at `headSha df6a3b6` was still `in_progress` (macOS/Ubuntu/Windows all
+        in_progress, no job conclusions). Last completed three-platform success
+        on record remains `eeb717b` / run `34179977713`. Box stays unticked;
+        parent greens do not transfer. Voice classic UX **design** is locked on
+        main via #104; A→B→C implementation is in flight elsewhere and is not
+        claimed shipped. Live-acceptance layers below stay open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
@@ -250,6 +258,14 @@ a green source gate is not semantic, deployment, or live evidence.
       continuity, gateway connection, and no voice UDP socket before consent
 
 ### Live acceptance — HUMAN-GATED, never substitutable
+- 2026-09-08 05:5x annotation (not a tick): voice classic Action Row UX **design**
+  locked on `main` at `df6a3b6` (#104) —
+  `docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md`. Implementation
+  needs writing-plans + Gate-phased PRs; A→B→C code is in flight on another
+  branch and is not acceptance evidence. Human-gated boxes below stay open:
+  two-guild isolation, consent, human-witnessed audible wake/reply, barge-in,
+  installed artifact identity. Portal Activity map, OAuth secret host, and
+  Components V2 crate-block remain operator/crate residuals outside these boxes.
 Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
 If participant consent or an authorized manager is unavailable these stay pending; source tests,
 provider logs, and historical consent are explicitly not acceptable substitutes.
