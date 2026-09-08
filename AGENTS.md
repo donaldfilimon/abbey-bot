@@ -2,8 +2,30 @@
 
 Rust/Serenity/Poise bot, not the separate Swift `../AbbeyBot` product.
 `AGENTS.md` and `CLAUDE.md` are verbatim mirrors except for the first heading;
-edit both bodies together. `README.md` owns commands, configuration and feature
-details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
+edit both bodies together. No gate enforces the mirror, so verify it yourself
+with `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)` before committing
+either file. `README.md` owns commands, configuration and feature details;
+`docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
+
+## Working in this checkout
+
+- Other agents work this same checkout concurrently (a `.codex/` directory is
+  present, and the reflog shows checkouts and commits that are not yours), and
+  HEAD belongs to whoever is typing in it. Never `git checkout`
+  here. Push refs, read another ref's files with `git show <ref>:<path>`, and
+  when you need a second branch checked out, `git worktree add` it under your
+  scratch directory, then remove it when done.
+- `tasks/goals.md` is the goal ledger and `tasks/todo.md` its checklists. The
+  ledger is append-ordered by writing session, not by time, so the newest text
+  in a section is not the newest state and a stale "not done" line can sit at
+  the tail below a later "done". Read the whole section and verify the artefact
+  (`git log`, the gate, `launchctl`) before acting on any claim in it, and
+  correct by appending, never by editing history.
+- CI evidence is SHA-bound. The three-platform run counts only for the exact
+  `headSha` it ran on; a parent's green run says nothing about the child, and
+  the `cancel-in-progress` group means a merge burst leaves about half of
+  `main`'s SHAs with a cancelled run (15 of the last 30 on 2026-09-08). The
+  evidence is the run at the final head.
 
 ## Verification
 
@@ -27,6 +49,18 @@ details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
 - Windows CI uses `./check.ps1`: POSIX/plist, launchd execution and Swift checks
   are not equivalent coverage. `scripts/check-audio-tap.sh` skips off macOS;
   on macOS it uses Xcode Swift, clears `TOOLCHAINS`, and tests synthetic PCM only.
+- The macOS gate cannot see the Windows lane, and these exact classes have each
+  turned `main` red after a fully green local run. In tests: derive paths from
+  `std::env::temp_dir()` (a hardcoded `/tmp/...` literal is a relative path on
+  Windows); build JSON with `serde_json::json!`, never by string formatting (a
+  Windows temp path's backslashes make the document invalid); set an accepted
+  socket's blocking mode explicitly (it inherits the listener's non-blocking
+  mode and fails with `WSAEWOULDBLOCK`); pin voice fixtures to `mode: disabled`
+  (the default `local` mode fails closed off macOS before the assertion runs);
+  and any byte-for-byte compare against a tracked file needs `text eol=lf` in
+  `.gitattributes`, because the Windows runner checks out with `autocrlf`. In
+  source, a `mut` binding needed only under `cfg(unix)` wants
+  `#[cfg_attr(not(unix), allow(unused_mut))]`, scoped so unix still lints it.
 - Markdown check: `python3 scripts/check-pages-liquid.py`. Pages parses template
   delimiters even in code fences; use Liquid raw spans or avoid those delimiters.
 - Source gates do not prove installed artifact identity, provider qualification,
@@ -56,7 +90,13 @@ section it ports. Read that header before the code.
   `persist`, `wdbx`, `llm/`, and `server.rs` itself, is pure: no locks, no
   network, no clock, with `now` and seeds injected by the caller. Nothing
   enforces this but the convention and review, and it is what lets the entire
-  decision path run in tests behind a recording `Outbound`.
+  decision path run in tests behind a recording `Outbound`. Check it in one
+  line before adding a module:
+  `grep -rlE '^\s*use (serenity|poise)' src/` must list only the modules
+  above plus test-only files (today the sole extra hit is
+  `command_registration_tests.rs`). A new decision module belongs off that
+  list, with its Discord edge in a `commands*` file, so the grep is the
+  boundary check to run before the first import.
 - **Inbound path.** A native event becomes a `platform::SocialEvent`; `pipeline`
   decides *whether* Abbey speaks (triage, intent, 18-dimension state encoding,
   the guild's policy, cooldown, hourly budget) and `generation` decides *how*
@@ -149,6 +189,6 @@ section it ports. Read that header before the code.
 - MLAI Community guild id is `1275617641620443146` (categories include START HERE, COMMUNITY, AI LAB, VOICE, STAFF).
 - Live Abbey is deployed via `deploy/install-launchd.sh` as the `com.donaldfilimon.abbey-bot` managed launchd service; use `deploy/check-launchd-env.sh` for real env checks.
 - Developer Portal Activity URL map remains P0 and Donald human-gated; GitHub Pages activity URL is already live.
-- Components V2 is blocked on pinned serenity 0.12.x / poise 0.6.x — ship classic Action Rows / buttons / selects / modals only.
+- Components V2 is blocked on serenity 0.12.5 alone; ship classic Action Rows / buttons / selects / modals only. poise is not part of the blocker: `poise 0.7.0` exists but requires `serenity ^0.12.5`, and `cargo tree --locked --offline -i rustls@0.22.4` shows the accepted TLS debt also descends from serenity alone (`serenity 0.12.5 -> tokio-tungstenite 0.21 -> tokio-rustls 0.25 -> rustls 0.22.4`). Bumping poise unlocks neither; only a Serenity release does.
 - `/forum draft|post|perms` shipped for `#help` (`src/forum.rs`, `src/commands_forum.rs`).
 - Live `/voice` 8/8 acceptance still requires Donald in the Office Hours VC on the launchd-locked process.
