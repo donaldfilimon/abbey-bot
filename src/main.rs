@@ -61,6 +61,7 @@ mod command_registration_tests;
 mod commands;
 mod commands_brain;
 mod commands_context;
+mod commands_forum;
 mod commands_help;
 mod commands_memory_browser;
 mod commands_voice;
@@ -69,6 +70,7 @@ mod contracts;
 mod embedding;
 mod engine;
 mod episode_gate;
+mod forum;
 mod gateway;
 mod generation;
 mod grounding;
@@ -597,6 +599,7 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands::modcall(),
         commands::server(),
         commands::webhook(),
+        commands_forum::forum(),
         commands_brain::remember(),
         commands_brain::forget(),
         commands_brain::pending(),

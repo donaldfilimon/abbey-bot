@@ -122,6 +122,9 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
 | `/server` | guild, bot DM | private | Create a server blueprint without changing the server. |
 | `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
+| `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |
+| `/forum post` | guild | private | Create a #help forum thread with a first-post template. |
+| `/forum perms` | guild | private | Snapshot and gap-fill Abbey's #help forum overwrite bits. |
 | `/remember` | guild, bot DM | private | Store a fact about yourself; moderators may choose a member. |
 | `/forget` | guild, bot DM | private | Remove a stored fact about yourself or an authorized member. |
 | `/pending list` | guild, bot DM | private | Review proposed fact replacements. |
