@@ -525,11 +525,7 @@ mod tests {
             AdminAction::SelectPage
         );
         assert_eq!(
-            resolve_select_action(
-                AdminAction::SelectPage,
-                &["view-conversation".into()]
-            )
-            .unwrap(),
+            resolve_select_action(AdminAction::SelectPage, &["view-conversation".into()]).unwrap(),
             AdminAction::View(AdminPage::Conversation)
         );
         assert_eq!(
@@ -544,6 +540,9 @@ mod tests {
             resolve_select_action(AdminAction::Flush, &["view-overview".into()]),
             Err(Rejection::Malformed)
         );
-        assert_eq!(reduce(AdminAction::SelectPage, &GuildSettings::default()), AdminEffect::None);
+        assert_eq!(
+            reduce(AdminAction::SelectPage, &GuildSettings::default()),
+            AdminEffect::None
+        );
     }
 }

@@ -1,4 +1,6 @@
-use super::dashboard::{AdminPreparation, acknowledged_admin_preparation, dashboard_rows, page_select_row};
+use super::dashboard::{
+    AdminPreparation, acknowledged_admin_preparation, dashboard_rows, page_select_row,
+};
 use super::*;
 use crate::persist::{PersistComponentOutcome, PersistErrorCategory, PersistReport};
 

@@ -178,9 +178,7 @@ fn dashboard_input(
 /// Classic String Select that opens a dashboard page (shared by `/admin show`
 /// and the dashboard itself). Option values are `View(...)` slugs; the menu
 /// custom id carries [`AdminAction::SelectPage`].
-pub(super) fn page_select_row(
-    session: &crate::admin_dashboard::AdminSession,
-) -> CreateActionRow {
+pub(super) fn page_select_row(session: &crate::admin_dashboard::AdminSession) -> CreateActionRow {
     use crate::admin_dashboard::{AdminAction as A, AdminPage};
     CreateActionRow::SelectMenu(
         CreateSelectMenu::new(

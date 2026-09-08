@@ -1889,13 +1889,14 @@ async fn actual_admin_page_select_opens_dashboard_page_fail_closed() {
     } else {
         panic!("expected string select");
     }
-    assert!(
-        crate::commands_brain::dispatch_admin_component(&fixture.context, &bad, &data).await
-    );
+    assert!(crate::commands_brain::dispatch_admin_component(&fixture.context, &bad, &data).await);
     assert!(fixture.take_requests().iter().any(|request| {
-        request.body["content"]
-            .as_str()
-            .is_some_and(|body| body.contains("stale") || body.contains("someone else") || body.contains("expired") || body.contains("Open `/admin dashboard`"))
+        request.body["content"].as_str().is_some_and(|body| {
+            body.contains("stale")
+                || body.contains("someone else")
+                || body.contains("expired")
+                || body.contains("Open `/admin dashboard`")
+        })
     }));
 }
 
