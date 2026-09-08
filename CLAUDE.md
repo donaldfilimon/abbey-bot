@@ -99,3 +99,19 @@ details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
   on failure without rollback. Keep `Change` additive (no deletes/role-permission
   edits), reveal only engine-hidden channels, and scope overwrite stages to one
   category. No mass Member grants without Donald.
+
+## Learned User Preferences
+
+- Prefer Discord Bot REST API plus host env credentials over Discord Electron UI automation; never paste bot tokens into chat or agent output.
+- Evolve the MLAI Community guild additively (keep AI LAB and VOICE categories intact); do not wipe or mass-rebuild structure.
+- Do not invent Developer Portal clicks; Activity URL mapping stays Donald human-gated.
+- No mass Member role grants and no Admin→Administrator escalation without Donald’s explicit decision.
+
+## Learned Workspace Facts
+
+- MLAI Community guild id is `1275617641620443146` (categories include START HERE, COMMUNITY, AI LAB, VOICE, STAFF).
+- Live Abbey is deployed via `deploy/install-launchd.sh` as the `com.donaldfilimon.abbey-bot` managed launchd service; use `deploy/check-launchd-env.sh` for real env checks.
+- Developer Portal Activity URL map remains P0 and Donald human-gated; GitHub Pages activity URL is already live.
+- Components V2 is blocked on pinned serenity 0.12.x / poise 0.6.x — ship classic Action Rows / buttons / selects / modals only.
+- `/forum draft|post|perms` shipped for `#help` (`src/forum.rs`, `src/commands_forum.rs`).
+- Live `/voice` 8/8 acceptance still requires Donald in the Office Hours VC on the launchd-locked process.
