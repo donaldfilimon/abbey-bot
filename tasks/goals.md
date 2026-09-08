@@ -1350,6 +1350,21 @@ records as his call. Until one of these happens, every "NOT yet re-cleared"
 subsection stays true by construction, and no live-acceptance rung that
 requires stage 0 can be started honestly.
 
+Follow-up, same session, 11:45 UTC (07:45 EDT). `df1f5d8`'s run did not
+survive: cancelled at 11:29:18 after 34 minutes 38 seconds, by the merge of
+#113 (`bf51d2f`, 11:28:59), roughly 40 seconds short of the 35:02 the
+`eeb717b` reference needed. `bf51d2f`'s own run was cancelled 44 seconds
+later by #114 (`2ca73d9`, 11:29:24). That makes twelve consecutive
+cancellations on `main`; `2ca73d9`'s run (`34220961762`) started 11:29:27 and
+completes near 12:04 UTC if nothing merges first. The first lever is being
+taken, not here: a concurrent session opened #118 adding a standing rule to
+`AGENTS.md`/`CLAUDE.md` ("do not stack merges onto `main` while the tip
+SHA's Gate is `in_progress`"), and #116, #117 and #118 each carry "do not
+merge until tip `2ca73d9` Rust Gate completes". This PR should be held the
+same way. If `2ca73d9` finishes green it is the first three-platform evidence
+on `main` since `eeb717b`, and the stage-0 re-clear becomes possible for that
+exact SHA and no other.
+
 #### Tip `7137d86` (#107 ledger + #108 agents) — three-platform Gate NOT claimed green (2026-09-08 06:4x EDT)
 
 Executed as `/goal continue` after live Action Row UX redeploy. Tip of
