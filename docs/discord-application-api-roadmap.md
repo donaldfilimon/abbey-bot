@@ -216,13 +216,29 @@ secret endpoint (not Pages).
   private lookup, not an announcement about the person or the author. The
   message menu reports empty resolved content plainly instead of answering a
   blank question, and points at `/see` for images.
-- **Forum / channel helpers:** thread create, tag suggest, first-post templates
-  for `#help` and similar — API-first, gap-fill permissions, no wipe of existing
-  overwrites (same discipline as voice overwrite work).
+- **Forum / channel helpers:** **shipped 2026-09-07.** `/forum draft` suggests
+  tags + previews Question/Bug/Build/General first-post templates (IWL brand,
+  no Quesar). `/forum post` creates a thread in `#help` (or a chosen forum) via
+  `CreateForumPost`, applies available tags (explicit list or auto-suggest), and
+  mentions the requester. `/forum perms` (Manage Server) snapshots the bot
+  member overwrite then gap-fills only missing required bits
+  (`View Channel`, `Send Messages`, `Send Messages in Threads`,
+  `Create Public Threads`, `Embed Links`, `Attach Files`, `Read Message History`)
+  — never wipes unrelated allow/deny or other overwrite targets. Classic slash
+  only; Components V2 still crate-blocked.
 
 **Done when:** user-install path documented + gated commands registered;
   role-connection endpoint (if adopted) behind operator env; forum helpers have
   a live checklist entry without breaking Onboarding constraints.
+
+### Acceptance note (2026-09-07) — forum helpers
+
+- Code: `src/forum.rs` (pure suggest/template/gap-fill) + `src/commands_forum.rs`
+  (`/forum draft|post|perms`), catalog leaves under Server, Entry Point `launch`
+  preservation unchanged.
+- **Still open in P3:** user-install (Portal Installation Contexts) and Linked
+  Roles / role connections — skipped until Donald enables Portal + decides
+  per-command consent. OAuth secret host remains P2.
 
 ### Operator prerequisite for user-install (read before writing the code)
 
@@ -239,7 +255,8 @@ writes a channel-scoped transcript, so invoking it inside a guild Abbey was
 never installed in would create memory for a server that never consented.
 `persona route` and `server` are pure and carry no such question.
 
-**Status:** unstarted; crate support confirmed (`poise::Command::install_context`
+**Status:** forum helpers shipped (this section). User-install and Linked Roles
+remain unstarted; crate support confirmed (`poise::Command::install_context`
 / `interaction_context` exist in the pinned 0.6.2), Portal click and the
 per-command consent decision are not.
 

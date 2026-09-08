@@ -333,8 +333,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(access_valid(spec.eligibility.access.rule(), 0));
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
-    assert_eq!(keys.len(), 51);
-    assert_eq!(registered_commands().len(), 51);
+    assert_eq!(keys.len(), 54);
+    assert_eq!(registered_commands().len(), 54);
     assert!(planned_commands().is_empty());
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {

@@ -146,6 +146,39 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Show a safe incoming-webhook setup guide."
     ),
     spec!(
+        ForumDraft,
+        Slash,
+        "forum draft",
+        GUILD,
+        A0,
+        C0,
+        Server,
+        true,
+        "Suggest #help tags and preview a first-post template."
+    ),
+    spec!(
+        ForumPost,
+        Slash,
+        "forum post",
+        GUILD,
+        A0,
+        C0,
+        Server,
+        true,
+        "Create a #help forum thread with a first-post template."
+    ),
+    spec!(
+        ForumPerms,
+        Slash,
+        "forum perms",
+        GUILD,
+        A4,
+        C0,
+        Server,
+        true,
+        "Snapshot and gap-fill Abbey's #help forum overwrite bits."
+    ),
+    spec!(
         Remember,
         Slash,
         "remember",
