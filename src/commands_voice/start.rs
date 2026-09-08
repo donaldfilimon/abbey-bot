@@ -733,5 +733,9 @@ pub(super) async fn start_voice(
         effective_mode.label(),
     ))
     .await?;
+    // Phase A classic Action Row — never starts STT/consent from buttons.
+    if let Err(error) = super::ux::send_post_join_panel(*ctx, &runtime, channel_id, resumed).await {
+        tracing::warn!(%error, "voice UX status panel follow-up failed");
+    }
     Ok(())
 }

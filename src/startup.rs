@@ -261,6 +261,7 @@ pub(super) async fn run(
                         interaction: serenity::all::Interaction::Component(interaction),
                     } = event
                         && (commands_brain::dispatch_admin_component(ctx, interaction, data).await
+                            || commands_voice::dispatch_ux_component(ctx, interaction, data).await
                             || commands_help::dispatch_component(
                                 ctx,
                                 interaction,

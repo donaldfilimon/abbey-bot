@@ -121,6 +121,8 @@ mod voice_openai;
 mod voice_registry;
 mod voice_self_test;
 mod voice_session;
+mod voice_ux;
+mod voice_ux_store;
 mod voice_views;
 mod wdbx;
 mod webhook;
