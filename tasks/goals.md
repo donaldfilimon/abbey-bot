@@ -718,16 +718,19 @@ status: in_progress
   separate times as the rung that actually catches things. Whether that CI cycle
   is worth an optional decomposition is Donald's call, not a gap to be quietly
   filled by a session whose mandate was ledger continuation.
-- **The exact-head item in this section is now SATISFIED.** Its closing sentence
-  reads "The exact-head item stays open until a three-platform run is green at a
-  head that carries this fix". `b9df963` is an ancestor of current `main`
-  (`merge-base --is-ancestor` verified), and `main` at `eeb717b` is green on
-  macOS, Ubuntu and Windows (run `34179977713`, recorded under the modernization
-  goal below). The three fixes that pass carries — the `mode: disabled` music
-  fixture, `README.md text eol=lf`, and the explicit
-  `(DispatchQueue?, DeferredSource?)` binding — are therefore confirmed on a
-  green three-platform head. This closes that specific rung only; it establishes
-  nothing about live acceptance.
+- **The exact-head item in this section was satisfied at `eeb717b`, which is the
+  parent of this ledger commit and not whatever `main` becomes when it lands.**
+  Its closing sentence reads "The exact-head item stays open until a
+  three-platform run is green at a head that carries this fix". `b9df963` is an
+  ancestor of `eeb717b` (`merge-base --is-ancestor` verified), and `eeb717b` is
+  green on macOS, Ubuntu and Windows (run `34179977713`, recorded under the
+  modernization goal below). So the three fixes that pass carries — the
+  `mode: disabled` music fixture, `README.md text eol=lf`, and the explicit
+  `(DispatchQueue?, DeferredSource?)` binding — are confirmed on a green
+  three-platform head. Scope, corrected after review: this is SHA-bound per
+  lines 99–100 and `docs/live-test-protocol.md` stage 0, so the head produced by
+  merging this PR needs its own run and inherits nothing from `eeb717b`. It also
+  closes that CI rung only and establishes nothing about live acceptance.
 
 ## Route guild operations through the WDBX episode gate
 status: in_progress
@@ -1050,16 +1053,30 @@ Not established by this pass, and unchanged: installed artifact identity,
 provider qualification, live two-guild member/manager Discord checks, fresh
 unanimous consent and human-witnessed audible voice acceptance.
 
-#### Exact-SHA three-platform CI: GREEN on `eeb717b` (2026-09-08 04:3x EDT)
+#### Three-platform CI: GREEN on `eeb717b`, the pre-merge parent of this commit (2026-09-08 04:3x EDT)
 
-Supersedes the `d5f00da` closing evidence above as the current standing CI
-observation. That bullet was not wrong, it was stale: `main` has advanced 16
-commits since `d5f00da`, and it went red and was repaired in between, so the
-`d5f00da` run says nothing about the present tree.
+**This is parent-SHA evidence and it does NOT clear stage 0 for the head that
+results from landing this ledger commit.** Corrected after review: an earlier
+draft of this entry called it "the current standing CI observation", which
+contradicts the SHA-bound rule this very file states at lines 99–100 ("Any later
+push to `main` invalidates it until that new SHA is green on all three platforms
+again") and the stage 0 requirement in `docs/live-test-protocol.md`, which asks
+for the Ubuntu, macOS and Windows job results whose `headSha` is *exactly* the
+SHA under test. Merging this PR produces a new `main` SHA for which `eeb717b`'s
+run is, by that rule, only the parent's result. That new head needs its own
+three-platform run before anything here is treated as current, and this entry
+must not be carried forward to it.
+
+What it does establish, scoped precisely: `eeb717b` — the tree as it stood
+before this ledger commit, and the head that carries #97–#102 — is green on all
+three platforms. In that narrow sense it supersedes `d5f00da`, which is 16
+commits behind and predates `main` going red and being repaired, so `d5f00da`
+describes neither `eeb717b` nor anything later.
 
 Measured, not inferred. `Rust` workflow run `34179977713`, `headSha`
-`eeb717b370c0ac37e24b89acac274c79dd8255a2`, which is current `main` and level
-with `origin/main` (`rev-list --left-right --count main...origin/main` = `0 0`):
+`eeb717b370c0ac37e24b89acac274c79dd8255a2`, which was `main` and level with
+`origin/main` at the time of reading (`rev-list --left-right --count
+main...origin/main` = `0 0`), and is the parent of this ledger commit:
 
 - Gate (macOS) success, Gate (Ubuntu) success, Gate (Windows) success.
 - The Windows lane genuinely reached the suite rather than short-circuiting:

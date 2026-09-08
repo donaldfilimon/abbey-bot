@@ -209,11 +209,15 @@ a green source gate is not semantic, deployment, or live evidence.
       pre-stabilization `origin/main` at `9716f00` passed those source lanes in Actions run
       `33218303755`. That run proves only the pre-stabilization baseline; the final pushed head
       requires its own exact-head run.
-      - 2026-09-08 04:4x: **that exact-head requirement is now satisfied on current `main`.**
-        Run `34179977713` at `headSha eeb717b` is green on Gate (macOS), Gate (Ubuntu) and
-        Gate (Windows). The Windows lane was verified at step level, not just workflow level,
-        and genuinely reached the suite over a 24m35s run rather than short-circuiting at fmt.
-        This closes the CI rung only; every live-acceptance layer below stays open.
+      - 2026-09-08 04:4x: **that exact-head requirement was met at `eeb717b`, and stays
+        unticked, because the requirement is SHA-bound.** Run `34179977713` at
+        `headSha eeb717b` is green on Gate (macOS), Gate (Ubuntu) and Gate (Windows), and the
+        Windows lane was verified at step level rather than workflow level, genuinely reaching
+        the suite over a 24m35s run instead of short-circuiting at fmt. But `eeb717b` is the
+        parent of the ledger commit carrying this note: per `docs/live-test-protocol.md`
+        stage 0 the three job results must carry the exact SHA under test, so the head that
+        results from merging needs its own run and cannot inherit this one. Closes the CI rung
+        for `eeb717b` only; every live-acceptance layer below stays open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
