@@ -196,6 +196,13 @@ status: in_progress
   #106 / #107 / #108 are also **MERGED** (ledger + agents docs). Tip Gate for current
   `origin/main` tip `7137d86` is **not** claimed three-platform green here (see tip
   subsection: may still be in progress / cancelled chain).
+- **2026-09-08 09:0x EDT: live binary moved again, unrecorded; tip `977fb3c` is three-platform green.**
+  Read-only: PID **36845** (started 08:20:06 ET), installed binary mtime 08:18 ET, SHA-256 prefix
+  **`5ae576c0`** (full hash in the modernization goal's `977fb3c` subsection), `discord_ready`
+  12:20:10 UTC. The 06:4x bullet's PID 58490 / `6084c7f2` describes the previous deploy. Hosted
+  evidence now exists for the exact tip `977fb3c` (run `34225076344`, all three lanes success,
+  12:40:45 UTC), which is stage 0 item 3 for that SHA only; the live binary's source SHA is not
+  proven, and 8/8 in Office Hours VC remains the acceptance rung. Not live-accepted.
 
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
@@ -1398,3 +1405,64 @@ voice, two-guild isolation, consent observations, installed artifact identity
 qualification, provider qualification, Portal Activity URL map (P0), OAuth
 secret host (P2), Components V2 (crate-blocked), and episode-gate human
 approval.
+
+#### Tip `977fb3c` (#118): three-platform Gate GREEN on the exact tip; stage 0 items 1 and 3 hold (2026-09-08 09:0x EDT)
+
+The cascade broke, twice, and the second break is the one that counts.
+`2ca73d9` (#114) survived 30 minutes 30 seconds unmerged and completed
+**success** at 11:59:57 UTC (run `34220961762`; macOS, Ubuntu and Windows all
+`success`), the first completed `main` run since `eeb717b` at 03:00. It was
+superseded 74 seconds later: #115 merged at 12:01:11 (`566c3e1`, the cascade
+entry above), and that run was cancelled at 12:15:42 by a three-merge stack,
+#116 `d834c3d` 12:14:59, #117 `09384ed` 12:15:23, #118 `977fb3c` 12:15:31,
+which is the exact pattern #118 forbids, in the push that landed #118. The
+tip then held. Run `34225076344` at `headSha
+977fb3ca965e9a90b5d69bd900bee406416cc308` completed **success** at 12:40:45
+UTC: Gate (Ubuntu) 12:15:44 to 12:35:29, Gate (macOS) 12:15:48 to 12:31:38,
+Gate (Windows) 12:15:44 to 12:40:43. All four merged PRs had a green branch
+run at their merged head (`a0af54d`, `46c7bb3`, `84065a6`, `8b948df`),
+measured this time rather than assumed.
+
+Stage 0 of `docs/live-test-protocol.md` for `977fb3c`, item by item. (1)
+`origin/main` is `977fb3c` and the shared checkout's HEAD is `977fb3c` on
+`main` with no ledger dirt, read at 13:00 UTC. (3) The three hosted job
+results above are for exactly that SHA. (2) The isolated strict gate,
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` with `ABBEY_WDBX_REPO` at the
+sibling `wdbx` (`6114b95`), run on a detached worktree of exactly `977fb3c`
+with its own `CARGO_TARGET_DIR`, printed `== ok ==` and its own
+`CHECK_SH_EXIT=0` at 13:10:19 UTC after 6 minutes 7 seconds: fmt, the
+deploy/privacy/Pages/contracts/security checks, the offline audio-tap build
+and tests, warnings-denied locked clippy, `1277 passed; 0 failed; 5 ignored`,
+the locked release build, and the WDBX cross-repository fixture parity line
+(`sha256=a4ec232c…`) against the sibling's golden projection. That release
+binary hashes `9687df5d…`, which does not and cannot match the live
+`5ae576c0…` because the crate embeds build paths; the comparison is
+uninformative by construction, not a mismatch finding. (4) Any later push to
+`main`, including the merge of the PR carrying this entry, moves the tip and
+re-opens item 3 for the new SHA under the #118 rule; the evidence here is for
+`977fb3c` and no other.
+
+One trap from this run, environmental and not a defect of `977fb3c`: the first
+attempt was launched with `nohup … &`, and
+`deploy/test-install-launchd.py::test_signal_cleanup_uses_verified_rollback`
+failed its SIGHUP and SIGINT subtests with `0 != 1` while SIGTERM passed.
+`nohup` and a non-interactive `&` job set those signals to `SIG_IGN`, children
+inherit that, and a child shell cannot reset a signal ignored on entry, so the
+harness's signals were dropped. The same file passed 28/28 in the foreground,
+and the gate was re-run through a Python wrapper that restores `SIG_DFL`
+before `exec`. Run this gate in the foreground or through such a wrapper; a `0
+!= 1` from that test under a background launch is the launcher, not the code.
+
+**Live service re-measured; the 06:4x line in the voice goal is stale.**
+`com.donaldfilimon.abbey-bot` is PID **36845**, started 08:20:06 ET (12:20:06
+UTC); the installed binary's mtime is 08:18 ET and its SHA-256 is
+`5ae576c02a5ea8f2a1183a7edf92c80ff6b5bed2fc973a107e88f5ece860a9e2`;
+`discord_ready` at 12:20:10 UTC and a further `connector_state=ready` at
+12:42:29 UTC in the events jsonl (same PID). So the service was redeployed
+five minutes after #118 merged and twenty minutes before `977fb3c`'s hosted
+run went green, by a session that did not record it; PID 58490 /
+`6084c7f2` is history. Which source SHA that binary was built from is **not
+established** here: the crate sets no `remap-path-prefix` or `trim-paths`, so
+a build from another path cannot reproduce the hash, and no commit id of this
+repository is embedded in the binary. Installed-artifact identity
+qualification stays open, as does everything human-witnessed. No status flips.

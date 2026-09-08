@@ -245,6 +245,12 @@ a green source gate is not semantic, deployment, or live evidence.
         binary redeployed (PID 58490, SHA-256 prefix `6084c7f2`, Discord
         connected) — **not** live-accepted; do not claim installed artifact
         identity *qualification*. Live-acceptance layers below stay open.
+      - 2026-09-08 09:0x: exact head `977fb3c` (tip of `main`, #118) is green on Gate (macOS),
+        Gate (Ubuntu) and Gate (Windows) in run `34225076344` (completed 12:40:45 UTC), the first
+        completed three-platform success on `main` since `eeb717b`; `2ca73d9` (#114) also
+        completed green at 11:59:57 UTC before being superseded. Strict local gate on a detached worktree of `977fb3c` (own `CARGO_TARGET_DIR`, `ABBEY_REQUIRE_WDBX_CONFORMANCE=1`): `CHECK_SH_EXIT=0`, 1277 passed, 13:10 UTC. No box change.
+        The live binary is now PID 36845 / SHA-256 prefix `5ae576c0` (source SHA unproven);
+        live-acceptance layers below stay open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
