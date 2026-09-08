@@ -150,10 +150,11 @@ Improve interaction surfaces that already ride the bot token (no OAuth secret).
 
 ### Acceptance note (2026-09-08) — classic voice Action Row UX (A/B/C)
 
-- **Shipped path:** after successful `/voice join|resume consent:true`, Abbey follows up with a classic Status Action Row (`Refresh` + `Leave`). Leave swaps to Confirm/Cancel without teardown; Confirm runs the existing leave path once. When a playable voice session exists, Play/Stop/Skip appear on the status surface.
+- **Source + live:** classic voice UX Phases A→B→C are on `main` and the live binary was restarted 2026-09-08. Human-witnessed Discord acceptance remains open (do not treat restart alone as acceptance).
+- **Shipped path:** after successful `/voice join|resume consent:true`, Abbey follows up with a classic Status Action Row (`Refresh` + `Leave`). Leave swaps to Confirm/Cancel without teardown; Confirm runs the existing leave path once. When a playable voice session exists, Play/Stop/Skip appear on the status surface; Play reuses the empty-query `/voice play` path for the selected player (default Spotify).
 - **Protocol:** short custom ids `abbey:v:{sid}:{act}` with acts `ref|leave|ok|cancel|play|stop|skip`; guild/user/channel/expiry live in the server-side session store under `ABBEY_DATA_DIR` (`voice-ux-sessions.json`), not in the custom id.
-- **Fail-closed:** wrong user/guild/expired/missing/malformed → ephemeral deny and zero voice mutations; authorized clicks ack with `UpdateMessage` (or Defer+edit for leave teardown).
-- **Unchanged:** `consent:true` stays slash-only (never a consent button; buttons never start STT); no Components V2 / Portal / bot Go Live in this slice.
+- **Fail-closed:** wrong user/guild/expired/missing/malformed → ephemeral deny and zero voice mutations; authorized clicks ack with `UpdateMessage` (or Defer/Acknowledge+edit for leave teardown and Play).
+- **Unchanged:** `consent:true` stays slash-only (never a consent button; buttons never start STT); no Components V2 / bot Go Live in this slice. Portal P0 remains Donald-owned.
 
 
 ### Acceptance note (2026-09-07) — `/admin show` classic page select

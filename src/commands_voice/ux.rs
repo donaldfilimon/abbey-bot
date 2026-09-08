@@ -333,34 +333,63 @@ async fn music_act(
         ChannelId::new(runtime.config.channel_id),
     )
     .is_some_and(|users| users.contains(&interaction.user.id.get()));
+    if let Err(error) = crate::music::command_channel_gate(
+        runtime.config.guild_id,
+        runtime.config.music_command_channel_id,
+        Some(session.guild),
+        interaction.channel_id.get(),
+    ) {
+        deny_message(ctx, interaction, data, &error).await;
+        return Ok(());
+    }
     if let Err(error) = crate::music::gate(true, manager, present, cfg!(target_os = "macos")) {
         deny_message(ctx, interaction, data, error).await;
         return Ok(());
     }
+
+    // Play can exceed the 3s interaction window (osascript + tap).
+    let defer_play = matches!(act, Act::Play);
+    if defer_play {
+        let ack = interaction
+            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+            .await;
+        if ack.is_err() {
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+            return Ok(());
+        }
+    }
+
     let note = match act {
         Act::Stop => {
-            runtime
-                .music
-                .stop("stopped", PlaybackTermination::Stopped);
+            runtime.music.stop("stopped", PlaybackTermination::Stopped);
             "Music capture and playback stopped; listening consent is unchanged.".to_owned()
         }
         Act::Play => {
-            "Use `/voice play` to start or mirror a track. Skip/Stop work on this panel while music is playable."
-                .to_owned()
-        }
-        Act::Skip => match runtime.music.player() {
-            Some(player) => {
-                match data.state.host_music.control(runtime.config.guild_id) {
-                    Ok(lease) => {
-                        let script = crate::player_control::next(player);
-                        match super::play::execute_script_for_ux(&runtime, script, lease).await {
-                            Ok(()) => "Skipped to the next track.".to_owned(),
-                            Err(error) => format!("Skip failed: {error}"),
-                        }
+            match super::play::start_empty_for_ux(ctx, &data.state, interaction, runtime.clone())
+                .await
+            {
+                Ok(message) => message,
+                Err(error) => {
+                    let detail = error.to_string();
+                    if detail.contains("/voice play") {
+                        detail
+                    } else {
+                        format!("{detail} Track URI / library search still uses `/voice play`.")
                     }
-                    Err(error) => error.to_owned(),
                 }
             }
+        }
+        Act::Skip => match runtime.music.player() {
+            Some(player) => match data.state.host_music.control(runtime.config.guild_id) {
+                Ok(lease) => {
+                    let script = crate::player_control::next(player);
+                    match super::play::execute_script_for_ux(&runtime, script, lease).await {
+                        Ok(()) => "Skipped to the next track.".to_owned(),
+                        Err(error) => format!("Skip failed: {error}"),
+                    }
+                }
+                Err(error) => error.to_owned(),
+            },
             None => "Select a player with `/voice play` before skipping.".to_owned(),
         },
         _ => return Err(Rejection::WrongPhase),
@@ -374,14 +403,25 @@ async fn music_act(
     );
     let mut session = session;
     session.phase = Phase::Status;
-    update_message(
-        ctx,
-        interaction,
-        data,
-        &body,
-        rows_for(&session, is_playable),
-    )
-    .await;
+    if defer_play {
+        edit_deferred(
+            ctx,
+            interaction,
+            data,
+            &body,
+            rows_for(&session, is_playable),
+        )
+        .await;
+    } else {
+        update_message(
+            ctx,
+            interaction,
+            data,
+            &body,
+            rows_for(&session, is_playable),
+        )
+        .await;
+    }
     Ok(())
 }
 

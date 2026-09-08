@@ -103,7 +103,7 @@ pub fn confirm_buttons() -> &'static [Act]; // ok, cancel
 **Files:** extract shared leave teardown from `voice_leave`; `player_control::next`; ux play handlers.
 
 - [ ] Confirm calls shared leave exactly once; Cancel/Refresh never call it (unit/integration assertions on a counter/probe where practical).
-- [ ] Skip uses pure `next` AppleScript; Play with empty query mirrors current selection (existing `play`).
+- [x] Skip uses pure `next` AppleScript; Play with empty query mirrors current selection (existing `play`).
 - [ ] Tests: leave confirm once; cancel restores; play disabled when not playable.
 
 ### Task 6: Docs, Gate checks, PR
