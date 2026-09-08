@@ -689,6 +689,46 @@ status: in_progress
   open until a three-platform run is green at a head that carries this fix; the local gate is the
   Mac layer of the evidence ladder, and this is the recorded instance of why it is not the last rung.
 
+- **2026-09-08 04:4x — the standing `voice_session.rs` follow-up rests on a STALE
+  line count, and that changes its priority rather than just its wording.** The
+  bullet above defers moving the mode-switching cluster to
+  `src/voice_session/mode.rs` and gives the reason as "`src/voice_session.rs` is
+  1283 lines". Measured now: it is **887 lines**. Decomposition already happened
+  around it, and `src/voice_session/` now holds `activation.rs`, `control.rs`, a
+  `control/` directory, `music.rs`, `ownership.rs`, `playback.rs`,
+  `verification.rs` and `tests.rs`. `python3 scripts/check-rust-module-size.py`
+  reports the whole tree passing, with `voice_session.rs` in the 800–1000
+  review-advisory band (alongside `commands.rs` 854, `provider.rs` 962,
+  `provider/manifest.rs` 900, `offline_voice.rs` 818), not in violation of the
+  <1000 hard rule.
+  So the move is no longer needed to satisfy any gate; it is an optional tidy.
+  The mode cluster is still in place (`ModeSwitchRefusal` at :247,
+  `effective_mode` at :416) and `mode.rs` still does not exist, so the follow-up
+  is genuinely undone — it is the justification that expired, not the work.
+  The original blocking condition IS now clear: the follow-up was held "until the
+  in-flight music feature stops editing the same file", and both
+  `src/voice_session/music.rs` and `src/voice_session.rs` were last touched
+  2026-09-06 (`c22a4e6` / `df0a5ad`), with the tree idle at this reading (no
+  source file modified in 60 minutes, no `cargo`/`rustc` running, no merge or
+  rebase in progress).
+  **Deliberately not performed in this pass, and this is a named stop, not an
+  oversight.** It is a pure move inside consent- and epoch-sensitive voice code
+  whose only remaining motive is tidiness; it cannot be closed by the Mac gate
+  alone and would need its own three-platform run, which this ledger records four
+  separate times as the rung that actually catches things. Whether that CI cycle
+  is worth an optional decomposition is Donald's call, not a gap to be quietly
+  filled by a session whose mandate was ledger continuation.
+- **The exact-head item in this section is now SATISFIED.** Its closing sentence
+  reads "The exact-head item stays open until a three-platform run is green at a
+  head that carries this fix". `b9df963` is an ancestor of current `main`
+  (`merge-base --is-ancestor` verified), and `main` at `eeb717b` is green on
+  macOS, Ubuntu and Windows (run `34179977713`, recorded under the modernization
+  goal below). The three fixes that pass carries — the `mode: disabled` music
+  fixture, `README.md text eol=lf`, and the explicit
+  `(DispatchQueue?, DeferredSource?)` binding — are therefore confirmed on a
+  green three-platform head. This closes that specific rung only; it establishes
+  nothing about live acceptance.
+
 ## Route guild operations through the WDBX episode gate
 status: in_progress
 - 2026-09-06 first slice (Donald chose "subprocess to the abi binary" over a gRPC
