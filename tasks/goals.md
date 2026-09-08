@@ -196,7 +196,7 @@ status: in_progress
   #106 / #107 / #108 are also **MERGED** (ledger + agents docs). Tip Gate for current
   `origin/main` tip `7137d86` is **not** claimed three-platform green here (see tip
   subsection: may still be in progress / cancelled chain).
-- **2026-09-08 09:0x EDT: live binary moved again, unrecorded; tip `977fb3c` is three-platform green.**
+- **2026-09-08 09:1x EDT: live binary moved again, unrecorded; tip `977fb3c` is three-platform green.**
   Read-only: PID **36845** (started 08:20:06 ET), installed binary mtime 08:18 ET, SHA-256 prefix
   **`5ae576c0`** (full hash in the modernization goal's `977fb3c` subsection), `discord_ready`
   12:20:10 UTC. The 06:4x bullet's PID 58490 / `6084c7f2` describes the previous deploy. Hosted
@@ -1406,7 +1406,7 @@ qualification, provider qualification, Portal Activity URL map (P0), OAuth
 secret host (P2), Components V2 (crate-blocked), and episode-gate human
 approval.
 
-#### Tip `977fb3c` (#118): three-platform Gate GREEN on the exact tip; stage 0 items 1 and 3 hold (2026-09-08 09:0x EDT)
+#### Tip `977fb3c` (#118): three-platform Gate GREEN on the exact tip; stage 0 items 1 and 3 hold (2026-09-08 09:1x EDT)
 
 The cascade broke, twice, and the second break is the one that counts.
 `2ca73d9` (#114) survived 30 minutes 30 seconds unmerged and completed
@@ -1425,19 +1425,20 @@ measured this time rather than assumed.
 
 Stage 0 of `docs/live-test-protocol.md` for `977fb3c`, item by item. (1)
 `origin/main` is `977fb3c` and the shared checkout's HEAD is `977fb3c` on
-`main` with no ledger dirt, read at 13:00 UTC. (3) The three hosted job
+`main` with no ledger dirt, read at 13:00 UTC, and the detached gate worktree at
+exactly `977fb3c` had an empty `git status --porcelain` after the run. (3) The three hosted job
 results above are for exactly that SHA. (2) The isolated strict gate,
 `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` with `ABBEY_WDBX_REPO` at the
 sibling `wdbx` (`6114b95`), run on a detached worktree of exactly `977fb3c`
-with its own `CARGO_TARGET_DIR`, printed `== ok ==` and its own
+with its own `CARGO_TARGET_DIR` on toolchain `1.98.0-aarch64-apple-darwin`, printed `== ok ==` and its own
 `CHECK_SH_EXIT=0` at 13:10:19 UTC after 6 minutes 7 seconds: fmt, the
 deploy/privacy/Pages/contracts/security checks, the offline audio-tap build
 and tests, warnings-denied locked clippy, `1277 passed; 0 failed; 5 ignored`,
 the locked release build, and the WDBX cross-repository fixture parity line
 (`sha256=a4ec232c…`) against the sibling's golden projection. That release
-binary hashes `9687df5d…`, which does not and cannot match the live
+binary hashes `9687df5d…`, which is not expected to match the live
 `5ae576c0…` because the crate embeds build paths; the comparison is
-uninformative by construction, not a mismatch finding. (4) Any later push to
+uninformative, not a mismatch finding. (4) Any later push to
 `main`, including the merge of the PR carrying this entry, moves the tip and
 re-opens item 3 for the new SHA under the #118 rule; the evidence here is for
 `977fb3c` and no other.
