@@ -663,7 +663,6 @@ status: in_progress
   accepts the fixed one, and the package passes on both 6.3.2 and 6.4. The exact-head item stays
   open until a three-platform run is green at a head that carries this fix; the local gate is the
   Mac layer of the evidence ladder, and this is the recorded instance of why it is not the last rung.
-||||||| parent of cf6a1f1 (feat: mirror /admin learning toggles into the WDBX episode gate via the abi binary)
 
 ## Route guild operations through the WDBX episode gate
 status: in_progress
