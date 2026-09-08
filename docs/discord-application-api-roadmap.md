@@ -79,7 +79,7 @@ Relative to Discord Application + Interactions surface. Source: live checkout + 
 
 ---
 
-## P0 — Portal URL map (operator, no code)
+## P0 — Portal URL map (operator-gated)
 
 Bot tokens cannot set Activity URL mappings. Donald clicks once in the
 [Abbey application](https://discord.com/developers/applications/1147940171099152464):
@@ -91,10 +91,19 @@ Bot tokens cannot set Activity URL mappings. Donald clicks once in the
 3. Confirm Entry Point `launch` still present.
 4. Join Office Hours → rocket → Abbey. First load after mapping may cache for ~1 min.
 
-**Done when:** iframe loads the Abbey shell and shows ready status inside Discord
-(not only in a plain browser tab).
+**Automatable (local only):** `deploy/check-activity-url-map.py` encodes the
+canonical PREFIX/TARGET contract, verifies `activity/index.html` + `activity/app.js`
+(+ Pages markdown inventory for `activity/README.md`), and prints PASS/FAIL.
+Tests: `deploy/test-check-activity-url-map.py` (also wired into `check.sh` /
+`check.ps1`). Checker PASS does **not** mean Portal is configured — API cannot
+read URL mappings.
 
-Detail: [`activities.md`](activities.md) § Remaining Developer Portal clicks.
+**Done when:** Donald confirms the discordsays iframe loads the Abbey shell and
+shows ready status inside Discord (not only in a plain browser tab on the Pages
+URL). Status remains **operator-gated** until that iframe confirmation.
+
+Detail: [`activities.md`](activities.md) § Remaining Developer Portal clicks and
+§ Canonical mapping contract.
 
 ---
 

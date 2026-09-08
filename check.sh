@@ -27,6 +27,8 @@ python3 deploy/check-python-locks.py \
 python3 deploy/test-configure-mlx-primary.py
 python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
+python3 deploy/test-check-activity-url-map.py
+python3 deploy/check-activity-url-map.py
 python3 deploy/test-service-protocol.py
 python3 deploy/test-service-environment.py
 python3 deploy/test-service-installation.py
