@@ -212,6 +212,54 @@ pub fn playable(
     has_runtime && media_enabled && !phase_failed && !start_pending
 }
 
+/// Human-readable reason Play/Stop/Skip stay disabled; `None` when playable.
+#[must_use]
+pub fn unplayable_reason(
+    has_runtime: bool,
+    media_enabled: bool,
+    phase_failed: bool,
+    start_pending: bool,
+) -> Option<&'static str> {
+    if playable(has_runtime, media_enabled, phase_failed, start_pending) {
+        return None;
+    }
+    if !has_runtime {
+        Some("no voice session is prepared")
+    } else if phase_failed {
+        Some("voice phase failed — recover with slash leave/join")
+    } else if start_pending {
+        Some("voice start is still pending")
+    } else if !media_enabled {
+        Some("media is closed (listening not open)")
+    } else {
+        Some("session is not playable")
+    }
+}
+
+/// Ephemeral Stop outcome: music-only; consent never changes.
+#[must_use]
+pub fn stop_note(was_active: bool) -> &'static str {
+    if was_active {
+        "Music capture and playback stopped; listening consent is unchanged."
+    } else {
+        "No music was playing. Capture/playback cleared; listening consent is unchanged."
+    }
+}
+
+/// Ephemeral Skip deny when no native player has been selected yet.
+#[must_use]
+pub fn skip_no_player_note() -> &'static str {
+    "Select a player with `/voice play` before skipping. Play can also pick Spotify by default."
+}
+
+/// Ephemeral deny when Play/Stop/Skip are clicked while disabled/unplayable.
+#[must_use]
+pub fn music_controls_unavailable_note(reason: &str) -> String {
+    format!(
+        "Play/Stop/Skip unavailable: {reason}. Tap Refresh after the session is playable. Consent stays slash-only."
+    )
+}
+
 #[must_use]
 pub fn status_buttons(is_playable: bool) -> &'static [Act] {
     if is_playable {
@@ -231,16 +279,16 @@ pub fn panel_content(phase: Phase, status_body: &str, is_playable: bool) -> Stri
     match phase {
         Phase::Status => {
             let play = if is_playable {
-                "Play/Stop/Skip are available while Abbey can transmit music."
+                "Play starts/mirrors the selected player (empty query). Stop clears music only — listening consent stays. Skip advances one track when a player is selected."
             } else {
-                "Play controls stay off until a playable voice session is active."
+                "Play/Stop/Skip stay disabled until a playable voice session is active (media open, not failed, start not pending)."
             };
             format!(
-                "{status_body}\n\n{play}\nRefresh re-reads live voice state. Leave asks for confirmation before disconnecting."
+                "{status_body}\n\n{play}\nRefresh re-reads live registry (mode, phase, media, player, playable). It never leaves or renews expiry. Leave asks for confirmation before disconnecting."
             )
         }
         Phase::ConfirmLeave => {
-            "Confirm leave? This stops capture, provider work, queued audio, and playback."
+            "Confirm leave? This stops capture, provider work, queued audio, and playback. Cancel returns to status without leaving."
                 .to_owned()
         }
         Phase::Left => {
@@ -393,5 +441,46 @@ mod tests {
         assert_eq!(phase, Phase::Left);
         // Refresh on status never leaves.
         assert_eq!(reduce(Phase::Status, Act::Ref).unwrap(), Phase::Status);
+    }
+
+    #[test]
+    fn unplayable_reason_matrix_and_stop_skip_copy() {
+        assert_eq!(unplayable_reason(true, true, false, false), None);
+        assert_eq!(
+            unplayable_reason(false, true, false, false),
+            Some("no voice session is prepared")
+        );
+        assert_eq!(
+            unplayable_reason(true, false, false, false),
+            Some("media is closed (listening not open)")
+        );
+        assert_eq!(
+            unplayable_reason(true, true, true, false),
+            Some("voice phase failed — recover with slash leave/join")
+        );
+        assert_eq!(
+            unplayable_reason(true, true, false, true),
+            Some("voice start is still pending")
+        );
+        assert!(stop_note(true).contains("stopped"));
+        assert!(stop_note(true).contains("consent is unchanged"));
+        assert!(stop_note(false).contains("No music was playing"));
+        assert!(skip_no_player_note().contains("/voice play"));
+        let deny = music_controls_unavailable_note("media is closed (listening not open)");
+        assert!(deny.contains("Play/Stop/Skip unavailable"));
+        assert!(deny.contains("Consent stays slash-only"));
+    }
+
+    #[test]
+    fn panel_content_explains_disable_states_and_refresh_scope() {
+        let playable = panel_content(Phase::Status, "status-line", true);
+        assert!(playable.contains("status-line"));
+        assert!(playable.contains("Stop clears music only"));
+        assert!(playable.contains("never leaves or renews expiry"));
+        let disabled = panel_content(Phase::Status, "status-line", false);
+        assert!(disabled.contains("stay disabled"));
+        assert!(disabled.contains("start not pending"));
+        let confirm = panel_content(Phase::ConfirmLeave, "", false);
+        assert!(confirm.contains("Cancel returns to status"));
     }
 }

@@ -305,17 +305,30 @@ async fn music_act(
             ctx,
             interaction,
             data,
-            "No playable voice session is prepared.",
+            &voice_ux::music_controls_unavailable_note("no voice session is prepared"),
         )
         .await;
         return Ok(());
     };
-    if !live_playable_http(ctx, data, &runtime).await {
+    let snapshot_for_gate = runtime.snapshot().await;
+    if !voice_ux::playable(
+        true,
+        snapshot_for_gate.media_enabled,
+        snapshot_for_gate.phase == VoicePhase::Failed,
+        snapshot_for_gate.start_pending,
+    ) {
+        let reason = voice_ux::unplayable_reason(
+            true,
+            snapshot_for_gate.media_enabled,
+            snapshot_for_gate.phase == VoicePhase::Failed,
+            snapshot_for_gate.start_pending,
+        )
+        .unwrap_or("session is not playable");
         deny_message(
             ctx,
             interaction,
             data,
-            "Play controls are unavailable until a playable voice session is active.",
+            &voice_ux::music_controls_unavailable_note(reason),
         )
         .await;
         return Ok(());
@@ -347,9 +360,9 @@ async fn music_act(
         return Ok(());
     }
 
-    // Play can exceed the 3s interaction window (osascript + tap).
-    let defer_play = matches!(act, Act::Play);
-    if defer_play {
+    // Play/Skip can exceed the 3s interaction window (osascript + tap).
+    let defer_music = matches!(act, Act::Play | Act::Skip);
+    if defer_music {
         let ack = interaction
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await;
@@ -361,8 +374,9 @@ async fn music_act(
 
     let note = match act {
         Act::Stop => {
+            let was_active = runtime.music.is_output_active();
             runtime.music.stop("stopped", PlaybackTermination::Stopped);
-            "Music capture and playback stopped; listening consent is unchanged.".to_owned()
+            voice_ux::stop_note(was_active).to_owned()
         }
         Act::Play => {
             match super::play::start_empty_for_ux(ctx, &data.state, interaction, runtime.clone())
@@ -390,7 +404,7 @@ async fn music_act(
                 }
                 Err(error) => error.to_owned(),
             },
-            None => "Select a player with `/voice play` before skipping.".to_owned(),
+            None => voice_ux::skip_no_player_note().to_owned(),
         },
         _ => return Err(Rejection::WrongPhase),
     };
@@ -403,7 +417,7 @@ async fn music_act(
     );
     let mut session = session;
     session.phase = Phase::Status;
-    if defer_play {
+    if defer_music {
         edit_deferred(
             ctx,
             interaction,
@@ -493,8 +507,27 @@ async fn live_playable_http(
 
 async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -> String {
     let snapshot = runtime.snapshot().await;
+    let player = match runtime.music.player() {
+        Some(crate::player_control::Player::Spotify) => "spotify",
+        Some(crate::player_control::Player::Music) => "music",
+        None => "none",
+    };
+    let pending = if snapshot.start_pending {
+        " · start pending"
+    } else {
+        ""
+    };
+    let why = voice_ux::unplayable_reason(
+        true,
+        snapshot.media_enabled,
+        snapshot.phase == VoicePhase::Failed,
+        snapshot.start_pending,
+    )
+    .map(|reason| format!(" · {reason}"))
+    .unwrap_or_default();
+    let music = runtime.music.status();
     format!(
-        "{} <#{channel}> · mode `{}` · phase {} · media {} · playable {}",
+        "{} <#{channel}> · mode `{}` · phase {} · media {} · playable {} · player `{player}`{pending}{why}\n{music}",
         if resumed { "Resumed" } else { "Joined" },
         runtime.effective_mode().label(),
         snapshot.phase.label(),

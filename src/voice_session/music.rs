@@ -194,6 +194,15 @@ impl MusicController {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .player
     }
+    /// True while a track handle is installed or music is mid-start.
+    #[must_use]
+    pub fn is_output_active(&self) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.output.is_some() || state.status == "starting" || state.status == "playing"
+    }
     pub fn status(&self) -> String {
         let state = self
             .state
