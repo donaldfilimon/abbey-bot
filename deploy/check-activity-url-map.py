@@ -47,6 +47,16 @@ REQUIRED_APP_JS_MARKERS = (
     "claims Portal is done",
 )
 
+# Post-Portal verify language that must stay in docs/activities.md (local only;
+# never claims Portal is live).
+REQUIRED_ACTIVITIES_DOC_MARKERS = (
+    "After Donald clicks Portal",
+    "discordsays iframe",
+    "checker never sees Portal state",
+    "operator gate",
+    "Pages shell only",
+)
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -316,6 +326,58 @@ def check_activity_client_copy_markers(root: pathlib.Path) -> list[CheckResult]:
     return results
 
 
+
+def check_activities_docs_verify_markers(root: pathlib.Path) -> list[CheckResult]:
+    """Require post-Portal verify checklist language in docs/activities.md.
+
+    Keeps operator-gated truth: these markers document how Donald confirms the
+    iframe. The checker still cannot see Portal state.
+    """
+    relative = "docs/activities.md"
+    path = root.joinpath(*relative.split("/"))
+    results: list[CheckResult] = []
+    if not path.is_file():
+        results.append(
+            CheckResult(
+                name="activities docs verify markers",
+                ok=False,
+                detail=f"{relative} missing",
+            )
+        )
+        return results
+    try:
+        body = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        results.append(
+            CheckResult(
+                name="activities docs verify markers",
+                ok=False,
+                detail=f"unreadable: {exc}",
+            )
+        )
+        return results
+    missing = [m for m in REQUIRED_ACTIVITIES_DOC_MARKERS if m not in body]
+    if missing:
+        results.append(
+            CheckResult(
+                name="activities docs verify markers",
+                ok=False,
+                detail="missing: " + ", ".join(missing),
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="activities docs verify markers",
+                ok=True,
+                detail=(
+                    f"{len(REQUIRED_ACTIVITIES_DOC_MARKERS)} post-Portal verify "
+                    "markers present; still operator-gated"
+                ),
+            )
+        )
+    return results
+
 def run_checks(root: pathlib.Path | None = None) -> list[CheckResult]:
     base = ROOT if root is None else root
     results: list[CheckResult] = []
@@ -323,6 +385,7 @@ def run_checks(root: pathlib.Path | None = None) -> list[CheckResult]:
     results.extend(check_required_assets(base))
     results.append(check_pages_markdown_inventory(base))
     results.extend(check_activity_client_copy_markers(base))
+    results.extend(check_activities_docs_verify_markers(base))
     return results
 
 
