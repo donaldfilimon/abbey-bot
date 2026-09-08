@@ -136,6 +136,36 @@ Bot tokens cannot set URL mappings. Donald must click these:
 Optional later mappings (only if the iframe needs extra hosts): add a PREFIX
 for each host; Discord CSP blocks unmapped origins.
 
+### Canonical mapping contract (automatable)
+
+Bot tokens still cannot write Portal URL mappings. What we *can* automate is the
+local contract + static shell check:
+
+| Field | Canonical value | Notes |
+|---|---|---|
+| PREFIX | `/` | Exact; no `/*`, no `/activity` |
+| TARGET | `donaldfilimon.github.io/abbey-bot/activity` | No `https://`, no trailing slash, directory form (not `index.html`) |
+| Pages browser URL | `https://donaldfilimon.github.io/abbey-bot/activity/` | Plain-browser smoke only |
+| Discord iframe origin | `https://1147940171099152464.discordsays.com/` | Where rocket launch actually loads |
+
+Run from repo root (read-only; exits non-zero on contract/asset fail):
+
+```
+python3 deploy/check-activity-url-map.py
+```
+
+Unit coverage: `python3 deploy/test-check-activity-url-map.py`.
+
+**After Donald clicks Portal**, verify like this:
+
+1. Plain browser: open the Pages URL above — confirms GitHub Pages is serving
+   `activity/` (shell HTML/JS). This alone does **not** mean Portal is mapped.
+2. In Discord: Office Hours → rocket → Abbey. Confirm Abbey `ready()` inside the
+   **discordsays iframe** (not only a browser tab). First load may take ~1 min
+   while Pages + proxy cache.
+3. Do **not** mark P0 done from the checker PASS lines. The checker never sees
+   Portal state; only Donald's iframe confirmation closes the operator gate.
+
 ## Related
 
 - Voice permission gate: `src/commands_voice/discord.rs`
