@@ -41,6 +41,43 @@ details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
   so they never reach the initial environ block that `ps eww` prints. Both
   surfaces report a variable that IS set as unset.
 
+## Architecture
+
+`README.md` `## Design notes` owns the reasoning and `docs/spec/*.md` owns the
+ported design (`brain.md`, `adaptivelearning.md`, `platforms.md`,
+`botarchitecture.md`, `appleintelligence.md`); this section is only the map.
+Almost every module opens with a `//!` header naming its own seam and the spec
+section it ports. Read that header before the code.
+
+- **Shell versus pure, by module.** Only these import serenity or poise:
+  `gateway/`, `commands*`, `forum`, `startup`, `service/framework`,
+  `voice_session/playback`, `server/{run,discord}`, `main`. Everything else,
+  including `pipeline`, `platform`, `brain/`, `engine`, `memory`, `tools`,
+  `persist`, `wdbx`, `llm/`, and `server.rs` itself, is pure: no locks, no
+  network, no clock, with `now` and seeds injected by the caller. Nothing
+  enforces this but the convention and review, and it is what lets the entire
+  decision path run in tests behind a recording `Outbound`.
+- **Inbound path.** A native event becomes a `platform::SocialEvent`; `pipeline`
+  decides *whether* Abbey speaks (triage, intent, 18-dimension state encoding,
+  the guild's policy, cooldown, hourly budget) and `generation` decides *how*
+  (stream, post early, edit in place, run model tools, repeat). `engine` holds
+  the per-scope multi-turn session and renders the prompt;
+  `llm/{dialect,transport,protocol,stream}.rs` is the wire. `pipeline` is
+  written once for every network, which is why the learning loop is identical
+  across Discord, Telegram and Slack.
+- **State.** `runtime::AppState` is one `Arc` with a `Mutex` per registry, taken
+  briefly and never held across an await that touches the network.
+  `persist::Stores` writes one JSON document plus one WDBX segment under
+  `ABBEY_DATA_DIR`, atomically (temp file then rename), so a crash mid-persist
+  leaves the previous document intact.
+- **Learning.** `brain/` is the whole loop and is entirely pure: `state.rs`
+  (action space and encoder), `dqn.rs` with `nn.rs`, `registry.rs` (one policy
+  per guild), `reward.rs` (delayed settlement), `social.rs` (reputation),
+  `budget.rs`, `replay.rs`.
+- **Gates are code with tests.** Each `scripts/check-*.py` has a
+  `scripts/test-check-*.py` beside it and `check.sh` runs both. Change a gate and
+  its test in the same commit.
+
 ## Boundaries
 
 - Keep decisions in pure modules and Discord translation in `commands*`/`gateway`.
