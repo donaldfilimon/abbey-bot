@@ -235,6 +235,16 @@ a green source gate is not semantic, deployment, or live evidence.
         transfer. #105 is **merged source** on `main`, not live-accepted;
         redeploy in flight — do not claim installed artifact identity.
         Live-acceptance layers below stay open.
+      - 2026-09-08 06:4x: **tip `7137d86` has NOT re-cleared the SHA-bound rung.**
+        After #107 (`7137d86`) and #108 (`6f678ac`) landed atop #105/`1b4822d`,
+        Rust run `34215740641` at `headSha 7137d86` was still `in_progress`
+        (macOS success; Ubuntu/Windows in_progress). Cancelled-chain parents
+        include #108/`34215468939` and #105/`34214591720`. Last completed
+        three-platform success on record remains `eeb717b` / run `34179977713`.
+        Box stays unticked; parent greens do not transfer. Live Action Row UX
+        binary redeployed (PID 58490, SHA-256 prefix `6084c7f2`, Discord
+        connected) — **not** live-accepted; do not claim installed artifact
+        identity *qualification*. Live-acceptance layers below stay open.
 - [x] Add a PowerShell equivalent of the portable gate; keep launchd/plist checks macOS-only and
       systemd/Docker checks Linux-only
 - [x] Re-prove source-level Discord/Telegram/Slack parity at the shared seams: identical messages
@@ -283,6 +293,14 @@ a green source gate is not semantic, deployment, or live evidence.
   green (run `34214591720` in_progress at write time). Residuals unchanged:
   Portal Activity P0, OAuth P2, Components V2 crate-blocked, provider
   qualification, two-guild isolation, consent, episode approval.
+- 2026-09-08 06:4x annotation (not a tick): Live Abbey **redeployed** ~06:28 ET
+  with Action Row UX binary — PID **58490**, SHA-256 prefix **`6084c7f2`**,
+  Discord connected (`discord_ready`). #105/#106/#107/#108 **MERGED**. **Not**
+  live-accepted: human-witnessed voice, two-guild, consent observations, and
+  installed artifact identity *qualification* stay open. Tip Gate for
+  `7137d86` not claimed green (run `34215740641` in_progress / cancelled
+  chain at write time). Residuals unchanged: Portal Activity P0, OAuth P2,
+  Components V2 crate-blocked, provider qualification, episode approval.
 Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
 If participant consent or an authorized manager is unavailable these stay pending; source tests,
 provider logs, and historical consent are explicitly not acceptable substitutes.

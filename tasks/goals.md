@@ -180,6 +180,23 @@ status: in_progress
   **do not** claim installed artifact identity from this ledger pass. Tip Gate
   for `1b4822d` was not three-platform green at write time (see tip subsection).
 
+- **2026-09-08 06:4x EDT — live Abbey redeployed with Action Row UX binary; acceptance still open.**
+  Verified on this Mac (read-only observation; service not started/stopped/reloaded by this
+  pass): `com.donaldfilimon.abbey-bot` PID **58490**, started **2026-09-08 ~06:27:54 ET**
+  (process start; Discord `discord_ready` / `connector_state=ready` at **~06:27:59 ET** in
+  `~/Library/Logs/abbey-bot/abbey-bot.events.jsonl`). Installed binary
+  `/Users/donaldfilimon/.local/libexec/abbey-bot/abbey-bot` mtime Sep 8 06:27, SHA-256
+  prefix **`6084c7f2`** (full
+  `6084c7f2dc71e27cdb7bae06345e5c8b920d4d7897005ce9c1655836bf9b012b`). Binary strings include
+  classic UX markers (`abbey:v:`, "Refresh voice & music", "Confirm leave") matching #105
+  source on `main` (`src/voice_ux.rs` / `src/commands_voice/ux.rs`). **Action Row UX binary is
+  live.** That is **not** live acceptance and **not** installed-artifact identity
+  *qualification*: human-witnessed audible wake/reply, barge-in, consent observations,
+  two-guild isolation, and the formal identity-qualification checklist remain open.
+  #106 / #107 / #108 are also **MERGED** (ledger + agents docs). Tip Gate for current
+  `origin/main` tip `7137d86` is **not** claimed three-platform green here (see tip
+  subsection: may still be in progress / cancelled chain).
+
 
 ## Implement the discord-abbey spec suite in Rust (abbey-bot)
 status: done
@@ -373,6 +390,22 @@ status: in_progress
     an actual `OverBudget` refusal.
   Voice classic UX A→B→C is **merged source** on `main`, with live redeploy in
   flight and **no** installed-artifact or human-witnessed acceptance claim.
+
+- **2026-09-08 06:4x EDT — residual inventory restated after live Action Row UX
+  redeploy; no status flip.** Tip of `main` at this writing is
+  `7137d866ccc7c4edea5c13a1371d9b5af22b733a` (#107 ledger merge). Beneath it:
+  #108 (`6f678ac`, agents docs), help harden `b6358c7`, #105 merge `1b4822d`,
+  #106 `143fc79`. Live binary SHA prefix `6084c7f2` / PID 58490 / Discord connected
+  is recorded above. Redeploy does **not** close any of:
+  - **human-witnessed voice** (audible wake/reply, barge-in, leave/stop)
+  - **two-guild** isolation observations
+  - **consent** observations (fresh unanimous agreement)
+  - **installed artifact identity qualification** (redeploy observed ≠ qualified)
+  - **Portal Activity URL map (P0)**
+  - **OAuth secret host (P2)**
+  - **Components V2** (crate-blocked; classic Action Rows only)
+  - Telegram/Slack live tokens; unobserved `/forget`, `/ocr`, post-deploy `/see`;
+    an actual `OverBudget` refusal.
 
 
 ## Self-learning hardening (continuation of "improve all")
@@ -811,6 +844,18 @@ status: in_progress
   unchanged: provider qualification, two-guild checks, consent, Portal Activity
   P0, OAuth P2, Components V2 crate-block, episode-gate human approval.
 
+- **2026-09-08 06:4x EDT — `#107` + `#108` on `main`; live Action Row UX
+  redeployed; acceptance not closed.** `7137d86` is the #107 ledger merge.
+  `6f678ac` is the #108 agents-docs merge. #105 (`1b4822d`) source remains on
+  `main`; live Abbey was redeployed ~06:28 ET (PID 58490, binary SHA-256 prefix
+  `6084c7f2`, Discord connected; Action Row UX markers present in the live
+  binary). Exact-SHA three-platform CI for tip `7137d86` is **not** claimed
+  green — tip Gate may still be in progress / cancelled chain (see tip
+  subsection). **No** status flip to done for live residuals: human-witnessed
+  voice, two-guild, consent observations, installed artifact identity
+  qualification, Portal P0, OAuth P2, Components V2 crate-block, episode-gate
+  human approval.
+
 
 ## Route guild operations through the WDBX episode gate
 status: in_progress
@@ -951,6 +996,11 @@ status: in_progress
   Still proposal-only; human approval is a distinct step the bot cannot supply.
   This `/goal continue` does not re-probe launchd, claim a new transaction, or
   invent WDBX progress beyond what is already recorded.
+
+- **2026-09-08 06:4x EDT — episode approval residual restated; no status flip.**
+  Still proposal-only; human approval is a distinct step the bot cannot supply.
+  This `/goal continue` records the live Action Row UX redeploy elsewhere and
+  does not re-probe the episode gateway or claim a new WDBX transaction.
 
 
 ## Build the MLAI server from a plan file (`--server-plan`)
@@ -1257,3 +1307,37 @@ flight), provider qualification, live two-guild member/manager Discord checks,
 fresh unanimous consent, human-witnessed audible voice acceptance, Portal
 Activity URL map (P0), OAuth secret host (P2), Components V2 (crate-blocked),
 and episode-gate human approval.
+
+#### Tip `7137d86` (#107 ledger + #108 agents) — three-platform Gate NOT claimed green (2026-09-08 06:4x EDT)
+
+Executed as `/goal continue` after live Action Row UX redeploy. Tip of
+`origin/main` at this writing is `7137d866ccc7c4edea5c13a1371d9b5af22b733a`
+(merge of PR #107). Parent chain includes #108 (`6f678ac`), help harden
+`b6358c7`, #105 merge `1b4822d`, #106 `143fc79`, docs tip `85d0e18`, #104
+`df6a3b6`, #103 `9abab67`, then `eeb717b` (last SHA with a completed
+three-platform **success** on record, run `34179977713`).
+
+**Live redeploy (verified this pass, ~06:28 ET):** PID **58490**; installed
+binary SHA-256 prefix **`6084c7f2`**; Discord `discord_ready` /
+`connector_state=ready` in events jsonl; Action Row UX binary markers live
+(`abbey:v:`, Refresh / Confirm leave). #105 / #106 / #107 / #108 **MERGED**.
+
+**Honest CI claim for `7137d86`:** Rust workflow run `34215740641`
+(`headSha 7137d86…`) was **`in_progress`** when this ledger entry was written —
+Gate (macOS) had `conclusion=success`; Gate (Ubuntu) and Gate (Windows) were
+still `in_progress` (no full three-platform success yet). Prior push Gates on
+the cancelled chain include `34215468939` (#108, cancelled), `34215190160`
+(help harden, cancelled), `34214591720` (#105, cancelled). Therefore this tip
+does **not** clear `docs/live-test-protocol.md` stage 0, and three-platform
+green is **not** claimed for `7137d86`. Tip Gate may still be in progress /
+cancelled chain; do not carry `eeb717b`'s green forward.
+
+Method: `gh run view 34215740641 --json status,conclusion,jobs`,
+`gh pr view` for #105–#108, `ps`/`shasum`/`launchctl print` read-only, and
+events jsonl. No local gate was run and none is claimed.
+
+Still not established, and unchanged (no status flips to done): human-witnessed
+voice, two-guild isolation, consent observations, installed artifact identity
+qualification, provider qualification, Portal Activity URL map (P0), OAuth
+secret host (P2), Components V2 (crate-blocked), and episode-gate human
+approval.
