@@ -49,7 +49,7 @@ Owner: workflow implementer. Files: new `commands_help/workflows.rs` and child t
 - [x] Keep reference navigation separate from task execution. Recheck permissions on input submission, acknowledge before I/O, use no fake slash interactions, and retain managed ownership for modal work.
 - [x] Reuse existing domain operations; where an action still requires a slash command, supply a concrete exact command and prerequisite instead of implying that the button executed it.
 - [x] Add bounded capability explanation for conversational requests without changing the seven model tools. Use only observed current facts and scoped permissions.
-- [ ] Run focused workflow tests, then integrate with the updated catalog/help interface and review.
+- [x] Run focused workflow tests, then integrate with the updated catalog/help interface and review.
 
 ## Task 4: Integration and delivery
 
@@ -87,6 +87,14 @@ Earlier final workflow results recovered after interruption: 61 help tests passe
 - Final correction validation: full Rust suite 1,222 passed, zero failed, five ignored. All-target warnings-denied Clippy passed after two small catalog lint corrections; the affected catalog suite was rerun on those final corrections: 18 passed, zero failed. Independent strict re-review and the narrow final recheck approved with no findings. Formatting, whitespace and Pages Liquid checks passed.
 - An external process committed/pushed the main correction slice as `543e3b671424194b57a30e3f1ce888a2cbb22123` during validation. This task preserves that commit and records only its final catalog lint correction and ledger in a follow-up. No push or installation was performed by this task during structural correction work.
 - Stable source handoff transfers all remaining aggregate release gates, hosted CI, installation and live acceptance to **Initialize Abbey bot**. Full strict release-gate and installed-artifact results must be recorded there; these Rust checks alone are not deployment evidence.
+
+## Task 3 source closeout — September 8, 2026
+
+- Implementation: `b6358c7f5b8492bd56d97a7f5a99593a1fd07171` (`fix(help): harden interaction validation and delivery failures`). The correction validates application and source-message channel binding and adds one bounded modal delivery-recovery attempt without replaying generation or completed tool effects.
+- Independent read-only review of the three-file correction and surrounding routing, authorization, catalog, shared operations and regression coverage found no actionable defects. The review confirms Task 3 source closeout; it is not live acceptance.
+- Verification observed in this session on the final source: `cargo test --locked commands_help::` passed 67 tests, zero failures; `cargo test --locked command_catalog::` passed 18 tests, zero failures; `cargo clippy --locked --all-targets -- -D warnings` passed. Source remained unchanged during closeout, so these results were retained rather than rerun for this documentation-only update.
+- All five task controls are connected through the existing component/modal routing. Visibility and read-only launchers use catalog `Discoverability`; conversation execution uses `Invocation` and typed availability guidance. Memory and administration reuse their existing private operations; images and voice/music provide truthful input/status guidance. No catalog API or routing hook remains unwired for Task 3, and the seven model tools and persistence interfaces are unchanged.
+- Handoff: **Initialize Abbey bot** retains the strict aggregate gate, hosted CI, installation and installed-artifact verification, provider qualification, and human Discord/voice acceptance. This closeout performs no installation or production interaction and closes none of the release owner's checkboxes. The externally created `pre-redeploy-abbey-bot-105` stash remains untouched.
 
 ## Final release sequence — updated September 6, 10:51 EDT
 
