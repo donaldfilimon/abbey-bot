@@ -108,6 +108,26 @@ class AssetAndInventoryTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0].ok, results[0].detail)
 
+
+    def test_activities_docs_verify_markers_pass_on_repo(self) -> None:
+        results = MODULE.check_activities_docs_verify_markers(ROOT)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].ok, results[0].detail)
+
+    def test_activities_docs_verify_markers_fail_without_operator_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "activities.md").write_text(
+                "# stub without post-Portal verify checklist\n",
+                encoding="utf-8",
+            )
+            results = MODULE.check_activities_docs_verify_markers(root)
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].ok)
+            self.assertIn("missing:", results[0].detail)
+
     def test_activity_client_copy_markers_fail_without_plain_browser_copy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -154,6 +174,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("asset activity/app.js", names)
         self.assertIn("pages markdown inventory", names)
         self.assertIn("activity client copy markers", names)
+        self.assertIn("activities docs verify markers", names)
 
 
 if __name__ == "__main__":

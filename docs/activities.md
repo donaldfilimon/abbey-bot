@@ -156,7 +156,8 @@ python3 deploy/check-activity-url-map.py
 
 Unit coverage: `python3 deploy/test-check-activity-url-map.py`.
 
-**After Donald clicks Portal**, verify like this:
+**After Donald clicks Portal**, verify like this (operator-gated; no bot can
+close this gate):
 
 1. Plain browser: open the Pages URL above — confirms GitHub Pages is serving
    `activity/` (shell HTML/JS). The client status should read **Pages shell only**
@@ -168,8 +169,18 @@ Unit coverage: `python3 deploy/test-check-activity-url-map.py`.
    as a wait/cache/map troubleshooting hint — not as automated Portal proof either
    way.
 3. Do **not** mark P0 done from the checker PASS lines (including the local
-   `activity client copy markers` check). The checker never sees Portal state;
-   only Donald's iframe confirmation closes the operator gate.
+   `activity client copy markers` check and the docs verify-markers check). The
+   checker never sees Portal state; only Donald's iframe confirmation closes the
+   operator gate.
+4. Optional local re-check after docs/client edits (still not Portal proof):
+
+```
+python3 deploy/check-activity-url-map.py
+python3 deploy/test-check-activity-url-map.py
+```
+
+   PASS lines only prove the PREFIX/TARGET contract text, tracked Pages assets,
+   and truthful plain-browser / post-Portal verify copy stay in sync.
 
 ## Related
 
