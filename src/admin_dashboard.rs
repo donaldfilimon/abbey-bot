@@ -257,7 +257,6 @@ impl AdminSession {
 ///
 /// The select menu custom id carries [`AdminAction::SelectPage`]; the chosen
 /// option value must be a navigable `View(...)` slug. Anything else fails closed.
-#[must_use]
 pub fn resolve_select_action(
     action: AdminAction,
     values: &[String],
