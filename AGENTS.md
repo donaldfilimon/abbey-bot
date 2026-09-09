@@ -243,9 +243,16 @@ section it ports. Read that header before the code.
 - Components V2 is blocked on serenity 0.12.5 alone; ship classic Action Rows / buttons / selects / modals only. poise is not part of the blocker: `poise 0.7.0` exists but requires `serenity ^0.12.5`, and `cargo tree --locked --offline -i rustls@0.22.4` shows the accepted TLS debt also descends from serenity alone (`serenity 0.12.5 -> tokio-tungstenite 0.21 -> tokio-rustls 0.25 -> rustls 0.22.4`). Bumping poise unlocks neither; only a Serenity release does.
 - `/forum draft|post|perms` shipped for `#help` (`src/forum.rs`, `src/commands_forum.rs`).
 - Live `/voice` 8/8 acceptance still requires Donald in the Office Hours VC on the launchd-locked process.
-- A bare `public_updates_channel_id` PATCH is **silently ignored** by the Discord API: it
-  returns success and changes nothing. Send `features` and `rules_channel_id` in the same
-  PATCH for it to take effect. This cost a debugging session that read the 200 as proof.
+- **Guild-LEVEL settings are outside this crate today, and there is a Discord API trap waiting
+  if that ever changes.** `src/server/discord.rs` mutates roles and channels only
+  (`create_role`, `edit_role`, `create_channel`, `edit_channel`); it sends no guild PATCH, and
+  `blueprints/mlai-community.toml` describes no guild-level fields. The trap, learned during
+  manual REST administration of the MLAI guild rather than from this code: a bare
+  `public_updates_channel_id` PATCH is **silently ignored** — it returns 200 and changes
+  nothing — and needs `features` and `rules_channel_id` in the same request. It cost a
+  debugging session that read the 200 as proof. Recorded here because this is where anyone
+  extending the apply path to guild settings would look, not because the current code path
+  hits it.
 - The MLAI guild blueprint is **fully applied**, so every `--server-plan` stage now re-diffs
   to `changes (0)`. A dry run that shows changes means the guild drifted, not that work is
   pending. `--apply` is additive-only and has no delete variant; role-permission and
