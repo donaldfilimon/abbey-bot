@@ -153,9 +153,11 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
         cfg!(target_os = "macos"),
     )
     .map_err(|message| {
-        let category = if !cfg!(target_os = "macos") {
-            OperationalErrorCategory::Configuration
-        } else if guild.get() != runtime.config.guild_id {
+        // A non-macOS host is a missing backend and a foreign guild is a misconfigured
+        // destination — both `Configuration`. What remains (manager, presence) is a
+        // decision about the caller's standing, which is `Authorization`.
+        let misconfigured = !cfg!(target_os = "macos") || guild.get() != runtime.config.guild_id;
+        let category = if misconfigured {
             OperationalErrorCategory::Configuration
         } else {
             OperationalErrorCategory::Authorization
