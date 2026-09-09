@@ -577,8 +577,8 @@ async fn start_inner(
                         interaction.create_followup(&context.http, builder).await
                     }
                 };
-                if delivered.is_err() {
-                    crate::gateway::interaction_outcomes::delivery_failed(&state);
+                if let Err(error) = &delivered {
+                    crate::gateway::interaction_outcomes::delivery_failed_from(&state, error);
                 }
             }
         }

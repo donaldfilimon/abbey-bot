@@ -705,8 +705,8 @@ pub async fn dispatch_component(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     true
 }

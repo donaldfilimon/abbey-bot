@@ -20,14 +20,53 @@ pub(crate) fn record_failure(
     }
 }
 
-/// Record a failed delivery attempt after its error has been consumed.
-/// The operation has already run; this function cannot replay it.
+/// Record a failed delivery attempt whose error has already been consumed — the caller
+/// checked `is_err()` and dropped it. The operation has already run; this function cannot
+/// replay it, and it cannot recover a cause that no longer exists.
+///
+/// The category is `Internal`, not `Unavailable`. An unclassified failure is not evidence
+/// of an outage, and reporting one as `Unavailable` is a false statement about the
+/// service — the same defect that made every voice `command_failure` unactionable.
+/// **Prefer [`delivery_failed_from`] wherever the error is still in hand.**
 pub(crate) fn delivery_failed(state: &crate::runtime::AppState) {
     record_failure(
         state,
         EventCode::ResponseDelivery,
-        OperationalErrorCategory::Unavailable,
+        OperationalErrorCategory::Internal,
     );
+}
+
+/// Record a failed delivery attempt from the error itself, so the operational event names
+/// a cause: a 403 is the bot's permissions, a 429 is capacity, and only transport loss or
+/// a server-side fault is genuine unavailability.
+pub(crate) fn delivery_failed_from<E: DeliveryFailure + ?Sized>(
+    state: &crate::runtime::AppState,
+    error: &E,
+) {
+    record_failure(
+        state,
+        EventCode::ResponseDelivery,
+        error.delivery_category(),
+    );
+}
+
+/// The error types a delivery site actually holds. Deliberately NOT implemented for
+/// `&str`: a string carries no cause, so a site holding only a message must call
+/// [`delivery_failed`] and say `Internal` rather than dress a guess up as a category.
+pub(crate) trait DeliveryFailure {
+    fn delivery_category(&self) -> OperationalErrorCategory;
+}
+
+impl DeliveryFailure for serenity::Error {
+    fn delivery_category(&self) -> OperationalErrorCategory {
+        serenity_category(self)
+    }
+}
+
+impl DeliveryFailure for crate::Error {
+    fn delivery_category(&self) -> OperationalErrorCategory {
+        category_of(self)
+    }
 }
 
 /// Classify a boxed command error by its *type*, never by message text: the operational
