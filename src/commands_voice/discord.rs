@@ -247,8 +247,23 @@ pub(super) async fn wait_for_enabled_bot_voice_state(
     channel_id: ChannelId,
     session_id: &str,
 ) -> Result<(), String> {
+    wait_for_enabled_bot_voice_state_from_serenity(
+        ctx.serenity_context(),
+        guild_id,
+        channel_id,
+        session_id,
+    )
+    .await
+}
+
+pub(super) async fn wait_for_enabled_bot_voice_state_from_serenity(
+    ctx: &serenity::all::Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    session_id: &str,
+) -> Result<(), String> {
     for _ in 0..20 {
-        if cached_bot_voice_state(ctx, guild_id).is_some_and(|state| {
+        if cached_bot_voice_state_from_serenity(ctx, guild_id).is_some_and(|state| {
             bot_voice_state_allows_conversation(&state, channel_id, session_id)
         }) {
             return Ok(());

@@ -22,6 +22,7 @@ use crate::{Context, Error};
 mod acknowledgement;
 mod play;
 use play::{voice_pause, voice_play, voice_resume_music, voice_stop_music, voice_volume};
+mod auto_listen;
 mod consent;
 mod discord;
 mod events;
@@ -86,6 +87,7 @@ async fn configure_disconnected_call(call: &Arc<Mutex<songbird::Call>>, mode: Vo
     call.lock().await.set_config(initial_songbird_config(mode));
 }
 
+pub use auto_listen::{AutoListenStartup, try_auto_listen_at_startup};
 pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;

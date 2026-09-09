@@ -694,6 +694,8 @@ pub(super) async fn start_voice(
         return Ok(());
     }
 
+    runtime.arm_unmute_grace(std::time::Duration::from_secs(3));
+
     if let Err(error) =
         verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
     {

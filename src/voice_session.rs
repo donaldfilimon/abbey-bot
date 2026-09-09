@@ -349,6 +349,11 @@ pub struct VoiceRuntime {
     aborted_overruns: AtomicU64,
     barge_ins: AtomicU64,
     completed_turns: AtomicU64,
+    /// Unix millis until which stale self_mute/self_deaf VoiceStateUpdates are
+    /// ignored after a local `enable_conversation` confirmation. Protects the
+    /// brief window where Discord can deliver an older muted payload after the
+    /// software media gate opens.
+    unmute_grace_until_ms: AtomicU64,
     verification: SyncMutex<VerificationState>,
     inspect: Option<VoiceInspectBinding>,
     inner: Mutex<RuntimeState>,
@@ -436,6 +441,7 @@ impl VoiceRuntime {
             aborted_overruns: AtomicU64::new(0),
             barge_ins: AtomicU64::new(0),
             completed_turns: AtomicU64::new(0),
+            unmute_grace_until_ms: AtomicU64::new(0),
             verification: SyncMutex::new(VerificationState::default()),
             inspect,
             inner: Mutex::new(RuntimeState {
@@ -553,6 +559,24 @@ impl VoiceRuntime {
             && epoch != 0
             && self.is_current(epoch)
             && self.media_epoch.load(Ordering::SeqCst) == epoch
+    }
+
+    /// Arm a short grace after Discord confirms the locally requested unmute /
+    /// undeafen. Stale muted VoiceStateUpdates that race the media gate open
+    /// are ignored until this watermark.
+    pub fn arm_unmute_grace(&self, duration: std::time::Duration) {
+        let until = crate::runtime::now_millis().saturating_add(duration.as_millis() as u64);
+        self.unmute_grace_until_ms.store(until, Ordering::SeqCst);
+    }
+
+    #[must_use]
+    pub fn in_unmute_grace(&self) -> bool {
+        let until = self.unmute_grace_until_ms.load(Ordering::SeqCst);
+        until != 0 && crate::runtime::now_millis() < until
+    }
+
+    pub fn clear_unmute_grace(&self) {
+        self.unmute_grace_until_ms.store(0, Ordering::SeqCst);
     }
 
     /// Timing-critical receive callbacks use this synchronous compare/exchange
@@ -813,6 +837,7 @@ impl VoiceRuntime {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.media_epoch.store(0, Ordering::SeqCst);
+            self.clear_unmute_grace();
             if cancel_pending_start {
                 let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
                 self.pending_start_generation.store(0, Ordering::SeqCst);
