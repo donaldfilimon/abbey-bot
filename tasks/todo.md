@@ -342,6 +342,20 @@ a green source gate is not semantic, deployment, or live evidence.
   leave storefront unpublished. Cross-repo: mlai-website-app #18 MERGED;
   Neuralnetworkanimation #1 MERGED. No live-residual status flips. Brand
   freeze unchanged.
+- 2026-09-08/09 ~23:4x annotation (not a tick): Tip `b793af0` (#129)
+  premium_entitlements **MERGED**; hosted Rust on tip still billing-locked
+  (0-step Gate fails — not a code bug). Open #132 AUTO_LISTEN + voice failure
+  telemetry — Gate fails all platforms for the same billing lock; do not merge
+  until unlock + green. Live managed Abbey PID **87677** (AUTO_LISTEN build;
+  Office Hours unmuted). abbey-audio-tap launchd installed; `:8182/health`
+  idle `ready:false` until capture; mlx-audio `:8181` healthy. Spotify host
+  playing / music channel notified; Discord mirror waits on Donald `/voice
+  play` (bots cannot invoke). Pages 200 Abbey title; discordsays still Discord
+  marketing shell — Portal URL map human-gated. Live pulse prompt updated
+  (quiet-when-green); donald-mode skill updated at
+  `~/.cursor/skills/donald-mode` (not necessarily in-repo). **Still Donald:**
+  Portal map, billing unlock, `/voice play` click. No live-residual status
+  flips. Brand freeze unchanged.
 Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
 If participant consent or an authorized manager is unavailable these stay pending; source tests,
 provider logs, and historical consent are explicitly not acceptable substitutes.
