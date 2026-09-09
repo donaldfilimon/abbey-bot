@@ -64,47 +64,14 @@ impl std::fmt::Display for VoiceCommandError {
 
 impl std::error::Error for VoiceCommandError {}
 
-/// Classify by error *type*, never by message text: the operational record is a closed
-/// vocabulary and must not depend on user-facing copy. An error whose type carries no
-/// cause is `Internal` — an unclassified failure is a defect here, and claiming
-/// `Unavailable` for it would be a false statement about the service.
+/// Voice's own typed refusal takes precedence; everything else defers to the shared
+/// classifier in `gateway::interaction_outcomes`, so one vocabulary serves every adapter
+/// rather than one classifier per module.
 fn category_of(error: &Error) -> OperationalErrorCategory {
-    if let Some(voice) = error.downcast_ref::<VoiceCommandError>() {
-        return voice.category;
-    }
-    if let Some(serenity) = error.downcast_ref::<serenity::Error>() {
-        return serenity_category(serenity);
-    }
-    OperationalErrorCategory::Internal
-}
-
-/// Discord REST and gateway faults. A refused request is not an outage: only transport
-/// loss and server-side faults earn `Unavailable`.
-fn serenity_category(error: &serenity::Error) -> OperationalErrorCategory {
-    match error {
-        serenity::Error::Http(http) => {
-            http_status_category(http.status_code().map(|code| code.as_u16()))
-        }
-        serenity::Error::Gateway(_) | serenity::Error::Tungstenite(_) => {
-            OperationalErrorCategory::Unavailable
-        }
-        serenity::Error::Model(_) => OperationalErrorCategory::Authorization,
-        serenity::Error::Json(_) | serenity::Error::Format(_) => OperationalErrorCategory::Protocol,
-        _ => OperationalErrorCategory::Internal,
-    }
-}
-
-/// Pure status -> category mapping. Split out because `serenity`'s error response types
-/// are `#[non_exhaustive]` and cannot be constructed in a test.
-fn http_status_category(status: Option<u16>) -> OperationalErrorCategory {
-    match status {
-        Some(401 | 403) => OperationalErrorCategory::Authorization,
-        Some(429) => OperationalErrorCategory::Capacity,
-        Some(status) if (500..600).contains(&status) => OperationalErrorCategory::Unavailable,
-        Some(_) => OperationalErrorCategory::Protocol,
-        // No status means the request never completed: transport loss, not a refusal.
-        None => OperationalErrorCategory::Unavailable,
-    }
+    error.downcast_ref::<VoiceCommandError>().map_or_else(
+        || crate::gateway::interaction_outcomes::category_of(error),
+        |voice| voice.category,
+    )
 }
 
 async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
@@ -907,53 +874,5 @@ mod tests {
             // The user-facing copy must survive the typed wrapper unchanged.
             assert_eq!(error.to_string(), message);
         }
-    }
-
-    /// An error whose type carries no cause must NOT be reported as `Unavailable`:
-    /// that would be a false claim that Abbey's voice service is down.
-    #[test]
-    fn unclassified_failures_are_internal_not_unavailable() {
-        let opaque: Error = "some unclassified failure".into();
-        assert_eq!(category_of(&opaque), OperationalErrorCategory::Internal);
-        assert_ne!(category_of(&opaque), OperationalErrorCategory::Unavailable);
-    }
-
-    /// A Discord refusal is not an outage. Only transport loss and server-side faults
-    /// earn `Unavailable`; a 403 is the caller's permissions, and a 429 is capacity.
-    #[test]
-    fn discord_rest_status_selects_the_category() {
-        assert_eq!(
-            http_status_category(Some(401)),
-            OperationalErrorCategory::Authorization
-        );
-        assert_eq!(
-            http_status_category(Some(403)),
-            OperationalErrorCategory::Authorization
-        );
-        assert_eq!(
-            http_status_category(Some(429)),
-            OperationalErrorCategory::Capacity
-        );
-        assert_eq!(
-            http_status_category(Some(500)),
-            OperationalErrorCategory::Unavailable
-        );
-        assert_eq!(
-            http_status_category(Some(503)),
-            OperationalErrorCategory::Unavailable
-        );
-        assert_eq!(
-            http_status_category(Some(404)),
-            OperationalErrorCategory::Protocol
-        );
-        assert_eq!(
-            http_status_category(Some(400)),
-            OperationalErrorCategory::Protocol
-        );
-        // A request that never completed is transport loss, which IS unavailability.
-        assert_eq!(
-            http_status_category(None),
-            OperationalErrorCategory::Unavailable
-        );
     }
 }
