@@ -99,6 +99,7 @@ mod persona;
 mod pipeline;
 mod platform;
 mod player_control;
+mod premium_entitlements;
 mod profile;
 mod provider;
 mod provider_self_test;
