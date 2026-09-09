@@ -1571,3 +1571,40 @@ qualification, provider qualification, live two-guild member/manager Discord
 checks, fresh unanimous consent, human-witnessed audible voice acceptance,
 Portal Activity URL map (P0), OAuth secret host (P2), Components V2
 (crate-blocked), and episode-gate human approval.
+
+#### Tip `8722494` (#128) — monetization on main; #129 billing-locked; night `/goal continue` (2026-09-08 ~20:47 EDT)
+
+Executed as `/goal continue`. Tip of `origin/main` at this writing is
+`87224941ce24524c28646d3fa2499df260eda8cc` — `docs(plan): monetization Guild Pro + Quesar phase-1 (#128)` **MERGED**. Design spec + plan + Portal checklist + Pages inventory are on main via #128.
+
+**PR #127** (design-only) was OPEN but CONFLICTING and **superseded** by #128 (which included the design). Closed as duplicate/conflict with comment that design is already on main.
+
+**Open: #129** `feat/premium-entitlements-gate` — pure `premium_entitlements` + `.env.example`; Devin Review noted; local cargo test/fmt/clippy claimed green; hosted Rust jobs fail in ~2–9s with **0 steps** and annotation: "The job was not started because your account is locked due to a billing issue." Do **not** merge #129 until hosted Rust Gate is green after billing unlock. Workflow display name in Actions is **Rust** (not "Gate" in the run list); jobs still labeled Gate (Ubuntu/macOS/Windows).
+
+**Live Abbey binary:** no live Abbey binary redeploy needed for this docs-only tip; #129 is not merged, so there is no entitlements binary yet. Last redeploy remains the earlier #124 line (PID **49552**, SHA-256 prefix **`f952e705`**) unless Donald has redeployed since — this continue does not re-probe launchd.
+
+**Portal checklist (operator, not agent):** `docs/ops/monetization-portal-checklist.md` — SKU rename to Abbey Guild Pro, attach entitlements, leave storefront unpublished (no live charges).
+
+**Still Donald / still open (no status flips):**
+
+- **P0 — Portal Activity URL map:** PREFIX `/`, TARGET
+  `donaldfilimon.github.io/abbey-bot/activity` (no scheme, no `index.html`);
+  Desktop + Web; Office Hours rocket → Abbey `ready()` in the **discordsays**
+  iframe.
+- **Billing unlock:** https://github.com/settings/billing → unlock → re-run Rust on tip + #129.
+- **Human Play acceptance** still open.
+- Brand freeze unchanged. No invented metrics.
+
+**Cross-repo brief (recorded, not actioned here):**
+
+- **mlai-website-app** #18 Quesar pilot CTA — **MERGED**.
+- **Neuralnetworkanimation** #1 black-hole improve — **MERGED**.
+- **wdnx** #29 / #30 open, blocked by GitHub Actions billing lock; Dependabot
+  #23–#28 held (unchanged from evening brief unless Donald closed them).
+- **abbey** #105 open (ollama list probe harden) unless closed since evening brief.
+
+Still not established, and unchanged: installed artifact identity
+qualification, provider qualification, live two-guild member/manager Discord
+checks, fresh unanimous consent, human-witnessed audible voice acceptance,
+Portal Activity URL map (P0), OAuth secret host (P2), Components V2
+(crate-blocked), and episode-gate human approval.

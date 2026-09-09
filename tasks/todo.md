@@ -326,6 +326,22 @@ a green source gate is not semantic, deployment, or live evidence.
   (Actions billing lock); Dependabot #23–#28 held; abbey #105 open (ollama list
   probe harden); ABI runner MacBook-arm64 reported back online. No live-
   residual status flips.
+- 2026-09-08 ~20:47 annotation (not a tick): Tip `8722494` (#128) monetization
+  Guild Pro + Quesar phase-1 **MERGED** (design/plan/Portal checklist/Pages
+  inventory on main). PR #127 design-only closed as superseded by #128.
+  Open #129 `feat/premium-entitlements-gate` — do **not** merge until hosted
+  Rust Gate is green after billing unlock (jobs fail ~2–9s / 0 steps:
+  account locked due to billing). Actions workflow display name **Rust**;
+  jobs still Gate (Ubuntu/macOS/Windows). Docs-only tip — no Abbey binary
+  redeploy; #129 not merged so no entitlements binary. **P0 still Donald:**
+  Portal Activity URL map PREFIX `/`, TARGET
+  `donaldfilimon.github.io/abbey-bot/activity` (no scheme, no `index.html`);
+  Desktop+Web; Office Hours rocket → `ready()` in discordsays iframe.
+  **Still Donald:** github.com/settings/billing unlock → re-run Rust on tip +
+  #129. Portal checklist: SKU rename Abbey Guild Pro, attach entitlements,
+  leave storefront unpublished. Cross-repo: mlai-website-app #18 MERGED;
+  Neuralnetworkanimation #1 MERGED. No live-residual status flips. Brand
+  freeze unchanged.
 Use only operator-supplied sandbox inputs and the privacy-safe role labels Guild A and Guild B.
 If participant consent or an authorized manager is unavailable these stay pending; source tests,
 provider logs, and historical consent are explicitly not acceptable substitutes.
