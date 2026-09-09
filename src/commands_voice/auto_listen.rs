@@ -141,9 +141,7 @@ async fn activate_local_auto_listen(
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
 
-    if let Err(message) = verify_required_voice_permissions_live(ctx, guild_id, channel_id).await {
-        return Err(message);
-    }
+    verify_required_voice_permissions_live(ctx, guild_id, channel_id).await?;
 
     let operation = runtime.start_operation_token();
     let Some((start_generation, effective_backend)) = runtime.reserve_start_with_backend(operation)
