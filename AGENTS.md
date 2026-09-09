@@ -250,7 +250,11 @@ section it ports. Read that header before the code.
   to `changes (0)`. A dry run that shows changes means the guild drifted, not that work is
   pending. `--apply` is additive-only and has no delete variant; role-permission and
   role-order decisions stay manual.
-- **Two** launchd agents are live, not one: `com.donaldfilimon.abbey-bot` and
-  `com.donaldfilimon.abbey-wdbx-gateway` (`launchctl list | grep abbey`). The gateway must be
-  up before the bot is restarted. Both carry `KeepAlive`, so a plain `kill` respawns them
-  rather than stopping them. Do not stop, unload, or reinstall either on your own initiative.
+- **Four** launchd agents are live, not one (corrected 2026-09-09 01:4x; an earlier line in
+  this file said two and was wrong): `com.donaldfilimon.abbey-bot`,
+  `com.donaldfilimon.abbey-wdbx-gateway`, `com.donaldfilimon.abbey-mlx-audio`, and
+  `com.donaldfilimon.abbey-audio-tap`. Enumerate with
+  `launchctl list | grep com.donaldfilimon.abbey` rather than trusting any count written
+  here, since the set has grown twice. The gateway must be up before the bot is restarted.
+  They carry `KeepAlive`, so a plain `kill` respawns rather than stops them. Do not stop,
+  unload, or reinstall any of them on your own initiative.
