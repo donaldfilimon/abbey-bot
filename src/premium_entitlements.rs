@@ -4,21 +4,25 @@
 //! [`authorize`] behind [`enforce_enabled`] so production stays open while
 //! `ABBEY_ENTITLEMENT_ENFORCE` is unset/off.
 
-// Public API is intentionally unused until phase-2 adapters wire call sites.
-#![allow(dead_code)]
-
 /// Discord type-5 Guild Pro SKU (existing Portal SKU; rename only — no second SKU).
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub const SKU_GUILD_PRO: u64 = 1_293_228_939_929_452_574;
 /// Discord application id for Abbey.
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub const APP_ID: u64 = 1_147_940_171_099_152_464;
 
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub const ENTITLEMENT_VOICE_UX_PRO: &str = "voice_ux_pro";
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub const ENTITLEMENT_ACTIVITY_ACCESS: &str = "activity_access";
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub const ENTITLEMENT_ADMIN_WORKFLOW: &str = "admin_workflow";
 
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub const ENV_ENTITLEMENT_ENFORCE: &str = "ABBEY_ENTITLEMENT_ENFORCE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub enum EntitlementKey {
     VoiceUxPro,
     ActivityAccess,
@@ -26,6 +30,7 @@ pub enum EntitlementKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub struct EntitlementGrant {
     pub sku_id: u64,
     pub key: EntitlementKey,
@@ -35,6 +40,7 @@ pub struct EntitlementGrant {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub enum Denial {
     /// Reserved; [`authorize`] returns `Ok(())` when enforce is false.
     EnforceOffSkipped,
@@ -48,6 +54,7 @@ pub enum Denial {
 /// Parse enforce flag. Default off: unset, empty, `0`, `false`, `off`, `no`
 /// (ASCII case-insensitive) → false. On: `1`, `true`, `on`, `yes` → true.
 /// Any other value → false (fail-soft config; never panic).
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub fn enforce_enabled(raw: Option<&str>) -> bool {
     let Some(raw) = raw else {
         return false;
@@ -61,6 +68,7 @@ pub fn enforce_enabled(raw: Option<&str>) -> bool {
     )
 }
 
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub fn key_str(key: EntitlementKey) -> &'static str {
     match key {
         EntitlementKey::VoiceUxPro => ENTITLEMENT_VOICE_UX_PRO,
@@ -69,6 +77,7 @@ pub fn key_str(key: EntitlementKey) -> &'static str {
     }
 }
 
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub fn parse_key(raw: &str) -> Result<EntitlementKey, Denial> {
     match raw {
         ENTITLEMENT_VOICE_UX_PRO => Ok(EntitlementKey::VoiceUxPro),
@@ -81,6 +90,7 @@ pub fn parse_key(raw: &str) -> Result<EntitlementKey, Denial> {
 /// Pure gate: when enforce is false, return `Ok(())` without consulting grants.
 /// When enforce is true, require an active grant for `(guild, key)` on
 /// [`SKU_GUILD_PRO`]. Matching key is preferred first, then diagnose.
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub fn authorize(
     enforce: bool,
     guild_id: u64,
@@ -115,6 +125,7 @@ pub fn authorize(
 /// Diagnose whether a single grant authorizes `(guild_id, key)` at `now`.
 /// Prefer key match, then guild, then SKU, then expiry (`None` = never expires;
 /// `Some(exp)` active while `now < exp`).
+#[allow(dead_code)] // phase-2 seam: wired when adapters consult `authorize`
 pub fn grant_active(
     grant: &EntitlementGrant,
     guild_id: u64,
