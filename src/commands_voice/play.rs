@@ -4,6 +4,7 @@ use crate::{
     Context, Error,
     audio_tap::{AudioTapClient, PcmBuffer, TapStream},
     gateway::shared::clamp_message,
+    observability::OperationalErrorCategory,
     player_control::{self, Player, Script},
     voice_session::{PlaybackTermination, VoicePhase, VoiceRuntime},
 };
@@ -27,17 +28,108 @@ impl From<MusicPlayer> for Player {
     }
 }
 
+/// A voice-command refusal that carries its own operational category.
+///
+/// `reply` records one closed operational event per failed voice command. Every failure
+/// used to be recorded as `Unavailable`, which asserts "the service is down" for
+/// permission refusals, misrouted channels and Discord REST faults alike — that blanket
+/// category is why the 14 live `command_failure` events on 2026-09-08 named no usable
+/// cause. Categories follow the vocabulary fixed in ce6c4f2: permission loss is
+/// `Authorization`, a missing backend or destination is `Configuration`, transport loss
+/// is `Unavailable`, waits are `Timeout`, and Discord refusals are `Protocol`.
+#[derive(Debug)]
+struct VoiceCommandError {
+    category: OperationalErrorCategory,
+    message: String,
+}
+
+impl VoiceCommandError {
+    fn new(category: OperationalErrorCategory, message: impl Into<String>) -> Self {
+        Self {
+            category,
+            message: message.into(),
+        }
+    }
+
+    fn boxed(category: OperationalErrorCategory, message: impl Into<String>) -> Error {
+        Box::new(Self::new(category, message))
+    }
+}
+
+impl std::fmt::Display for VoiceCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for VoiceCommandError {}
+
+/// Classify by error *type*, never by message text: the operational record is a closed
+/// vocabulary and must not depend on user-facing copy. An error whose type carries no
+/// cause is `Internal` — an unclassified failure is a defect here, and claiming
+/// `Unavailable` for it would be a false statement about the service.
+fn category_of(error: &Error) -> OperationalErrorCategory {
+    if let Some(voice) = error.downcast_ref::<VoiceCommandError>() {
+        return voice.category;
+    }
+    if let Some(serenity) = error.downcast_ref::<serenity::Error>() {
+        return serenity_category(serenity);
+    }
+    OperationalErrorCategory::Internal
+}
+
+/// Discord REST and gateway faults. A refused request is not an outage: only transport
+/// loss and server-side faults earn `Unavailable`.
+fn serenity_category(error: &serenity::Error) -> OperationalErrorCategory {
+    match error {
+        serenity::Error::Http(http) => {
+            http_status_category(http.status_code().map(|code| code.as_u16()))
+        }
+        serenity::Error::Gateway(_) | serenity::Error::Tungstenite(_) => {
+            OperationalErrorCategory::Unavailable
+        }
+        serenity::Error::Model(_) => OperationalErrorCategory::Authorization,
+        serenity::Error::Json(_) | serenity::Error::Format(_) => OperationalErrorCategory::Protocol,
+        _ => OperationalErrorCategory::Internal,
+    }
+}
+
+/// Pure status -> category mapping. Split out because `serenity`'s error response types
+/// are `#[non_exhaustive]` and cannot be constructed in a test.
+fn http_status_category(status: Option<u16>) -> OperationalErrorCategory {
+    match status {
+        Some(401 | 403) => OperationalErrorCategory::Authorization,
+        Some(429) => OperationalErrorCategory::Capacity,
+        Some(status) if (500..600).contains(&status) => OperationalErrorCategory::Unavailable,
+        Some(_) => OperationalErrorCategory::Protocol,
+        // No status means the request never completed: transport loss, not a refusal.
+        None => OperationalErrorCategory::Unavailable,
+    }
+}
+
 async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
-    let guild = ctx.guild_id().ok_or("This command requires a server.")?;
-    let runtime = ctx.data().voice_for(guild.get())
-        .ok_or("No voice destination is selected in this server. Join a voice channel and use `/voice join` first; listening still requires each participant's agreement.")?;
+    // `guild_only` on every caller makes a missing guild a framework defect, not a user error.
+    let guild = ctx.guild_id().ok_or_else(|| {
+        VoiceCommandError::boxed(
+            OperationalErrorCategory::Internal,
+            "This command requires a server.",
+        )
+    })?;
+    let runtime = ctx.data().voice_for(guild.get()).ok_or_else(|| {
+        VoiceCommandError::boxed(
+            OperationalErrorCategory::Configuration,
+            "No voice destination is selected in this server. Join a voice channel and use `/voice join` first; listening still requires each participant's agreement.",
+        )
+    })?;
     crate::music::command_channel_gate(
         runtime.config.guild_id,
         runtime.config.music_command_channel_id,
         ctx.guild_id().map(|guild| guild.get()),
         ctx.channel_id().get(),
-    )?;
-    let guild = ctx.guild_id().ok_or("This command requires a server.")?;
+    )
+    .map_err(|message| {
+        VoiceCommandError::boxed(OperationalErrorCategory::Configuration, message)
+    })?;
     let member = guild.member(ctx.http(), ctx.author().id).await?;
     let partial = guild.to_partial_guild(ctx.http()).await?;
     let manager = member.user.id == partial.owner_id
@@ -52,12 +144,24 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
             });
     let present = super::cached_participants(ctx, guild, ChannelId::new(runtime.config.channel_id))
         .is_ok_and(|(present, _)| present);
+    // Manager/presence refusals are permission decisions; a non-macOS host is a missing
+    // backend. `gate` returns the first failing reason, so categorize in the same order.
     crate::music::gate(
         guild.get() == runtime.config.guild_id,
         manager,
         present,
         cfg!(target_os = "macos"),
-    )?;
+    )
+    .map_err(|message| {
+        let category = if !cfg!(target_os = "macos") {
+            OperationalErrorCategory::Configuration
+        } else if guild.get() != runtime.config.guild_id {
+            OperationalErrorCategory::Configuration
+        } else {
+            OperationalErrorCategory::Authorization
+        };
+        VoiceCommandError::boxed(category, message)
+    })?;
     Ok(runtime)
 }
 
@@ -325,11 +429,11 @@ pub async fn voice_volume(
     reply(ctx, result).await
 }
 async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Error> {
-    if result.is_err() {
+    if let Err(error) = result.as_ref() {
         crate::gateway::interaction_outcomes::record_failure(
             &ctx.data().state,
             crate::observability::EventCode::CommandFailure,
-            crate::observability::OperationalErrorCategory::Unavailable,
+            category_of(error),
         );
     }
     let delivered = ctx
@@ -775,5 +879,79 @@ mod tests {
         );
         assert!(!runtime.snapshot().await.media_enabled);
         server.await.unwrap();
+    }
+
+    /// Every failed voice command used to record `Unavailable`, which asserted an outage
+    /// for permission refusals and misconfiguration alike. Pin each cause to its own
+    /// category so a live failure names something actionable.
+    #[test]
+    fn voice_command_errors_carry_their_own_category() {
+        for (category, message) in [
+            (
+                OperationalErrorCategory::Authorization,
+                "Music controls require Manage Server.",
+            ),
+            (
+                OperationalErrorCategory::Configuration,
+                "Local music capture requires a macOS host.",
+            ),
+            (
+                OperationalErrorCategory::Internal,
+                "This command requires a server.",
+            ),
+        ] {
+            let error = VoiceCommandError::boxed(category, message);
+            assert_eq!(category_of(&error), category);
+            // The user-facing copy must survive the typed wrapper unchanged.
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
+    /// An error whose type carries no cause must NOT be reported as `Unavailable`:
+    /// that would be a false claim that Abbey's voice service is down.
+    #[test]
+    fn unclassified_failures_are_internal_not_unavailable() {
+        let opaque: Error = "some unclassified failure".into();
+        assert_eq!(category_of(&opaque), OperationalErrorCategory::Internal);
+        assert_ne!(category_of(&opaque), OperationalErrorCategory::Unavailable);
+    }
+
+    /// A Discord refusal is not an outage. Only transport loss and server-side faults
+    /// earn `Unavailable`; a 403 is the caller's permissions, and a 429 is capacity.
+    #[test]
+    fn discord_rest_status_selects_the_category() {
+        assert_eq!(
+            http_status_category(Some(401)),
+            OperationalErrorCategory::Authorization
+        );
+        assert_eq!(
+            http_status_category(Some(403)),
+            OperationalErrorCategory::Authorization
+        );
+        assert_eq!(
+            http_status_category(Some(429)),
+            OperationalErrorCategory::Capacity
+        );
+        assert_eq!(
+            http_status_category(Some(500)),
+            OperationalErrorCategory::Unavailable
+        );
+        assert_eq!(
+            http_status_category(Some(503)),
+            OperationalErrorCategory::Unavailable
+        );
+        assert_eq!(
+            http_status_category(Some(404)),
+            OperationalErrorCategory::Protocol
+        );
+        assert_eq!(
+            http_status_category(Some(400)),
+            OperationalErrorCategory::Protocol
+        );
+        // A request that never completed is transport loss, which IS unavailability.
+        assert_eq!(
+            http_status_category(None),
+            OperationalErrorCategory::Unavailable
+        );
     }
 }
