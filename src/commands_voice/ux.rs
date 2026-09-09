@@ -310,15 +310,22 @@ async fn music_act(
         .await;
         return Ok(());
     };
+    // The registry can drop this runtime across any await below (`/voice leave` does
+    // exactly that), and a stale `Arc` still answers every method perfectly well. So
+    // liveness is re-derived from the registry, never asserted as a literal `true`.
+    let runtime_is_current = || {
+        data.voice_for(session.guild)
+            .is_some_and(|current| Arc::ptr_eq(&current, &runtime))
+    };
     let snapshot_for_gate = runtime.snapshot().await;
     if !voice_ux::playable(
-        true,
+        runtime_is_current(),
         snapshot_for_gate.media_enabled,
         snapshot_for_gate.phase == VoicePhase::Failed,
         snapshot_for_gate.start_pending,
     ) {
         let reason = voice_ux::unplayable_reason(
-            true,
+            runtime_is_current(),
             snapshot_for_gate.media_enabled,
             snapshot_for_gate.phase == VoicePhase::Failed,
             snapshot_for_gate.start_pending,
@@ -334,12 +341,31 @@ async fn music_act(
         return Ok(());
     }
     // Manager + presence gate (parity with /voice play).
-    let permissions = interaction
-        .member
-        .as_ref()
-        .and_then(|m| m.permissions)
-        .unwrap_or(Permissions::empty());
-    let manager = permissions.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR);
+    //
+    // Authorization is re-read over REST rather than taken from
+    // `interaction.member.permissions`: that snapshot is built when Discord creates the
+    // component payload, so a permission revoked between the click and this handler would
+    // still authorize the mutation. Unavailable REST fails CLOSED — an unanswerable
+    // permission question is not permission.
+    let guild = GuildId::new(runtime.config.guild_id);
+    let manager = match (
+        guild.member(&ctx.http, interaction.user.id).await,
+        guild.to_partial_guild(&ctx.http).await,
+    ) {
+        (Ok(member), Ok(partial)) => {
+            member.user.id == partial.owner_id
+                || member
+                    .roles
+                    .iter()
+                    .filter_map(|id| partial.roles.get(id))
+                    .chain(partial.roles.get(&serenity::all::RoleId::new(guild.get())))
+                    .any(|role| {
+                        role.permissions
+                            .intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR)
+                    })
+        }
+        _ => false,
+    };
     let present = cached_participants_from_serenity(
         ctx,
         GuildId::new(runtime.config.guild_id),
@@ -372,10 +398,24 @@ async fn music_act(
         }
     }
 
+    // Re-checked here, not just at the gate above: the REST authorization calls are
+    // awaits, and this is the last point before music state is mutated.
+    if !runtime_is_current() {
+        deny_message(
+            ctx,
+            interaction,
+            data,
+            &voice_ux::music_controls_unavailable_note("no voice session is prepared"),
+        )
+        .await;
+        return Ok(());
+    }
     let note = match act {
         Act::Stop => {
-            let was_active = runtime.music.is_output_active();
-            runtime.music.stop("stopped", PlaybackTermination::Stopped);
+            // One lock acquisition decides and cancels. Reading `is_output_active`
+            // first would let a concurrent `begin` land between the two, so Stop would
+            // cancel that playback while reporting that nothing was playing.
+            let was_active = runtime.music.stop("stopped", PlaybackTermination::Stopped);
             voice_ux::stop_note(was_active).to_owned()
         }
         Act::Play => {
