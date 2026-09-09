@@ -72,6 +72,7 @@ pub async fn run(mut session: OpenAiSession) {
             .actor_failed(
                 session.epoch,
                 "OpenAI Realtime stopped; audio processing is closed",
+                crate::observability::OperationalErrorCategory::Unavailable,
             )
             .await;
     }

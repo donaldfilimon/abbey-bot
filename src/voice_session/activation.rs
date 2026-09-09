@@ -368,7 +368,7 @@ impl VoiceRuntime {
         inner.participants = participants;
         inner.processing_mode = self.effective_mode();
         self.current_epoch.store(epoch, Ordering::SeqCst);
-        self.publish_inspect_phase(VoicePhase::Connecting, false);
+        self.publish_inspect_phase(VoicePhase::Connecting, false, None);
         epoch
     }
 
@@ -423,7 +423,7 @@ impl VoiceRuntime {
         inner.status = status;
         self.pending_start_generation.store(0, Ordering::SeqCst);
         self.media_epoch.store(epoch, Ordering::SeqCst);
-        self.publish_inspect_phase(VoicePhase::Listening, true);
+        self.publish_inspect_phase(VoicePhase::Listening, true, None);
         if let Some(evidence) = verification {
             self.record_verification_activation(evidence, inner.consent_epoch);
         }

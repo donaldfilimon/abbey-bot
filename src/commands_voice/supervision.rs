@@ -115,7 +115,10 @@ pub async fn autojoin_self_deafened(
         Err(error) => {
             let _ = manager.remove(guild_id).await;
             runtime
-                .fail_safe("Discord did not confirm safe no-audio presence")
+                .fail_safe(
+                    "Discord did not confirm safe no-audio presence",
+                    crate::observability::OperationalErrorCategory::Timeout,
+                )
                 .await;
             return Err(error);
         }
@@ -202,14 +205,37 @@ pub(super) async fn on_voice_state_update(
 
     if new.user_id == bot_id {
         let epoch = runtime.current_epoch();
+        let media_open = runtime.media_enabled(epoch);
+        // After enable_conversation, Discord can deliver an older muted payload
+        // for the same session. While the local unmute grace is armed, treat
+        // only those self flags as lag — server mute/deaf/suppress still stop.
+        let mut self_mute = new.self_mute;
+        let mut self_deaf = new.self_deaf;
+        if media_open
+            && (self_mute || self_deaf)
+            && !new.mute
+            && !new.deaf
+            && !new.suppress
+            && runtime.in_unmute_grace()
+        {
+            tracing::info!(
+                session = %new.session_id,
+                epoch,
+                self_mute,
+                self_deaf,
+                "ignoring stale self mute/deaf VoiceStateUpdate during unmute grace"
+            );
+            self_mute = false;
+            self_deaf = false;
+        }
         let impact = classify_bot_voice_payload(BotVoiceFacts {
             in_configured_channel: new.channel_id == Some(channel_id),
             mute: new.mute,
             deaf: new.deaf,
             suppress: new.suppress,
-            self_mute: new.self_mute,
-            self_deaf: new.self_deaf,
-            media_open: runtime.media_enabled(epoch),
+            self_mute,
+            self_deaf,
+            media_open,
         });
         let BotVoiceImpact::Adverse(reason) = impact else {
             return;
@@ -297,7 +323,12 @@ async fn stop_for_bot_payload(
         drop(transition);
         return;
     }
-    runtime.fail_safe(reason).await;
+    runtime
+        .fail_safe(
+            reason,
+            crate::observability::OperationalErrorCategory::Authorization,
+        )
+        .await;
     if let Some(manager) = manager {
         remove_call_for_consent(&manager, guild_id).await;
     }
@@ -426,7 +457,12 @@ pub(super) async fn on_voice_permissions_changed(
         drop(transition);
         return;
     }
-    runtime.fail_safe(reason).await;
+    runtime
+        .fail_safe(
+            reason,
+            crate::observability::OperationalErrorCategory::Authorization,
+        )
+        .await;
     if let Some(manager) = manager {
         remove_call_for_consent(&manager, guild_id).await;
     }

@@ -31,7 +31,9 @@
 //! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
 //!   admin-triggered, DAVE-capable Discord connection. `ABBEY_VOICE_AUTOJOIN=1`
 //!   provides persistent muted/self-deafened no-audio presence. Conversational
-//!   local or Realtime voice still requires `/voice join consent:true`.
+//!   local or Realtime voice still requires `/voice join consent:true`, unless
+//!   `ABBEY_VOICE_AUTO_LISTEN=1` and Local consent already covers every non-bot
+//!   member currently in the channel (then the consented join path runs).
 //! - `--voice-self-test OUTPUT.wav` — run local TTS → STT → canonical Abbey
 //!   reasoning → TTS without a Discord token, microphone, or call.
 //! - `--server-plan PLAN.toml --guild ID [--stage …] [--category …] [--apply]` —
