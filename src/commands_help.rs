@@ -676,8 +676,8 @@ pub async fn dispatch_component(
     )
     .await;
     let (body, rows) = match preparation {
-        Err(_) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, &error);
             return true;
         }
         Ok(HelpPreparation::Rejected(error)) => (error.message().to_string(), Vec::new()),

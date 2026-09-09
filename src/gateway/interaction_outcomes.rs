@@ -101,7 +101,12 @@ pub(crate) fn serenity_category(error: &serenity::Error) -> OperationalErrorCate
 /// are `#[non_exhaustive]` and cannot be constructed in a test.
 pub(crate) fn http_status_category(status: Option<u16>) -> OperationalErrorCategory {
     match status {
-        Some(401 | 403) => OperationalErrorCategory::Authorization,
+        // 401 is Abbey's own credentials, 403 is the caller's permissions. The
+        // distinction is the operator's next action, and `ProviderFailureKind` in
+        // `llm.rs` already splits them the same way — collapsing them here left
+        // `OperationalErrorCategory::Authentication` unreachable crate-wide.
+        Some(401) => OperationalErrorCategory::Authentication,
+        Some(403) => OperationalErrorCategory::Authorization,
         Some(429) => OperationalErrorCategory::Capacity,
         Some(status) if (500..600).contains(&status) => OperationalErrorCategory::Unavailable,
         Some(_) => OperationalErrorCategory::Protocol,
@@ -169,7 +174,7 @@ mod tests {
     fn discord_rest_status_selects_the_category() {
         assert_eq!(
             http_status_category(Some(401)),
-            OperationalErrorCategory::Authorization
+            OperationalErrorCategory::Authentication
         );
         assert_eq!(
             http_status_category(Some(403)),

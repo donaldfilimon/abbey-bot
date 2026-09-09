@@ -74,6 +74,35 @@ fn category_of(error: &Error) -> OperationalErrorCategory {
     )
 }
 
+/// Categorize a [`crate::music::gate`] refusal by re-deriving **which** condition failed,
+/// in `gate`'s own precedence order: guild, then manager, then presence, then host.
+///
+/// Order is the whole point. An earlier version tested `cfg!(target_os = "macos")` first,
+/// which is a *compile-time constant*: on any non-macOS build it is unconditionally true,
+/// so every refusal — including a pure "Manage Server" denial — was labelled
+/// `Configuration`. That is the same mislabelling this module exists to remove, so the
+/// mapping is a pure function over `gate`'s own inputs and is tested against all four.
+const fn gate_category(
+    configured_guild: bool,
+    manager: bool,
+    present: bool,
+    macos: bool,
+) -> OperationalErrorCategory {
+    if !configured_guild {
+        // A foreign guild is a misconfigured destination.
+        OperationalErrorCategory::Configuration
+    } else if !manager || !present {
+        // Manager and presence are decisions about the caller's standing.
+        OperationalErrorCategory::Authorization
+    } else if !macos {
+        // A non-macOS host is a missing backend.
+        OperationalErrorCategory::Configuration
+    } else {
+        // `gate` returned Ok; unreachable through `map_err`, and never a false outage.
+        OperationalErrorCategory::Internal
+    }
+}
+
 async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
     // `guild_only` on every caller makes a missing guild a framework defect, not a user error.
     let guild = ctx.guild_id().ok_or_else(|| {
@@ -120,16 +149,15 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
         cfg!(target_os = "macos"),
     )
     .map_err(|message| {
-        // A non-macOS host is a missing backend and a foreign guild is a misconfigured
-        // destination — both `Configuration`. What remains (manager, presence) is a
-        // decision about the caller's standing, which is `Authorization`.
-        let misconfigured = !cfg!(target_os = "macos") || guild.get() != runtime.config.guild_id;
-        let category = if misconfigured {
-            OperationalErrorCategory::Configuration
-        } else {
-            OperationalErrorCategory::Authorization
-        };
-        VoiceCommandError::boxed(category, message)
+        VoiceCommandError::boxed(
+            gate_category(
+                guild.get() == runtime.config.guild_id,
+                manager,
+                present,
+                cfg!(target_os = "macos"),
+            ),
+            message,
+        )
     })?;
     Ok(runtime)
 }
@@ -416,7 +444,7 @@ async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Er
     match delivered {
         Ok(_) => Ok(()),
         Err(error) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+            crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, &error);
             Err(error.into())
         }
     }
@@ -874,5 +902,35 @@ mod tests {
             // The user-facing copy must survive the typed wrapper unchanged.
             assert_eq!(error.to_string(), message);
         }
+    }
+
+    /// `gate` returns the FIRST failing reason, so the category must follow its order.
+    /// The `macos` column is what regressed: it is a compile-time constant, so testing it
+    /// first labelled a Manage-Server denial `Configuration` on every non-macOS build.
+    #[test]
+    fn gate_category_follows_the_gate_precedence_on_every_host() {
+        for macos in [true, false] {
+            // A foreign guild fails first and is a misconfigured destination.
+            assert_eq!(
+                gate_category(false, true, true, macos),
+                OperationalErrorCategory::Configuration
+            );
+            // Manager and presence are the caller's standing, on ANY host.
+            assert_eq!(
+                gate_category(true, false, true, macos),
+                OperationalErrorCategory::Authorization,
+                "a Manage Server denial is Authorization even when macos={macos}"
+            );
+            assert_eq!(
+                gate_category(true, true, false, macos),
+                OperationalErrorCategory::Authorization,
+                "a presence refusal is Authorization even when macos={macos}"
+            );
+        }
+        // Only once guild, manager and presence all pass does the host decide.
+        assert_eq!(
+            gate_category(true, true, true, false),
+            OperationalErrorCategory::Configuration
+        );
     }
 }

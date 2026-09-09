@@ -406,8 +406,8 @@ pub async fn dispatch_admin_component(
     )
     .await;
     let (mut session, action, current) = match preparation {
-        Err(_) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, &error);
             return true;
         }
         Ok(AdminPreparation::Rejected(error)) => {
