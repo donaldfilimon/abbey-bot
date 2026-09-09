@@ -114,11 +114,18 @@ impl MusicController {
         state.status = "playing".into();
         true
     }
-    pub fn stop(&self, status: &str, reason: PlaybackTermination) {
+    /// Cancel playback and report whether output **was** active, decided under the same
+    /// lock acquisition that performs the cancellation.
+    ///
+    /// Returning it matters: a caller that consults [`Self::is_output_active`] first takes
+    /// the lock twice, and a concurrent `begin` landing in that window is cancelled by
+    /// this call while the caller still reports that nothing was playing.
+    pub fn stop(&self, status: &str, reason: PlaybackTermination) -> bool {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let was_active = Self::active(&state);
         state.cancel.cancel();
         self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(old) = state.output.take() {
@@ -129,6 +136,7 @@ impl MusicController {
         }
         state.status = status.into();
         state.last_event = Some(SessionEvent::MusicTerminated { reason });
+        was_active
     }
     pub fn finish(&self, generation: u64, status: &str, reason: PlaybackTermination) {
         let mut state = self
@@ -201,6 +209,12 @@ impl MusicController {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::active(&state)
+    }
+
+    /// The single definition of "output is active", so [`Self::stop`] and
+    /// [`Self::is_output_active`] can never drift apart.
+    fn active(state: &State) -> bool {
         state.output.is_some() || state.status == "starting" || state.status == "playing"
     }
     pub fn status(&self) -> String {
