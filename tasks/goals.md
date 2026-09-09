@@ -1608,3 +1608,40 @@ qualification, provider qualification, live two-guild member/manager Discord
 checks, fresh unanimous consent, human-witnessed audible voice acceptance,
 Portal Activity URL map (P0), OAuth secret host (P2), Components V2
 (crate-blocked), and episode-gate human approval.
+
+#### Tip `b793af0` (#129) — LIVE AUTO_LISTEN pulse; #132 billing-locked; late-night `/goal continue` (2026-09-08/09 ~23:4x EDT)
+
+Executed as `/goal continue`. Tip of `origin/main` at this writing is
+`b793af0f46c82e4186a6622af00c01dd4af14e30` — `feat(premium): add pure premium_entitlements gate module (#129)` **MERGED** (merged ~20:51 EDT / 00:51 UTC). Hosted Rust on that tip (and on intervening #128/#130 pushes) still **fails in seconds with 0 steps** under the GitHub Actions billing lock — same class of failure as earlier #129 Gate notes. Do **not** treat those reds as code defects; unlock billing, then re-run Rust on tip + open PRs.
+
+**Open: #132** `fix/voice-failure-telemetry` — `feat(voice): AUTO_LISTEN + voice failure telemetry`. Devin Review SUCCESS. Hosted Gate (Ubuntu/macOS/Windows) all **FAILURE** with empty step lists (billing lock), not treated as a code bug. Do **not** merge #132 until hosted Rust Gate is green after billing unlock.
+
+**Live Abbey (claim-honest, this pass):** managed abbey-bot PID **87677**; build includes **AUTO_LISTEN**; Office Hours unmuted. This continue does not re-hash the binary or claim installed-artifact identity qualification.
+
+**Audio stack (claim-honest):**
+
+- `abbey-audio-tap` installed via launchd; `GET :8182/health` reports service `abbey-audio-tap`, idle, `ready:false` until capture.
+- `mlx-audio` on `:8181` healthy.
+
+**Music / Discord mirror:** Spotify host playing; music channel notified. Discord mirror still needs Donald to click `/voice play` — bots cannot invoke that slash command.
+
+**Activity / Portal:** GitHub Pages returns **200** with Abbey title. `discordsays` is still the Discord marketing shell. Portal Activity URL map remains **human-gated** (no agent-side flip).
+
+**Ops / skills (recorded, not repo-shipped here):** Live pulse routine prompt updated (smarter quiet-when-green). `donald-mode` skill updated under `~/.cursor/skills/donald-mode` (home skill path; not necessarily present in this repo).
+
+**Still Donald / still open (no status flips):**
+
+- **P0 — Portal Activity URL map:** PREFIX `/`, TARGET
+  `donaldfilimon.github.io/abbey-bot/activity` (no scheme, no `index.html`);
+  Desktop + Web; Office Hours rocket → Abbey `ready()` in the **discordsays**
+  iframe.
+- **Billing unlock:** https://github.com/settings/billing → unlock → re-run Rust on tip + #132 (and any other open Gate-red PRs).
+- **Discord `/voice play` click** for music mirror (human; bots cannot invoke).
+- **Human Play acceptance** still open.
+- Brand freeze unchanged. No invented metrics.
+
+Still not established, and unchanged: installed artifact identity
+qualification, provider qualification, live two-guild member/manager Discord
+checks, fresh unanimous consent, human-witnessed audible voice acceptance,
+Portal Activity URL map (P0), OAuth secret host (P2), Components V2
+(crate-blocked), and episode-gate human approval.
