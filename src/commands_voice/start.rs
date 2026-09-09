@@ -654,7 +654,7 @@ pub(super) async fn start_voice(
         runtime
             .fail_safe(
                 "required Discord voice permissions could not be verified before activation",
-                crate::observability::OperationalErrorCategory::Authorization,
+                error.category(),
             )
             .await;
         drop(transition);
@@ -703,7 +703,7 @@ pub(super) async fn start_voice(
         runtime
             .fail_safe(
                 "required Discord voice permissions changed during activation",
-                crate::observability::OperationalErrorCategory::Authorization,
+                error.category(),
             )
             .await;
         drop(transition);

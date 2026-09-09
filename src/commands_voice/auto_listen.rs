@@ -217,7 +217,7 @@ async fn activate_local_auto_listen(
     }
     if let Err(error) = verify_required_voice_permissions_live(ctx, guild_id, channel_id).await {
         drop(transition);
-        return Err(error);
+        return Err(error.into());
     }
     let manager = songbird::get(ctx)
         .await
@@ -452,11 +452,11 @@ async fn activate_local_auto_listen(
         runtime
             .fail_safe(
                 "required Discord voice permissions could not be verified before activation",
-                crate::observability::OperationalErrorCategory::Authorization,
+                error.category(),
             )
             .await;
         drop(transition);
-        return Err(error);
+        return Err(error.into());
     }
 
     if let Err(error) = enable_conversation(&call).await {
@@ -499,11 +499,11 @@ async fn activate_local_auto_listen(
         runtime
             .fail_safe(
                 "required Discord voice permissions changed during activation",
-                crate::observability::OperationalErrorCategory::Authorization,
+                error.category(),
             )
             .await;
         drop(transition);
-        return Err(error);
+        return Err(error.into());
     }
 
     let post_enable_participants = cached_participants_from_serenity(ctx, guild_id, channel_id)
