@@ -406,8 +406,8 @@ pub async fn dispatch_admin_component(
     )
     .await;
     let (mut session, action, current) = match preparation {
-        Err(_) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, &error);
             return true;
         }
         Ok(AdminPreparation::Rejected(error)) => {
@@ -552,8 +552,8 @@ pub async fn dispatch_admin_component(
                         .allowed_mentions(crate::gateway::no_mentions()),
                 )
                 .await;
-            if delivery.is_err() {
-                crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+            if let Err(error) = &delivery {
+                crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
             }
             return true;
         }
@@ -597,8 +597,8 @@ async fn edit_admin(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }
 

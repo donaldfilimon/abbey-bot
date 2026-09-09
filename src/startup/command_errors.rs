@@ -1,5 +1,5 @@
 //! Poise framework translation into fixed recovery guidance.
-use crate::gateway::interaction_outcomes::{delivery_failed, record_failure};
+use crate::gateway::interaction_outcomes::{delivery_failed_from, record_failure};
 use crate::observability::{EventCode, OperationalErrorCategory};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,8 +74,8 @@ pub(super) async fn handle(error: poise::FrameworkError<'_, crate::Data, crate::
                     .allowed_mentions(crate::gateway::no_mentions()),
             )
             .await;
-        if response.is_err() {
-            delivery_failed(&ctx.data().state);
+        if let Err(error) = &response {
+            delivery_failed_from(&ctx.data().state, error);
         }
     } else if let F::UnknownInteraction {
         ctx,
@@ -98,8 +98,8 @@ pub(super) async fn handle(error: poise::FrameworkError<'_, crate::Data, crate::
                 ),
             )
             .await;
-        if response.is_err() {
-            delivery_failed(&framework.user_data.state);
+        if let Err(error) = &response {
+            delivery_failed_from(&framework.user_data.state, error);
         }
     } else if let F::EventHandler { framework, .. }
     | F::NonCommandMessage { framework, .. }

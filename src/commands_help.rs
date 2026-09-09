@@ -676,8 +676,8 @@ pub async fn dispatch_component(
     )
     .await;
     let (body, rows) = match preparation {
-        Err(_) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, &error);
             return true;
         }
         Ok(HelpPreparation::Rejected(error)) => (error.message().to_string(), Vec::new()),
@@ -705,8 +705,8 @@ pub async fn dispatch_component(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     true
 }

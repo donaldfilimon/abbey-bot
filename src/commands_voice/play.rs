@@ -4,6 +4,7 @@ use crate::{
     Context, Error,
     audio_tap::{AudioTapClient, PcmBuffer, TapStream},
     gateway::shared::clamp_message,
+    observability::OperationalErrorCategory,
     player_control::{self, Player, Script},
     voice_session::{PlaybackTermination, VoicePhase, VoiceRuntime},
 };
@@ -27,17 +28,104 @@ impl From<MusicPlayer> for Player {
     }
 }
 
+/// A voice-command refusal that carries its own operational category.
+///
+/// `reply` records one closed operational event per failed voice command. Every failure
+/// used to be recorded as `Unavailable`, which asserts "the service is down" for
+/// permission refusals, misrouted channels and Discord REST faults alike — that blanket
+/// category is why the 14 live `command_failure` events on 2026-09-08 named no usable
+/// cause. Categories follow the vocabulary fixed in ce6c4f2: permission loss is
+/// `Authorization`, a missing backend or destination is `Configuration`, transport loss
+/// is `Unavailable`, waits are `Timeout`, and Discord refusals are `Protocol`.
+#[derive(Debug)]
+struct VoiceCommandError {
+    category: OperationalErrorCategory,
+    message: String,
+}
+
+impl VoiceCommandError {
+    fn new(category: OperationalErrorCategory, message: impl Into<String>) -> Self {
+        Self {
+            category,
+            message: message.into(),
+        }
+    }
+
+    fn boxed(category: OperationalErrorCategory, message: impl Into<String>) -> Error {
+        Box::new(Self::new(category, message))
+    }
+}
+
+impl std::fmt::Display for VoiceCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for VoiceCommandError {}
+
+/// Voice's own typed refusal takes precedence; everything else defers to the shared
+/// classifier in `gateway::interaction_outcomes`, so one vocabulary serves every adapter
+/// rather than one classifier per module.
+fn category_of(error: &Error) -> OperationalErrorCategory {
+    error.downcast_ref::<VoiceCommandError>().map_or_else(
+        || crate::gateway::interaction_outcomes::category_of(error),
+        |voice| voice.category,
+    )
+}
+
+/// Categorize a [`crate::music::gate`] refusal by re-deriving **which** condition failed,
+/// in `gate`'s own precedence order: guild, then manager, then presence, then host.
+///
+/// Order is the whole point. An earlier version tested `cfg!(target_os = "macos")` first,
+/// which is a *compile-time constant*: on any non-macOS build it is unconditionally true,
+/// so every refusal — including a pure "Manage Server" denial — was labelled
+/// `Configuration`. That is the same mislabelling this module exists to remove, so the
+/// mapping is a pure function over `gate`'s own inputs and is tested against all four.
+const fn gate_category(
+    configured_guild: bool,
+    manager: bool,
+    present: bool,
+    macos: bool,
+) -> OperationalErrorCategory {
+    if !configured_guild {
+        // A foreign guild is a misconfigured destination.
+        OperationalErrorCategory::Configuration
+    } else if !manager || !present {
+        // Manager and presence are decisions about the caller's standing.
+        OperationalErrorCategory::Authorization
+    } else if !macos {
+        // A non-macOS host is a missing backend.
+        OperationalErrorCategory::Configuration
+    } else {
+        // `gate` returned Ok; unreachable through `map_err`, and never a false outage.
+        OperationalErrorCategory::Internal
+    }
+}
+
 async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
-    let guild = ctx.guild_id().ok_or("This command requires a server.")?;
-    let runtime = ctx.data().voice_for(guild.get())
-        .ok_or("No voice destination is selected in this server. Join a voice channel and use `/voice join` first; listening still requires each participant's agreement.")?;
+    // `guild_only` on every caller makes a missing guild a framework defect, not a user error.
+    let guild = ctx.guild_id().ok_or_else(|| {
+        VoiceCommandError::boxed(
+            OperationalErrorCategory::Internal,
+            "This command requires a server.",
+        )
+    })?;
+    let runtime = ctx.data().voice_for(guild.get()).ok_or_else(|| {
+        VoiceCommandError::boxed(
+            OperationalErrorCategory::Configuration,
+            "No voice destination is selected in this server. Join a voice channel and use `/voice join` first; listening still requires each participant's agreement.",
+        )
+    })?;
     crate::music::command_channel_gate(
         runtime.config.guild_id,
         runtime.config.music_command_channel_id,
         ctx.guild_id().map(|guild| guild.get()),
         ctx.channel_id().get(),
-    )?;
-    let guild = ctx.guild_id().ok_or("This command requires a server.")?;
+    )
+    .map_err(|message| {
+        VoiceCommandError::boxed(OperationalErrorCategory::Configuration, message)
+    })?;
     let member = guild.member(ctx.http(), ctx.author().id).await?;
     let partial = guild.to_partial_guild(ctx.http()).await?;
     let manager = member.user.id == partial.owner_id
@@ -52,12 +140,25 @@ async fn authorized(ctx: Context<'_>) -> Result<Arc<VoiceRuntime>, Error> {
             });
     let present = super::cached_participants(ctx, guild, ChannelId::new(runtime.config.channel_id))
         .is_ok_and(|(present, _)| present);
+    // Manager/presence refusals are permission decisions; a non-macOS host is a missing
+    // backend. `gate` returns the first failing reason, so categorize in the same order.
     crate::music::gate(
         guild.get() == runtime.config.guild_id,
         manager,
         present,
         cfg!(target_os = "macos"),
-    )?;
+    )
+    .map_err(|message| {
+        VoiceCommandError::boxed(
+            gate_category(
+                guild.get() == runtime.config.guild_id,
+                manager,
+                present,
+                cfg!(target_os = "macos"),
+            ),
+            message,
+        )
+    })?;
     Ok(runtime)
 }
 
@@ -325,11 +426,11 @@ pub async fn voice_volume(
     reply(ctx, result).await
 }
 async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Error> {
-    if result.is_err() {
+    if let Err(error) = result.as_ref() {
         crate::gateway::interaction_outcomes::record_failure(
             &ctx.data().state,
             crate::observability::EventCode::CommandFailure,
-            crate::observability::OperationalErrorCategory::Unavailable,
+            category_of(error),
         );
     }
     let delivered = ctx
@@ -343,7 +444,7 @@ async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Er
     match delivered {
         Ok(_) => Ok(()),
         Err(error) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+            crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, &error);
             Err(error.into())
         }
     }
@@ -504,8 +605,8 @@ async fn start_inner(
                         interaction.create_followup(&context.http, builder).await
                     }
                 };
-                if delivered.is_err() {
-                    crate::gateway::interaction_outcomes::delivery_failed(&state);
+                if let Err(error) = &delivered {
+                    crate::gateway::interaction_outcomes::delivery_failed_from(&state, error);
                 }
             }
         }
@@ -775,5 +876,61 @@ mod tests {
         );
         assert!(!runtime.snapshot().await.media_enabled);
         server.await.unwrap();
+    }
+
+    /// Every failed voice command used to record `Unavailable`, which asserted an outage
+    /// for permission refusals and misconfiguration alike. Pin each cause to its own
+    /// category so a live failure names something actionable.
+    #[test]
+    fn voice_command_errors_carry_their_own_category() {
+        for (category, message) in [
+            (
+                OperationalErrorCategory::Authorization,
+                "Music controls require Manage Server.",
+            ),
+            (
+                OperationalErrorCategory::Configuration,
+                "Local music capture requires a macOS host.",
+            ),
+            (
+                OperationalErrorCategory::Internal,
+                "This command requires a server.",
+            ),
+        ] {
+            let error = VoiceCommandError::boxed(category, message);
+            assert_eq!(category_of(&error), category);
+            // The user-facing copy must survive the typed wrapper unchanged.
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
+    /// `gate` returns the FIRST failing reason, so the category must follow its order.
+    /// The `macos` column is what regressed: it is a compile-time constant, so testing it
+    /// first labelled a Manage-Server denial `Configuration` on every non-macOS build.
+    #[test]
+    fn gate_category_follows_the_gate_precedence_on_every_host() {
+        for macos in [true, false] {
+            // A foreign guild fails first and is a misconfigured destination.
+            assert_eq!(
+                gate_category(false, true, true, macos),
+                OperationalErrorCategory::Configuration
+            );
+            // Manager and presence are the caller's standing, on ANY host.
+            assert_eq!(
+                gate_category(true, false, true, macos),
+                OperationalErrorCategory::Authorization,
+                "a Manage Server denial is Authorization even when macos={macos}"
+            );
+            assert_eq!(
+                gate_category(true, true, false, macos),
+                OperationalErrorCategory::Authorization,
+                "a presence refusal is Authorization even when macos={macos}"
+            );
+        }
+        // Only once guild, manager and presence all pass does the host decide.
+        assert_eq!(
+            gate_category(true, true, true, false),
+            OperationalErrorCategory::Configuration
+        );
     }
 }
