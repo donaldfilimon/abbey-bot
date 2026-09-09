@@ -381,6 +381,15 @@ pub async fn dispatch_admin_component(
                 runtime::now(),
             )?;
             let action = match &interaction.data.kind {
+                // `SelectPage` is a String Select sentinel: it only becomes a concrete
+                // action once `resolve_select_action` reads the chosen option value. A
+                // button carries no values, so a `SelectPage` reaching this arm is
+                // malformed by construction and must not pass through unresolved.
+                ComponentInteractionDataKind::Button
+                    if matches!(action, crate::admin_dashboard::AdminAction::SelectPage) =>
+                {
+                    return Err(crate::admin_dashboard::Rejection::Malformed);
+                }
                 ComponentInteractionDataKind::Button => action,
                 ComponentInteractionDataKind::StringSelect { values } => {
                     crate::admin_dashboard::resolve_select_action(action, values)?
