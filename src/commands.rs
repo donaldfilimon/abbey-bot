@@ -262,8 +262,8 @@ pub async fn ask(
         ctx.say(clamp_message(reply.text)),
     )
     .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, error);
     }
     let (_, memory) = delivery?;
     crate::memory_gate::deliver_notices(
@@ -569,8 +569,8 @@ pub async fn ask_context_menu(
         ctx.say(clamp_message(reply.text)),
     )
     .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&ctx.data().state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, error);
     }
     let (_, memory) = delivery?;
     crate::memory_gate::deliver_notices(

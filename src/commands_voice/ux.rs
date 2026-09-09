@@ -228,8 +228,8 @@ async fn confirm_leave(
     );
     let (ack_result, leave_result) =
         super::acknowledgement::acknowledge_with_transition(closed, ack, leave_work).await;
-    if ack_result.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &ack_result {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     let content = if leave_result.is_ok() {
         let _ = data.state.voice_ux.set_phase(&session.sid, Phase::Left);
@@ -568,8 +568,8 @@ async fn update_message(
             ),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }
 
@@ -589,8 +589,8 @@ async fn edit_deferred(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }
 
@@ -621,7 +621,7 @@ async fn deny_message(
             ),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }
