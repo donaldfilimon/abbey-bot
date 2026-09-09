@@ -9,6 +9,13 @@ pub(super) async fn run(
 ) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(if managed.is_some() {
+            // Managed (launchd) runs emit no tracing at all: the closed
+            // operational events in `observability` are the sole record, and
+            // the agent routes stdout/stderr to /dev/null anyway. `RUST_LOG`
+            // in deploy/com.donaldfilimon.abbey-bot.plist is therefore inert
+            // for this path — raising it will not produce diagnostics, so a
+            // managed failure must carry its cause as an
+            // `OperationalErrorCategory` on the event instead.
             tracing_subscriber::EnvFilter::new("off")
         } else {
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -339,12 +346,43 @@ pub(super) async fn run(
                 if voice_autojoin {
                     match setup_voice_runtime.as_ref() {
                         Some(runtime) => {
-                            commands_voice::autojoin_self_deafened(
+                            // Prefer a single consented Local join when AUTO_LISTEN is on
+                            // and the ledger already covers the room. That avoids the
+                            // muted-autojoin → leave → decode-rejoin race that can surface
+                            // a stale disconnect VoiceStateUpdate after media opens.
+                            match commands_voice::try_auto_listen_at_startup(
                                 ctx,
                                 std::sync::Arc::clone(runtime),
+                                std::sync::Arc::clone(&shell_state),
                             )
                             .await
-                            .map_err(runtime::StartupError)?;
+                            {
+                                Ok(commands_voice::AutoListenStartup::Listening) => {
+                                    tracing::info!(
+                                        "ABBEY_VOICE_AUTO_LISTEN started consented Local listening without muted autojoin bounce"
+                                    );
+                                }
+                                Ok(commands_voice::AutoListenStartup::MutedPresence) => {
+                                    commands_voice::autojoin_self_deafened(
+                                        ctx,
+                                        std::sync::Arc::clone(runtime),
+                                    )
+                                    .await
+                                    .map_err(runtime::StartupError)?;
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        %error,
+                                        "ABBEY_VOICE_AUTO_LISTEN failed; falling back to muted/self-deafened autojoin"
+                                    );
+                                    commands_voice::autojoin_self_deafened(
+                                        ctx,
+                                        std::sync::Arc::clone(runtime),
+                                    )
+                                    .await
+                                    .map_err(runtime::StartupError)?;
+                                }
+                            }
                         }
                         None => {
                             return Err(runtime::StartupError(

@@ -679,7 +679,15 @@ async fn inspect_voice_actor_failure_and_consent_withdrawal_publish_safe_states(
     let first_start = runtime.reserve_start();
     let first_epoch = runtime.begin(HashSet::from([7])).await;
     assert!(runtime.activate(first_epoch, first_start, "active").await);
-    assert!(runtime.actor_failed(first_epoch, "provider failed").await);
+    assert!(
+        runtime
+            .actor_failed(
+                first_epoch,
+                "provider failed",
+                crate::observability::OperationalErrorCategory::Unavailable,
+            )
+            .await
+    );
     assert_eq!(inspect_state(&inspect, 41), VoiceInspectState::Paused);
 
     let second_start = runtime.reserve_start();
@@ -1410,4 +1418,69 @@ async fn stale_music_completion_cannot_stop_a_replacement() {
         Some(crate::player_control::Player::Music)
     );
     assert!(!runtime.snapshot().await.media_enabled);
+}
+
+#[test]
+fn presence_only_is_degraded_and_never_reads_as_listening() {
+    // Managed runs disable tracing (`EnvFilter::new("off")`), so this closed
+    // event is the only operational record of voice state. Presence-only is
+    // connected but deaf and mute; Listening is the only phase that can hear a
+    // participant. Collapsing both into `Ready` made "is voice actually on?"
+    // unanswerable from the event log, which is how a real failure went
+    // undiagnosed.
+    use crate::observability::EventOutcome;
+    assert_eq!(
+        phase_outcome(VoicePhase::PresenceOnly),
+        EventOutcome::Degraded
+    );
+    assert_eq!(phase_outcome(VoicePhase::Listening), EventOutcome::Ready);
+    assert_ne!(
+        phase_outcome(VoicePhase::PresenceOnly),
+        phase_outcome(VoicePhase::Listening)
+    );
+}
+
+#[test]
+fn every_voice_phase_maps_to_its_own_closed_outcome() {
+    use crate::observability::EventOutcome;
+    for (phase, expected) in [
+        (VoicePhase::Disconnected, EventOutcome::Stopped),
+        (VoicePhase::PresenceOnly, EventOutcome::Degraded),
+        (VoicePhase::Listening, EventOutcome::Ready),
+        (VoicePhase::Connecting, EventOutcome::Started),
+        (VoicePhase::Thinking, EventOutcome::Started),
+        (VoicePhase::Speaking, EventOutcome::Started),
+        (VoicePhase::AwaitingConsent, EventOutcome::Skipped),
+        (VoicePhase::Failed, EventOutcome::Failed),
+    ] {
+        assert_eq!(phase_outcome(phase), expected, "phase {phase:?}");
+    }
+}
+
+#[test]
+fn only_a_failure_carries_an_error_category() {
+    // A bare `failed` with no category is what left a live voice failure
+    // undiagnosable: the reason existed at every call site and was dropped
+    // before telemetry. Equally, a non-failure phase must never imply a fault.
+    use crate::observability::OperationalErrorCategory;
+    assert_eq!(
+        phase_error(VoicePhase::Failed, Some(OperationalErrorCategory::Timeout)),
+        Some(OperationalErrorCategory::Timeout)
+    );
+    for phase in [
+        VoicePhase::Disconnected,
+        VoicePhase::PresenceOnly,
+        VoicePhase::Listening,
+        VoicePhase::Connecting,
+        VoicePhase::Thinking,
+        VoicePhase::Speaking,
+        VoicePhase::AwaitingConsent,
+    ] {
+        assert_eq!(
+            phase_error(phase, Some(OperationalErrorCategory::Timeout)),
+            None,
+            "phase {phase:?} must not report a fault"
+        );
+    }
+    assert_eq!(phase_error(VoicePhase::Failed, None), None);
 }
