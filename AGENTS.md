@@ -243,3 +243,14 @@ section it ports. Read that header before the code.
 - Components V2 is blocked on serenity 0.12.5 alone; ship classic Action Rows / buttons / selects / modals only. poise is not part of the blocker: `poise 0.7.0` exists but requires `serenity ^0.12.5`, and `cargo tree --locked --offline -i rustls@0.22.4` shows the accepted TLS debt also descends from serenity alone (`serenity 0.12.5 -> tokio-tungstenite 0.21 -> tokio-rustls 0.25 -> rustls 0.22.4`). Bumping poise unlocks neither; only a Serenity release does.
 - `/forum draft|post|perms` shipped for `#help` (`src/forum.rs`, `src/commands_forum.rs`).
 - Live `/voice` 8/8 acceptance still requires Donald in the Office Hours VC on the launchd-locked process.
+- A bare `public_updates_channel_id` PATCH is **silently ignored** by the Discord API: it
+  returns success and changes nothing. Send `features` and `rules_channel_id` in the same
+  PATCH for it to take effect. This cost a debugging session that read the 200 as proof.
+- The MLAI guild blueprint is **fully applied**, so every `--server-plan` stage now re-diffs
+  to `changes (0)`. A dry run that shows changes means the guild drifted, not that work is
+  pending. `--apply` is additive-only and has no delete variant; role-permission and
+  role-order decisions stay manual.
+- **Two** launchd agents are live, not one: `com.donaldfilimon.abbey-bot` and
+  `com.donaldfilimon.abbey-wdbx-gateway` (`launchctl list | grep abbey`). The gateway must be
+  up before the bot is restarted. Both carry `KeepAlive`, so a plain `kill` respawns them
+  rather than stopping them. Do not stop, unload, or reinstall either on your own initiative.
