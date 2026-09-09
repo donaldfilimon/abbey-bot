@@ -115,7 +115,10 @@ pub async fn autojoin_self_deafened(
         Err(error) => {
             let _ = manager.remove(guild_id).await;
             runtime
-                .fail_safe("Discord did not confirm safe no-audio presence")
+                .fail_safe(
+                    "Discord did not confirm safe no-audio presence",
+                    crate::observability::OperationalErrorCategory::Timeout,
+                )
                 .await;
             return Err(error);
         }
@@ -297,7 +300,12 @@ async fn stop_for_bot_payload(
         drop(transition);
         return;
     }
-    runtime.fail_safe(reason).await;
+    runtime
+        .fail_safe(
+            reason,
+            crate::observability::OperationalErrorCategory::Authorization,
+        )
+        .await;
     if let Some(manager) = manager {
         remove_call_for_consent(&manager, guild_id).await;
     }
@@ -426,7 +434,12 @@ pub(super) async fn on_voice_permissions_changed(
         drop(transition);
         return;
     }
-    runtime.fail_safe(reason).await;
+    runtime
+        .fail_safe(
+            reason,
+            crate::observability::OperationalErrorCategory::Authorization,
+        )
+        .await;
     if let Some(manager) = manager {
         remove_call_for_consent(&manager, guild_id).await;
     }

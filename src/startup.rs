@@ -9,6 +9,13 @@ pub(super) async fn run(
 ) -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_env_filter(if managed.is_some() {
+            // Managed (launchd) runs emit no tracing at all: the closed
+            // operational events in `observability` are the sole record, and
+            // the agent routes stdout/stderr to /dev/null anyway. `RUST_LOG`
+            // in deploy/com.donaldfilimon.abbey-bot.plist is therefore inert
+            // for this path — raising it will not produce diagnostics, so a
+            // managed failure must carry its cause as an
+            // `OperationalErrorCategory` on the event instead.
             tracing_subscriber::EnvFilter::new("off")
         } else {
             tracing_subscriber::EnvFilter::try_from_default_env()
