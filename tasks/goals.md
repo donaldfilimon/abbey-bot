@@ -1774,3 +1774,16 @@ carries no `Co-Authored-By` trailer. Rule that follows: when attributing a ref m
 `~/.openclaw`, …), not only Claude's, and check `ps` for `--yolo`/goal loops rooted at `~`.
 Practical state: main is `540d54c` = origin, tree clean; the Grok loop and this session are
 now writing the same files, which is the hazard to resolve, not the history.
+
+**Review of the foreign docs commit `4f70323` (`/goal continue`, 2026-09-16 00:2x EDT).**
+Reviewed claim by claim against primary sources rather than trusting a commit that no
+session of Donald's reviewed: the three `Gate` lanes are `ubuntu-24.04` / `macos-15` /
+`windows-2025` in `.github/workflows` (`runs-on: ${{ matrix.os }}`); `main`'s run for
+`8dbdb18` (id 35053305472, 2026-09-16 03:50:21Z) has all three jobs `failure` with
+`steps=0`; `.gitignore` line 22 is `/abbey-bot-wt-*`; no `../abbey-bot-wt-*` directory
+exists, so removing "where the live ones sit" was a correction, not a loss; the twin
+mirror is intact. **Accurate; no follow-up commit needed.** Grok loop PID 49762 still
+active (last inference 00:25 EDT); its plan targets `project-registry`, `~/CLAUDE.md`
+and `~/tasks/goals.md` next, none of which this session will touch while it runs.
+Open goals unchanged: all 42 `tasks/todo.md` items remain human-, deployment-,
+platform- or crate-gated; nothing source-actionable was found this pass.
