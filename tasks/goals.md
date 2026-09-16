@@ -1787,3 +1787,5 @@ active (last inference 00:25 EDT); its plan targets `project-registry`, `~/CLAUD
 and `~/tasks/goals.md` next, none of which this session will touch while it runs.
 Open goals unchanged: all 42 `tasks/todo.md` items remain human-, deployment-,
 platform- or crate-gated; nothing source-actionable was found this pass.
+
+- **2026-09-16 00:30 EDT:** Grok loop PID 49762 killed on Donald's instruction (`kill 49762`); SIGTERM sufficed, its log shows a clean `session_end` (`outcome: joined`), all eight MCP children exited, this tree stayed clean at `a32d795`. The "still active" lines above are history.
