@@ -146,10 +146,14 @@ section it ports. Read that header before the code.
   sufficient: it matches `use` lines only, so a module reaching serenity through
   a path-qualified attribute never appears in it — `voice_session/playback.rs`
   is listed as shell above and is invisible to that grep because it writes
-  `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds ten
-  files, every one of them either test-only or already inside a module listed
-  above — so the wide pattern confirms there is no leak today, at the cost of
-  noise. Read the new module either way.
+  `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds a
+  further set of files — re-derive it with
+  `comm -13 <(narrow|sort) <(wide|sort)` rather than trusting a count here, which
+  has already gone stale once (it read "ten" while the answer was eleven on
+  2026-09-16). What matters is not the number but that every one of them is
+  either test-only or already inside a module listed above, which is what makes
+  the wide pattern a no-leak confirmation at the cost of noise. Read the new
+  module either way.
 - **Inbound path.** A native event becomes a `platform::SocialEvent`; `pipeline`
   decides *whether* Abbey speaks (triage, intent, 18-dimension state encoding,
   the guild's policy, cooldown, hourly budget) and `generation` decides *how*

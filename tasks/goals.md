@@ -1838,3 +1838,38 @@ identity | **PENDING** | ... exact-head CI required before deployment") was **le
 untouched** — upgrading a status table on the strength of a runtime-only chain would be
 exactly the Current-laundering the iron rules forbid. The row is imprecise rather than
 wrong; this entry is the precise version.
+
+**`/goal continue` 2026-09-16 00:4x EDT — two ungated invariants checked; one held, one was wrong.**
+Both are rules `AGENTS.md` states but **no gate enforces**, so nothing would have caught drift.
+
+**1. Shell-versus-pure boundary: HOLDS.** `grep -rlE '^\s*use (serenity|poise)' src/` returns
+30 files, every one inside the documented shell set (`gateway/`, `commands*`, `forum.rs`,
+`startup`, `service/framework.rs`, `voice_session/playback.rs`, `server/{run,discord}.rs`,
+`main.rs`) plus exactly the four documented test-only files — that four is still exact. The
+wide pattern `\b(serenity|poise)::` adds 11 more, each re-classified by hand: 7 in-module,
+4 test-only, **zero outside the allowed set**. No leak. `voice_session/playback.rs` is
+confirmed invisible to the narrow grep for the stated reason — it carries
+`#[serenity::async_trait]` at line 50 and no `use serenity` line.
+
+**2. `AGENTS.md`'s own count was stale, and `.cursor/agents/abbey-reviewer.md` was wrong.**
+- The twins said the wide pattern "adds ten files"; it adds **eleven**. Replaced the
+  hardcoded number with a re-derivation (`comm -13 <(narrow) <(wide)`) and a note that the
+  count already went stale once — the same brittle-count anti-pattern `main` fixed in
+  `docs/superpowers/README.md` when it replaced "(6 plans)" with "list not exhaustive".
+  Edited in **both** twins together; `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)`
+  clean, which is the rule with no gate behind it.
+- `.cursor/agents/abbey-reviewer.md` carried the drift `AGENTS.md` names, still unfixed:
+  it described **`gateway.rs`**, a file that does not exist (it is `gateway/` with
+  `discord.rs`, `interaction_outcomes.rs`, `mod.rs`, `shared.rs`, `slack.rs`, `telegram.rs`),
+  and a **"Discord Shell (5 files)"** where 33 non-test files import serenity/poise. Fixed
+  both, and three further inaccuracies found while verifying: its **"Gate Checklist" listed
+  four cargo commands and never mentioned `./check.sh`**, so a reviewer following it would
+  skip the deployment/privacy/Pages/contracts stages entirely (the real gate has six); it
+  said "property test" where there is no `proptest`/`quickcheck` in `Cargo.toml`; and it
+  omitted the gated 1,000/800-line module-size rule. Added a closing clause that `AGENTS.md`
+  wins on conflict and must be changed here in the same commit. Its `Zig-compatible wyhash`
+  and `WDBX v1` claims were **checked and left alone** — both match the module headers.
+
+Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0,
+`check-rust-module-size` 0, `check-abbey-contracts` 0 (81 artifacts, digest `72e241e3…`).
+No Rust changed, so the compile stages were not re-run for this docs-only slice.
