@@ -122,7 +122,6 @@ mod voice;
 mod voice_consent;
 mod voice_consent_store;
 mod voice_local;
-mod voice_openai;
 mod voice_registry;
 mod voice_self_test;
 mod voice_session;
