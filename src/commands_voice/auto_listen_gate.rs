@@ -38,12 +38,14 @@ pub(crate) fn decide_auto_listen(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // decision helper for the live oh-autolisten watcher; not yet wired
 pub(crate) enum WhilePresentGate {
     Skip,
     RemainPresent,
     Activate,
 }
 
+#[allow(dead_code)] // see WhilePresentGate
 pub(crate) fn while_present_gate(
     phase: VoicePhase,
     decision: &AutoListenDecision,

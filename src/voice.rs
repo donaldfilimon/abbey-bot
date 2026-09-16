@@ -164,6 +164,7 @@ struct VoiceEnv {
     channel: Option<String>,
     music_command_channel: Option<String>,
     mode: Option<String>,
+    #[allow(dead_code)] // retired Realtime env — still loaded so old env files are harmless
     openai_key: Option<String>,
     #[allow(dead_code)] // retired Realtime env — still loaded so old env files are harmless
     openai_endpoint: Option<String>,
@@ -660,10 +661,15 @@ fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String,
     }
 }
 
+// Retired from the live path by the local-only backends change: mode selection
+// refuses openai before build_openai runs. Kept as defense-in-depth against a
+// future caller reintroducing a remote endpoint, and pinned by voice/tests.rs.
+#[allow(dead_code)]
 fn validate_openai_endpoint(raw: &str) -> Result<(), String> {
     validate_openai_endpoint_for_build(raw, cfg!(test))
 }
 
+#[allow(dead_code)]
 fn validate_openai_endpoint_for_build(
     raw: &str,
     allow_loopback_test_double: bool,
