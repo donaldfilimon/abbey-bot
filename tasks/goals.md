@@ -36,6 +36,7 @@ status: done
 - **2026-09-16 continue (help+guidance embeds):** `/help` + ephemeral command-error guidance use `abbey_reply_embed` (same brand/footer as chat/music). Tip hygiene after `6604593`. Gate UNMEASURABLE.
 - **2026-09-16 continue (#154):** Local `./check.sh` green again — fmt after #153 + consent-notice test pins Local stop route / OpenAi refusal without stop route. Merged `53b69cc`. Gate UNMEASURABLE.
 - **2026-09-16 continue (#156):** Abbey `ask.rs` local-first + consent + lane handoffs (Aviva/Abi contracts untouched). Merged `289c5e5`; Mac redeploy verified. Gate UNMEASURABLE.
+- **2026-09-16 continue-with-all (#162+#163):** Abbey `ask.rs` system-prompt quality raised and merged `#162` → tip `a0ad563`; Mac managed redeploy verified (PID 32972, voice local/`af_heart`, mlx/tap 200). `#163` docs monetization Guild Pro + Quesar pilot merged → checkout `827f01f` (docs-only; no binary redeploy). Hosted Gate = UNMEASURABLE. Still Donald-gated: full-duplex Portal/`/voice play`, billing unlock, empty New Bot sidebar rows, `/admin brain` post-load for `step_count`.
 - **2026-09-16 continue (embed+music UX):** Shared `abbey_reply_embed` on send+edit; clearer `/voice play|pause|resume-music|stop-music|volume` docs + catalog + ephemeral music embeds. Music ≠ listen consent. Local check/catalog green; Gate UNMEASURABLE.
 - **2026-09-16 /goal continue:** Dead `voice_openai` actor removed (`feat/drop-dead-voice-openai`). `OpenAiSession` was import-only / never constructed; live start already fail-closed on Realtime. `VoiceMode::OpenAi` kept inert for consent/tests. Aftercare: `abbey-state.json.bak-*` already chmod 600. Mac redeploy only if binary behavior changed (dead-code drop → yes, rebuild).
 - **2026-09-16:** #145 merged (`e1ccc5b`). Chat replies use Abbey embed; capability guidance points at `/help`, permission-mirrored `/server …`, `/voice …`. Live Mac managed redeploy verified (PID fresh, mlx/tap 200, 24 guild cmds). Hosted Gate empty-step = UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock. NL auto-execute of `/server` from chat not shipped (hint-via-guidance only).
@@ -2011,3 +2012,26 @@ agents loaded. `main` does **not** contain #154, and at `cb5b6d1` is still red: 
 --check` exit 1 and `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`
 fails. #154 still merges cleanly onto it (`git merge-tree`); its runtime delta is nil (fmt,
 a test, docs), so the running binary loses nothing by lacking it.
+
+**`/goal continue` 2026-09-16 13:2x EDT — `main` re-measured GREEN at `54e36ce`; the
+"red at fmt until #154 merges" line above is history.** #154 merged at 08:44Z and #155–#164
+followed (#164, the Abbey/Aviva/Abi `ask.rs` contract upgrade, at 14:16Z = 10:16 EDT); 0 open
+PRs after `git fetch --prune`. Full `./check.sh` on the clean `54e36ce` tree, exit code read
+from the log (`CHECK_SH_EXIT: 0`, 13:22:20–13:26:43 EDT): fmt, 11 shell scripts + 6 plists,
+every Python gate and twin, audio-tap Swift, clippy `-D warnings`, **1,306 passed / 0 failed /
+5 ignored**, release build. **Deployed identity proven:** `target/release/abbey-bot` from this
+gate and `~/.local/libexec/abbey-bot/abbey-bot` (installed 10:19 EDT, three minutes after #164
+merged) share SHA-256 `3c017f0c…3384506`; the launchd service runs that file as PID 31586
+(started 10:19:57), `readiness.json` reads `discord: ready`, `scheduler: running`, and all five
+`com.donaldfilimon.abbey-*` agents are loaded (`abbey-oh-autolisten` still `-15`, measured, not
+diagnosed). So the running bot is byte-identical to a gate-green build of the current `main`;
+no redeploy is owed. Hosted CI remains UNMEASURABLE (billing lock). This session also
+corrected three drifted claims in `CLAUDE.md`/`AGENTS.md` (gate now globs shell/plist but
+still names Python gates; `launch.sh`/`run_bot.sh` are untracked; source count), mirror
+verified, uncommitted at the time of writing.
+Named stop for this `continue`: every remaining open item in `tasks/todo.md` and in the five
+`in_progress` sections is human-gated (Office Hours live acceptance, a distinct human episode
+approver, Telegram/Slack tokens, Portal Activity map, billing unlock, `/admin brain`
+post-load) or upstream-blocked — crates.io `serenity` `max_stable_version` re-measured
+**0.12.5** at 13:2x EDT (unchanged since 2025-12-20), so Components V2 and the four accepted
+`rustls-webpki` records stay blocked. No status flips.
