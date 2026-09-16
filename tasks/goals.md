@@ -303,6 +303,18 @@ status: in_progress
   **Not claimed:** live post-deploy `step_count` growth, OverBudget, or act observation —
   status stays `in_progress`. Suggestion only: clear or lower `epsilon_override` after warm-up
   if exploration should decay.
+- **2026-09-16 13:3x EDT — live post-deploy `step_count` growth MEASURED; goal stays
+  `in_progress`.** Read-only from the deployed service's persisted state
+  (`~/.local/share/abbey-bot/abbey-state.json`, numeric fields only, no content), comparing
+  the three `.bak-*` snapshots from 02:58–03:04 (before `35a6f04` shipped) with the live
+  document at 13:29:58 (PID 31586, binary `3c017f0c…` built from `54e36ce`, which contains
+  `35a6f04`). MLAI guild (`discord:1275617641620443146`, the only `learning_enabled` scope):
+  `step_count` **0 → 12**, `experiences` 9 → 10, persisted `epsilon` 0.5 → 0.4708 while the
+  guild's `epsilon_override` is still 0.5; `pending_rewards` 0, `events` 48 → 55. Ten
+  experiences is above `MIN_REPLAY_FOR_LEARN` (8) and below `BATCH_SIZE` (64), so this is
+  exactly the sparse-buffer case the fix targeted, and the 03:1x bullet's "not claimed"
+  line is now measured. **Still not claimed:** an `OverBudget` refusal and a witnessed
+  `/admin act` decision; `/admin brain` post-load remains Donald's live check.
 
 ## Reply quality & speed (sub-project 1 of "improve all")
 status: done
@@ -1067,6 +1079,31 @@ status: in_progress
   Still proposal-only; human approval is a distinct step the bot cannot supply.
   This `/goal continue` records the live Action Row UX redeploy elsewhere and
   does not re-probe the episode gateway or claim a new WDBX transaction.
+- **2026-09-16 13:3x–13:4x EDT — acceptance harness re-run against a SCRATCH gateway with
+  today's binaries; one stale assertion fixed; goal stays `in_progress`.** Setup, all under
+  the session scratchpad and removed afterwards: the installed `abi-wdbx-gateway` (06:22
+  build) on `127.0.0.1:50061/50062`, an empty store, a fresh random token, a copy of the live
+  `episode-policy.json`, and a copy of `episode-gate-acceptance.json` pointed at that port —
+  the shipped acceptance config's endpoint is the LIVE gateway's `50051`, so running the test
+  as-is would have charged the production store; its mtime was checked unchanged before and
+  after. First run: steps 1–4 appended (4 scratch records, same sizes as 2026-09-06) and the
+  unlisted scope was refused with nothing stored, but the test panicked at its step-5
+  assertion: since `34f9e95` (09-06 10:03, "deliver terminal outcomes per turn")
+  `admit_fact` renders `Decision::Rejected.message()` ("Memory: the gate rejected the
+  proposal…"), while the `#[ignore]` test still expected the older `refusal()` string, which
+  only `admit_forget` uses now. A never-run test cannot go red, which is how a 10-day-old
+  wording change hid here. Fix in `src/episode_gate/acceptance.rs`: assert equality with
+  `memory_gate::Decision::Rejected.message()` so the next rewording cannot desync, comment
+  corrected (the store's reason label goes to the log, not the person). Second run:
+  `acceptance ok`, counters appended 4 / rejected 1 / unavailable 0 / ungated_forgets 0,
+  covered_guilds 2, every receipt re-verified by `abi wdbx episode verify` from a separate
+  process, `TEST_EXIT: 0`. Full `./check.sh` on the changed tree `CHECK_SH_EXIT: 0`, 1,306
+  passed / 5 ignored. **Observed, not changed:** `verify --json` now reports
+  `signature_status: unsigned` for every record, because neither the scratch run nor
+  `deploy/com.donaldfilimon.abbey-wdbx-gateway.plist` passes `--episode-signing-key`
+  (wdbx `56767f7`, 04:28 today, made episode signing available); provisioning a key and
+  changing the live plist is Donald's decision. Residuals unchanged: no run against the live
+  gateway (by rule), proposal stage only, human approver still a distinct step.
 
 
 ## Build the MLAI server from a plan file (`--server-plan`)
@@ -2035,3 +2072,25 @@ approver, Telegram/Slack tokens, Portal Activity map, billing unlock, `/admin br
 post-load) or upstream-blocked — crates.io `serenity` `max_stable_version` re-measured
 **0.12.5** at 13:2x EDT (unchanged since 2025-12-20), so Components V2 and the four accepted
 `rustls-webpki` records stay blocked. No status flips.
+
+**`/goal continue` 2026-09-16 13:4x–14:0x EDT — the five `#[ignore]` tests, run on purpose;
+two stale test defects fixed; no status flips.** The episode-gate acceptance rerun and its fix
+are recorded in that goal's section. The other two runnable live tests, both never re-run since
+their August/September authoring, gave: (1) `pipeline::tests::live_dm_round_trip_against_the_configured_backend`
+against the deployed local backend (`ABBEY_BOT_LLM_ENDPOINT`/`_MODEL` from the env file,
+`127.0.0.1:11434`, `/v1/models` 200; values not printed) **failed** at its last assertion with
+replies of 4 and 3 characters ("What", "You"): the backend is slow (236 s for three turns), so
+`generation` posted the partial after `STREAM_FIRST_POST_SECS` and delivered the full text as
+`edit`s, which `FakeOut` records in `edited`, while the test judged only `sent`. Test defect, not
+product: fixed in `src/pipeline/tests.rs` to fold each message's last edit over its `sent-N` id
+and judge that; rerun **ok** (25 / 49 / 99 chars, reply 3 carries "nightly"), 367 s, `TEST_EXIT:
+0`. (2) `provider::tests::live_fm_cli_accepts_the_production_decision_schema` on this macOS
+27.0 host: **ok** in 10 s (plain answer, one typed `remember_fact` call with the expected
+argument, tool-result continuation), so the installed FM CLI accepts Abbey's decision schema
+today; the FM *service* install and capability manifest (todo) remain Donald's. `preflight`
+ran green against the production `episode-gate.json` (coverage 1) as a by-product of the
+acceptance filter; `export_command_registration_payload` is an operator export, not run. Full
+`./check.sh` on the tree with both test fixes: `CHECK_SH_EXIT: 0`, 1,306 passed / 5 ignored.
+Lesson, same shape twice today: an ignored test only proves what it asserted the last time
+someone ran it; the gate's green covers none of the five. Uncommitted at the time of writing:
+`src/episode_gate/acceptance.rs`, `src/pipeline/tests.rs`, this ledger.
