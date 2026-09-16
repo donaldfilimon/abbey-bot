@@ -2,6 +2,7 @@
 
 ## Discord UX: embed replies + slash-aware guidance
 status: done
+- **2026-09-16 continue (help+guidance embeds):** `/help` + ephemeral command-error guidance use `abbey_reply_embed` (same brand/footer as chat/music). Tip hygiene after `6604593`. Gate UNMEASURABLE.
 - **2026-09-16 continue (#154):** Local `./check.sh` green again — fmt after #153 + consent-notice test pins Local stop route / OpenAi refusal without stop route. Merged `53b69cc`. Gate UNMEASURABLE.
 - **2026-09-16 continue (#156):** Abbey `ask.rs` local-first + consent + lane handoffs (Aviva/Abi contracts untouched). Merged `289c5e5`; Mac redeploy verified. Gate UNMEASURABLE.
 - **2026-09-16 continue (embed+music UX):** Shared `abbey_reply_embed` on send+edit; clearer `/voice play|pause|resume-music|stop-music|volume` docs + catalog + ephemeral music embeds. Music ≠ listen consent. Local check/catalog green; Gate UNMEASURABLE.
