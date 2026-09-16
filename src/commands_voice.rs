@@ -3,7 +3,7 @@
 //! Commands validate runtime permission, exact-channel membership, explicit
 //! participant attestation, and provider readiness while the call is muted and
 //! self-deafened. Only after a public disclosure succeeds do they enable
-//! decoding. The provider actors live in `voice_local` and `voice_openai`.
+//! decoding. The provider actor lives in `voice_local` (OpenAI Realtime removed).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +15,6 @@ use crate::gateway::shared::clamp_message;
 use crate::offline_voice::MlxAudioClient;
 use crate::voice::{VoiceBackendConfig, VoiceMode};
 use crate::voice_local::LocalSession;
-use crate::voice_openai::OpenAiSession;
 use crate::voice_session::{SessionControl, SharedPlayback, VerificationActivation, VoiceRuntime};
 use crate::{Context, Error};
 
