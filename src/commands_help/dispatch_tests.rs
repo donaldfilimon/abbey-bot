@@ -457,7 +457,7 @@ fn help_component(
     .unwrap()
 }
 
-fn assert_private_help_response(requests: &[Request]) -> &Value {
+fn private_ephemeral_patch(requests: &[Request]) -> &Value {
     assert_eq!(requests[0].body["type"], 5);
     assert_eq!(requests[0].body["data"]["flags"], 64);
     let reply = &requests
@@ -465,9 +465,33 @@ fn assert_private_help_response(requests: &[Request]) -> &Value {
         .find(|request| request.method == "PATCH")
         .unwrap()
         .body;
-    assert!(reply["content"].as_str().unwrap().chars().count() <= 2000);
     assert_eq!(reply["allowed_mentions"]["parse"], json!([]));
     assert_eq!(reply["allowed_mentions"]["replied_user"], false);
+    reply
+}
+
+fn private_help_body(reply: &Value) -> &str {
+    reply["embeds"][0]["description"]
+        .as_str()
+        .expect("private help embed description")
+}
+
+fn assert_private_help_response(requests: &[Request]) -> &Value {
+    let reply = private_ephemeral_patch(requests);
+    let content = reply["content"].as_str().unwrap_or("");
+    assert!(
+        content.is_empty(),
+        "help body lives in the Abbey embed, not content"
+    );
+    assert!(private_help_body(reply).chars().count() <= 2000);
+    assert_eq!(reply["embeds"][0]["author"]["name"], "Abbey");
+    reply
+}
+
+/// Memory-browser and similar private patches still use plain content.
+fn assert_private_content_response(requests: &[Request]) -> &Value {
+    let reply = private_ephemeral_patch(requests);
+    assert!(reply["content"].as_str().unwrap().chars().count() <= 2000);
     reply
 }
 
@@ -541,7 +565,7 @@ async fn actual_help_navigation_waits_for_ack_and_refreshes_permissions_without_
                 );
                 let reply = assert_private_help_response(&requests);
                 assert_eq!(
-                    reply["content"].as_str().unwrap().contains("`/admin show`"),
+                    private_help_body(reply).contains("`/admin show`"),
                     manager && section == HelpSection::Administration
                 );
                 let id = reply["components"][0]["components"][0]["custom_id"]
@@ -626,7 +650,7 @@ async fn actual_help_rejects_bad_controls_before_lookup_and_stops_on_ack_failure
             assert_eq!(requests.len(), 2);
             assert!(!requests.iter().any(|request| request.method == "GET"));
             let reply = assert_private_help_response(&requests);
-            assert_eq!(reply["content"], expected);
+            assert_eq!(private_help_body(reply), expected);
             assert_eq!(reply["components"], json!([]));
         }
         fixture.fail_acknowledgement.store(true, Ordering::SeqCst);
@@ -656,7 +680,7 @@ async fn actual_help_dm_navigation_has_private_controls_and_dm_specific_visibili
             let requests = fixture.take_requests();
             assert_eq!(requests.len(), 2);
             let reply = assert_private_help_response(&requests);
-            let body = reply["content"].as_str().unwrap();
+            let body = private_help_body(reply);
             assert!(!body.contains("channel-visible") && !body.contains("member menu;"));
             if section == HelpSection::Conversation || section == HelpSection::Images {
                 assert!(body.contains("reply in this DM"));
@@ -1992,7 +2016,7 @@ async fn memory_browser_dispatch_refreshes_full_facts_permissions_and_preserves_
         let component = memory_component(&fixture, session.navigate(index).unwrap());
         assert!(dispatch_component(&fixture.context, &component, &data, false).await);
         let requests = fixture.take_requests();
-        let body = assert_private_help_response(&requests);
+        let body = assert_private_content_response(&requests);
         for fact in &facts[usize::from(index) * 4..(usize::from(index) * 4 + 4).min(facts.len())] {
             assert!(body["content"].as_str().unwrap().contains(fact));
         }
@@ -2015,7 +2039,7 @@ async fn memory_browser_dispatch_refreshes_full_facts_permissions_and_preserves_
     let component = memory_component(&fixture, session.navigate(1).unwrap());
     dispatch_component(&fixture.context, &component, &data, false).await;
     let requests = fixture.take_requests();
-    let body = assert_private_help_response(&requests);
+    let body = assert_private_content_response(&requests);
     assert!(
         body["content"]
             .as_str()
@@ -2054,7 +2078,7 @@ async fn memory_browser_envelope_and_bot_dm_scope_fail_before_permission_lookup(
     dispatch_component(&fixture.context, &good, &data, false).await;
     let requests = fixture.take_requests();
     assert!(
-        assert_private_help_response(&requests)["content"]
+        assert_private_content_response(&requests)["content"]
             .as_str()
             .unwrap()
             .contains("private DM fact")
@@ -2077,7 +2101,7 @@ async fn memory_browser_envelope_and_bot_dm_scope_fail_before_permission_lookup(
         }
         dispatch_component(&fixture.context, &component, &data, false).await;
         let requests = fixture.take_requests();
-        let body = assert_private_help_response(&requests);
+        let body = assert_private_content_response(&requests);
         assert!(
             !body["content"]
                 .as_str()
@@ -2114,7 +2138,7 @@ async fn memory_browser_acknowledgement_holds_all_permission_requests() {
     fixture.acknowledgement_release.add_permits(1);
     assert!(action.await);
     let requests = fixture.take_requests();
-    assert_private_help_response(&requests);
+    assert_private_content_response(&requests);
     assert!(requests.iter().any(|request| request.method == "GET"));
 }
 
@@ -2139,7 +2163,7 @@ async fn memory_browser_recomputes_pages_after_facts_are_removed_elsewhere() {
     dispatch_component(&fixture.context, &component, &data, false).await;
     let requests = fixture.take_requests();
     assert!(
-        assert_private_help_response(&requests)["content"]
+        assert_private_content_response(&requests)["content"]
             .as_str()
             .unwrap()
             .contains("Page 2 of 2")
@@ -2153,7 +2177,7 @@ async fn memory_browser_recomputes_pages_after_facts_are_removed_elsewhere() {
     }
     dispatch_component(&fixture.context, &component, &data, false).await;
     let requests = fixture.take_requests();
-    let body = assert_private_help_response(&requests);
+    let body = assert_private_content_response(&requests);
     assert!(body["content"].as_str().unwrap().contains("Page 1 of 1"));
     assert!(body["content"].as_str().unwrap().contains("fact 0"));
     assert_eq!(body["components"], json!([]));

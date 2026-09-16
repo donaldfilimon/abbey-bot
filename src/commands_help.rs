@@ -546,11 +546,10 @@ pub async fn help(
     .await?;
     match prepared {
         HelpPreparation::Ready(session, input) => {
+            let body = crate::commands::clamp_message(catalog::render_help(section, &input));
             ctx.send(
                 poise::CreateReply::default()
-                    .content(crate::commands::clamp_message(catalog::render_help(
-                        section, &input,
-                    )))
+                    .embed(crate::gateway::abbey_reply_embed(&body))
                     .components(help_rows(
                         session,
                         ctx.guild_id().map(|guild| guild.get()),
@@ -563,11 +562,27 @@ pub async fn help(
             .await?;
         }
         HelpPreparation::Rejected(rejection) => {
-            ctx.say(rejection.message()).await?;
+            let body = crate::commands::clamp_message(rejection.message().into());
+            ctx.send(
+                poise::CreateReply::default()
+                    .embed(crate::gateway::abbey_reply_embed(&body))
+                    .ephemeral(true)
+                    .allowed_mentions(crate::gateway::no_mentions()),
+            )
+            .await?;
         }
         HelpPreparation::PermissionsUnavailable => {
-            ctx.say("Discord could not confirm the current permissions. Open /help to try again.")
-                .await?;
+            let body = crate::commands::clamp_message(
+                "Discord could not confirm the current permissions. Open /help to try again."
+                    .into(),
+            );
+            ctx.send(
+                poise::CreateReply::default()
+                    .embed(crate::gateway::abbey_reply_embed(&body))
+                    .ephemeral(true)
+                    .allowed_mentions(crate::gateway::no_mentions()),
+            )
+            .await?;
         }
     }
     Ok(())
@@ -695,11 +710,13 @@ pub async fn dispatch_component(
             ),
         ),
     };
+    let body = crate::commands::clamp_message(body);
     let delivery = interaction
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new()
-                .content(crate::commands::clamp_message(body))
+                .content("")
+                .embed(crate::gateway::abbey_reply_embed(&body))
                 .components(rows)
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
