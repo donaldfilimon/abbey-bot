@@ -59,6 +59,7 @@ pub enum CommandKey {
     AdminReset,
     AdminDashboard,
     AdminQuarantine,
+    AdminContradict,
     AdminResolve,
     VoiceConsent,
     VoiceNotice,

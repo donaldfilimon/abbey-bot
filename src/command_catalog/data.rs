@@ -568,6 +568,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Mark a member's stored fact as suspect for review."
     ),
     spec!(
+        AdminContradict,
+        Slash,
+        "admin contradict",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Record that two of a member's stored facts contradict each other."
+    ),
+    spec!(
         AdminResolve,
         Slash,
         "admin resolve",

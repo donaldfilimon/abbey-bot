@@ -1,5 +1,5 @@
-//! `/admin quarantine` and `/admin resolve`: the Discord edge of
-//! `memory_review`, the first memory-edge emitter.
+//! `/admin quarantine`, `/admin contradict` and `/admin resolve`: the
+//! Discord edge of `memory_review`, the memory-edge emitters.
 use super::*;
 use crate::episode_gate::{EdgeReason, MemoryEdgeRequest, Reviewer, parse_digest};
 use crate::memory_review;
@@ -95,6 +95,67 @@ pub async fn admin_quarantine(
     };
     let outcome = gate.record_memory_edge(request).await;
     ctx.say(clamp_message(memory_review::quarantine_reply(
+        &outcome,
+        member.id.get(),
+    )))
+    .await?;
+    Ok(())
+}
+
+/// Record that two of a member's stored facts contradict each other. Both stay.
+#[poise::command(slash_command, guild_only, ephemeral, rename = "contradict")]
+pub async fn admin_contradict(
+    ctx: Context<'_>,
+    #[description = "Whose facts they are"] member: User,
+    #[description = "One fact, as stored"]
+    #[max_length = 300]
+    fact: String,
+    #[description = "The fact it contradicts, as stored"]
+    #[max_length = 300]
+    counterpart: String,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if reviewer(ctx).await.is_none() {
+        ctx.say(memory_review::NOT_REVIEWER).await?;
+        return Ok(());
+    }
+    let g = scoped_guild(ctx);
+    let state = &ctx.data().state;
+    let Some(gate) = state.gate_for(&g).cloned() else {
+        ctx.say(memory_review::NO_GATE).await?;
+        return Ok(());
+    };
+    let u = scoped_user(&member);
+    let service = state.memory_service();
+    let (Some(first), Some(second)) = (
+        service.resolve_fact(&g, &u, &fact),
+        service.resolve_fact(&g, &u, &counterpart),
+    ) else {
+        ctx.say(memory_review::not_found(member.id.get())).await?;
+        return Ok(());
+    };
+    if first == second {
+        ctx.say(memory_review::SAME_FACT).await?;
+        return Ok(());
+    }
+    let receipt = |selected: &str| {
+        service
+            .receipt(&g, &u, selected)
+            .and_then(|hex| parse_digest(&hex))
+    };
+    let (Some(target), Some(counterpart)) = (receipt(&first), receipt(&second)) else {
+        ctx.say(memory_review::NO_RECEIPT).await?;
+        return Ok(());
+    };
+    let request = MemoryEdgeRequest::Contradict {
+        scoped_guild: g,
+        target,
+        counterpart,
+        now: runtime::now(),
+        nonce: gate.next_nonce(),
+    };
+    let outcome = gate.record_memory_edge(request).await;
+    ctx.say(clamp_message(memory_review::contradict_reply(
         &outcome,
         member.id.get(),
     )))
