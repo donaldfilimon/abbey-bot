@@ -48,6 +48,8 @@ Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-rustsec-deb
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-rustsec-debt.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-wdbx-conformance.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-wdbx-conformance.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-systemd-unit.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-systemd-unit.py")
 
 Write-Host "audio-tap installer and Swift gate: skipped (requires POSIX/macOS); Python syntax checked above"
 Write-Host "launchd installer/readiness/status execution: skipped (requires POSIX/macOS); shared schema, Python syntax and privacy checked"

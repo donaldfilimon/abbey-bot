@@ -1,5 +1,17 @@
 # Goals
 
+## Merge-all, systemd unit hardening, redeploy + rebuild abi/abbey fleet
+status: in_progress
+- **2026-09-16 capture (/goal):** merge everything to `main` via PR, finish `deploy/abbey-bot.service`
+  leftovers, managed Mac redeploy, rebuild/gate abi, wdbx, abbey, delete what is provably unneeded.
+  Survey at 05:55: abbey-bot 0 open PRs, 0 extra worktrees; only unmerged ref is
+  `origin/docs/monetization-guild-pro-quesar-design-20260908`, whose PR #127 was CLOSED unmerged
+  (a decision, not leftover work; kept, Donald's call). AbbeyBot (Swift) has a live same-day
+  `codex/*` worktree owned by another session and is out of scope.
+- **Slice 1:** unit gains `UMask=0077`, `StateDirectoryMode=0700`, `TimeoutStopSec=30` and ten more
+  hardening keys; new `scripts/check-systemd-unit.py` + `test-check-systemd-unit.py` (8 tests) wired
+  into `check.sh` and `check.ps1`. Unit still UNVERIFIED on a real systemd host.
+
 ## Discord UX: embed replies + slash-aware guidance
 status: done
 - **2026-09-16 continue (help+guidance embeds):** `/help` + ephemeral command-error guidance use `abbey_reply_embed` (same brand/footer as chat/music). Tip hygiene after `6604593`. Gate UNMEASURABLE.
