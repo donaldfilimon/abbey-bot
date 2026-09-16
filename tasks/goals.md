@@ -1702,3 +1702,33 @@ provider qualification, live two-guild member/manager Discord checks, fresh unan
 consent, human-witnessed audible voice acceptance, Portal Activity URL map (P0),
 OAuth secret host (P2), Components V2 (crate-blocked), and episode-gate human approval.
 The live launchd services were not touched this pass.
+
+**Blocker re-verification (`/goal continue and finish all`, 2026-09-16 ~23:5x EDT).**
+Ran against the source, not the prose. `tasks/todo.md` has **42** open items and every
+one is human-gated, deployment-gated, platform-gated or crate-gated; no agent-actionable
+source slice remained this pass, so none was invented.
+
+- **Serenity is still the wall, confirmed today.** crates.io reports serenity
+  `max_stable_version` = `newest_version` = **0.12.5**, which is exactly what
+  `Cargo.lock` pins. Components V2 stays crate-blocked, and the
+  `security/rustsec-accepted-debt.json` review trigger "a compatible fixed
+  rustls-webpki line becomes available" has **not** fired — `rustls-webpki` 0.102.8
+  remains correctly accepted, not stale. poise 0.7.0 is published but requires
+  serenity `^0.12.5`; per AGENTS.md it unlocks neither, so it was deliberately not
+  bumped (churn without benefit).
+- Live launchd services were not touched, per the standing rule against stopping,
+  unloading or reinstalling them on agent initiative.
+- Remaining blockers are all outside the source: GitHub billing unlock (hosted
+  three-platform Gate), Portal Activity URL map (P0, human), human-witnessed audible
+  voice acceptance, Discord `/voice play` click, two-guild live checks, Linux/Windows
+  runtime acceptance, and staged MLX-Audio / MLX-VLM install qualification.
+
+**Concurrent-actor note (open unknown, not resolved).** `git reflog show --date=iso main`
+records `d82620d` committed at 23:23:06 — before this session started — and
+`69b540f main@{23:35:21}: merge gate/combined-20260916: Fast-forward`, an explicit merge
+of a branch this session had created ~60 s earlier, matching no command it ran. Two other
+Claude sessions were live (cwd `~` and a scratch workspace); neither appears in an
+`lsof -d cwd` sweep of this repo, because `git -C` works from any directory. Content was
+identical and local `main` was realigned to `origin/main` after an empty-diff check, so
+nothing was lost — but **another session may hold the same "merge all branches" instruction**.
+Attribute ref moves with `git reflog --date=iso`, not a cwd sweep.
