@@ -6,10 +6,16 @@ edit both bodies together. No gate enforces the mirror, so verify it yourself
 with `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)` before committing
 either file. `README.md` owns commands, configuration and feature details;
 `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
-`.cursor/agents/abbey-reviewer.md` is a third, Cursor-side restatement of the
-Boundaries below and it drifts (it still describes a `gateway.rs` file and a
-five-file Discord shell); trust this file over it, and fix it at the same time
-if you change a rule it repeats.
+The Boundaries below are restated in **two** editor-side files —
+`.cursor/agents/abbey-reviewer.md` and `.codex/agents/abbey-reviewer.toml` — which
+makes four copies of these rules in the repo counting this file and its twin. Both
+restatements had drifted the same way and were corrected on 2026-09-16 (each described
+a `gateway.rs` that does not exist, a five-file Discord shell where 33 non-test files
+import serenity/poise, and a Gate Checklist of four cargo commands that never mentioned
+`./check.sh`). Trust this file over both; a rule changed here must be changed in **both**
+of them in the same commit, and the `.codex` one is easy to forget because editors load
+it silently. It is TOML with a `"""` block, so a regex backslash written into it is an
+invalid escape — verify with `python3 -c "import tomllib,sys;tomllib.load(open(sys.argv[1],'rb'))"`.
 
 ## Working in this checkout
 

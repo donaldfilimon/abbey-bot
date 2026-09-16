@@ -1873,3 +1873,32 @@ confirmed invisible to the narrow grep for the stated reason — it carries
 Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0,
 `check-rust-module-size` 0, `check-abbey-contracts` 0 (81 artifacts, digest `72e241e3…`).
 No Rust changed, so the compile stages were not re-run for this docs-only slice.
+
+**`/goal continue` 2026-09-16 00:4x EDT (second slice) — the same drift in a file nobody knew existed, and two stale README rows.**
+
+**1. `.codex/agents/abbey-reviewer.toml` had the identical drift just fixed in `.cursor`,**
+and the root cause is that `AGENTS.md` named only the Cursor copy ("a third, Cursor-side
+restatement"), so the Codex one was invisible to the fix-it-too instruction. There are in
+fact **four** copies of these rules: `AGENTS.md`, `CLAUDE.md`, `.cursor/agents/abbey-reviewer.md`,
+`.codex/agents/abbey-reviewer.toml`. Fixed the Codex file the same way (the non-existent
+`gateway.rs`, the "5 files" shell, the cargo-only Gate Checklist that never mentioned
+`./check.sh`, the `proptest` language, the missing module-size rule) and rewrote the twins'
+paragraph to name **both** restatements, state the four-copy count, and record a trap found
+doing it: the Codex file is TOML with a `"""` block, where a regex backslash is an invalid
+escape — verify with `tomllib.load` after editing. TOML re-parsed clean (5,149 chars).
+
+**2. `README.md` status table carried two materially wrong rows.**
+- Source gate said "904 Rust tests passed, 2 live tests ignored". Tonight's measured run is
+  **1,294 passed, 0 failed, 5 ignored** — off by 390 tests. Updated, dated, and bound to
+  `4bd8dbf`. **The Swift (27) and audio-tap (25) sub-counts were deliberately NOT updated**
+  and are now explicitly marked as from an earlier run: the 2026-09-16 foreground pass was
+  killed by the 10-minute cap *before* the `== offline macOS audio tap ==` stage (marker
+  count 0 in the log), so those numbers are unmeasured, not confirmed. Quoting them as
+  current would have been the exact laundering the iron rules forbid.
+- Cross-platform CI said "**Repaired, unverified at new head**" and described an August
+  `cargo fmt` repair. That is not the current state: hosted CI has been **billing-locked
+  since 2026-09-08** and no CI evidence is obtainable at all. Row changed to
+  **UNMEASURABLE — account billing lock**, a deliberate *downgrade* in claimed confidence.
+
+Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0, twin
+mirror clean, `.codex` TOML parses. No Rust changed; compile stages not re-run and not claimed.

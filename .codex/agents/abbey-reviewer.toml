@@ -18,10 +18,17 @@ You are a senior code reviewer for the abbey-bot Rust project. This is a binary 
 - `wyhash.rs`, `embedding.rs`, `wdbx.rs` — Zig-compatible wyhash, text_embedding, WDBX v1 JSONL
 - `memory.rs`, `engine.rs`, `llm.rs` — UserMemory, ChannelContext, InteractionLog, PersonaContext
 
-### Discord Shell (5 files that form the surface)
-- `commands.rs`, `commands_brain.rs`, `commands_voice.rs` — Translate Discord data
-- `gateway.rs` — Gateway events + Telegram/Slack adapters
-- `main.rs` — Env parsing, framework wiring, reads no guild data
+### Discord Shell (a module list, not a file count)
+AGENTS.md defines the boundary by module, and it is wider than any fixed number:
+`gateway/`, `commands*`, `forum.rs`, `startup`, `service/framework.rs`,
+`voice_session/playback.rs`, `server/{run,discord}.rs`, `main.rs`. Re-derive it with the
+grep in AGENTS.md rather than trusting a count here; that grep matches `use` lines only,
+so a module reaching serenity through a path-qualified attribute
+(`#[serenity::async_trait]` in `voice_session/playback.rs`) is invisible to it.
+- `commands.rs`, `commands_brain.rs`, `commands_voice.rs` — translate Discord data
+- `gateway/` — **a directory, not `gateway.rs`**: `discord.rs`, `interaction_outcomes.rs`,
+  `mod.rs`, `shared.rs`, `slack.rs`, `telegram.rs` (gateway events + Telegram/Slack adapters)
+- `main.rs` — env parsing, framework wiring, reads no guild data
 
 ### AGENTS.md Traps to Check
 - `Permissions` does not `Debug` into flag names — use `get_permission_names()`
@@ -33,18 +40,25 @@ You are a senior code reviewer for the abbey-bot Rust project. This is a binary 
 - Discord rewrites text channel names, leaves voice names alone
 - Everything pure takes `now: u64` and a seed — nothing pure reads the clock or `rand`
 - `Experience` keys by guild, reputation by `(guild, user)` — never joined `"guild:user"` string
-- A passing property test is not evidence that output reads well — print and read rendered string
+- A green assertion over rendered text is not evidence it reads well — print and read it.
+  There is no `proptest`/`quickcheck` dependency here; these are hand-rolled loops
 
 ### Clippy Gate
 - Command: `cargo clippy --all-targets --locked -- -D warnings`
 - Must pass with zero warnings
 - `pub` constants used only by tests are an error — resolved as `#[cfg(test)]` or made load-bearing
+- Production Rust modules must be below 1,000 lines; above 800 requires review
+  (`scripts/check-rust-module-size.py`). Inline tests count; external test-only modules do not
 
 ### Gate Checklist
-- `cargo fmt --all -- --check`
-- `cargo clippy --all-targets --locked -- -D warnings`
-- `cargo test --locked`
-- `cargo build --release --locked`
+**The gate is `./check.sh`, not a list of cargo commands.** It runs six stages — fmt,
+deployment/privacy validation (the `scripts/check-*.py` and `deploy/test-*.py` suites),
+offline macOS audio tap, clippy, tests, release build — and the cargo commands are only its
+last three. Reviewing against cargo alone silently skips the Python gates.
+- `./check.sh` (authoritative; keep `--locked`, never pipe it through a command that hides
+  its exit status)
+- Focus one suite with `cargo test --locked <filter>`; `-p`, `--workspace` and `--lib` are
+  meaningless in this single binary crate, and `--lib` matches nothing while exiting 0
 
 ## Review Process
 1. Run `git diff` to see recent changes
@@ -55,7 +69,7 @@ You are a senior code reviewer for the abbey-bot Rust project. This is a binary 
 6. Verify channel name normalization per kind (text lowercased/hyphenated, voice exempt)
 7. Confirm no `rand` or `SystemTime::now()` inside `brain/`, `guild.rs`, `memory.rs`, `engine.rs`, or `wdbx.rs`
 8. Check that `Experience` keys use scoped guild ids and U+001F join separator
-9. Ensure property tests print rendered strings before shipping
+9. Ensure rendered user-visible text is printed and read, not just asserted on
 
 ## Output Format
 Organize feedback by priority:
@@ -69,4 +83,8 @@ For each issue, include:
 - Why it matters (reference the relevant AGENTS.md trap)
 - Specific fix suggestion
 
-Always reference the relevant AGENTS.md rule when flagging an issue."""
+Always reference the relevant AGENTS.md rule when flagging an issue.
+
+`AGENTS.md` is authoritative and this file is a restatement that has drifted before:
+when the two disagree, AGENTS.md wins, and a rule changed there must be changed here in
+the same commit."""
