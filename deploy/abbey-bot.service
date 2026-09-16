@@ -10,6 +10,9 @@
 #   systemctl enable --now abbey-bot
 #
 # The env file carries the token, so it — not this unit — is the secret.
+# scripts/check-systemd-unit.py pins the hardening below; this Mac has no
+# systemd, so run `systemd-analyze verify` and `systemd-analyze security
+# abbey-bot` on the target host before trusting it.
 
 [Unit]
 Description=Abbey Bot — Discord operational layer
@@ -24,10 +27,17 @@ EnvironmentFile=/etc/abbey-bot/env
 # Set ABBEY_DATA_DIR=/var/lib/abbey-bot in the env file to use it.
 DynamicUser=yes
 StateDirectory=abbey-bot
+# Owner-only, matching the launchd agent's Umask 077: learned state, memory and
+# the WDBX segment must never be group/world readable.
+StateDirectoryMode=0700
+UMask=0077
 Restart=on-failure
 # 30s, not 5: a bad token exits 1 forever, and a 5-second loop re-auths
 # against Discord fast enough to draw IP-level rate limiting.
 RestartSec=30
+# SIGTERM (the default KillSignal) triggers the bot's graceful stop and final
+# persist; bound it so a wedged shutdown still ends.
+TimeoutStopSec=30
 # Hardening: the bot needs outbound network and nothing else.
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -35,13 +45,26 @@ ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
 ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
 # AF_UNIX included: on hosts where nsswitch delegates entirely to
 # nss-resolve with no dns fallback, blocking unix sockets hard-fails DNS.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=yes
 # Rust does not JIT; nothing here needs writable+executable memory.
 MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# EPERM rather than SIGSYS, so an unexpected syscall surfaces as an error in
+# the log instead of a silent kill.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 CapabilityBoundingSet=
 
 [Install]

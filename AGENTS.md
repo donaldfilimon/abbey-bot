@@ -61,7 +61,9 @@ invalid escape — verify with `python3 -c "import tomllib,sys;tomllib.load(open
 
 `src/` is the entire product: one binary crate, ~240 files, no library target
 and no workspace. Everything else is support — `deploy/` the launchd installers
-plus the Python tests that gate them, `scripts/` the `check-*.py` gates and
+plus the Python tests that gate them (and a systemd unit, `abbey-bot.service`,
+which with the root `Dockerfile` is documented in README but never exercised
+on this host), `scripts/` the `check-*.py` gates and
 their `test-check-*.py` twins, `contracts/` the frozen transcription corpus and
 its lockfile, `blueprints/` the guild server plans, `activity/` the Discord
 Activity web client published to Pages, `tools/abbey-audio-tap/` the macOS Swift
@@ -187,9 +189,14 @@ section it ports. Read that header before the code.
   (action space and encoder), `dqn.rs` with `nn.rs`, `registry.rs` (one policy
   per guild), `reward.rs` (delayed settlement), `social.rs` (reputation),
   `budget.rs`, `replay.rs`.
-- **Gates are code with tests.** Each `scripts/check-*.py` has a
-  `scripts/test-check-*.py` beside it and `check.sh` runs both. Change a gate and
-  its test in the same commit.
+- **Gates are code with tests, mostly.** Most `scripts/check-*.py` gates have a
+  `scripts/test-check-*.py` twin; `check-privacy.py` and `check-python-syntax.py`
+  do not, so a change there has no test to catch it. `check-systemd-unit.py` is the only
+  thing that reads `deploy/abbey-bot.service` (no systemd on this Mac), so a
+  hardening change there must update its pinned table too. The `deploy/*.py` service
+  modules are covered by `deploy/test-*.py`. `check.sh` runs every one of them by
+  explicit name, not by glob, so a new gate or test is dead until it is added
+  there. Where a twin exists, change the gate and its test in the same commit.
 
 ## Boundaries
 
