@@ -933,6 +933,38 @@ status: in_progress
   voice, two-guild, consent observations, installed artifact identity
   qualification, Portal P0, OAuth P2, Components V2 crate-block, episode-gate
   human approval.
+- **2026-09-16 14:2x–14:3x EDT — spec §3b run; STOPPED at the staged smoke, as the spec
+  requires; the live bot stays on the Ollama primary.** (1) First install attempt refused in
+  1 s: `uv` `--require-hashes` rejected `mlx-metal` as unpinned. Dependabot's #138 bump
+  (`mlx-vlm` 0.6.17 → 0.7.0, 2026-09-15) regenerated `deploy/mlx-vlm-requirements.txt`
+  without `mlx-metal`, which `mlx==0.32.2` requires on Darwin, so the Mac install path was
+  broken for a day while the offline gate (`check-python-locks.py` checks hashes, not
+  completeness) stayed green. Repair: only the missing stanza (`mlx-metal==0.32.2`, three
+  hashes, resolved with every existing pin held as a constraint so nothing else moved; a
+  plain re-resolve would have drifted 17 packages); `check-python-locks.py` exit 0; a real
+  `uv pip install --require-hashes --dry-run` into a scratch 3.11 venv exit 0; full
+  `./check.sh` exit 0, 1,306 passed. (2) Second attempt: venv staged, snapshot
+  `73bcf09…` downloaded and verified (6.3 GB), both mlx-vlm patches and the template patch
+  applied, server healthy (prefill ~334 tok/s, decode ~15 tok/s). The smoke's plain-text
+  and forced-tool-call rungs passed; **tool-result continuation failed**
+  (`finish_reason=length` at 256 tokens), the same failure as 2026-09-03 and the subject of
+  `docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md`. Installer
+  exited 1 before any live file changed; staged venv retained at
+  `~/.local/libexec/abbey-bot/.mlx-vlm-venv.new.AlTLrR` (583 MB) per its recovery rule.
+  (3) Throwaway probe of that spec's top-ranked candidate (a scratch model dir with the
+  weights symlinked and a template copy whose generation-prompt block also emits
+  `<|channel>thought\n<channel|>` after a `tool_response`; scratch port; removed after):
+  **candidate 1 is necessary but not sufficient.** Without the smoke's system prompt the
+  continuation ended `stop` with `"OK."`; with the smoke's exact system prompt, streamed,
+  3 of 3 runs emitted `<|channel>thought\n<channel|>` repeatedly until `length`. So the
+  checkpoint imitates the pre-filled empty thought block in a loop; candidate 2 (splitter
+  re-entry) would only move those markers out of `content`, not stop the loop. Open
+  question for the next slice: whether 0.7.0's server or the 4-bit checkpoint owns the
+  loop (0.6.17 failed the same way on 09-03), and whether `logit_bias` on `<|channel>`
+  (candidate 3) converges. **Not done, by the spec's stop rule:** smoke rungs, the
+  `publish-provider-qualification` manifest, `configure-mlx-primary.py`, and the primary
+  switch. Dependabot will regenerate this lock again on the next `mlx-vlm` bump; a guard
+  that fails the gate when a Darwin-only dependency is missing is a worthwhile follow-up.
 
 
 ## Route guild operations through the WDBX episode gate
@@ -1122,6 +1154,18 @@ status: in_progress
   appended 4 / rejected 1, and `abi wdbx episode verify --json` on the first receipt read
   `signature_status: valid`, `signer_key_id: ed25519:0dd2de9e…`. Full `./check.sh`
   `CHECK_SH_EXIT: 0`, 11 scripts, 6 plists, 1,306 passed / 5 ignored.
+- **2026-09-16 14:2x EDT — §3a APPLIED: the live gateway now signs episodes.** Precondition
+  held (installed `abi`, `abi-wdbx-gateway`, both shims byte-equal to
+  `~/dev/active/abi/target/release`, so the rerun changed launch arguments only). PR #167
+  (`21c9e98`) merged first; then `./deploy/install-wdbx-gateway-launchd.sh` printed
+  `generated episode signing key at ~/.config/abbey-bot/episode-signing-key` and its
+  success line `WDBX gateway ready: pid 36823` (the readiness verify path; the shell exit
+  code was read through a pipe and is not claimed). Post-checks: key 32 bytes, mode 600;
+  the running gateway's argv carries `--episode-signing-key`; all five
+  `com.donaldfilimon.abbey-*` agents loaded; bot PID 31586 untouched, readiness
+  `ready/ready/running`. The gateway was down for a few seconds (covered memory writes fail
+  closed by design). Live signing is evidenced by the first real record, §4 rung 1; not
+  claimed yet.
 
 
 ## Build the MLAI server from a plan file (`--server-plan`)
