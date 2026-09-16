@@ -10,15 +10,26 @@ echo "== fmt =="
 cargo fmt --all -- --check
 
 echo "== deployment and privacy validation =="
-sh -n deploy/install-launchd.sh
-sh -n deploy/check-launchd-env.sh
-sh -n deploy/install-mlx-audio-launchd.sh
-sh -n deploy/install-mlx-vlm-launchd.sh
-sh -n deploy/run-mlx-audio.sh
-sh -n deploy/run-mlx-vlm.sh
-sh -n deploy/install-audio-tap-launchd.sh
-sh -n deploy/install-wdbx-gateway-launchd.sh
-sh -n scripts/check-audio-tap.sh
+# Shell syntax is ENUMERATED, not listed. The hand-maintained list this replaced
+# had gone stale: install-oh-autolisten-launchd.sh and the 5.8 KB watcher it
+# installs, watch-office-hours-auto-listen.sh, were never parsed by any gate.
+# A glob covers the next service the day it lands instead of the day someone
+# notices. Every script under these two directories is #!/bin/sh (verified
+# 2026-09-16), so `sh -n` is the correct parser for all of them; add a shebang
+# dispatch here if a bash script ever lands, because dash on the Linux lane will
+# not forgive bashisms that macOS's bash-as-sh accepts. Root-level launch.sh and
+# run_bot.sh are deliberately out of scope: both are untracked local-only
+# wrappers and do not exist on a CI runner.
+shell_checked=0
+for deploy_script in deploy/*.sh scripts/*.sh; do
+  sh -n "$deploy_script"
+  shell_checked=$((shell_checked + 1))
+done
+# A selector that quietly matches nothing reads exactly like a pass. An unmatched
+# glob stays literal under POSIX sh so `sh -n 'deploy/*.sh'` already fails loudly,
+# but assert the count too: that covers the day someone narrows the pattern.
+[ "$shell_checked" -gt 0 ]
+echo "shell syntax: ${shell_checked} script(s)"
 python3 scripts/check-python-syntax.py
 python3 deploy/check-python-locks.py \
   deploy/mlx-vlm-requirements.txt \
@@ -52,10 +63,18 @@ python3 scripts/check-rustsec-debt.py
 python3 scripts/test-check-wdbx-conformance.py
 python3 scripts/check-wdbx-conformance.py
 if command -v plutil >/dev/null 2>&1; then
-  plutil -lint deploy/com.donaldfilimon.abbey-bot.plist
-  plutil -lint deploy/com.donaldfilimon.abbey-mlx-audio.plist
-  plutil -lint deploy/com.donaldfilimon.abbey-mlx-vlm.plist
-  plutil -lint deploy/com.donaldfilimon.abbey-audio-tap.plist
+  # Enumerated for the same reason as the shell loop above: the hand-maintained
+  # list omitted abbey-oh-autolisten.plist and abbey-wdbx-gateway.plist, both of
+  # which belong to services that are actually loaded. A plist holding an install
+  # placeholder (abbey-oh-autolisten's __HOME__) is still valid plist and lints
+  # clean, so templating is not a reason to leave one out.
+  plist_checked=0
+  for deploy_plist in deploy/*.plist; do
+    plutil -lint "$deploy_plist"
+    plist_checked=$((plist_checked + 1))
+  done
+  [ "$plist_checked" -gt 0 ]
+  echo "plist lint: ${plist_checked} plist(s)"
 fi
 
 echo "== offline macOS audio tap =="
