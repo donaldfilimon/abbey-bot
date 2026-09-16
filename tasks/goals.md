@@ -1732,3 +1732,25 @@ Claude sessions were live (cwd `~` and a scratch workspace); neither appears in 
 identical and local `main` was realigned to `origin/main` after an empty-diff check, so
 nothing was lost — but **another session may hold the same "merge all branches" instruction**.
 Attribute ref moves with `git reflog --date=iso`, not a cwd sweep.
+
+**Concurrent-actor note — RESOLVED to "unattributed", not to another session (2026-09-16 00:2x EDT).**
+The paragraph above said another session may hold the same instruction. Checked, and no:
+the two app sessions were on cell-lang and unsloth PR #10373; the "Merge all branches into
+main across repos" hit was a `done` line in `~/tasks/goals.md`, not a live instruction.
+Every actor that could run `git merge gate/combined-20260916` in this checkout at 23:35:21
+was enumerated and cleared with evidence: all tool calls from all five sessions in the
+03:34:30–03:36:00Z window; every transcript and background-job output (none names the
+branch or SHA); zsh history and the Terminal panel (no human command); Codex (launched
+23:36:54, after); the desktop app (its only fast-forward merges a 40-hex SHA from
+`ls-remote`, only for a branch behind origin — cannot write a branch name); the CLI binary
+(no `ff-only` string; ExitWorktree applies a tree diff, not `git merge`); user, repo and
+Codex hooks (read-only + append); the `remember` plugin (git-restore off by default,
+session-start only, and its 23:34:29 save was skipped at 23:34:30: "0 human msgs < 3");
+GitKraken (unauthenticated, fetch skipped); the live bot (no git subprocess, WorkingDirectory
+elsewhere); abbey/abi CLIs (not running; gitops is diff-only); cron/launchd; the self-hosted
+runners (cwd `<runner>/`, no job at 23:35); repo gate scripts (no merge). The `.git/logs`
+entry is genuine (`AGENTS.md`/`CLAUDE.md`/`Cargo.lock`/`deploy/*` mtimes all 23:35:21) and
+carries the machine's single git identity, which cannot discriminate actors. Residual: the
+merge is unattributed; the content was byte-identical to what `origin/main` later received,
+local `main` was realigned after an empty-diff check, and nothing was lost. Practical rule
+kept: attribute ref moves with `git reflog --date=iso`; a cwd sweep cannot see `git -C`.
