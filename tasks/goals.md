@@ -253,6 +253,19 @@ status: in_progress
   `:178`, and covered by `src/pipeline/tests.rs:624`. The gap is live observation only, not
   implementation.
 
+- **2026-09-16 DQN sparse-learn fix (source).** MLAI guild snapshot showed `experience_count=9`
+  / restored `experiences` length 9 with `step_count=0` and `epsilon` stuck at the
+  `epsilon_override=0.5` clamp. Root cause: `DqnAgent::learn` no-op'd until the replay buffer
+  held 64 samples (`BATCH_SIZE`), so Tick::Learn never incremented steps on sparse Discord
+  reward streams; separately, pipeline reapplies `epsilon_override` on every decision so ε
+  cannot decay while that override is set. Fix: train once the buffer holds
+  `MIN_REPLAY_FOR_LEARN` (8), still sampling `BATCH_SIZE` with replacement. Discord
+  capability_guidance now points operators at `/admin act|learning|brain|budget` when
+  learning is the topic (claim-honest: in-process DQN only, no autonomous code rewrite).
+  **Not claimed:** live post-deploy `step_count` growth, OverBudget, or act observation —
+  status stays `in_progress`. Suggestion only: clear or lower `epsilon_override` after warm-up
+  if exploration should decay.
+
 ## Reply quality & speed (sub-project 1 of "improve all")
 status: done
 - Spec `docs/superpowers/specs/2026-08-19-reply-quality-speed-design.md`; the dated `docs/benchmarks/2026-08-19-local-models.md` ranked gpt-oss:20b first, gemma4:e4b second, and measured gemma4:12b at 32–94 seconds with heavy reasoning. The latest operator choice supersedes that recommendation and the interim e4b choice: `gemma4:12b` is now the operational default/deployment intent, while every benchmark result remains historical evidence. Landed: tidy_reply shape/length contract; one generation slot per local backend + honest busy line; streaming local replies with post-early/edit-in-place (`stream_reply`, `Outbound::edit` on Discord/Telegram/Slack); one-shot Anthropic→local fallback. Gate 317 tests.
