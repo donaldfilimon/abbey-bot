@@ -395,7 +395,7 @@ pub(super) fn consent_notice(mode: VoiceMode, channel_id: ChannelId, resumed: bo
             "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start. A clearly attributed spoken withdrawal is honored locally; for an authoritative stop, use `/voice leave` or mention Abbey and write `stop listening` in this voice chat. A new participant pauses and disconnects the session until renewed consent."
         ),
         VoiceMode::OpenAi => format!(
-            "☁️ Abbey is {action} consented voice in <#{channel_id}> using the explicitly configured direct OpenAI Realtime backup. Participant audio is sent to that provider and complete responses are buffered before Discord playback. This degraded backup does not use local ABI persona routing or WDBX context; use local mode for canonical Abbey. Abbey does not retain raw audio locally. Spoken control is not authoritative in this degraded mode: use `/voice leave` or mention Abbey and write `stop listening` in this voice chat to stop immediately. A new participant pauses and disconnects the session until renewed consent."
+            "OpenAI Realtime voice was removed. Abbey will not start consented listening in that mode — set local mode (MLX-Audio loopback) and use `/voice` again. Channel: <#{channel_id}> ({action})."
         ),
         VoiceMode::Disabled => unreachable!(),
     }

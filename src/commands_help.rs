@@ -206,14 +206,7 @@ pub fn runtime_input(
                 .readiness
                 .insert(Capability::VoiceLocal, CapabilityReadiness::Ready);
         }
-        if config
-            .backend_for(crate::voice::VoiceMode::OpenAi)
-            .is_some()
-        {
-            input
-                .readiness
-                .insert(Capability::VoiceOpenAi, CapabilityReadiness::Ready);
-        }
+        // OpenAI Realtime removed — never advertise VoiceOpenAi as Ready.
         input.selected_voice_mode =
             match voice.as_ref().map_or(config.mode(), |v| v.effective_mode()) {
                 crate::voice::VoiceMode::Disabled => SelectedVoiceMode::Off,

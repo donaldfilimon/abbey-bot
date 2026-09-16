@@ -62,6 +62,7 @@ pub async fn create_channel(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::ChannelCreate,
@@ -109,6 +110,7 @@ pub async fn rename_channel(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::ChannelEdit,
@@ -149,6 +151,7 @@ pub async fn slowmode(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::Slowmode,
@@ -190,6 +193,7 @@ pub async fn delete_channel(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::ChannelDelete,
@@ -223,6 +227,7 @@ pub async fn assign_role(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::RoleAssign,
@@ -255,6 +260,7 @@ pub async fn remove_role(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::RoleRemove,
@@ -287,6 +293,7 @@ pub async fn move_member(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::MoveMember,
@@ -334,6 +341,7 @@ pub async fn purge(
         ctx.say(NO_GUILD).await?;
         return Ok(());
     };
+    ctx.defer_ephemeral().await?;
     let (requester, bot) = load_mirror_perms(ctx, guild_id).await?;
     if let Err(denial) = permission_mirror::authorize(
         ServerAction::PurgeMessages,

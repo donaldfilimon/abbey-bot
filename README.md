@@ -171,7 +171,7 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |
 | `/voice status` | guild | private | Read your privacy-bounded voice status. |
 | `/voice diagnostics` | guild | private | Read private content-free operator voice diagnostics. |
-| `/voice mode` | guild | private | Read or select a fully configured voice mode. |
+| `/voice mode` | guild | private | Read or select local/off voice mode (OpenAI Realtime removed). |
 | `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |
 | `/voice verify report` | guild | private | Read the private local voice acceptance report. |
 
