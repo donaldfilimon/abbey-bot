@@ -8,7 +8,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>exec "$HOME/.local/libexec/abbey-bot/abi-wdbx-gateway" --grpc 127.0.0.1:50051 --events 127.0.0.1:50052 --store "$HOME/.local/share/abbey-bot/wdbx-gateway" --token-file "$HOME/.config/abbey-bot/episode-gateway-token" --episode-policy "$HOME/.config/abbey-bot/episode-policy.json"</string>
+    <string>exec "$HOME/.local/libexec/abbey-bot/abi-wdbx-gateway" --grpc 127.0.0.1:50051 --events 127.0.0.1:50052 --store "$HOME/.local/share/abbey-bot/wdbx-gateway" --token-file "$HOME/.config/abbey-bot/episode-gateway-token" --episode-policy "$HOME/.config/abbey-bot/episode-policy.json" --episode-signing-key "$HOME/.config/abbey-bot/episode-signing-key"</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__HOME__/.local/share/abbey-bot/wdbx-gateway</string>

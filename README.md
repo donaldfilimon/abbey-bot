@@ -869,10 +869,16 @@ restart:
   `127.0.0.1:50051` gRPC and `:50052` events, store
   `~/.local/share/abbey-bot/wdbx-gateway`, bearer token
   `~/.config/abbey-bot/episode-gateway-token`, policy
-  `~/.config/abbey-bot/episode-policy.json`), and waits until a verify of the
-  all-zero digest answers `found=false`. Install it before adding
-  `ABBEY_EPISODE_GATE_CONFIG` to the env file; `--uninstall` unloads the agent
-  and leaves binaries, store, token, and policy in place.
+  `~/.config/abbey-bot/episode-policy.json`, episode signing key
+  `~/.config/abbey-bot/episode-signing-key`), and waits until a verify of the
+  all-zero digest answers `found=false`. The signing key is 32 raw bytes the
+  gateway signs every appended episode with; the installer generates it at
+  mode 600 on first install, refuses a symlink, a wrong mode or size, or the
+  store's own membership key, and never prints it (`abi wdbx episode verify
+  --json` then reports `signature_status: valid` for new records). Install it
+  before adding `ABBEY_EPISODE_GATE_CONFIG` to the env file; `--uninstall`
+  unloads the agent and leaves binaries, store, token, policy, and signing key
+  in place.
   Those dated observations do not describe the current installation after a
   subsequent cutover. Use a current acceptance record containing exact hashes,
   PIDs, listeners, provider report, and model identities; source, CI, or WAV

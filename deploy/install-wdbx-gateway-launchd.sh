@@ -15,6 +15,9 @@
 #   ~/.local/share/abbey-bot/wdbx-gateway/        the store; ledger under episodes/
 #   ~/.config/abbey-bot/episode-gateway-token     bearer token (chmod 600; you write it)
 #   ~/.config/abbey-bot/episode-policy.json       StorePolicy JSON (you write it)
+#   ~/.config/abbey-bot/episode-signing-key       32 raw bytes, Ed25519 seed that signs
+#                                                 every appended episode (chmod 600;
+#                                                 generated here on first install)
 #   ~/Library/Logs/abbey-bot/wdbx-gateway.log
 #   ~/Library/LaunchAgents/com.donaldfilimon.abbey-wdbx-gateway.plist
 #
@@ -30,6 +33,8 @@ STORE_DIR="$HOME/.local/share/abbey-bot/wdbx-gateway"
 LOG_DIR="$HOME/Library/Logs/abbey-bot"
 BEARER_PATH="$HOME/.config/abbey-bot/episode-gateway-token"
 POLICY_FILE="$HOME/.config/abbey-bot/episode-policy.json"
+SIGNING_KEY_PATH="$HOME/.config/abbey-bot/episode-signing-key"
+MEMBERSHIP_KEY="$STORE_DIR/gateway-membership/signing.key"
 ENDPOINT=http://127.0.0.1:50051
 UID_NUM=$(id -u)
 
@@ -64,7 +69,7 @@ fi
 if [ "$1" = "--uninstall" ]; then
   unload_service
   rm -f "$PLIST_DST"
-  echo "uninstalled $LABEL; binaries, store, token, and policy left in place"
+  echo "uninstalled $LABEL; binaries, store, token, policy, and signing key left in place"
   exit 0
 fi
 
@@ -90,6 +95,36 @@ fi
 umask 077
 mkdir -p "$BIN_DIR" "$STORE_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 chmod 700 "$STORE_DIR"
+
+# Episode signing key: 32 raw bytes the gateway signs every appended episode
+# with (`--episode-signing-key`). Generated once under the umask above and
+# never printed. It must not be the membership key the store mints under
+# gateway-membership/: the gateway refuses that reuse, and refusing it here
+# gives a named reason instead of a KeepAlive crash loop after bootstrap.
+if [ ! -e "$SIGNING_KEY_PATH" ]; then
+  head -c 32 /dev/urandom >"$SIGNING_KEY_PATH.new"
+  chmod 600 "$SIGNING_KEY_PATH.new"
+  mv -f "$SIGNING_KEY_PATH.new" "$SIGNING_KEY_PATH"
+  echo "generated episode signing key at $SIGNING_KEY_PATH"
+fi
+if [ -L "$SIGNING_KEY_PATH" ] || [ ! -f "$SIGNING_KEY_PATH" ]; then
+  echo "$SIGNING_KEY_PATH must be a regular file, not a symlink" >&2
+  exit 1
+fi
+key_mode=$(stat -f '%Lp' "$SIGNING_KEY_PATH")
+if [ "$key_mode" != "600" ]; then
+  echo "$SIGNING_KEY_PATH must be mode 600 (is $key_mode)" >&2
+  exit 1
+fi
+key_size=$(stat -f '%z' "$SIGNING_KEY_PATH")
+if [ "$key_size" != "32" ]; then
+  echo "$SIGNING_KEY_PATH must be exactly 32 bytes (is $key_size)" >&2
+  exit 1
+fi
+if [ -f "$MEMBERSHIP_KEY" ] && cmp -s "$SIGNING_KEY_PATH" "$MEMBERSHIP_KEY"; then
+  echo "$SIGNING_KEY_PATH must not be the membership signing key at $MEMBERSHIP_KEY" >&2
+  exit 1
+fi
 
 # Stop the running gateway before replacing its binary; a stale process
 # holding the old inode would keep serving the old build.

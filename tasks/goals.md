@@ -1104,6 +1104,24 @@ status: in_progress
   (wdbx `56767f7`, 04:28 today, made episode signing available); provisioning a key and
   changing the live plist is Donald's decision. Residuals unchanged: no run against the live
   gateway (by rule), proposal stage only, human approver still a distinct step.
+- **2026-09-16 14:1x EDT — episode signing key support landed as PROPOSED (spec
+  `docs/superpowers/specs/2026-09-16-do-all-signing-key-mlx-primary-design.md` §2); the
+  live gateway is still unsigned until §3a applies it.** `deploy/com.donaldfilimon.abbey-wdbx-gateway.plist`
+  passes `--episode-signing-key "$HOME/.config/abbey-bot/episode-signing-key"`;
+  `deploy/install-wdbx-gateway-launchd.sh` provisions that file before bootstrap (32 bytes
+  from `/dev/urandom` written atomically at mode 600 under `umask 077` when absent; otherwise
+  must be a regular non-symlink file, mode 600, exactly 32 bytes, and byte-different from the
+  store's `gateway-membership/signing.key`; any violation exits 1 with the rule, never the
+  bytes; `--uninstall` leaves it in place). New `deploy/test-install-wdbx-gateway-launchd.py`
+  runs from `check.sh` and is an honest text pin (the installer cannot run under a test):
+  exact flag set in the exec string, plist path == installer path, the generation and
+  validation lines, provisioning after `umask` and before `bootstrap`, uninstall leaves the
+  key, no line prints key material. README deploy bullet updated. **Proof on a scratch
+  gateway** (ports 50061/50062, empty store, scratch token and scratch key, copy of the live
+  policy; live store mtime unchanged; scratch removed): acceptance test `TEST_EXIT: 0`,
+  appended 4 / rejected 1, and `abi wdbx episode verify --json` on the first receipt read
+  `signature_status: valid`, `signer_key_id: ed25519:0dd2de9e…`. Full `./check.sh`
+  `CHECK_SH_EXIT: 0`, 11 scripts, 6 plists, 1,306 passed / 5 ignored.
 
 
 ## Build the MLAI server from a plan file (`--server-plan`)
