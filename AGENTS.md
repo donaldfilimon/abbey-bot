@@ -59,8 +59,8 @@ invalid escape — verify with `python3 -c "import tomllib,sys;tomllib.load(open
 
 ## Layout and local run
 
-`src/` is the entire product: one binary crate, ~240 files, no library target
-and no workspace. Everything else is support — `deploy/` the launchd installers
+`src/` is the entire product: one binary crate, ~250 `.rs` files (247 on
+2026-09-16), no library target and no workspace. Everything else is support — `deploy/` the launchd installers
 plus the Python tests that gate them (and a systemd unit, `abbey-bot.service`,
 which with the root `Dockerfile` is documented in README but never exercised
 on this host), `scripts/` the `check-*.py` gates and
@@ -72,9 +72,13 @@ sidecar, `docs/spec/` the ported design, `tasks/` the ledger. `tests/` holds
 is data read by inline `#[cfg(test)]` modules and by the `scripts/check-*.py`
 and `deploy/*.py` gates.
 
-Run it locally with `./launch.sh` (`run_bot.sh` execs the same script). It
-sources `~/.config/abbey-bot/env` first and then repo `.env`, which **overrides**
-— a stale repo `.env` silently beats the deployed credentials. Check
+Run it locally with `./launch.sh` (`run_bot.sh` execs the same script). Both
+are **untracked**, owner-only local wrappers: absent from a fresh clone or
+worktree and deliberately outside `check.sh`'s shell-syntax loop, so the
+tracked recipe is README `## Running` (`cargo run` with the variables that
+`.env.example` documents). `launch.sh` sources `~/.config/abbey-bot/env` first
+and then repo `.env`, which **overrides** — a stale repo `.env` silently beats
+the deployed credentials. Check
 `launchctl list` for `abbey` before starting one: the deployed service is
 managed and normally running, the repo `.env` here does set `DISCORD_TOKEN`, and
 if the two resolve to the same identity Discord delivers to both sessions. README `## Running` owns
@@ -167,8 +171,8 @@ section it ports. Read that header before the code.
   `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds a
   further set of files — re-derive it with
   `comm -13 <(narrow|sort) <(wide|sort)` rather than trusting a count here, which
-  has already gone stale once (it read "ten" while the answer was eleven on
-  2026-09-16). What matters is not the number but that every one of them is
+  has already gone stale once (it read "ten" while the answer was eleven early
+  on 2026-09-16, and twelve by 13:2x that afternoon). What matters is not the number but that every one of them is
   either test-only or already inside a module listed above, which is what makes
   the wide pattern a no-leak confirmation at the cost of noise. Read the new
   module either way.
@@ -194,9 +198,14 @@ section it ports. Read that header before the code.
   do not, so a change there has no test to catch it. `check-systemd-unit.py` is the only
   thing that reads `deploy/abbey-bot.service` (no systemd on this Mac), so a
   hardening change there must update its pinned table too. The `deploy/*.py` service
-  modules are covered by `deploy/test-*.py`. `check.sh` runs every one of them by
-  explicit name, not by glob, so a new gate or test is dead until it is added
-  there. Where a twin exists, change the gate and its test in the same commit.
+  modules are covered by `deploy/test-*.py`. Since 2026-09-16 `check.sh`
+  enumerates shell syntax (`sh -n` over `deploy/*.sh` and `scripts/*.sh`) and
+  plist lint (`deploy/*.plist`) by glob, so a new script or plist in those
+  directories is parsed the day it lands (the loop assumes `#!/bin/sh`; a bash
+  script needs a shebang dispatch first). Every Python gate and test twin is
+  still run by explicit name, so a new `.py` gate or test is dead until it is
+  added there. Where a twin exists, change the gate and its test in the same
+  commit.
 
 ## Boundaries
 
