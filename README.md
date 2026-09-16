@@ -161,11 +161,11 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/admin dashboard` | guild | private | Open private administration controls. |
 | `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
 | `/voice notice` | guild | private | Publish the member voice consent controls. |
-| `/voice play` | guild | private | Play native music and mirror eligible host audio; requires macOS. |
-| `/voice pause` | guild | private | Pause music and close host capture without changing consent. |
-| `/voice resume-music` | guild | private | Resume music only; never renew listening consent. |
-| `/voice stop-music` | guild | private | Stop host audio capture and mirrored music. |
-| `/voice volume` | guild | private | Set music volume; duck to one quarter while Abbey speaks. |
+| `/voice play` | guild | private | Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent. |
+| `/voice pause` | guild | private | Pause mirrored music and close tap capture; listen consent unchanged. |
+| `/voice resume-music` | guild | private | Resume mirrored music only; never renews listen consent. |
+| `/voice stop-music` | guild | private | Stop tap capture and mirrored playback; listen consent unchanged. |
+| `/voice volume` | guild | private | Set mirror volume 0–100; Abbey speech ducks music to ¼. |
 | `/voice join` | guild | private | Start voice after every participant's saved agreement. |
 | `/voice resume` | guild | private | Resume voice after current participant consent checks. |
 | `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |

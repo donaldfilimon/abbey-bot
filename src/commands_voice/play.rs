@@ -309,7 +309,7 @@ fn tap_client() -> Result<AudioTapClient, Error> {
     )?)
 }
 
-/// Play a native Spotify track or Music library search and mirror eligible host audio.
+/// Mirror host Spotify/Music into Abbey's voice channel (macOS tap). Does not grant listen consent.
 #[poise::command(
     slash_command,
     guild_only,
@@ -320,8 +320,9 @@ fn tap_client() -> Result<AudioTapClient, Error> {
 )]
 pub async fn voice_play(
     ctx: Context<'_>,
-    #[description="Spotify track URI or Music library search; omit for current selection"] query:Option<String>,
-    #[description = "Native player (default Spotify)"] player: Option<MusicPlayer>,
+    #[description = "Spotify URI or Music search; omit to mirror what is already playing"]
+    query: Option<String>,
+    #[description = "Host player (default Spotify)"] player: Option<MusicPlayer>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let result = async {
@@ -332,7 +333,7 @@ pub async fn voice_play(
     .await;
     reply(ctx, result).await
 }
-/// Pause local music and close its capture stream without changing listening consent.
+/// Pause mirrored music and close host capture. Listening consent is unchanged.
 #[poise::command(
     slash_command,
     guild_only,
@@ -359,7 +360,7 @@ pub async fn voice_pause(ctx: Context<'_>) -> Result<(), Error> {
     .await;
     reply(ctx, result).await
 }
-/// Resume music only; this never renews permission to listen to Discord participants.
+/// Resume mirrored music only. Never renews listen consent.
 #[poise::command(
     slash_command,
     guild_only,
@@ -381,7 +382,7 @@ pub async fn voice_resume_music(ctx: Context<'_>) -> Result<(), Error> {
     .await;
     reply(ctx, result).await
 }
-/// Stop mirroring the host audio mix and discard all queued music.
+/// Stop host capture and mirrored playback. Listening consent is unchanged.
 #[poise::command(
     slash_command,
     guild_only,
@@ -400,7 +401,7 @@ pub async fn voice_stop_music(ctx: Context<'_>) -> Result<(), Error> {
     .await;
     reply(ctx, result).await
 }
-/// Set the mirrored music volume; Abbey's speaking voice ducks it to one quarter.
+/// Set mirrored music volume (0–100). Abbey speech ducks music to one quarter.
 #[poise::command(
     slash_command,
     guild_only,
@@ -433,11 +434,12 @@ async fn reply(ctx: Context<'_>, result: Result<String, Error>) -> Result<(), Er
             category_of(error),
         );
     }
+    let body = clamp_message(result.unwrap_or_else(|e| e.to_string()));
     let delivered = ctx
         .send(
             poise::CreateReply::default()
                 .ephemeral(true)
-                .content(clamp_message(result.unwrap_or_else(|e| e.to_string())))
+                .embed(crate::gateway::abbey_reply_embed(&body))
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;

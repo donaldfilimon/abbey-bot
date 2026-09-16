@@ -587,7 +587,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Play native music and mirror eligible host audio; requires macOS."
+        "Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent."
     ),
     spec!(
         VoicePause,
@@ -598,7 +598,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Pause music and close host capture without changing consent."
+        "Pause mirrored music and close tap capture; listen consent unchanged."
     ),
     spec!(
         VoiceResumeMusic,
@@ -609,7 +609,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Resume music only; never renew listening consent."
+        "Resume mirrored music only; never renews listen consent."
     ),
     spec!(
         VoiceStopMusic,
@@ -620,7 +620,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Stop host audio capture and mirrored music."
+        "Stop tap capture and mirrored playback; listen consent unchanged."
     ),
     spec!(
         VoiceVolume,
@@ -631,7 +631,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Set music volume; duck to one quarter while Abbey speaks."
+        "Set mirror volume 0–100; Abbey speech ducks music to ¼."
     ),
     spec!(
         VoiceJoin,
