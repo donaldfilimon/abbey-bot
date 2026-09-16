@@ -1,20 +1,21 @@
 //! Memory-edge episodes (amendment 2026-09-16): a guild moderator's review of
 //! a stored fact.
 //!
-//! The first and only emitter is `/admin quarantine` / `/admin resolve`
-//! (Donald's decision, 2026-09-16). There is no automatic policy: nothing here
-//! quarantines on its own, including on a failed signature.
+//! The emitters are `/admin quarantine`, `/admin contradict` and
+//! `/admin resolve` (Donald's decisions, 2026-09-16). There is no automatic
+//! policy: nothing here quarantines or contradicts on its own, including on a
+//! failed signature or on two facts that merely look inconsistent.
 //!
 //! Who the ledger records differs by kind, because WDBX enforces it: a
-//! quarantine is recorded by the bot's service principal (flagging is the
-//! protective direction), and a resolution by the *invoking human*, as the
-//! same keyed, content-free principal a learning-toggle proposal uses. This
-//! is the only write this bot records under a human principal.
+//! quarantine and a contradiction are recorded by the bot's service principal
+//! (flagging is the protective direction), and a resolution by the *invoking
+//! human*, as the same keyed, content-free principal a learning-toggle
+//! proposal uses. That is the only write this bot records under a human
+//! principal.
 //!
 //! Transcribed from `abi-wdbx::v3::episode::{MemoryEdge, MemoryEdgeKind,
-//! EdgeReason}` and pinned by `tests/fixtures/episode_write_memory_edge.json`.
-//! The bot never records `contradicts` yet; the variant exists so the wire
-//! type matches the canonical one and the fixture parses.
+//! EdgeReason}` and pinned by `tests/fixtures/episode_write_memory_edge.json`,
+//! which is itself a `contradicts` edge.
 
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +106,15 @@ pub enum MemoryEdgeRequest {
         now: u64,
         nonce: u64,
     },
+    /// Record that the facts whose receipts are `target` and `counterpart`
+    /// contradict each other. Order does not matter; the write sorts them.
+    Contradict {
+        scoped_guild: String,
+        target: [u8; 32],
+        counterpart: [u8; 32],
+        now: u64,
+        nonce: u64,
+    },
     /// Close the open edge episode `edge`, as `reviewer`.
     Resolve {
         scoped_guild: String,
@@ -151,6 +161,37 @@ pub fn memory_edge_write(
                 target: *target,
                 counterpart: None,
                 reason: *reason,
+            };
+            (scoped_guild, recorded_by, edge, *now, *nonce)
+        }
+        MemoryEdgeRequest::Contradict {
+            scoped_guild,
+            target,
+            counterpart,
+            now,
+            nonce,
+        } => {
+            if target == counterpart {
+                return Err("a fact cannot contradict itself".into());
+            }
+            if *counterpart == [0; 32] {
+                return Err("an edge must name a nonzero digest".into());
+            }
+            let recorded_by = ActorRef {
+                principal_id: config.service_principal.clone(),
+                kind: ActorKind::Service,
+            };
+            // WDBX admits one encoding per pair: the lower digest is the target.
+            let (low, high) = if target < counterpart {
+                (*target, *counterpart)
+            } else {
+                (*counterpart, *target)
+            };
+            let edge = MemoryEdge {
+                kind: MemoryEdgeKind::Contradicts,
+                target: low,
+                counterpart: Some(high),
+                reason: EdgeReason::ConflictingObservation,
             };
             (scoped_guild, recorded_by, edge, *now, *nonce)
         }
@@ -223,6 +264,7 @@ impl EpisodeGate {
     pub async fn record_memory_edge(&self, request: MemoryEdgeRequest) -> GateOutcome {
         let kind = match &request {
             MemoryEdgeRequest::Quarantine { .. } => "quarantines",
+            MemoryEdgeRequest::Contradict { .. } => "contradicts",
             MemoryEdgeRequest::Resolve { .. } => "resolves",
         };
         let outcome = match memory_edge_write(self.config(), &request) {

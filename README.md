@@ -160,6 +160,7 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/admin reset` | guild | private | Clear only this channel's transcript. |
 | `/admin dashboard` | guild | private | Open private administration controls. |
 | `/admin quarantine` | guild | private | Mark a member's stored fact as suspect for review. |
+| `/admin contradict` | guild | private | Record that two of a member's stored facts contradict each other. |
 | `/admin resolve` | guild | private | Close a memory review with a verdict. |
 | `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
 | `/voice notice` | guild | private | Publish the member voice consent controls. |

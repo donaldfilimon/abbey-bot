@@ -1,10 +1,12 @@
 //! Pure decisions for the memory review commands (`/admin quarantine`,
-//! `/admin resolve`), the first memory-edge emitter (amendment 2026-09-16).
+//! `/admin contradict`, `/admin resolve`), the memory-edge emitters
+//! (amendment 2026-09-16).
 //!
-//! A quarantine never hides or deletes the fact; it records in the WDBX
-//! ledger that a moderator considers it suspect. Only a human with a
-//! governance role may review, and WDBX refuses a resolution from anyone
-//! else, so the role check here and the ledger's check agree.
+//! A quarantine or a contradiction never hides or deletes a fact; it records
+//! in the WDBX ledger that a moderator considers one suspect, or two
+//! irreconcilable. Only a human with a governance role may review, and WDBX
+//! refuses a resolution from anyone else, so the role check here and the
+//! ledger's check agree.
 
 use crate::command_catalog::DiscordPermission;
 use crate::episode_gate::{GateOutcome, Reviewer};
@@ -12,8 +14,8 @@ use crate::episode_gate::{GateOutcome, Reviewer};
 pub const NOT_REVIEWER: &str = "Only the server owner, or a member Discord currently grants Administrator or Manage Server, can review memory.";
 pub const NO_GATE: &str = "Memory review needs the constitutional episode gate, which is not configured for this server. Nothing was recorded.";
 pub const NO_RECEIPT: &str = "That fact has no ledger receipt (it was stored before the episode gate covered this server), so there is nothing to quarantine. Nothing was recorded.";
-pub const BAD_EDGE: &str =
-    "That is not an edge digest. Paste the 64-character hex digest from the quarantine reply.";
+pub const BAD_EDGE: &str = "That is not an edge digest. Paste the 64-character hex digest from the quarantine or contradiction reply.";
+pub const SAME_FACT: &str = "Both wordings resolve to the same stored fact, and a fact cannot contradict itself. Nothing was recorded.";
 
 /// The governance role a reviewer holds, strongest first. `None` means the
 /// invoker may not review.
@@ -56,6 +58,21 @@ pub fn quarantine_reply(outcome: &GateOutcome, subject_id: u64) -> String {
     };
     format!(
         "Quarantined a fact about <@{subject_id}>. It stays on record and visible; the ledger now marks it suspect.\n\
+         To close this review: `/admin resolve edge:{digest_hex}`"
+    )
+}
+
+pub fn contradict_reply(outcome: &GateOutcome, subject_id: u64) -> String {
+    if let Some(message) = refused(outcome) {
+        return format!(
+            "{message} Both facts must be on record and not forgotten, and the same pair can be marked only once."
+        );
+    }
+    let GateOutcome::Appended { digest_hex, .. } = outcome else {
+        unreachable!("refused covers every other outcome");
+    };
+    format!(
+        "Recorded that two facts about <@{subject_id}> contradict each other. Both stay on record and visible; the ledger now holds the pair open.\n\
          To close this review: `/admin resolve edge:{digest_hex}`"
     )
 }
@@ -111,6 +128,24 @@ mod tests {
         assert!(reply.contains("<@42>"));
         assert!(reply.contains("stays on record"));
         assert!(reply.contains(&format!("`/admin resolve edge:{}`", "ab".repeat(32))));
+    }
+
+    #[test]
+    fn a_contradiction_reply_hands_back_the_edge_to_resolve() {
+        let reply = contradict_reply(&appended(), 42);
+        println!("{reply}");
+        assert!(reply.contains("<@42>"));
+        assert!(reply.contains("stay on record"));
+        assert!(reply.contains(&format!("`/admin resolve edge:{}`", "ab".repeat(32))));
+        let refused = contradict_reply(
+            &GateOutcome::Rejected {
+                detail: "FailedPrecondition: episode_transition_invalid".into(),
+            },
+            42,
+        );
+        println!("{refused}");
+        assert!(refused.contains("nothing was recorded"));
+        assert!(refused.contains("only once"));
     }
 
     #[test]

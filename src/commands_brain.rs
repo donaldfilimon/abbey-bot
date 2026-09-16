@@ -45,7 +45,7 @@ pub use memory_commands::{
     forget, memory_context_menu, pending_confirm, pending_dismiss, pending_list, recall, remember,
     reputation,
 };
-pub use memory_review::{admin_quarantine, admin_resolve};
+pub use memory_review::{admin_contradict, admin_quarantine, admin_resolve};
 
 const NO_GUILD: &str = "This one only works inside a server.";
 
@@ -191,6 +191,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_reset",
         "admin_dashboard",
         "admin_quarantine",
+        "admin_contradict",
         "admin_resolve"
     )
 )]

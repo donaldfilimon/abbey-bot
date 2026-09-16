@@ -838,6 +838,46 @@ fn a_quarantine_is_recorded_by_the_service_against_the_receipt() {
 }
 
 #[test]
+fn a_contradiction_is_recorded_by_the_service_between_two_receipts_in_ledger_order() {
+    use super::edge::{MemoryEdgeKind, memory_edge_write};
+
+    let config = config();
+    let contradict = |target, counterpart, nonce| MemoryEdgeRequest::Contradict {
+        scoped_guild: "discord:123456789012345678".into(),
+        target,
+        counterpart,
+        now: 1_700_000_000,
+        nonce,
+    };
+    let write = memory_edge_write(&config, &contradict([9; 32], [2; 32], 0)).unwrap();
+    let (recorded_by, edge) = edge_of(&write);
+    assert_eq!(recorded_by.kind, ActorKind::Service);
+    assert_eq!(recorded_by.principal_id, "abbey-service");
+    assert_eq!(edge.kind, MemoryEdgeKind::Contradicts);
+    // WDBX admits one encoding per pair: the lower digest is the target,
+    // whichever order the reviewer named the facts in.
+    assert_eq!(edge.target, [2; 32]);
+    assert_eq!(edge.counterpart, Some([9; 32]));
+    assert_eq!(edge.reason, EdgeReason::ConflictingObservation);
+    assert!(write.operation_id.starts_with("memory-edge-contradicts-"));
+    let reversed = memory_edge_write(&config, &contradict([2; 32], [9; 32], 0)).unwrap();
+    assert_eq!(edge_of(&reversed).1, edge);
+    let json = serde_json::to_string(&write).unwrap();
+    assert!(json.contains("\"kind\":\"contradicts\""));
+    assert!(json.contains("\"reason\":\"conflicting_observation\""));
+
+    // A fact cannot contradict itself, and neither side may be the zero digest.
+    assert!(memory_edge_write(&config, &contradict([9; 32], [9; 32], 0)).is_err());
+    assert!(memory_edge_write(&config, &contradict([0; 32], [9; 32], 0)).is_err());
+    assert!(memory_edge_write(&config, &contradict([9; 32], [0; 32], 0)).is_err());
+
+    // Two contradictions in one second stay distinct operations.
+    let second = memory_edge_write(&config, &contradict([9; 32], [2; 32], 1)).unwrap();
+    assert_ne!(second.operation_id, write.operation_id);
+    assert_ne!(second.request_id, write.request_id);
+}
+
+#[test]
 fn a_resolution_is_recorded_by_the_reviewing_human() {
     use super::edge::{MemoryEdgeKind, memory_edge_write};
 
