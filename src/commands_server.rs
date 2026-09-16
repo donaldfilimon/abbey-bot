@@ -76,7 +76,8 @@ pub async fn create_channel(
 
     let name = normalize_channel_name(&name);
     if name.is_empty() {
-        ctx.say("Channel name cannot be empty after normalization.").await?;
+        ctx.say("Channel name cannot be empty after normalization.")
+            .await?;
         return Ok(());
     }
 
@@ -124,7 +125,8 @@ pub async fn rename_channel(
 
     let name = normalize_channel_name(&name);
     if name.is_empty() {
-        ctx.say("Channel name cannot be empty after normalization.").await?;
+        ctx.say("Channel name cannot be empty after normalization.")
+            .await?;
         return Ok(());
     }
     ensure_guild_channel(ctx, guild_id, channel).await?;
@@ -135,8 +137,11 @@ pub async fn rename_channel(
             EditChannel::new().name(&name).audit_log_reason(&reason),
         )
         .await?;
-    ctx.say(clamp_message(format!("Renamed <#{}> to `{}`.", channel, name)))
-        .await?;
+    ctx.say(clamp_message(format!(
+        "Renamed <#{}> to `{}`.",
+        channel, name
+    )))
+    .await?;
     Ok(())
 }
 
@@ -307,7 +312,8 @@ pub async fn move_member(
 
     let dest = ensure_guild_channel(ctx, guild_id, channel).await?;
     if !matches!(dest.kind, ChannelType::Voice | ChannelType::Stage) {
-        ctx.say("Destination must be a voice or stage channel.").await?;
+        ctx.say("Destination must be a voice or stage channel.")
+            .await?;
         return Ok(());
     }
 

@@ -552,7 +552,6 @@ pub(super) async fn start_voice(
         return Ok(());
     }
 
-
     if !runtime.start_is_current(start_generation) || !runtime.is_current(epoch) {
         let _ = manager.remove(guild_id).await;
         runtime

@@ -64,9 +64,9 @@ mod commands;
 mod commands_brain;
 mod commands_context;
 mod commands_forum;
-mod commands_server;
 mod commands_help;
 mod commands_memory_browser;
+mod commands_server;
 mod commands_voice;
 #[cfg(test)]
 mod contracts;

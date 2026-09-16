@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use serenity::all::{
-    ChannelId, Colour, CreateAllowedMentions, CreateEmbed, CreateMessage, EditMessage,
-    FullEvent, Http, Message, MessageId, MessageReference, Reaction, ReactionType,
+    ChannelId, Colour, CreateAllowedMentions, CreateEmbed, CreateMessage, EditMessage, FullEvent,
+    Http, Message, MessageId, MessageReference, Reaction, ReactionType,
 };
 
 use crate::gateway::shared::{DISCORD_MESSAGE_CAP, Snowflake, clamp, fetch_capped};

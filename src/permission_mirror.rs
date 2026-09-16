@@ -59,7 +59,10 @@ impl ServerAction {
 
     /// Destructive by default — needs [`ActionContext::confirm`].
     pub const fn requires_confirm(self) -> bool {
-        matches!(self, Self::ChannelDelete | Self::RoleDelete | Self::PurgeMessages)
+        matches!(
+            self,
+            Self::ChannelDelete | Self::RoleDelete | Self::PurgeMessages
+        )
     }
 }
 
@@ -179,13 +182,15 @@ mod tests {
     #[test]
     fn allow_when_both_hold_manage_channels() {
         let bits = Permissions::MANAGE_CHANNELS;
-        assert!(authorize(
-            ServerAction::ChannelCreate,
-            bits,
-            bits,
-            ActionContext::default()
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::ChannelCreate,
+                bits,
+                bits,
+                ActionContext::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -219,24 +224,28 @@ mod tests {
 
     #[test]
     fn administrator_on_requester_satisfies_permission() {
-        assert!(authorize(
-            ServerAction::MoveMember,
-            Permissions::ADMINISTRATOR,
-            Permissions::MOVE_MEMBERS,
-            ActionContext::default()
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::MoveMember,
+                Permissions::ADMINISTRATOR,
+                Permissions::MOVE_MEMBERS,
+                ActionContext::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn administrator_on_bot_satisfies_permission() {
-        assert!(authorize(
-            ServerAction::RoleAssign,
-            Permissions::MANAGE_ROLES,
-            Permissions::ADMINISTRATOR,
-            ActionContext::default()
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::RoleAssign,
+                Permissions::MANAGE_ROLES,
+                Permissions::ADMINISTRATOR,
+                ActionContext::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -249,20 +258,25 @@ mod tests {
             ActionContext::default(),
         )
         .expect_err("confirm required");
-        assert_eq!(err, Denial::ConfirmRequired {
-            action: ServerAction::ChannelDelete
-        });
+        assert_eq!(
+            err,
+            Denial::ConfirmRequired {
+                action: ServerAction::ChannelDelete
+            }
+        );
 
-        assert!(authorize(
-            ServerAction::ChannelDelete,
-            bits,
-            bits,
-            ActionContext {
-                confirm: true,
-                ..ActionContext::default()
-            },
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::ChannelDelete,
+                bits,
+                bits,
+                ActionContext {
+                    confirm: true,
+                    ..ActionContext::default()
+                },
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -277,16 +291,18 @@ mod tests {
             ),
             Err(Denial::ConfirmRequired { .. })
         ));
-        assert!(authorize(
-            ServerAction::PurgeMessages,
-            bits,
-            bits,
-            ActionContext {
-                confirm: true,
-                ..ActionContext::default()
-            }
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::PurgeMessages,
+                bits,
+                bits,
+                ActionContext {
+                    confirm: true,
+                    ..ActionContext::default()
+                }
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -324,16 +340,18 @@ mod tests {
     #[test]
     fn role_delete_zero_holders_with_confirm_ok() {
         let bits = Permissions::MANAGE_ROLES;
-        assert!(authorize(
-            ServerAction::RoleDelete,
-            bits,
-            bits,
-            ActionContext {
-                confirm: true,
-                role_holders: Some(0),
-            },
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::RoleDelete,
+                bits,
+                bits,
+                ActionContext {
+                    confirm: true,
+                    role_holders: Some(0),
+                },
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -351,13 +369,15 @@ mod tests {
     #[test]
     fn overwrite_edit_requires_manage_roles_on_both_sides() {
         let bits = Permissions::MANAGE_ROLES;
-        assert!(authorize(
-            ServerAction::OverwriteEdit,
-            bits,
-            bits,
-            ActionContext::default()
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::OverwriteEdit,
+                bits,
+                bits,
+                ActionContext::default()
+            )
+            .is_ok()
+        );
         assert!(matches!(
             authorize(
                 ServerAction::OverwriteEdit,
@@ -372,19 +392,15 @@ mod tests {
     #[test]
     fn non_destructive_channel_edit_needs_no_confirm() {
         let bits = Permissions::MANAGE_CHANNELS;
-        assert!(authorize(
-            ServerAction::ChannelEdit,
-            bits,
-            bits,
-            ActionContext::default()
-        )
-        .is_ok());
-        assert!(authorize(
-            ServerAction::Slowmode,
-            bits,
-            bits,
-            ActionContext::default()
-        )
-        .is_ok());
+        assert!(
+            authorize(
+                ServerAction::ChannelEdit,
+                bits,
+                bits,
+                ActionContext::default()
+            )
+            .is_ok()
+        );
+        assert!(authorize(ServerAction::Slowmode, bits, bits, ActionContext::default()).is_ok());
     }
 }
