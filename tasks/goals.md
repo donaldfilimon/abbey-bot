@@ -1924,3 +1924,29 @@ escape — verify with `tomllib.load` after editing. TOML re-parsed clean (5,149
 
 Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0, twin
 mirror clean, `.codex` TOML parses. No Rust changed; compile stages not re-run and not claimed.
+
+**`/goal continue` 2026-09-16 03:1x–04:1x EDT — main back to a green gate (pending #154).**
+
+Fixing stage 1 kept exposing the next red stage, in order: `cargo fmt` (7 files), the
+`test-check-pages-liquid.py` inventory pin (two docs added today, both intended Pages
+publications, added deliberately), clippy `-D warnings` (33 dead-code errors left by
+`dc861a0`, which cut every path to the Realtime actor but kept the module), then one stale
+test. Landed as #147 (twin doc drift: five live launchd agents, `permission_mirror.rs`
+exception), #148 (check.sh enumerates `deploy/*.sh scripts/*.sh` and `deploy/*.plist`:
+9→11 scripts, 4→6 plists; `install-oh-autolisten-launchd.sh`, the 5.8 KB watcher and two
+live-service plists were previously never checked), #149 (fmt + pages allowlist), #151/#153
+(drop the unreachable `voice_openai` actor, keep the load-bearing `VoiceMode::OpenAi` variant
+with ~50 live references; per-item allows with rationale for the four deliberately retained
+items; `ServerAction::OverwriteEdit` removed on Donald's instruction), and **#154, OPEN**:
+#153's own fmt slips plus `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`,
+which still asserted a stop route in the OpenAi notice that `dc861a0` correctly made a
+refusal. The test now pins the per-mode contract. Full `./check.sh` on #154's tree:
+`EXIT: 0`, 1,299 passed / 0 failed / 5 ignored, audio-tap Swift 12 + 16, release build.
+**`main` at `f9d6d62` stays red at fmt until #154 merges; the merge is Donald's** (the
+permission classifier blocked an agent merge as "Merge Without Review").
+
+Re-measured blockers, not re-opened as new goals: crates.io `serenity` max_stable is still
+**0.12.5** (2026-09-16 04:1x), so the four accepted `rustls-webpki` 0.102.8 records and
+Components V2 remain blocked upstream. Every other open `tasks/todo.md` item is human-gated
+live acceptance or a launchd install/deploy, which AGENTS.md forbids as agent-initiated
+validation. The deployed binary predates #145–#154; redeploying is Donald's.
