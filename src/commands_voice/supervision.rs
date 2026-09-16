@@ -260,6 +260,64 @@ pub(super) async fn on_voice_state_update(
     if !joined_target {
         return;
     }
+
+    // Bots are not consent subjects; ignore their joins for both upgrade and revoke.
+    let joiner_is_bot = new
+        .member
+        .as_ref()
+        .map(|member| member.user.bot)
+        .or_else(|| {
+            ctx.cache.guild(guild_id).and_then(|guild| {
+                guild
+                    .members
+                    .get(&new.user_id)
+                    .map(|member| member.user.bot)
+            })
+        })
+        .unwrap_or(false);
+    if joiner_is_bot {
+        return;
+    }
+
+    // PresenceOnly muted autojoin: upgrade to Local listening when consent already
+    // covers the room (including this joiner). Spawn so model prep cannot block
+    // gateway handling or the active-session revoke path below.
+    let phase = runtime.snapshot().await.phase;
+    if phase == VoicePhase::PresenceOnly {
+        let upgrade_runtime = Arc::clone(&runtime);
+        let upgrade_state = Arc::clone(&data.state);
+        let upgrade_ctx = ctx.clone();
+        tokio::spawn(async move {
+            match super::try_auto_listen_while_present(
+                &upgrade_ctx,
+                upgrade_runtime,
+                upgrade_state,
+            )
+            .await
+            {
+                Ok(outcome) => tracing::info!(
+                    ?outcome,
+                    "PresenceOnly auto-listen join hook finished"
+                ),
+                Err(error) => tracing::warn!(
+                    %error,
+                    "PresenceOnly auto-listen join hook failed; muted presence kept"
+                ),
+            }
+        });
+        return;
+    }
+
+    // Active conversational sessions still revoke on unattested joins.
+    if !matches!(
+        phase,
+        VoicePhase::Connecting
+            | VoicePhase::Listening
+            | VoicePhase::Thinking
+            | VoicePhase::Speaking
+    ) {
+        return;
+    }
     // The join payload itself is evidence. A newer cache where the user has
     // already left must not erase a transient consent boundary. Attestation
     // and revocation share one critical section so an intervening replacement

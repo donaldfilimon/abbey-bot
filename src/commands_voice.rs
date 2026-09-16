@@ -22,6 +22,7 @@ use crate::{Context, Error};
 mod acknowledgement;
 mod play;
 use play::{voice_pause, voice_play, voice_resume_music, voice_stop_music, voice_volume};
+mod auto_listen_gate;
 mod auto_listen;
 mod consent;
 mod discord;
@@ -87,6 +88,7 @@ async fn configure_disconnected_call(call: &Arc<Mutex<songbird::Call>>, mode: Vo
     call.lock().await.set_config(initial_songbird_config(mode));
 }
 
+#[allow(unused_imports)] // public API for callers outside this module tree
 pub use auto_listen::{
     AutoListenStartup, AutoListenWhilePresent, try_auto_listen_at_startup,
     try_auto_listen_while_present,
@@ -352,8 +354,15 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         caller_present,
         caller_can_manage: permissions.contains(serenity::all::Permissions::MANAGE_GUILD),
     });
-    ctx.say(clamp_message(view.render())).await?;
-    Ok(())
+    // Attach classic Action Row controls (Refresh/Leave[/Play]) when a session exists.
+    match ux::send_status_command_panel(ctx, &runtime, channel_id, &view.render()).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::warn!(%error, "voice status Action Row panel failed; falling back to text");
+            ctx.say(clamp_message(view.render())).await?;
+            Ok(())
+        }
+    }
 }
 
 /// Show content-free operational detail to current server managers.
