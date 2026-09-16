@@ -362,7 +362,6 @@ mod tests {
         assert_eq!(plan, Ok(()));
     }
 
-
     #[test]
     fn non_destructive_channel_edit_needs_no_confirm() {
         let bits = Permissions::MANAGE_CHANNELS;

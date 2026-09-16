@@ -486,9 +486,18 @@ mod tests {
 
     #[test]
     fn consent_notices_name_guaranteed_written_stop_route_and_fit_discord() {
-        for mode in [VoiceMode::Local, VoiceMode::OpenAi] {
-            let notice = consent_notice(mode, ChannelId::new(u64::MAX), false);
-            assert!(notice.contains("mention Abbey and write `stop listening`"));
+        // Local is the only mode that can start listening, so it is the only one
+        // that owes participants a written stop route. The retired Realtime mode
+        // must say plainly that it will not start, and must not name a stop
+        // route it has no session to honor.
+        let local = consent_notice(VoiceMode::Local, ChannelId::new(u64::MAX), false);
+        assert!(local.contains("mention Abbey and write `stop listening`"));
+
+        let removed = consent_notice(VoiceMode::OpenAi, ChannelId::new(u64::MAX), false);
+        assert!(removed.contains("OpenAI Realtime voice was removed"));
+        assert!(!removed.contains("stop listening"));
+
+        for notice in [&local, &removed] {
             assert!(notice.chars().count() < 2000);
         }
     }
