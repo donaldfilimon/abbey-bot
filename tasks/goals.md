@@ -1789,3 +1789,52 @@ Open goals unchanged: all 42 `tasks/todo.md` items remain human-, deployment-,
 platform- or crate-gated; nothing source-actionable was found this pass.
 
 - **2026-09-16 00:30 EDT:** Grok loop PID 49762 killed on Donald's instruction (`kill 49762`); SIGTERM sufficed, its log shows a clean `session_end` (`outcome: joined`), all eight MCP children exited, this tree stayed clean at `a32d795`. The "still active" lines above are history.
+
+**`/goal continue` 2026-09-16 00:3x EDT — two residuals measured instead of re-listed.**
+
+**1. Strict WDBX conformance re-run on the current tip (new evidence).** The last strict
+run recorded here was on `ff5d594`, nine days old. Re-run now:
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1 python3 scripts/check-wdbx-conformance.py` → **EXIT 0**
+on tip `4fa1ec4` against sibling `../wdbx` at `2cf550c`, cross-repository fixture parity
+`sha256=a4ec232c6980e009b77936386c9b233b864abb2d6b66b6253624d2f7a474be90`
+(`wdbx/crates/abi-wdbx/tests/golden/abbey-bot-projection.seg.jsonl`); its twin
+`test-check-wdbx-conformance.py` → **EXIT 0** (3 tests). So the transcription contract
+still holds against the *current* sibling, not just the September 6 one.
+
+**2. Installed-artifact identity: the RUNTIME half is now proven; the SOURCE half is not,
+and cannot be from the artifact alone.** Every pass has re-listed this as flatly "not
+established". Measured read-only, nothing installed or restarted:
+
+- Installed `~/.local/libexec/abbey-bot/abbey-bot`: 32,622,896 bytes, mtime 2026-09-09
+  00:12:45 EDT, `sha256 8ab22e466b675ea4ccece46c933593049c116fd2ed5e3680a6c3366a9b970663`.
+- `readiness.json` self-reports `executable_sha256` = **that same digest**, `pid 1437`,
+  `phase ready`, `discord ready`, `scheduler running`, `last_persistence complete`,
+  published 7.2 s before the read (contract: refresh ≤10 s, stale >30 s → **fresh**).
+- `launchctl list` gives pid **1437** for `com.donaldfilimon.abbey-bot`, and that process's
+  `txt` descriptor is that exact path with that exact digest.
+- `bootstrap-status.json` is absent, i.e. a clean startup with no recorded failure.
+
+That chain — launchd pid ↔ readiness pid ↔ self-computed digest ↔ installed file ↔ the
+mapped executable of the live process — is **established**. `src/readiness.rs` earns it:
+`RunIdentity::current()` hashes `current_exe()` with a stat-before/stat-after guard, and
+`ReadinessPublisher::publish` refuses a document whose digest is not its own.
+
+**What is still NOT established, with the reason:** which *commit* produced those bytes.
+There is no `build.rs`, no `option_env!("GIT_SHA")`/`env!` build embedding anywhere in
+`src/`, and `Cargo.toml` carries only `version = "0.1.0"` — so the artifact contains no
+provenance to read. `main`'s tip at the binary's mtime was `ec5b35e`, but that is
+**inference from a timestamp, not proof**, and is recorded as such. Note the installer
+already proves the narrower claim it can: `deploy/service_transaction.py` phase `publish`
+compares `binary_digest(...)` against `sha256(candidate)` and raises
+`TransactionError('artifact')` on mismatch, so installed-equals-built is enforced *at
+install time* — it simply is not recoverable afterwards.
+
+**Proposed (NOT implemented, Donald's call):** embed build provenance so the source half
+becomes checkable — a `build.rs` emitting `GIT_SHA`/dirty state read via `option_env!`,
+surfaced in readiness. Deliberately not done autonomously tonight: it adds a build-time
+git dependency to every build including `--locked` CI, needs a clean fallback when git is
+absent, and changes the deployed artifact. `README.md`'s status row ("Installed artifact
+identity | **PENDING** | ... exact-head CI required before deployment") was **left
+untouched** — upgrading a status table on the strength of a runtime-only chain would be
+exactly the Current-laundering the iron rules forbid. The row is imprecise rather than
+wrong; this entry is the precise version.
