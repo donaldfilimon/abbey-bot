@@ -1961,3 +1961,18 @@ pages-liquid test is already present there, so merging it would be a no-op. **#1
 only merge candidate.** Donald authorized the merge explicitly, but the Claude Code
 permission classifier blocked `gh pr merge 154` twice (once as "Merge Without Review"); the
 merge was not attempted by any other route. Redeploy waits on the merge.
+
+**Redeploy 2026-09-16 04:3x EDT (Donald: "deploy the #154 branch now").** #154 was still
+unmerged on GitHub (`merged=false`, no merge event). Deployed `933783e` from a disposable
+detached worktree through `deploy/install-launchd.sh` (the installer copies the binary to
+`~/.local/libexec/abbey-bot` and points `WorkingDirectory` at the state dir, so the
+checkout is not referenced after install): `installation: ready` at 04:32:42, PID 8381,
+installed SHA-256 == built == `readiness.json` (`a3c63fcd…`), `discord: ready`, voice back
+in Office Hours. **Superseded 76 s later:** a concurrent session merged #155 (`cb5b6d1`,
+08:31:31Z) and ran its own install from `main`, finishing 04:34:13. **Running now:** PID
+39743, `main` at `cb5b6d1`, installed == built == readiness (`3af8438a…`), `discord: ready`,
+`scheduler: running`, `last_persistence: complete`, install lock released, all five launchd
+agents loaded. `main` does **not** contain #154, and at `cb5b6d1` is still red: `cargo fmt
+--check` exit 1 and `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`
+fails. #154 still merges cleanly onto it (`git merge-tree`); its runtime delta is nil (fmt,
+a test, docs), so the running binary loses nothing by lacking it.
