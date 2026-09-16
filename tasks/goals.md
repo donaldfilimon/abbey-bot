@@ -1,5 +1,10 @@
 # Goals
 
+## Discord UX: embed replies + slash-aware guidance
+status: done
+- **2026-09-16:** #145 merged (`e1ccc5b`). Chat replies use Abbey embed; capability guidance points at `/help`, permission-mirrored `/server …`, `/voice …`. Live Mac managed redeploy verified (PID fresh, mlx/tap 200, 24 guild cmds). Hosted Gate empty-step = UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock. NL auto-execute of `/server` from chat not shipped (hint-via-guidance only).
+
+
 ## Program 1 stable-Rust contract conformance
 status: done
 - Local C1 source evidence on 2026-08-22: `abbey-bot` vendors the exact 81-artifact,
