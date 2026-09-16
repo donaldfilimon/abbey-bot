@@ -144,9 +144,19 @@ section it ports. Read that header before the code.
   decision path run in tests behind a recording `Outbound`. Check it in one
   line before adding a module:
   `grep -rlE '^\s*use (serenity|poise)' src/` must list only the modules
-  above plus test-only files (on 2026-09-08, four: `command_registration_tests.rs`,
+  above, plus test-only files (on 2026-09-08, four: `command_registration_tests.rs`,
   `commands_help/dispatch_tests.rs`, `commands_help/workflows/dispatch_tests.rs`,
-  `commands_voice/acknowledgement_tests.rs`). A new decision module belongs off
+  `commands_voice/acknowledgement_tests.rs`), plus one named exception:
+  **`permission_mirror.rs` is pure and stays pure.** It imports
+  `serenity::all::Permissions`, the bitflag *type*, not the client, so the grep
+  reports it while the boundary holds. Do not "fix" it by moving it into the
+  shell list, and expect the same shape from any future pure module that needs a
+  Discord newtype. The check that decides it is a different grep:
+  `grep -nE 'async|\.await|Http|Client' src/permission_mirror.rs` must come back
+  empty (it did on 2026-09-16). An `.await` in such a file is a real breach.
+  Do not widen that pattern to `Context` — the module's own `ActionContext`
+  matches it 18 times and the check then looks failed when it is not. A new
+  decision module belongs off
   that list, with its Discord edge in a `commands*` file, so the grep is the
   boundary check to run before the first import. It is necessary and not
   sufficient: it matches `use` lines only, so a module reaching serenity through
@@ -278,11 +288,16 @@ section it ports. Read that header before the code.
   to `changes (0)`. A dry run that shows changes means the guild drifted, not that work is
   pending. `--apply` is additive-only and has no delete variant; role-permission and
   role-order decisions stay manual.
-- **Four** launchd agents are live, not one (corrected 2026-09-09 01:4x; an earlier line in
-  this file said two and was wrong): `com.donaldfilimon.abbey-bot`,
-  `com.donaldfilimon.abbey-wdbx-gateway`, `com.donaldfilimon.abbey-mlx-audio`, and
-  `com.donaldfilimon.abbey-audio-tap`. Enumerate with
-  `launchctl list | grep com.donaldfilimon.abbey` rather than trusting any count written
-  here, since the set has grown twice. The gateway must be up before the bot is restarted.
+- **Five** launchd agents are live (corrected 2026-09-16 03:1x; this line has now read
+  one, two and four — each correct when written and stale within a week, which is the
+  point of the enumeration below): `com.donaldfilimon.abbey-bot`,
+  `com.donaldfilimon.abbey-wdbx-gateway`,
+  `com.donaldfilimon.abbey-mlx-audio`, `com.donaldfilimon.abbey-audio-tap`, and
+  `com.donaldfilimon.abbey-oh-autolisten`. **A plist in `deploy/` is not a running
+  service:** `com.donaldfilimon.abbey-mlx-vlm` has both a plist and an installer there
+  and was NOT loaded at that reading, so enumerate the live set with
+  `launchctl list | grep com.donaldfilimon.abbey` and the installable set with
+  `ls deploy/*.plist` — they are different questions and the answers differ.
+  Never trust any count written here. The gateway must be up before the bot is restarted.
   They carry `KeepAlive`, so a plain `kill` respawns rather than stops them. Do not stop,
   unload, or reinstall any of them on your own initiative.

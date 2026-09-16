@@ -25,10 +25,12 @@ AGENTS.md defines the boundary by module, and it is wider than any fixed number:
 `gateway/`, `commands*`, `forum.rs`, `startup`, `service/framework.rs`,
 `voice_session/playback.rs`, `server/{run,discord}.rs`, `main.rs`. Re-derive it rather
 than trusting a count here:
-`grep -rlE '^\s*use (serenity|poise)' src/` must list only those modules plus test-only
-files. That grep matches `use` lines only, so a module reaching serenity through a
-path-qualified attribute (`#[serenity::async_trait]` in `voice_session/playback.rs`) is
-invisible to it; `grep -rlE '\b(serenity|poise)::' src/` is the wider, noisier check.
+`grep -rlE '^\s*use (serenity|poise)' src/` must list only those modules, test-only
+files, and `permission_mirror.rs` — a pure gate that imports the `Permissions` bitflag
+type, not the client (no `async`/`.await`/`Http`); leave it off the shell list. That grep
+matches `use` lines only, so a module reaching serenity through a path-qualified
+attribute (`#[serenity::async_trait]` in `voice_session/playback.rs`) is invisible to it;
+`grep -rlE '\b(serenity|poise)::' src/` is the wider, noisier check.
 - `commands.rs`, `commands_brain.rs`, `commands_voice.rs` — translate Discord data
 - `gateway/` — **a directory, not `gateway.rs`**: `discord.rs`, `interaction_outcomes.rs`,
   `mod.rs`, `shared.rs`, `slack.rs`, `telegram.rs` (gateway events + Telegram/Slack adapters)

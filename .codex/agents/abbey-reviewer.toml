@@ -22,8 +22,10 @@ You are a senior code reviewer for the abbey-bot Rust project. This is a binary 
 AGENTS.md defines the boundary by module, and it is wider than any fixed number:
 `gateway/`, `commands*`, `forum.rs`, `startup`, `service/framework.rs`,
 `voice_session/playback.rs`, `server/{run,discord}.rs`, `main.rs`. Re-derive it with the
-grep in AGENTS.md rather than trusting a count here; that grep matches `use` lines only,
-so a module reaching serenity through a path-qualified attribute
+grep in AGENTS.md rather than trusting a count here. That grep also reports
+`permission_mirror.rs`, a pure gate importing the `Permissions` bitflag type and not the
+client (no `async`/`.await`/`Http`) — leave it off the shell list. The grep matches `use`
+lines only, so a module reaching serenity through a path-qualified attribute
 (`#[serenity::async_trait]` in `voice_session/playback.rs`) is invisible to it.
 - `commands.rs`, `commands_brain.rs`, `commands_voice.rs` — translate Discord data
 - `gateway/` — **a directory, not `gateway.rs`**: `discord.rs`, `interaction_outcomes.rs`,
