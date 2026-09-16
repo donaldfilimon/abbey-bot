@@ -460,6 +460,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/specs/2026-09-06-guided-ux-operator-status-design.md",
             "docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md",
             "docs/superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md",
+            "docs/superpowers/specs/2026-09-16-do-all-signing-key-mlx-primary-design.md",
             "patches/openmls_rust_crypto-0.5.1/CHANGELOG.md",
             "patches/openmls_rust_crypto-0.5.1/PATCH.md",
             "patches/openmls_rust_crypto-0.5.1/README.md",

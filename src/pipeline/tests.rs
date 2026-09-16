@@ -454,16 +454,33 @@ async fn live_dm_round_trip_against_the_configured_backend() {
     third_event.native_message_id = "m3".into();
     let third = handle(&state, &out, third_event, false, None).await;
     assert_eq!(third, Outcome::Replied);
+    // A slow backend streams: the first `send` carries only the partial that
+    // went out once `STREAM_FIRST_POST_SECS` elapsed, and the full reply is
+    // the last `edit` of that message id. Judge the text the person ends up
+    // seeing, not the first partial (measured 2026-09-16: "What" / "You").
     let sent = out.sent.lock().unwrap();
-    for (i, (_, m)) in sent.iter().enumerate() {
+    let edited = out.edited.lock().unwrap();
+    let final_texts: Vec<String> = sent
+        .iter()
+        .enumerate()
+        .map(|(i, (_, m))| {
+            let id = format!("sent-{}", i + 1);
+            edited
+                .iter()
+                .rev()
+                .find(|(_, edited_id, _)| *edited_id == id)
+                .map_or_else(|| m.text.clone(), |(_, _, text)| text.clone())
+        })
+        .collect();
+    for (i, text) in final_texts.iter().enumerate() {
         eprintln!(
             "--- reply {} ({} chars):\n{}",
             i + 1,
-            m.text.chars().count(),
-            m.text
+            text.chars().count(),
+            text
         );
-        assert!(!m.text.contains("no generation backend"));
-        assert!(m.text.chars().count() <= 2000);
+        assert!(!text.contains("no generation backend"));
+        assert!(text.chars().count() <= 2000);
     }
     assert_eq!(sent.len(), 3);
     assert_eq!(
@@ -472,9 +489,9 @@ async fn live_dm_round_trip_against_the_configured_backend() {
         "three exchanges committed to one transcript"
     );
     assert!(
-        sent[2].1.text.to_lowercase().contains("nightly"),
+        final_texts[2].to_lowercase().contains("nightly"),
         "the transcript should carry the toolchain fact: {}",
-        sent[2].1.text
+        final_texts[2]
     );
 }
 

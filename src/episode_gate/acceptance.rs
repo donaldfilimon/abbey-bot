@@ -232,14 +232,14 @@ async fn live_memory_path_round_trips_through_a_real_gateway() {
     );
 
     // 5. Fail closed, live: a covered scope the gateway policy does not list
-    //    is refused with the store's reason, and nothing is stored.
+    //    is refused and nothing is stored. The person sees the fixed,
+    //    content-free `Decision::Rejected` text (since `34f9e95` the slash
+    //    path renders per-turn decisions, not the older `refusal` string);
+    //    the store's reason label goes to the log only.
     let error = memory_gate::admit_fact(&state, UNLISTED_SCOPE, u, "never stored", None)
         .await
         .expect_err("the policy does not know this guild");
-    assert!(
-        error.starts_with("Not stored: the constitutional memory gate refused it"),
-        "{error}"
-    );
+    assert_eq!(error, memory_gate::Decision::Rejected.message(), "{error}");
     assert!(state.memory_service().facts(UNLISTED_SCOPE, u).is_empty());
 
     let counters = gate.counters();
