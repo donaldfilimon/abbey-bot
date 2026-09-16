@@ -12,7 +12,7 @@
 //!
 //! The decision logic these commands render lives in the pure modules —
 //! [`crate::persona`], [`crate::profile`], [`crate::perms`],
-//! [`crate::moderation`], [`crate::server`], [`crate::webhook`] — which know
+//! [`crate::moderation`], [`crate::server`], [`crate::webhook`], [`crate::roleplay_gate`] — which know
 //! nothing about Discord. That split is what lets
 //! the decision suite run without a gateway. This file is the only one that
 //! touches Discord types, and its job is translation: fetch over REST, build
@@ -32,6 +32,7 @@ use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::Persona;
 use crate::pipeline;
 use crate::profile::{self, ProfileFacts};
+use crate::roleplay_gate::{self, RoleplayContext};
 use crate::routing_signals;
 use crate::runtime::{self, AppState};
 #[cfg(test)]
@@ -258,6 +259,88 @@ pub async fn ask(
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
     let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
+    let delivery = deliver_generated_reply(
+        &ctx.data().state,
+        reply.memory,
+        ctx.say(clamp_message(reply.text)),
+    )
+    .await;
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, error);
+    }
+    let (_, memory) = delivery?;
+    crate::memory_gate::deliver_notices(
+        &ctx.data().state,
+        crate::observability::EventComponent::Discord,
+        memory,
+        |decision| async move { ctx.say(decision.message()).await.map(|_| ()) },
+    )
+    .await;
+    Ok(())
+}
+
+/// Roleplay as Aviva when the NSFW gate allows it (bot DM or NSFW guild channel).
+///
+/// Pure admission lives in [`roleplay_gate`]; this shell defers, resolves channel
+/// NSFW after defer, then either refuses or answers as Aviva.
+#[poise::command(slash_command)]
+pub async fn roleplay(
+    ctx: Context<'_>,
+    #[description = "What you want from Aviva"]
+    #[max_length = 2000]
+    prompt: Option<String>,
+) -> Result<(), Error> {
+    ctx.defer().await?;
+
+    let state = &ctx.data().state;
+    let scoped = match ctx.guild_id() {
+        Some(g) => format!("discord:{}", g.get()),
+        None => format!("discord:dm:{}", ctx.author().id.get()),
+    };
+    let enabled = {
+        let mut stores = AppState::lock(&state.stores);
+        AppState::lock(&state.guilds)
+            .config(&scoped, &mut *stores)
+            .nsfw_roleplay_enabled
+    };
+
+    let context = if ctx.guild_id().is_some() {
+        let channel_nsfw = match ctx.channel_id().to_channel(ctx.http()).await {
+            Ok(channel) => channel
+                .guild()
+                .is_some_and(|guild_channel| guild_channel.nsfw),
+            // Fail closed: unknown channel shape is treated as SFW.
+            Err(_) => false,
+        };
+        RoleplayContext::Guild { channel_nsfw }
+    } else {
+        RoleplayContext::BotDm
+    };
+
+    let decision = roleplay_gate::decide(context, enabled);
+    if !decision.allow() {
+        ctx.say(clamp_message(decision.message().to_string()))
+            .await?;
+        return Ok(());
+    }
+
+    let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) else {
+        // Stick Aviva on this channel session so follow-up freeform can stay Aviva.
+        let scope = format!("discord:{}", ctx.channel_id().get());
+        let now = runtime::now();
+        AppState::lock(&state.engine).prepare(
+            &scope,
+            Persona::Aviva,
+            &crate::memory::PersonaContext::empty(),
+            "",
+            now,
+        );
+        ctx.say(clamp_message(decision.message().to_string()))
+            .await?;
+        return Ok(());
+    };
+
+    let reply = answer_question(ctx, &prompt, Some(Persona::Aviva), Commit::Yes).await;
     let delivery = deliver_generated_reply(
         &ctx.data().state,
         reply.memory,

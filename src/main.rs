@@ -110,6 +110,7 @@ mod provider;
 mod provider_self_test;
 mod readiness;
 mod recall;
+mod roleplay_gate;
 mod routing_signals;
 mod runtime;
 mod scoped_stats;
@@ -617,6 +618,8 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_brain::ocr(),
         commands_brain::stats(),
         commands_brain::admin(),
+        commands_brain::nsfw(),
+        commands::roleplay(),
         commands_voice::voice(),
     ];
     commands_help::bind_commands(&mut commands);

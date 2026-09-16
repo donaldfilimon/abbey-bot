@@ -115,6 +115,7 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/help` | guild, bot DM | private | Browse commands available to you privately. |
 | `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
 | `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
+| `/roleplay` | guild, bot DM | public | Roleplay as Aviva in a DM or NSFW channel when the nsfw gate is on. |
 | `/whois` | guild | public | Read a member's profile and roles. |
 | `Abbey: profile` | guild | private | Read the selected member's profile privately. |
 | `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
@@ -147,9 +148,11 @@ Active voice guidance includes a wake-name example and the stop command.
 | `Abbey: describe image` | guild, bot DM | private | Describe the first supported attachment privately. |
 | `Abbey: read image text` | guild, bot DM | private | Read text from the first supported attachment privately. |
 | `/stats` | guild, bot DM | private | Read this conversation’s learning and reply budget. |
+| `/nsfw` | guild, bot DM | private | Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw). |
 | `/admin show` | guild | private | Read this server's settings. |
 | `/admin persona` | guild | private | Set the server's default persona. |
 | `/admin learning` | guild | private | Control learning for this server. |
+| `/admin nsfw` | guild | private | Enable or disable Aviva roleplay for this server (NSFW channels only). |
 | `/admin vision` | guild | private | Control image understanding for this server. |
 | `/admin cooldown` | guild | private | Set the unsolicited reply cooldown. |
 | `/admin act` | guild | private | Opt this server into unsolicited replies or turn them off. |

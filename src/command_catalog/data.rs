@@ -73,6 +73,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Ask a question through the configured generation backend."
     ),
     spec!(
+        Roleplay,
+        Slash,
+        "roleplay",
+        BOTH,
+        A0,
+        C8,
+        Conversation,
+        false,
+        "Roleplay as Aviva in a DM or NSFW channel when the nsfw gate is on."
+    ),
+    spec!(
         Whois,
         Slash,
         "whois",
@@ -425,6 +436,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Read this conversation’s learning and reply budget."
     ),
     spec!(
+        Nsfw,
+        Slash,
+        "nsfw",
+        BOTH,
+        A0,
+        C0,
+        Conversation,
+        true,
+        "Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw)."
+    ),
+    spec!(
         AdminShow,
         Slash,
         "admin show",
@@ -456,6 +478,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         Administration,
         true,
         "Control learning for this server."
+    ),
+    spec!(
+        AdminNsfw,
+        Slash,
+        "admin nsfw",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Enable or disable Aviva roleplay for this server (NSFW channels only)."
     ),
     spec!(
         AdminVision,
