@@ -69,7 +69,7 @@ async fn actual_memory_and_admin_tasks_deliver_existing_private_views() {
     for action in ["memory", "admin", "images", "voice"] {
         assert!(dispatch_component(&fixture.context, &task(&fixture, action), &data, false).await);
         let requests = fixture.take_requests();
-        let body = assert_private_help_response(&requests)["content"]
+        let body = assert_private_content_response(&requests)["content"]
             .as_str()
             .unwrap()
             .to_string();
@@ -118,7 +118,7 @@ async fn modal_uses_real_generation_privately_without_committing_the_transcript(
     let before = format!("{:?}", *runtime::AppState::lock(&data.state.engine));
     assert!(workflows::dispatch_modal(&fixture.context, &modal(&fixture), &data).await);
     let requests = fixture.take_requests();
-    let body = assert_private_help_response(&requests)["content"]
+    let body = assert_private_content_response(&requests)["content"]
         .as_str()
         .unwrap()
         .to_string();
@@ -180,7 +180,7 @@ async fn workflow_modal_rejects_foreign_context_and_malformed_inputs_before_io()
             2,
             "case {case}: only acknowledgement and rejection allowed"
         );
-        let body = assert_private_help_response(&requests);
+        let body = assert_private_content_response(&requests);
         assert!(body["content"].as_str().unwrap().chars().count() <= 2000);
     }
 }
@@ -233,7 +233,7 @@ async fn workflow_admin_rechecks_authority_after_acknowledgement() {
     fixture.acknowledgement_release.add_permits(1);
     assert!(action.await);
     let requests = fixture.take_requests();
-    let body = assert_private_help_response(&requests);
+    let body = assert_private_content_response(&requests);
     assert!(
         body["content"]
             .as_str()

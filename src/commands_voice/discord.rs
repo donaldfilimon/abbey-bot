@@ -55,13 +55,59 @@ pub(super) fn member_has_required_voice_permissions(
     })
 }
 
+/// Why a live permission revalidation failed.
+///
+/// The four failure paths are operationally different and only one of them is
+/// an authorization fact. Returning a bare string forced every caller to guess,
+/// and they all guessed `Authorization` — so a rate-limited REST call reported
+/// itself as a permission denial, sending an operator to the Discord role
+/// editor for a network problem.
+#[derive(Debug)]
+pub(super) struct VoicePermissionError {
+    message: String,
+    category: crate::observability::OperationalErrorCategory,
+}
+
+impl VoicePermissionError {
+    fn new(
+        message: impl Into<String>,
+        category: crate::observability::OperationalErrorCategory,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            category,
+        }
+    }
+
+    /// Closed-vocabulary cause, for the operational event.
+    pub(super) fn category(&self) -> crate::observability::OperationalErrorCategory {
+        self.category
+    }
+}
+
+impl std::fmt::Display for VoicePermissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for VoicePermissionError {}
+
+/// Existing callers surface the message to the operator and do not care about
+/// the category; this keeps their `?` and `return Err(..)` unchanged.
+impl From<VoicePermissionError> for String {
+    fn from(error: VoicePermissionError) -> Self {
+        error.message
+    }
+}
+
 /// Fetch channel, member, and roles directly to close preflight/activation
 /// TOCTOU windows. Passing the HTTP client deliberately bypasses the cache.
 pub(super) async fn verify_required_voice_permissions_live(
     ctx: &serenity::all::Context,
     guild_id: GuildId,
     channel_id: ChannelId,
-) -> Result<(), String> {
+) -> Result<(), VoicePermissionError> {
     let bot_id = ctx.cache.current_user().id;
     let fetched = tokio::try_join!(
         channel_id.to_channel(&ctx.http),
@@ -70,26 +116,35 @@ pub(super) async fn verify_required_voice_permissions_live(
     );
     let (channel, member, guild) = fetched.map_err(|error| {
         tracing::warn!(%error, %guild_id, %channel_id, "could not revalidate Discord voice permissions");
-        "Discord could not revalidate Abbey's View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities permissions; voice stayed off."
-            .to_string()
+        // The read did not happen. Nothing here says anything about the bot's
+        // permissions, so this must not be reported as a denial.
+        VoicePermissionError::new(
+            "Discord could not revalidate Abbey's View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities permissions; voice stayed off.",
+            crate::observability::OperationalErrorCategory::Unavailable,
+        )
     })?;
     let Some(channel) = channel.guild() else {
-        return Err(
-            "The configured voice destination is no longer a server channel; voice stayed off."
-                .into(),
-        );
+        // The configured destination is wrong, not forbidden.
+        return Err(VoicePermissionError::new(
+            "The configured voice destination is no longer a server channel; voice stayed off.",
+            crate::observability::OperationalErrorCategory::Configuration,
+        ));
     };
     if channel.guild_id != guild_id || channel.id != channel_id {
-        return Err(
-            "The configured voice destination changed unexpectedly; voice stayed off.".into(),
-        );
+        return Err(VoicePermissionError::new(
+            "The configured voice destination changed unexpectedly; voice stayed off.",
+            crate::observability::OperationalErrorCategory::Configuration,
+        ));
     }
     if !guild
         .user_permissions_in(&channel, &member)
         .contains(required_voice_permissions())
     {
-        return Err("Abbey needs View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities in the configured voice channel; voice stayed off."
-            .into());
+        // The only genuine authorization failure of the four.
+        return Err(VoicePermissionError::new(
+            "Abbey needs View Channel, Send Messages, Connect, Speak, Stream, and Use Embedded Activities in the configured voice channel; voice stayed off.",
+            crate::observability::OperationalErrorCategory::Authorization,
+        ));
     }
     Ok(())
 }
@@ -247,8 +302,23 @@ pub(super) async fn wait_for_enabled_bot_voice_state(
     channel_id: ChannelId,
     session_id: &str,
 ) -> Result<(), String> {
+    wait_for_enabled_bot_voice_state_from_serenity(
+        ctx.serenity_context(),
+        guild_id,
+        channel_id,
+        session_id,
+    )
+    .await
+}
+
+pub(super) async fn wait_for_enabled_bot_voice_state_from_serenity(
+    ctx: &serenity::all::Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    session_id: &str,
+) -> Result<(), String> {
     for _ in 0..20 {
-        if cached_bot_voice_state(ctx, guild_id).is_some_and(|state| {
+        if cached_bot_voice_state_from_serenity(ctx, guild_id).is_some_and(|state| {
             bot_voice_state_allows_conversation(&state, channel_id, session_id)
         }) {
             return Ok(());
@@ -325,7 +395,7 @@ pub(super) fn consent_notice(mode: VoiceMode, channel_id: ChannelId, resumed: bo
             "🔒 Abbey is {action} consented voice in <#{channel_id}>. Discord still transports the call, but speech recognition, Abbey/Abi/Aviva reasoning, WDBX-scoped context, and speech synthesis run locally on Donald's Mac. Abbey does not retain raw audio. Person-specific WDBX context is read-only and is used only for one uniquely attributed speaker; overlap disables it. Say Abbey, Aviva, or ABI to start. A clearly attributed spoken withdrawal is honored locally; for an authoritative stop, use `/voice leave` or mention Abbey and write `stop listening` in this voice chat. A new participant pauses and disconnects the session until renewed consent."
         ),
         VoiceMode::OpenAi => format!(
-            "☁️ Abbey is {action} consented voice in <#{channel_id}> using the explicitly configured direct OpenAI Realtime backup. Participant audio is sent to that provider and complete responses are buffered before Discord playback. This degraded backup does not use local ABI persona routing or WDBX context; use local mode for canonical Abbey. Abbey does not retain raw audio locally. Spoken control is not authoritative in this degraded mode: use `/voice leave` or mention Abbey and write `stop listening` in this voice chat to stop immediately. A new participant pauses and disconnects the session until renewed consent."
+            "OpenAI Realtime voice was removed. Abbey will not start consented listening in that mode — set local mode (MLX-Audio loopback) and use `/voice` again. Channel: <#{channel_id}> ({action})."
         ),
         VoiceMode::Disabled => unreachable!(),
     }
@@ -416,10 +486,47 @@ mod tests {
 
     #[test]
     fn consent_notices_name_guaranteed_written_stop_route_and_fit_discord() {
-        for mode in [VoiceMode::Local, VoiceMode::OpenAi] {
-            let notice = consent_notice(mode, ChannelId::new(u64::MAX), false);
-            assert!(notice.contains("mention Abbey and write `stop listening`"));
+        // Local is the only mode that can start listening, so it is the only one
+        // that owes participants a written stop route. The retired Realtime mode
+        // must say plainly that it will not start, and must not name a stop
+        // route it has no session to honor.
+        let local = consent_notice(VoiceMode::Local, ChannelId::new(u64::MAX), false);
+        assert!(local.contains("mention Abbey and write `stop listening`"));
+
+        let removed = consent_notice(VoiceMode::OpenAi, ChannelId::new(u64::MAX), false);
+        assert!(removed.contains("OpenAI Realtime voice was removed"));
+        assert!(!removed.contains("stop listening"));
+
+        for notice in [&local, &removed] {
             assert!(notice.chars().count() < 2000);
         }
+    }
+
+    #[test]
+    fn a_permission_error_keeps_its_cause_and_still_reads_as_its_message() {
+        use crate::observability::OperationalErrorCategory as Category;
+
+        // The four failure paths in verify_required_voice_permissions_live are
+        // not reachable without a live Discord context, so what is pinned here
+        // is the carrier: the category survives, and the message is what an
+        // operator sees. Every caller previously hardcoded Authorization, which
+        // reported a rate-limited REST call as a permission denial.
+        let unavailable = VoicePermissionError::new("read failed", Category::Unavailable);
+        assert_eq!(unavailable.category(), Category::Unavailable);
+        assert_eq!(unavailable.to_string(), "read failed");
+        assert_eq!(String::from(unavailable), "read failed");
+
+        let denied = VoicePermissionError::new("missing Connect", Category::Authorization);
+        assert_eq!(denied.category(), Category::Authorization);
+
+        // The distinction is the whole point: these must not collapse.
+        assert_ne!(
+            VoicePermissionError::new("x", Category::Unavailable).category(),
+            VoicePermissionError::new("x", Category::Authorization).category()
+        );
+        assert_ne!(
+            VoicePermissionError::new("x", Category::Configuration).category(),
+            VoicePermissionError::new("x", Category::Authorization).category()
+        );
     }
 }

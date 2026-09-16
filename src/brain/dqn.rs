@@ -26,8 +26,12 @@ const EPSILON_INITIAL: f32 = 0.1;
 const EPSILON_MIN: f32 = 0.01;
 /// Multiplicative decay applied once per `learn()`.
 const EPSILON_DECAY: f32 = 0.995;
-/// Experiences sampled per `learn()`; below this many held, `learn()` is a no-op.
+/// Experiences sampled per `learn()` (with replacement when the buffer is smaller).
 const BATCH_SIZE: usize = 64;
+/// Minimum held experiences before `learn()` trains. Lower than [`BATCH_SIZE`] so
+/// sparse guild reward streams (often well under 64) still increment `step_count`
+/// instead of forever no-op'ing while a warm snapshot sits unused after restore.
+const MIN_REPLAY_FOR_LEARN: usize = 8;
 /// `learn()` calls between hard target-network syncs.
 const TARGET_SYNC_INTERVAL: u64 = 100;
 /// SGD step size (the Swift `train` default).
@@ -186,9 +190,11 @@ impl DqnAgent {
 
     /// One learning step: replays a batch, hard-syncs the target network
     /// every [`TARGET_SYNC_INTERVAL`] steps, and decays ε. A no-op while the
-    /// buffer holds fewer than [`BATCH_SIZE`] experiences.
+    /// buffer holds fewer than [`MIN_REPLAY_FOR_LEARN`] experiences. Sampling
+    /// always draws [`BATCH_SIZE`] transitions (with replacement when the
+    /// buffer is smaller), so sparse Discord reward streams still train.
     pub fn learn(&mut self) {
-        if self.buffer.len() < BATCH_SIZE {
+        if self.buffer.len() < MIN_REPLAY_FOR_LEARN {
             return;
         }
 
@@ -365,10 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn learn_is_a_noop_under_batch_size() {
+    fn learn_is_a_noop_under_min_replay() {
         let mut agent = DqnAgent::new(&[1, 4, 3], 100, 3);
         let before = agent.export_weights();
-        for i in 0..(BATCH_SIZE - 1) {
+        for i in 0..(MIN_REPLAY_FOR_LEARN - 1) {
             agent.remember(bandit_exp(i % 3));
         }
         agent.learn();
@@ -383,6 +389,32 @@ mod tests {
         assert_eq!(agent.step_count(), 1);
         assert!(agent.epsilon() < EPSILON_INITIAL);
         assert_ne!(agent.export_weights(), before);
+    }
+
+    #[test]
+    fn learn_trains_from_sparse_restored_experiences_below_batch_size() {
+        // Mirrors the live MLAI gap: a warm snapshot with ~9 experiences and
+        // step_count 0 must still train on Tick::Learn instead of waiting for 64.
+        let mut trained = DqnAgent::new(&[1, 4, 3], 100, 11);
+        for i in 0..9 {
+            trained.remember(bandit_exp(i % 3));
+        }
+        let snap = trained.export_weights();
+        assert_eq!(snap.experiences.len(), 9);
+        assert_eq!(snap.step_count, 0);
+
+        let mut restored = DqnAgent::new(&[1, 4, 3], 100, 99);
+        restored.import_weights(&snap).expect("topology matches");
+        assert_eq!(restored.buffer_len(), 9);
+        assert_eq!(restored.step_count(), 0);
+
+        restored.learn();
+        assert_eq!(
+            restored.step_count(),
+            1,
+            "sparse buffer must train after restore"
+        );
+        assert!(restored.epsilon() < snap.epsilon);
     }
 
     #[test]

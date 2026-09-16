@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use serenity::all::{
-    ChannelId, CreateAllowedMentions, CreateMessage, EditMessage, FullEvent, Http, Message,
-    MessageId, MessageReference, Reaction, ReactionType,
+    ChannelId, Colour, CreateAllowedMentions, CreateEmbed, CreateMessage, EditMessage, FullEvent,
+    Http, Message, MessageId, MessageReference, Reaction, ReactionType,
 };
 
-use crate::gateway::shared::{DISCORD_MESSAGE_CAP, Snowflake, clamp, fetch_capped};
+use crate::gateway::shared::{Snowflake, clamp, fetch_capped};
 use crate::pipeline::{self, Outbound};
 use crate::platform::{EventKind, OutboundMessage, RemoteAttachment, SocialEvent, SocialNetwork};
 use crate::runtime::AppState;
@@ -15,6 +15,20 @@ use crate::runtime::AppState;
 /// No generated or guild-derived text may trigger a Discord notification.
 pub(crate) fn no_mentions() -> CreateAllowedMentions {
     CreateAllowedMentions::new().replied_user(false)
+}
+
+/// Discord embed description max (API). Keep under this so rich replies never 400.
+const DISCORD_EMBED_DESCRIPTION_CAP: usize = 4096;
+
+/// Shared Abbey chat/reply embed — brand colour + footer, no duplicate content body.
+pub fn abbey_reply_embed(description: &str) -> CreateEmbed {
+    CreateEmbed::new()
+        .author(serenity::all::CreateEmbedAuthor::new("Abbey"))
+        .description(description)
+        .colour(Colour::from_rgb(0x7c, 0x5c, 0xff))
+        .footer(serenity::all::CreateEmbedFooter::new(
+            "local · consent-aware · music ≠ listen",
+        ))
 }
 
 /// Delivery through serenity's REST client.
@@ -30,8 +44,10 @@ impl Outbound for DiscordOutbound {
         message: &OutboundMessage,
     ) -> Result<String, String> {
         let channel = ChannelId::new(Snowflake::parse(native_channel_id)?.get());
+        let body = clamp(&message.text, DISCORD_EMBED_DESCRIPTION_CAP);
+        // Compact Abbey embed only — empty content avoids double text in clients.
         let mut builder = CreateMessage::new()
-            .content(clamp(&message.text, DISCORD_MESSAGE_CAP))
+            .embed(abbey_reply_embed(&body))
             .allowed_mentions(no_mentions());
         if let Some(reply) = &message.reply_to_native_message_id {
             let mut reference: MessageReference =
@@ -83,7 +99,11 @@ impl Outbound for DiscordOutbound {
                 ChannelId::new(Snowflake::parse(native_channel_id)?.get()),
                 MessageId::new(Snowflake::parse(native_message_id)?.get()),
                 &EditMessage::new()
-                    .content(clamp(text, DISCORD_MESSAGE_CAP))
+                    .content("")
+                    .embed(abbey_reply_embed(&clamp(
+                        text,
+                        DISCORD_EMBED_DESCRIPTION_CAP,
+                    )))
                     .allowed_mentions(no_mentions()),
                 Vec::new(),
             )

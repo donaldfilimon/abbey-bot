@@ -20,6 +20,10 @@ macro_rules! spec {
                     AccessId::A2 => Some(DiscordPermission::ModerateMembers),
                     AccessId::A3 => Some(DiscordPermission::ManageWebhooks),
                     AccessId::A4 | AccessId::A5 => Some(DiscordPermission::ManageServer),
+                    AccessId::A8 => Some(DiscordPermission::ManageChannels),
+                    AccessId::A9 => Some(DiscordPermission::ManageRoles),
+                    AccessId::A10 => Some(DiscordPermission::MoveMembers),
+                    AccessId::A11 => Some(DiscordPermission::ManageMessages),
                     _ => None,
                 },
             },
@@ -124,15 +128,103 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Recommend a moderation action after permission and hierarchy checks."
     ),
     spec!(
-        Server,
+        ServerBlueprint,
         Slash,
-        "server",
+        "server blueprint",
         BOTH,
         A0,
         C0,
         Server,
         true,
         "Create a server blueprint without changing the server."
+    ),
+    spec!(
+        ServerCreateChannel,
+        Slash,
+        "server create-channel",
+        GUILD,
+        A8,
+        C0,
+        Server,
+        true,
+        "Create a text channel when you and Abbey both have Manage Channels."
+    ),
+    spec!(
+        ServerRenameChannel,
+        Slash,
+        "server rename-channel",
+        GUILD,
+        A8,
+        C0,
+        Server,
+        true,
+        "Rename a channel when you and Abbey both have Manage Channels."
+    ),
+    spec!(
+        ServerSlowmode,
+        Slash,
+        "server slowmode",
+        GUILD,
+        A8,
+        C0,
+        Server,
+        true,
+        "Set channel slowmode when you and Abbey both have Manage Channels."
+    ),
+    spec!(
+        ServerDeleteChannel,
+        Slash,
+        "server delete-channel",
+        GUILD,
+        A8,
+        C0,
+        Server,
+        true,
+        "Delete a channel with confirm:true when you and Abbey both have Manage Channels."
+    ),
+    spec!(
+        ServerAssignRole,
+        Slash,
+        "server assign-role",
+        GUILD,
+        A9,
+        C0,
+        Server,
+        true,
+        "Assign a role when you and Abbey both have Manage Roles."
+    ),
+    spec!(
+        ServerRemoveRole,
+        Slash,
+        "server remove-role",
+        GUILD,
+        A9,
+        C0,
+        Server,
+        true,
+        "Remove a role when you and Abbey both have Manage Roles."
+    ),
+    spec!(
+        ServerMoveMember,
+        Slash,
+        "server move-member",
+        GUILD,
+        A10,
+        C0,
+        Server,
+        true,
+        "Move a member in voice when you and Abbey both have Move Members."
+    ),
+    spec!(
+        ServerPurge,
+        Slash,
+        "server purge",
+        GUILD,
+        A11,
+        C0,
+        Server,
+        true,
+        "Purge recent messages with confirm:true when you and Abbey both have Manage Messages."
     ),
     spec!(
         Webhook,
@@ -465,6 +557,28 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Open private administration controls."
     ),
     spec!(
+        AdminQuarantine,
+        Slash,
+        "admin quarantine",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Mark a member's stored fact as suspect for review."
+    ),
+    spec!(
+        AdminResolve,
+        Slash,
+        "admin resolve",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Close a memory review with a verdict."
+    ),
+    spec!(
         VoiceConsent,
         Slash,
         "voice consent",
@@ -495,7 +609,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Play native music and mirror eligible host audio; requires macOS."
+        "Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent."
     ),
     spec!(
         VoicePause,
@@ -506,7 +620,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Pause music and close host capture without changing consent."
+        "Pause mirrored music and close tap capture; listen consent unchanged."
     ),
     spec!(
         VoiceResumeMusic,
@@ -517,7 +631,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Resume music only; never renew listening consent."
+        "Resume mirrored music only; never renews listen consent."
     ),
     spec!(
         VoiceStopMusic,
@@ -528,7 +642,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Stop host audio capture and mirrored music."
+        "Stop tap capture and mirrored playback; listen consent unchanged."
     ),
     spec!(
         VoiceVolume,
@@ -539,7 +653,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Set music volume; duck to one quarter while Abbey speaks."
+        "Set mirror volume 0–100; Abbey speech ducks music to ¼."
     ),
     spec!(
         VoiceJoin,
@@ -605,7 +719,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Read or select a fully configured voice mode."
+        "Read or select local/off voice mode (OpenAI Realtime removed)."
     ),
     spec!(
         VoiceVerifyStart,

@@ -85,18 +85,58 @@ pub enum SessionEvent {
     },
 }
 
+/// Closed-vocabulary outcome for a voice phase.
+///
+/// `PresenceOnly` and `Listening` are deliberately distinct: presence-only is
+/// connected but deaf and mute, while `Listening` is the only phase that can
+/// actually hear a participant. Reporting both as `Ready` hid exactly the
+/// difference an operator asks about when checking whether voice is on.
+#[must_use]
+pub(crate) fn phase_outcome(phase: VoicePhase) -> crate::observability::EventOutcome {
+    use crate::observability::EventOutcome;
+    match phase {
+        VoicePhase::Disconnected => EventOutcome::Stopped,
+        VoicePhase::PresenceOnly => EventOutcome::Degraded,
+        VoicePhase::Listening => EventOutcome::Ready,
+        VoicePhase::Connecting | VoicePhase::Thinking | VoicePhase::Speaking => {
+            EventOutcome::Started
+        }
+        VoicePhase::AwaitingConsent => EventOutcome::Skipped,
+        VoicePhase::Failed => EventOutcome::Failed,
+    }
+}
+
+/// An error category is evidence about a failure, so it is carried only by the
+/// `Failed` phase; any other phase reports none even if a caller supplied one.
+#[must_use]
+pub(crate) fn phase_error(
+    phase: VoicePhase,
+    error: Option<crate::observability::OperationalErrorCategory>,
+) -> Option<crate::observability::OperationalErrorCategory> {
+    match phase {
+        VoicePhase::Failed => error,
+        _ => None,
+    }
+}
+
 impl VoiceRuntime {
     /// Invalidate a failed provider from inside its own task without awaiting
     /// the JoinHandle that represents that same task.
-    pub async fn actor_failed(&self, epoch: u64, status: impl Into<String>) -> bool {
-        self.actor_stop_to(epoch, VoicePhase::Failed, status).await
+    pub async fn actor_failed(
+        &self,
+        epoch: u64,
+        status: impl Into<String>,
+        error: crate::observability::OperationalErrorCategory,
+    ) -> bool {
+        self.actor_stop_to(epoch, VoicePhase::Failed, status, Some(error))
+            .await
     }
 
     /// Close consent from inside the local actor after an attributed speaker
     /// explicitly withdraws. This mirrors `actor_failed`'s self-JoinHandle
     /// handling but preserves the recoverable AwaitingConsent phase.
     pub async fn actor_awaiting_consent(&self, epoch: u64, status: impl Into<String>) -> bool {
-        self.actor_stop_to(epoch, VoicePhase::AwaitingConsent, status)
+        self.actor_stop_to(epoch, VoicePhase::AwaitingConsent, status, None)
             .await
     }
 
@@ -105,6 +145,7 @@ impl VoiceRuntime {
         epoch: u64,
         phase: VoicePhase,
         status: impl Into<String>,
+        error: Option<crate::observability::OperationalErrorCategory>,
     ) -> bool {
         let control = {
             let mut inner = self.inner.lock().await;
@@ -131,7 +172,7 @@ impl VoiceRuntime {
             inner.phase = phase;
             inner.status = bounded_status(status.into());
             self.current_epoch.store(next_epoch, Ordering::SeqCst);
-            self.publish_inspect_phase(phase, false);
+            self.publish_inspect_phase(phase, false, error);
             inner.control.take()
         };
         if let Some(control) = control {
@@ -308,6 +349,11 @@ pub struct VoiceRuntime {
     aborted_overruns: AtomicU64,
     barge_ins: AtomicU64,
     completed_turns: AtomicU64,
+    /// Unix millis until which stale self_mute/self_deaf VoiceStateUpdates are
+    /// ignored after a local `enable_conversation` confirmation. Protects the
+    /// brief window where Discord can deliver an older muted payload after the
+    /// software media gate opens.
+    unmute_grace_until_ms: AtomicU64,
     verification: SyncMutex<VerificationState>,
     inspect: Option<VoiceInspectBinding>,
     inner: Mutex<RuntimeState>,
@@ -395,6 +441,7 @@ impl VoiceRuntime {
             aborted_overruns: AtomicU64::new(0),
             barge_ins: AtomicU64::new(0),
             completed_turns: AtomicU64::new(0),
+            unmute_grace_until_ms: AtomicU64::new(0),
             verification: SyncMutex::new(VerificationState::default()),
             inspect,
             inner: Mutex::new(RuntimeState {
@@ -455,19 +502,24 @@ impl VoiceRuntime {
         }
     }
 
-    fn publish_inspect_phase(&self, phase: VoicePhase, media_enabled: bool) {
+    /// `error` is carried only on the `Failed` phase. Managed runs disable
+    /// tracing entirely (`EnvFilter::new("off")`), so this closed event is the
+    /// sole operational record of why voice stopped; dropping the category
+    /// left an operator with a bare `failed` and no cause.
+    fn publish_inspect_phase(
+        &self,
+        phase: VoicePhase,
+        media_enabled: bool,
+        error: Option<crate::observability::OperationalErrorCategory>,
+    ) {
         if let Some(events) = self.telemetry.get() {
-            use crate::observability::{EventCode, EventComponent, EventOutcome};
-            let outcome = match phase {
-                VoicePhase::Disconnected => EventOutcome::Stopped,
-                VoicePhase::PresenceOnly | VoicePhase::Listening => EventOutcome::Ready,
-                VoicePhase::Connecting | VoicePhase::Thinking | VoicePhase::Speaking => {
-                    EventOutcome::Started
-                }
-                VoicePhase::AwaitingConsent => EventOutcome::Skipped,
-                VoicePhase::Failed => EventOutcome::Failed,
-            };
-            let _ = events.record(EventComponent::Voice, EventCode::VoiceState, outcome, None);
+            use crate::observability::{EventCode, EventComponent};
+            let _ = events.record(
+                EventComponent::Voice,
+                EventCode::VoiceState,
+                phase_outcome(phase),
+                phase_error(phase, error),
+            );
         }
         self.music.phase(phase);
         let state = match phase {
@@ -507,6 +559,24 @@ impl VoiceRuntime {
             && epoch != 0
             && self.is_current(epoch)
             && self.media_epoch.load(Ordering::SeqCst) == epoch
+    }
+
+    /// Arm a short grace after Discord confirms the locally requested unmute /
+    /// undeafen. Stale muted VoiceStateUpdates that race the media gate open
+    /// are ignored until this watermark.
+    pub fn arm_unmute_grace(&self, duration: std::time::Duration) {
+        let until = crate::runtime::now_millis().saturating_add(duration.as_millis() as u64);
+        self.unmute_grace_until_ms.store(until, Ordering::SeqCst);
+    }
+
+    #[must_use]
+    pub fn in_unmute_grace(&self) -> bool {
+        let until = self.unmute_grace_until_ms.load(Ordering::SeqCst);
+        until != 0 && crate::runtime::now_millis() < until
+    }
+
+    pub fn clear_unmute_grace(&self) {
+        self.unmute_grace_until_ms.store(0, Ordering::SeqCst);
     }
 
     /// Timing-critical receive callbacks use this synchronous compare/exchange
@@ -625,7 +695,7 @@ impl VoiceRuntime {
             inner.status = bounded_status(status.into());
             inner.participants = participants;
             self.current_epoch.store(next_epoch, Ordering::SeqCst);
-            self.publish_inspect_phase(VoicePhase::AwaitingConsent, false);
+            self.publish_inspect_phase(VoicePhase::AwaitingConsent, false, None);
             inner.control.take()
         };
         // Stop in-flight STT/LLM/TTS/provider work as soon as the consent
@@ -660,7 +730,11 @@ impl VoiceRuntime {
         if inner.epoch == epoch && self.current_epoch.load(Ordering::SeqCst) == epoch {
             inner.phase = phase;
             inner.status = bounded_status(status.into());
-            self.publish_inspect_phase(phase, self.media_epoch.load(Ordering::SeqCst) == epoch);
+            self.publish_inspect_phase(
+                phase,
+                self.media_epoch.load(Ordering::SeqCst) == epoch,
+                None,
+            );
         }
     }
 
@@ -682,7 +756,7 @@ impl VoiceRuntime {
             && self.media_epoch.load(Ordering::SeqCst) != epoch
         {
             inner.status = bounded_status(status.into());
-            self.publish_inspect_phase(VoicePhase::Connecting, false);
+            self.publish_inspect_phase(VoicePhase::Connecting, false, None);
         }
     }
 
@@ -697,6 +771,7 @@ impl VoiceRuntime {
             true,
             None,
             Some(session_id),
+            None,
         )
         .await;
     }
@@ -708,6 +783,7 @@ impl VoiceRuntime {
             true,
             Some(participants),
             None,
+            None,
         )
         .await;
     }
@@ -715,24 +791,34 @@ impl VoiceRuntime {
     pub async fn disconnect(&self, status: impl Into<String>) {
         self.music
             .stop("voice disconnected", PlaybackTermination::Stopped);
-        self.stop_to(VoicePhase::Disconnected, status).await;
+        self.stop_to(VoicePhase::Disconnected, status, None).await;
     }
 
     /// Stop the installed actor/call state while preserving the caller's
     /// already-reserved start token. Must be used only under `transition`.
     pub async fn disconnect_for_replace(&self, status: impl Into<String>) {
-        self.stop_to_inner(VoicePhase::Disconnected, status, false, None, None)
+        self.stop_to_inner(VoicePhase::Disconnected, status, false, None, None, None)
             .await;
     }
 
-    pub async fn fail_safe(&self, status: impl Into<String>) {
+    pub async fn fail_safe(
+        &self,
+        status: impl Into<String>,
+        error: crate::observability::OperationalErrorCategory,
+    ) {
         self.music
             .stop("voice failed", PlaybackTermination::Errored);
-        self.stop_to(VoicePhase::Failed, status).await;
+        self.stop_to(VoicePhase::Failed, status, Some(error)).await;
     }
 
-    async fn stop_to(&self, phase: VoicePhase, status: impl Into<String>) {
-        self.stop_to_inner(phase, status, true, None, None).await;
+    async fn stop_to(
+        &self,
+        phase: VoicePhase,
+        status: impl Into<String>,
+        error: Option<crate::observability::OperationalErrorCategory>,
+    ) {
+        self.stop_to_inner(phase, status, true, None, None, error)
+            .await;
     }
 
     async fn stop_to_inner(
@@ -742,6 +828,7 @@ impl VoiceRuntime {
         cancel_pending_start: bool,
         participants: Option<HashSet<u64>>,
         discord_session_id: Option<String>,
+        error: Option<crate::observability::OperationalErrorCategory>,
     ) {
         let control = {
             let mut inner = self.inner.lock().await;
@@ -750,6 +837,7 @@ impl VoiceRuntime {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.media_epoch.store(0, Ordering::SeqCst);
+            self.clear_unmute_grace();
             if cancel_pending_start {
                 let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
                 self.pending_start_generation.store(0, Ordering::SeqCst);
@@ -781,7 +869,7 @@ impl VoiceRuntime {
                 inner.participants = participants;
             }
             self.current_epoch.store(epoch, Ordering::SeqCst);
-            self.publish_inspect_phase(phase, false);
+            self.publish_inspect_phase(phase, false, error);
             inner.control.take()
         };
         if let Some(control) = control {

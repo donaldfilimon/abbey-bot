@@ -31,7 +31,9 @@
 //! - `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` (optional) — enable an
 //!   admin-triggered, DAVE-capable Discord connection. `ABBEY_VOICE_AUTOJOIN=1`
 //!   provides persistent muted/self-deafened no-audio presence. Conversational
-//!   local or Realtime voice still requires `/voice join consent:true`.
+//!   local or Realtime voice still requires `/voice join consent:true`, unless
+//!   `ABBEY_VOICE_AUTO_LISTEN=1` and Local consent already covers every non-bot
+//!   member currently in the channel (then the consented join path runs).
 //! - `--voice-self-test OUTPUT.wav` — run local TTS → STT → canonical Abbey
 //!   reasoning → TTS without a Discord token, microphone, or call.
 //! - `--server-plan PLAN.toml --guild ID [--stage …] [--category …] [--apply]` —
@@ -64,6 +66,7 @@ mod commands_context;
 mod commands_forum;
 mod commands_help;
 mod commands_memory_browser;
+mod commands_server;
 mod commands_voice;
 #[cfg(test)]
 mod contracts;
@@ -88,17 +91,20 @@ mod memory;
 mod memory_browser;
 mod memory_card;
 mod memory_gate;
+mod memory_review;
 mod moderation;
 mod music;
 mod observability;
 mod offline_voice;
 mod operator_guidance;
+mod permission_mirror;
 mod perms;
 mod persist;
 mod persona;
 mod pipeline;
 mod platform;
 mod player_control;
+mod premium_entitlements;
 mod profile;
 mod provider;
 mod provider_self_test;
@@ -117,7 +123,6 @@ mod voice;
 mod voice_consent;
 mod voice_consent_store;
 mod voice_local;
-mod voice_openai;
 mod voice_registry;
 mod voice_self_test;
 mod voice_session;
@@ -599,7 +604,7 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_context::read_image_text(),
         commands::perms(),
         commands::modcall(),
-        commands::server(),
+        commands_server::server(),
         commands::webhook(),
         commands_forum::forum(),
         commands_brain::remember(),

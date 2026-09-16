@@ -6,10 +6,16 @@ edit both bodies together. No gate enforces the mirror, so verify it yourself
 with `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)` before committing
 either file. `README.md` owns commands, configuration and feature details;
 `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
-`.cursor/agents/abbey-reviewer.md` is a third, Cursor-side restatement of the
-Boundaries below and it drifts (it still describes a `gateway.rs` file and a
-five-file Discord shell); trust this file over it, and fix it at the same time
-if you change a rule it repeats.
+The Boundaries below are restated in **two** editor-side files —
+`.cursor/agents/abbey-reviewer.md` and `.codex/agents/abbey-reviewer.toml` — which
+makes four copies of these rules in the repo counting this file and its twin. Both
+restatements had drifted the same way and were corrected on 2026-09-16 (each described
+a `gateway.rs` that does not exist, a five-file Discord shell where 33 non-test files
+import serenity/poise, and a Gate Checklist of four cargo commands that never mentioned
+`./check.sh`). Trust this file over both; a rule changed here must be changed in **both**
+of them in the same commit, and the `.codex` one is easy to forget because editors load
+it silently. It is TOML with a `"""` block, so a regex backslash written into it is an
+invalid escape — verify with `python3 -c "import tomllib,sys;tomllib.load(open(sys.argv[1],'rb'))"`.
 
 ## Working in this checkout
 
@@ -18,12 +24,12 @@ if you change a rule it repeats.
   HEAD belongs to whoever is typing in it. Never `git checkout`
   here. Push refs, read another ref's files with `git show <ref>:<path>`, and
   when you need a second branch checked out, `git worktree add` it **beside**
-  the repo (`../abbey-bot-wt-<topic>`, which is where the live ones sit), then
-  remove it when done. Never create one inside the repo root. `.gitignore`
-  covers `/abbey-bot-wt-*` as a backstop, because a nested worktree is an
-  embedded repo that `git add -A` would otherwise commit into this tree as a
-  gitlink; but the ignore also hides it from `git status`, so the placement
-  rule is the real protection, not the pattern.
+  the repo (`../abbey-bot-wt-<topic>`), then remove it when done. Never create
+  one inside the repo root. `.gitignore` covers `/abbey-bot-wt-*` as a backstop,
+  because a nested worktree is an embedded repo that `git add -A` would
+  otherwise commit into this tree as a gitlink; but the ignore also hides it
+  from `git status`, so the placement rule is the real protection, not the
+  pattern.
 - `tasks/goals.md` is the goal ledger and `tasks/todo.md` its checklists. The
   ledger is append-ordered by writing session, not by time, so the newest text
   in a section is not the newest state and a stale "not done" line can sit at
@@ -35,6 +41,17 @@ if you change a rule it repeats.
   the `cancel-in-progress` group means a merge burst leaves about half of
   `main`'s SHAs with a cancelled run (15 of the last 30 on 2026-09-08). The
   evidence is the run at the final head.
+- A `Gate` job that completes in 2–10 s with **0 steps** (`gh run view <run>
+  --json jobs` shows `steps: []`) is not red, it is unmeasured: its check-run annotation
+  (`gh api repos/donaldfilimon/abbey-bot/check-runs/<job id>/annotations`) reads
+  `The job was not started because your account is locked due to a billing
+  issue.` Every hosted job on this account has carried it since 2026-09-08, and
+  `main`'s run for `8dbdb18` at 2026-09-16 03:50Z still does, which is why all
+  three lanes on every open PR are red at once. All three lanes here are
+  GitHub-hosted (`ubuntu-24.04` / `macos-15` / `windows-2025`), so this repo has
+  no CI evidence at all while the lock holds; the evidence is a local
+  `./check.sh` run with its exit code read from the log. Never edit code to
+  satisfy a locked check. Clearing it is GitHub billing settings, Donald's.
 - Do **not** stack merges onto `main` while the tip SHA's three-platform Rust
   Gate is still `in_progress`. Each merge cancels in-flight tip evidence
   (`cancel-in-progress`). Open improve PRs in parallel; leave merge to a
@@ -44,7 +61,9 @@ if you change a rule it repeats.
 
 `src/` is the entire product: one binary crate, ~240 files, no library target
 and no workspace. Everything else is support — `deploy/` the launchd installers
-plus the Python tests that gate them, `scripts/` the `check-*.py` gates and
+plus the Python tests that gate them (and a systemd unit, `abbey-bot.service`,
+which with the root `Dockerfile` is documented in README but never exercised
+on this host), `scripts/` the `check-*.py` gates and
 their `test-check-*.py` twins, `contracts/` the frozen transcription corpus and
 its lockfile, `blueprints/` the guild server plans, `activity/` the Discord
 Activity web client published to Pages, `tools/abbey-audio-tap/` the macOS Swift
@@ -127,18 +146,32 @@ section it ports. Read that header before the code.
   decision path run in tests behind a recording `Outbound`. Check it in one
   line before adding a module:
   `grep -rlE '^\s*use (serenity|poise)' src/` must list only the modules
-  above plus test-only files (on 2026-09-08, four: `command_registration_tests.rs`,
+  above, plus test-only files (on 2026-09-08, four: `command_registration_tests.rs`,
   `commands_help/dispatch_tests.rs`, `commands_help/workflows/dispatch_tests.rs`,
-  `commands_voice/acknowledgement_tests.rs`). A new decision module belongs off
+  `commands_voice/acknowledgement_tests.rs`), plus one named exception:
+  **`permission_mirror.rs` is pure and stays pure.** It imports
+  `serenity::all::Permissions`, the bitflag *type*, not the client, so the grep
+  reports it while the boundary holds. Do not "fix" it by moving it into the
+  shell list, and expect the same shape from any future pure module that needs a
+  Discord newtype. The check that decides it is a different grep:
+  `grep -nE 'async|\.await|Http|Client' src/permission_mirror.rs` must come back
+  empty (it did on 2026-09-16). An `.await` in such a file is a real breach.
+  Do not widen that pattern to `Context` — the module's own `ActionContext`
+  matches it 18 times and the check then looks failed when it is not. A new
+  decision module belongs off
   that list, with its Discord edge in a `commands*` file, so the grep is the
   boundary check to run before the first import. It is necessary and not
   sufficient: it matches `use` lines only, so a module reaching serenity through
   a path-qualified attribute never appears in it — `voice_session/playback.rs`
   is listed as shell above and is invisible to that grep because it writes
-  `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds ten
-  files, every one of them either test-only or already inside a module listed
-  above — so the wide pattern confirms there is no leak today, at the cost of
-  noise. Read the new module either way.
+  `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds a
+  further set of files — re-derive it with
+  `comm -13 <(narrow|sort) <(wide|sort)` rather than trusting a count here, which
+  has already gone stale once (it read "ten" while the answer was eleven on
+  2026-09-16). What matters is not the number but that every one of them is
+  either test-only or already inside a module listed above, which is what makes
+  the wide pattern a no-leak confirmation at the cost of noise. Read the new
+  module either way.
 - **Inbound path.** A native event becomes a `platform::SocialEvent`; `pipeline`
   decides *whether* Abbey speaks (triage, intent, 18-dimension state encoding,
   the guild's policy, cooldown, hourly budget) and `generation` decides *how*
@@ -156,9 +189,14 @@ section it ports. Read that header before the code.
   (action space and encoder), `dqn.rs` with `nn.rs`, `registry.rs` (one policy
   per guild), `reward.rs` (delayed settlement), `social.rs` (reputation),
   `budget.rs`, `replay.rs`.
-- **Gates are code with tests.** Each `scripts/check-*.py` has a
-  `scripts/test-check-*.py` beside it and `check.sh` runs both. Change a gate and
-  its test in the same commit.
+- **Gates are code with tests, mostly.** Most `scripts/check-*.py` gates have a
+  `scripts/test-check-*.py` twin; `check-privacy.py` and `check-python-syntax.py`
+  do not, so a change there has no test to catch it. `check-systemd-unit.py` is the only
+  thing that reads `deploy/abbey-bot.service` (no systemd on this Mac), so a
+  hardening change there must update its pinned table too. The `deploy/*.py` service
+  modules are covered by `deploy/test-*.py`. `check.sh` runs every one of them by
+  explicit name, not by glob, so a new gate or test is dead until it is added
+  there. Where a twin exists, change the gate and its test in the same commit.
 
 ## Boundaries
 
@@ -211,7 +249,12 @@ section it ports. Read that header before the code.
   on-disk rows; shutdown must not propose. Preserve receipts and regenerate episode
   fixtures from canonical types, not by hand (`episode_gate/tests.rs`). Budgets
   charge each candidate cumulatively without refunds; size for changed checkpoints,
-  not current live state. Keep the existing accounting policy.
+  not current live state. Keep the existing accounting policy. Memory-edge
+  episodes (quarantine/resolve, amendment 2026-09-16) are emitted only by
+  `/admin quarantine` and `/admin resolve`: a quarantine is recorded by the
+  service against the fact's receipt, a resolution by the reviewing human's
+  keyed principal (the one write under a human principal), and neither hides
+  or deletes the fact. Add no automatic quarantine without Donald's decision.
 - Live episode acceptance is deliberately ignored: run
   `ABBEY_EPISODE_GATE_ACCEPTANCE_CONFIG=... cargo test --locked acceptance -- --ignored --nocapture`
   only against a scratch gateway. It permanently charges that guild's budget;
@@ -243,3 +286,30 @@ section it ports. Read that header before the code.
 - Components V2 is blocked on serenity 0.12.5 alone; ship classic Action Rows / buttons / selects / modals only. poise is not part of the blocker: `poise 0.7.0` exists but requires `serenity ^0.12.5`, and `cargo tree --locked --offline -i rustls@0.22.4` shows the accepted TLS debt also descends from serenity alone (`serenity 0.12.5 -> tokio-tungstenite 0.21 -> tokio-rustls 0.25 -> rustls 0.22.4`). Bumping poise unlocks neither; only a Serenity release does.
 - `/forum draft|post|perms` shipped for `#help` (`src/forum.rs`, `src/commands_forum.rs`).
 - Live `/voice` 8/8 acceptance still requires Donald in the Office Hours VC on the launchd-locked process.
+- **Guild-LEVEL settings are outside this crate today, and there is a Discord API trap waiting
+  if that ever changes.** `src/server/discord.rs` mutates roles and channels only
+  (`create_role`, `edit_role`, `create_channel`, `edit_channel`); it sends no guild PATCH, and
+  `blueprints/mlai-community.toml` describes no guild-level fields. The trap, learned during
+  manual REST administration of the MLAI guild rather than from this code: a bare
+  `public_updates_channel_id` PATCH is **silently ignored** — it returns 200 and changes
+  nothing — and needs `features` and `rules_channel_id` in the same request. It cost a
+  debugging session that read the 200 as proof. Recorded here because this is where anyone
+  extending the apply path to guild settings would look, not because the current code path
+  hits it.
+- The MLAI guild blueprint is **fully applied**, so every `--server-plan` stage now re-diffs
+  to `changes (0)`. A dry run that shows changes means the guild drifted, not that work is
+  pending. `--apply` is additive-only and has no delete variant; role-permission and
+  role-order decisions stay manual.
+- **Five** launchd agents are live (corrected 2026-09-16 03:1x; this line has now read
+  one, two and four — each correct when written and stale within a week, which is the
+  point of the enumeration below): `com.donaldfilimon.abbey-bot`,
+  `com.donaldfilimon.abbey-wdbx-gateway`,
+  `com.donaldfilimon.abbey-mlx-audio`, `com.donaldfilimon.abbey-audio-tap`, and
+  `com.donaldfilimon.abbey-oh-autolisten`. **A plist in `deploy/` is not a running
+  service:** `com.donaldfilimon.abbey-mlx-vlm` has both a plist and an installer there
+  and was NOT loaded at that reading, so enumerate the live set with
+  `launchctl list | grep com.donaldfilimon.abbey` and the installable set with
+  `ls deploy/*.plist` — they are different questions and the answers differ.
+  Never trust any count written here. The gateway must be up before the bot is restarted.
+  They carry `KeepAlive`, so a plain `kill` respawns rather than stops them. Do not stop,
+  unload, or reinstall any of them on your own initiative.

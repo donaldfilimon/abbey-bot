@@ -54,6 +54,9 @@ impl VadCtx {
 /// Unified VAD contract consumed by both voice actors.
 pub trait Vad {
     fn is_voice(&self, frame: &[i16]) -> bool;
+    /// No production caller since the Realtime actor was removed; the local
+    /// barge-in path is the intended consumer and the impls stay pinned by tests.
+    #[allow(dead_code)]
     fn should_interrupt(&self, ctx: &VadCtx) -> bool;
 }
 

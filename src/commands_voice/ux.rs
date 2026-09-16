@@ -42,8 +42,52 @@ pub(super) async fn send_post_join_panel(
         .insert(session.clone())
         .map_err(Error::from)?;
     let is_playable = live_playable(ctx.data(), runtime).await;
-    let status = status_body(runtime, resumed, is_playable).await;
+    let label = channel_mention(channel_id.get());
+    let status = status_body(runtime, resumed, is_playable, &label).await;
     let content = voice_ux::panel_content(Phase::Status, &status, is_playable);
+    ctx.send(
+        poise::CreateReply::default()
+            .content(clamp_message(content))
+            .components(rows_for(&session, is_playable))
+            .ephemeral(true)
+            .allowed_mentions(crate::gateway::no_mentions()),
+    )
+    .await?;
+    Ok(())
+}
+
+/// `/voice status` Action Row panel: member-safe summary plus Refresh/Leave[/Play] controls.
+pub(super) async fn send_status_command_panel(
+    ctx: crate::Context<'_>,
+    runtime: &VoiceRuntime,
+    channel_id: ChannelId,
+    member_summary: &str,
+    reveal_channel: bool,
+) -> Result<(), Error> {
+    let sid = voice_ux::mint_sid();
+    let now = crate::runtime::now();
+    let session = Session {
+        sid: sid.clone(),
+        guild: runtime.config.guild_id,
+        user: ctx.author().id.get(),
+        channel: channel_id.get(),
+        expiry: now.saturating_add(voice_ux::SESSION_SECONDS),
+        phase: Phase::Status,
+    };
+    ctx.data()
+        .state
+        .voice_ux
+        .insert(session.clone())
+        .map_err(Error::from)?;
+    let is_playable = live_playable(ctx.data(), runtime).await;
+    let label = if reveal_channel {
+        channel_mention(channel_id.get())
+    } else {
+        "configured channel".into()
+    };
+    let status = status_body(runtime, false, is_playable, &label).await;
+    let panel = voice_ux::panel_content(Phase::Status, &status, is_playable);
+    let content = format!("{member_summary}\n\n{panel}");
     ctx.send(
         poise::CreateReply::default()
             .content(clamp_message(content))
@@ -228,8 +272,8 @@ async fn confirm_leave(
     );
     let (ack_result, leave_result) =
         super::acknowledgement::acknowledge_with_transition(closed, ack, leave_work).await;
-    if ack_result.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &ack_result {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     let content = if leave_result.is_ok() {
         let _ = data.state.voice_ux.set_phase(&session.sid, Phase::Left);
@@ -310,15 +354,22 @@ async fn music_act(
         .await;
         return Ok(());
     };
+    // The registry can drop this runtime across any await below (`/voice leave` does
+    // exactly that), and a stale `Arc` still answers every method perfectly well. So
+    // liveness is re-derived from the registry, never asserted as a literal `true`.
+    let runtime_is_current = || {
+        data.voice_for(session.guild)
+            .is_some_and(|current| Arc::ptr_eq(&current, &runtime))
+    };
     let snapshot_for_gate = runtime.snapshot().await;
     if !voice_ux::playable(
-        true,
+        runtime_is_current(),
         snapshot_for_gate.media_enabled,
         snapshot_for_gate.phase == VoicePhase::Failed,
         snapshot_for_gate.start_pending,
     ) {
         let reason = voice_ux::unplayable_reason(
-            true,
+            runtime_is_current(),
             snapshot_for_gate.media_enabled,
             snapshot_for_gate.phase == VoicePhase::Failed,
             snapshot_for_gate.start_pending,
@@ -333,13 +384,47 @@ async fn music_act(
         .await;
         return Ok(());
     }
+    // Ack music mutations BEFORE REST so Discord's 3s interaction window cannot
+    // expire on member + guild fetches (previously Play/Skip deferred only after
+    // those awaits). Stop joins the early-ack path for the same reason.
+    let defer_music = matches!(act, Act::Play | Act::Skip | Act::Stop);
+    if defer_music {
+        let ack = interaction
+            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+            .await;
+        if ack.is_err() {
+            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+            return Ok(());
+        }
+    }
+
     // Manager + presence gate (parity with /voice play).
-    let permissions = interaction
-        .member
-        .as_ref()
-        .and_then(|m| m.permissions)
-        .unwrap_or(Permissions::empty());
-    let manager = permissions.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR);
+    //
+    // Authorization is re-read over REST rather than taken from
+    // `interaction.member.permissions`: that snapshot is built when Discord creates the
+    // component payload, so a permission revoked between the click and this handler would
+    // still authorize the mutation. Unavailable REST fails CLOSED — an unanswerable
+    // permission question is not permission. Fetch member + guild in parallel.
+    let guild = GuildId::new(runtime.config.guild_id);
+    let (member_result, partial_result) = tokio::join!(
+        guild.member(&ctx.http, interaction.user.id),
+        guild.to_partial_guild(&ctx.http),
+    );
+    let manager = match (member_result, partial_result) {
+        (Ok(member), Ok(partial)) => {
+            member.user.id == partial.owner_id
+                || member
+                    .roles
+                    .iter()
+                    .filter_map(|id| partial.roles.get(id))
+                    .chain(partial.roles.get(&serenity::all::RoleId::new(guild.get())))
+                    .any(|role| {
+                        role.permissions
+                            .intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR)
+                    })
+        }
+        _ => false,
+    };
     let present = cached_participants_from_serenity(
         ctx,
         GuildId::new(runtime.config.guild_id),
@@ -352,43 +437,49 @@ async fn music_act(
         Some(session.guild),
         interaction.channel_id.get(),
     ) {
-        deny_message(ctx, interaction, data, &error).await;
+        deny_music(ctx, interaction, data, defer_music, &error).await;
         return Ok(());
     }
     if let Err(error) = crate::music::gate(true, manager, present, cfg!(target_os = "macos")) {
-        deny_message(ctx, interaction, data, error).await;
+        deny_music(ctx, interaction, data, defer_music, error).await;
         return Ok(());
     }
 
-    // Play/Skip can exceed the 3s interaction window (osascript + tap).
-    let defer_music = matches!(act, Act::Play | Act::Skip);
-    if defer_music {
-        let ack = interaction
-            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-            .await;
-        if ack.is_err() {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
-            return Ok(());
-        }
+    // Re-checked here, not just at the gate above: the REST authorization calls are
+    // awaits, and this is the last point before music state is mutated.
+    if !runtime_is_current() {
+        deny_music(
+            ctx,
+            interaction,
+            data,
+            defer_music,
+            &voice_ux::music_controls_unavailable_note("no voice session is prepared"),
+        )
+        .await;
+        return Ok(());
     }
-
     let note = match act {
         Act::Stop => {
-            let was_active = runtime.music.is_output_active();
-            runtime.music.stop("stopped", PlaybackTermination::Stopped);
+            // One lock acquisition decides and cancels. Reading `is_output_active`
+            // first would let a concurrent `begin` land between the two, so Stop would
+            // cancel that playback while reporting that nothing was playing.
+            let was_active = runtime.music.stop("stopped", PlaybackTermination::Stopped);
             voice_ux::stop_note(was_active).to_owned()
         }
         Act::Play => {
             match super::play::start_empty_for_ux(ctx, &data.state, interaction, runtime.clone())
                 .await
             {
-                Ok(message) => message,
+                Ok(message) => format!("{}\n\n{message}", voice_ux::empty_play_note()),
                 Err(error) => {
                     let detail = error.to_string();
                     if detail.contains("/voice play") {
-                        detail
+                        format!("{}\n\n{detail}", voice_ux::empty_play_note())
                     } else {
-                        format!("{detail} Track URI / library search still uses `/voice play`.")
+                        format!(
+                            "{}\n\n{detail} Track URI / library search still uses `/voice play`.",
+                            voice_ux::empty_play_note()
+                        )
                     }
                 }
             }
@@ -505,7 +596,16 @@ async fn live_playable_http(
     live_playable(data, runtime).await
 }
 
-async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -> String {
+fn channel_mention(channel_id: u64) -> String {
+    format!("<#{channel_id}>")
+}
+
+async fn status_body(
+    runtime: &VoiceRuntime,
+    resumed: bool,
+    is_playable: bool,
+    channel_label: &str,
+) -> String {
     let snapshot = runtime.snapshot().await;
     let player = match runtime.music.player() {
         Some(crate::player_control::Player::Spotify) => "spotify",
@@ -527,7 +627,8 @@ async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -
     .unwrap_or_default();
     let music = runtime.music.status();
     format!(
-        "{} <#{channel}> · mode `{}` · phase {} · media {} · playable {} · player `{player}`{pending}{why}\n{music}",
+        "{} {channel_label} · mode `{}` · phase {} · media {} · playable {} · player `{player}`{pending}{why}
+{music}",
         if resumed { "Resumed" } else { "Joined" },
         runtime.effective_mode().label(),
         snapshot.phase.label(),
@@ -537,7 +638,6 @@ async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -
             "closed"
         },
         if is_playable { "yes" } else { "no" },
-        channel = runtime.config.channel_id,
     )
 }
 
@@ -547,7 +647,8 @@ async fn status_body_http(
     resumed: bool,
     is_playable: bool,
 ) -> String {
-    status_body(runtime, resumed, is_playable).await
+    let label = channel_mention(runtime.config.channel_id);
+    status_body(runtime, resumed, is_playable, &label).await
 }
 
 async fn update_message(
@@ -568,8 +669,8 @@ async fn update_message(
             ),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }
 
@@ -589,9 +690,34 @@ async fn edit_deferred(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
+}
+
+async fn deny_music(
+    ctx: &serenity::all::Context,
+    interaction: &ComponentInteraction,
+    data: &Data,
+    deferred: bool,
+    message: &str,
+) {
+    if deferred {
+        let delivery = interaction
+            .create_followup(
+                &ctx.http,
+                serenity::all::CreateInteractionResponseFollowup::new()
+                    .content(clamp_message(message.to_owned()))
+                    .ephemeral(true)
+                    .allowed_mentions(crate::gateway::no_mentions()),
+            )
+            .await;
+        if let Err(error) = &delivery {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
+        }
+        return;
+    }
+    deny_message(ctx, interaction, data, message).await;
 }
 
 async fn deny(
@@ -621,7 +747,7 @@ async fn deny_message(
             ),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }

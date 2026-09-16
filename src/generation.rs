@@ -479,6 +479,7 @@ async fn generate_conversation<O: Outbound + Sync>(
             ask.scope,
             &tool_names,
             system_suffix,
+            ask.user_input,
         );
         let (text, posted, calls) = loop {
             match conversation.reserve().await {

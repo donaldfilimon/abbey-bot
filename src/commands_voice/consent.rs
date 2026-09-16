@@ -21,7 +21,7 @@ pub(super) fn buttons(mode: VoiceMode) -> Vec<CreateActionRow> {
             CreateButton::new(id)
                 .label(match mode {
                     VoiceMode::Local => "Agree — local",
-                    _ => "Agree — OpenAI",
+                    _ => "Agree — unavailable",
                 })
                 .style(ButtonStyle::Success),
         );

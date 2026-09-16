@@ -31,7 +31,7 @@ The architecture reference is `docs/spec/botarchitecture.md` — Swift/Vapor/Dis
 
 ## Plans
 
-Located in `docs/superpowers/plans/` (6 plans):
+Located in `docs/superpowers/plans/` (plans; list not exhaustive):
 
 - `2026-08-19-guild-learning-loop.md` — per-guild opt-in, hourly budget, BrainStats, ABBEY_QUIET precedence
 - `2026-08-19-finishing.md` — completion checklist for the 2026-08-19 spec slice
@@ -39,6 +39,7 @@ Located in `docs/superpowers/plans/` (6 plans):
 - `2026-09-02-embedded-skills-stabilization.md` — skill sync, CLI adapters, cross-CLI drift repair
 - `2026-09-03-residual-ops.md` — residual operational follow-ups after the 2026-09-03 wave
 - `2026-09-08-voice-classic-ux.md` — implement A status → B leave confirm → C play classic Action Rows
+- `2026-09-08-monetization-guild-pro-quesar.md` — phase-1 Guild Pro + Quesar plan (SKU reuse, entitlements, no live charges; Rust enforce later)
 
 ## Specs
 

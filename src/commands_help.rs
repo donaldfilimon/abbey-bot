@@ -52,6 +52,9 @@ fn discord_permission(permission: DiscordPermission) -> Permissions {
         DiscordPermission::ModerateMembers => Permissions::MODERATE_MEMBERS,
         DiscordPermission::ManageWebhooks => Permissions::MANAGE_WEBHOOKS,
         DiscordPermission::ManageServer => Permissions::MANAGE_GUILD,
+        DiscordPermission::ManageChannels => Permissions::MANAGE_CHANNELS,
+        DiscordPermission::ManageRoles => Permissions::MANAGE_ROLES,
+        DiscordPermission::MoveMembers => Permissions::MOVE_MEMBERS,
         DiscordPermission::Administrator => Permissions::ADMINISTRATOR,
     }
 }
@@ -61,6 +64,9 @@ pub fn permissions_input(permissions: Permissions) -> Vec<DiscordPermission> {
         DiscordPermission::ModerateMembers,
         DiscordPermission::ManageWebhooks,
         DiscordPermission::ManageServer,
+        DiscordPermission::ManageChannels,
+        DiscordPermission::ManageRoles,
+        DiscordPermission::MoveMembers,
         DiscordPermission::Administrator,
     ]
     .into_iter()
@@ -200,14 +206,7 @@ pub fn runtime_input(
                 .readiness
                 .insert(Capability::VoiceLocal, CapabilityReadiness::Ready);
         }
-        if config
-            .backend_for(crate::voice::VoiceMode::OpenAi)
-            .is_some()
-        {
-            input
-                .readiness
-                .insert(Capability::VoiceOpenAi, CapabilityReadiness::Ready);
-        }
+        // OpenAI Realtime removed — never advertise VoiceOpenAi as Ready.
         input.selected_voice_mode =
             match voice.as_ref().map_or(config.mode(), |v| v.effective_mode()) {
                 crate::voice::VoiceMode::Disabled => SelectedVoiceMode::Off,
@@ -547,11 +546,10 @@ pub async fn help(
     .await?;
     match prepared {
         HelpPreparation::Ready(session, input) => {
+            let body = crate::commands::clamp_message(catalog::render_help(section, &input));
             ctx.send(
                 poise::CreateReply::default()
-                    .content(crate::commands::clamp_message(catalog::render_help(
-                        section, &input,
-                    )))
+                    .embed(crate::gateway::abbey_reply_embed(&body))
                     .components(help_rows(
                         session,
                         ctx.guild_id().map(|guild| guild.get()),
@@ -564,11 +562,27 @@ pub async fn help(
             .await?;
         }
         HelpPreparation::Rejected(rejection) => {
-            ctx.say(rejection.message()).await?;
+            let body = crate::commands::clamp_message(rejection.message().into());
+            ctx.send(
+                poise::CreateReply::default()
+                    .embed(crate::gateway::abbey_reply_embed(&body))
+                    .ephemeral(true)
+                    .allowed_mentions(crate::gateway::no_mentions()),
+            )
+            .await?;
         }
         HelpPreparation::PermissionsUnavailable => {
-            ctx.say("Discord could not confirm the current permissions. Open /help to try again.")
-                .await?;
+            let body = crate::commands::clamp_message(
+                "Discord could not confirm the current permissions. Open /help to try again."
+                    .into(),
+            );
+            ctx.send(
+                poise::CreateReply::default()
+                    .embed(crate::gateway::abbey_reply_embed(&body))
+                    .ephemeral(true)
+                    .allowed_mentions(crate::gateway::no_mentions()),
+            )
+            .await?;
         }
     }
     Ok(())
@@ -676,8 +690,8 @@ pub async fn dispatch_component(
     )
     .await;
     let (body, rows) = match preparation {
-        Err(_) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, &error);
             return true;
         }
         Ok(HelpPreparation::Rejected(error)) => (error.message().to_string(), Vec::new()),
@@ -696,17 +710,19 @@ pub async fn dispatch_component(
             ),
         ),
     };
+    let body = crate::commands::clamp_message(body);
     let delivery = interaction
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new()
-                .content(crate::commands::clamp_message(body))
+                .content("")
+                .embed(crate::gateway::abbey_reply_embed(&body))
                 .components(rows)
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     true
 }

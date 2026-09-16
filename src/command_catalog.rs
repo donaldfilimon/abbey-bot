@@ -19,7 +19,15 @@ pub enum CommandKey {
     AskMessage,
     Perms,
     Modcall,
-    Server,
+    ServerBlueprint,
+    ServerCreateChannel,
+    ServerRenameChannel,
+    ServerSlowmode,
+    ServerDeleteChannel,
+    ServerAssignRole,
+    ServerRemoveRole,
+    ServerMoveMember,
+    ServerPurge,
     Webhook,
     ForumDraft,
     ForumPost,
@@ -50,6 +58,8 @@ pub enum CommandKey {
     AdminExport,
     AdminReset,
     AdminDashboard,
+    AdminQuarantine,
+    AdminResolve,
     VoiceConsent,
     VoiceNotice,
     VoicePlay,
@@ -83,6 +93,9 @@ pub enum DiscordPermission {
     ModerateMembers,
     ManageWebhooks,
     ManageServer,
+    ManageChannels,
+    ManageRoles,
+    MoveMembers,
     Administrator,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +144,10 @@ pub enum AccessId {
     A5,
     A6,
     A7,
+    A8,
+    A9,
+    A10,
+    A11,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionId {
@@ -163,6 +180,10 @@ impl AccessId {
             Self::A5 => All(&[Permission(ManageServer), CallerPresentInVoice]),
             Self::A6 => Any(&[CallerPresentInVoice, Permission(ManageServer)]),
             Self::A7 => Any(&[ApplicationOwner, Permission(Administrator)]),
+            Self::A8 => Permission(ManageChannels),
+            Self::A9 => Permission(ManageRoles),
+            Self::A10 => Permission(MoveMembers),
+            Self::A11 => Permission(ManageMessages),
         }
     }
 }

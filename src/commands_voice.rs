@@ -3,25 +3,26 @@
 //! Commands validate runtime permission, exact-channel membership, explicit
 //! participant attestation, and provider readiness while the call is muted and
 //! self-deafened. Only after a public disclosure succeeds do they enable
-//! decoding. The provider actors live in `voice_local` and `voice_openai`.
+//! decoding. The provider actor lives in `voice_local` (OpenAI Realtime removed).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::all::{ChannelId, ChannelType, GuildId};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 
 use crate::gateway::shared::clamp_message;
 use crate::offline_voice::MlxAudioClient;
 use crate::voice::{VoiceBackendConfig, VoiceMode};
 use crate::voice_local::LocalSession;
-use crate::voice_openai::OpenAiSession;
 use crate::voice_session::{SessionControl, SharedPlayback, VerificationActivation, VoiceRuntime};
 use crate::{Context, Error};
 
 mod acknowledgement;
 mod play;
 use play::{voice_pause, voice_play, voice_resume_music, voice_stop_music, voice_volume};
+mod auto_listen;
+mod auto_listen_gate;
 mod consent;
 mod discord;
 mod events;
@@ -86,6 +87,11 @@ async fn configure_disconnected_call(call: &Arc<Mutex<songbird::Call>>, mode: Vo
     call.lock().await.set_config(initial_songbird_config(mode));
 }
 
+#[allow(unused_imports)] // public API for callers outside this module tree
+pub use auto_listen::{
+    AutoListenStartup, AutoListenWhilePresent, try_auto_listen_at_startup,
+    try_auto_listen_while_present,
+};
 pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
@@ -93,7 +99,6 @@ pub use ux::dispatch_ux_component;
 pub use verification::voice_verify;
 
 const INPUT_QUEUE_FRAMES: usize = 64;
-const OPENAI_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const LOCAL_HEALTH_TIMEOUT: Duration = Duration::from_secs(600);
 const SIDECAR_STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -110,7 +115,7 @@ impl Drop for StartAttempt {
     }
 }
 
-/// Consent-gated Discord voice and redacted operator verification.
+/// Voice listen (consent), status, and macOS music mirror (`play` / `pause` / `stop-music`).
 #[poise::command(
     slash_command,
     guild_only,
@@ -347,8 +352,23 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         caller_present,
         caller_can_manage: permissions.contains(serenity::all::Permissions::MANAGE_GUILD),
     });
-    ctx.say(clamp_message(view.render())).await?;
-    Ok(())
+    // Attach classic Action Row controls (Refresh/Leave[/Play]) when a session exists.
+    match ux::send_status_command_panel(
+        ctx,
+        &runtime,
+        channel_id,
+        &view.render(),
+        permissions.contains(serenity::all::Permissions::VIEW_CHANNEL),
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::warn!(%error, "voice status Action Row panel failed; falling back to text");
+            ctx.say(clamp_message(view.render())).await?;
+            Ok(())
+        }
+    }
 }
 
 /// Show content-free operational detail to current server managers.
@@ -462,9 +482,7 @@ pub async fn voice_diagnostics(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn voice_mode(
     ctx: Context<'_>,
-    #[description = "Off, Local, or OpenAI. Omit to show the current mode."] mode: Option<
-        VoiceModeChoice,
-    >,
+    #[description = "Off or Local. Omit to show the current mode."] mode: Option<VoiceModeChoice>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let Some(runtime) = ctx
@@ -531,9 +549,6 @@ fn selectable_modes(runtime: &VoiceRuntime) -> String {
     if runtime.config.available_local().is_some() {
         names.push("`local`");
     }
-    if runtime.config.available_openai().is_some() {
-        names.push("`openai`");
-    }
     names.join(", ")
 }
 
@@ -541,9 +556,6 @@ fn selectable_modes_raw(runtime: &VoiceRuntime) -> Vec<String> {
     let mut modes = vec!["Off".into()];
     if runtime.config.available_local().is_some() {
         modes.push("Local".into());
-    }
-    if runtime.config.available_openai().is_some() {
-        modes.push("OpenAI".into());
     }
     modes
 }
@@ -554,8 +566,6 @@ pub enum VoiceModeChoice {
     Off,
     #[name = "Local"]
     Local,
-    #[name = "OpenAI"]
-    OpenAi,
 }
 
 impl From<VoiceModeChoice> for VoiceMode {
@@ -563,7 +573,6 @@ impl From<VoiceModeChoice> for VoiceMode {
         match value {
             VoiceModeChoice::Off => Self::Disabled,
             VoiceModeChoice::Local => Self::Local,
-            VoiceModeChoice::OpenAi => Self::OpenAi,
         }
     }
 }

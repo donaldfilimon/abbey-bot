@@ -1,5 +1,49 @@
 # Goals
 
+## Merge-all, systemd unit hardening, redeploy + rebuild abi/abbey fleet
+status: done
+- **2026-09-16 capture (/goal):** merge everything to `main` via PR, finish `deploy/abbey-bot.service`
+  leftovers, managed Mac redeploy, rebuild/gate abi, wdbx, abbey, delete what is provably unneeded.
+  Survey at 05:55: abbey-bot 0 open PRs, 0 extra worktrees; only unmerged ref is
+  `origin/docs/monetization-guild-pro-quesar-design-20260908`, whose PR #127 was CLOSED unmerged
+  (a decision, not leftover work; kept, Donald's call). AbbeyBot (Swift) has a live same-day
+  `codex/*` worktree owned by another session and is out of scope.
+- **Slice 1:** unit gains `UMask=0077`, `StateDirectoryMode=0700`, `TimeoutStopSec=30` and ten more
+  hardening keys; new `scripts/check-systemd-unit.py` + `test-check-systemd-unit.py` (8 tests) wired
+  into `check.sh` and `check.ps1`. Unit still UNVERIFIED on a real systemd host.
+- **Slice 2 (06:0x-06:23):** #159 merged as `fbc8396` on local `./check.sh` exit 0 (1299 passed) +
+  strict `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` parity (sha256 `a4ec232c…`); hosted Gate = billing lock,
+  UNMEASURABLE. wdbx 9788ae7 fmt/clippy/test (620 passed)/release green; abi 2e5ca7e3
+  `./tools/check.sh` all green (854 passed). Deployed gateway-first: `abi-wdbx-gateway` + `abi` from
+  abi 2e5ca7e3 (installed SHA = built), gateway pid ready; then managed bot reinstall `installation:
+  ready`, `service-status.py` Discord ready / scheduler running / persistence complete. Deleted merged
+  local branches (3) and merged remote `fix/clippy-allows-after-151` (#153); moved three 2026-09-08
+  `abbey-bot.bak-*` binaries to `~/.Trash/abbey-bot-libexec-bak-20260916` (no script references them).
+- **Residuals:** Dependabot #1-#4 are all `rustls-webpki 0.102.8` via serenity 0.12.5, already
+  accepted debt (RUSTSEC-2026-0049/0098/0099/0104); blocked on a Serenity release, not fixable here.
+  `nightly-2026-09-01`'s `rust-objcopy` cannot find `libLLVM.dylib` (rpath looks under
+  `rustlib/…/lib`; the dylib is in `lib/`), so abi release binaries keep debuginfo: upstream packaging,
+  harmless. Unmerged `docs/monetization-…-20260908` kept (PR #127 closed unmerged, Donald's call).
+  AbbeyBot (Swift) and the live `abbey-bot-wt-memory-edge-review-20260916` worktree belong to other
+  sessions and were not touched.
+- **Outcome (06:28):** abbey `./check.sh` -> `check.sh: OK` (3064 passed); its stale lock
+  (`ed25519-dalek` from abi 0cd6eb41) merged as abbey#107 `9d29c5d`; `./install.sh` reinstalled
+  `~/.local/bin/abbey` + `abbeyd` (abbey 2.6.0, were 2026-09-03 builds). All four Rust repos are on
+  `main` = `origin/main`, gated green locally, and deployed. Systemd unit still host-unverified.
+
+## Discord UX: embed replies + slash-aware guidance
+status: done
+- **2026-09-16 continue (help+guidance embeds):** `/help` + ephemeral command-error guidance use `abbey_reply_embed` (same brand/footer as chat/music). Tip hygiene after `6604593`. Gate UNMEASURABLE.
+- **2026-09-16 continue (#154):** Local `./check.sh` green again — fmt after #153 + consent-notice test pins Local stop route / OpenAi refusal without stop route. Merged `53b69cc`. Gate UNMEASURABLE.
+- **2026-09-16 continue (#156):** Abbey `ask.rs` local-first + consent + lane handoffs (Aviva/Abi contracts untouched). Merged `289c5e5`; Mac redeploy verified. Gate UNMEASURABLE.
+- **2026-09-16 continue (embed+music UX):** Shared `abbey_reply_embed` on send+edit; clearer `/voice play|pause|resume-music|stop-music|volume` docs + catalog + ephemeral music embeds. Music ≠ listen consent. Local check/catalog green; Gate UNMEASURABLE.
+- **2026-09-16 /goal continue:** Dead `voice_openai` actor removed (`feat/drop-dead-voice-openai`). `OpenAiSession` was import-only / never constructed; live start already fail-closed on Realtime. `VoiceMode::OpenAi` kept inert for consent/tests. Aftercare: `abbey-state.json.bak-*` already chmod 600. Mac redeploy only if binary behavior changed (dead-code drop → yes, rebuild).
+- **2026-09-16:** #145 merged (`e1ccc5b`). Chat replies use Abbey embed; capability guidance points at `/help`, permission-mirrored `/server …`, `/voice …`. Live Mac managed redeploy verified (PID fresh, mlx/tap 200, 24 guild cmds). Hosted Gate empty-step = UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock. NL auto-execute of `/server` from chat not shipped (hint-via-guidance only).
+- **2026-09-16 continue (#150):** Warmer local SFW `VOICE_SYSTEM_SUFFIX` (human/conversational spoken turns). Merged `6c12962`. Mac managed redeploy verified; state+env mode 600; `af_heart` pins. Gate UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock.
+- **2026-09-16 continue:** MLAI `default_persona` had drifted to `aviva`; restored to `abbey` (private `abbey-state.json` mode 600 required — world-readable write caused managed EX_CONFIG 78). Live PID ready; Discord @me 200; unsolicited still on. Docs tip `ab45d02`.
+
+
+
 ## Program 1 stable-Rust contract conformance
 status: done
 - Local C1 source evidence on 2026-08-22: `abbey-bot` vendors the exact 81-artifact,
@@ -20,6 +64,7 @@ status: done
 
 ## Full-duplex Abbey voice in Discord Engineering
 status: in_progress
+- **2026-09-16:** PRs #132/#134/#135/#136 landed on `origin/main` (`935247d`) via the existing merge queue; worktrees removed. Local `./check.sh` EXIT 0 (1294 passed). rustls 0.23.45 closed RUSTSEC-2026-0285 on the reqwest line; serenity 0.22.4 debt unchanged. Live launchd service not touched.
 - Design: `docs/superpowers/specs/2026-08-20-live-voice-design.md`. Delivery now follows the
   canonical checkout on `main`; dated branch names are archival context, not current guidance.
 - The source contract remains participant-attested and fail-closed: bounded Songbird media,
@@ -244,6 +289,19 @@ status: in_progress
   `Outcome::OverBudget` is defined at `src/pipeline.rs:75`, returned at `src/pipeline.rs:169` and
   `:178`, and covered by `src/pipeline/tests.rs:624`. The gap is live observation only, not
   implementation.
+
+- **2026-09-16 DQN sparse-learn fix (source).** MLAI guild snapshot showed `experience_count=9`
+  / restored `experiences` length 9 with `step_count=0` and `epsilon` stuck at the
+  `epsilon_override=0.5` clamp. Root cause: `DqnAgent::learn` no-op'd until the replay buffer
+  held 64 samples (`BATCH_SIZE`), so Tick::Learn never incremented steps on sparse Discord
+  reward streams; separately, pipeline reapplies `epsilon_override` on every decision so ε
+  cannot decay while that override is set. Fix: train once the buffer holds
+  `MIN_REPLAY_FOR_LEARN` (8), still sampling `BATCH_SIZE` with replacement. Discord
+  capability_guidance now points operators at `/admin act|learning|brain|budget` when
+  learning is the topic (claim-honest: in-process DQN only, no autonomous code rewrite).
+  **Not claimed:** live post-deploy `step_count` growth, OverBudget, or act observation —
+  status stays `in_progress`. Suggestion only: clear or lower `epsilon_override` after warm-up
+  if exploration should decay.
 
 ## Reply quality & speed (sub-project 1 of "improve all")
 status: done
@@ -1571,3 +1629,385 @@ qualification, provider qualification, live two-guild member/manager Discord
 checks, fresh unanimous consent, human-witnessed audible voice acceptance,
 Portal Activity URL map (P0), OAuth secret host (P2), Components V2
 (crate-blocked), and episode-gate human approval.
+
+#### Tip `8722494` (#128) — monetization on main; #129 billing-locked; night `/goal continue` (2026-09-08 ~20:47 EDT)
+
+Executed as `/goal continue`. Tip of `origin/main` at this writing is
+`87224941ce24524c28646d3fa2499df260eda8cc` — `docs(plan): monetization Guild Pro + Quesar phase-1 (#128)` **MERGED**. Design spec + plan + Portal checklist + Pages inventory are on main via #128.
+
+**PR #127** (design-only) was OPEN but CONFLICTING and **superseded** by #128 (which included the design). Closed as duplicate/conflict with comment that design is already on main.
+
+**Open: #129** `feat/premium-entitlements-gate` — pure `premium_entitlements` + `.env.example`; Devin Review noted; local cargo test/fmt/clippy claimed green; hosted Rust jobs fail in ~2–9s with **0 steps** and annotation: "The job was not started because your account is locked due to a billing issue." Do **not** merge #129 until hosted Rust Gate is green after billing unlock. Workflow display name in Actions is **Rust** (not "Gate" in the run list); jobs still labeled Gate (Ubuntu/macOS/Windows).
+
+**Live Abbey binary:** no live Abbey binary redeploy needed for this docs-only tip; #129 is not merged, so there is no entitlements binary yet. Last redeploy remains the earlier #124 line (PID **49552**, SHA-256 prefix **`f952e705`**) unless Donald has redeployed since — this continue does not re-probe launchd.
+
+**Portal checklist (operator, not agent):** `docs/ops/monetization-portal-checklist.md` — SKU rename to Abbey Guild Pro, attach entitlements, leave storefront unpublished (no live charges).
+
+**Still Donald / still open (no status flips):**
+
+- **P0 — Portal Activity URL map:** PREFIX `/`, TARGET
+  `donaldfilimon.github.io/abbey-bot/activity` (no scheme, no `index.html`);
+  Desktop + Web; Office Hours rocket → Abbey `ready()` in the **discordsays**
+  iframe.
+- **Billing unlock:** https://github.com/settings/billing → unlock → re-run Rust on tip + #129.
+- **Human Play acceptance** still open.
+- Brand freeze unchanged. No invented metrics.
+
+**Cross-repo brief (recorded, not actioned here):**
+
+- **mlai-website-app** #18 Quesar pilot CTA — **MERGED**.
+- **Neuralnetworkanimation** #1 black-hole improve — **MERGED**.
+- **wdnx** #29 / #30 open, blocked by GitHub Actions billing lock; Dependabot
+  #23–#28 held (unchanged from evening brief unless Donald closed them).
+- **abbey** #105 open (ollama list probe harden) unless closed since evening brief.
+
+Still not established, and unchanged: installed artifact identity
+qualification, provider qualification, live two-guild member/manager Discord
+checks, fresh unanimous consent, human-witnessed audible voice acceptance,
+Portal Activity URL map (P0), OAuth secret host (P2), Components V2
+(crate-blocked), and episode-gate human approval.
+
+#### Tip `b793af0` (#129) — LIVE AUTO_LISTEN pulse; #132 billing-locked; late-night `/goal continue` (2026-09-08/09 ~23:4x EDT)
+
+Executed as `/goal continue`. Tip of `origin/main` at this writing is
+`b793af0f46c82e4186a6622af00c01dd4af14e30` — `feat(premium): add pure premium_entitlements gate module (#129)` **MERGED** (merged ~20:51 EDT / 00:51 UTC). Hosted Rust on that tip (and on intervening #128/#130 pushes) still **fails in seconds with 0 steps** under the GitHub Actions billing lock — same class of failure as earlier #129 Gate notes. Do **not** treat those reds as code defects; unlock billing, then re-run Rust on tip + open PRs.
+
+**Open: #132** `fix/voice-failure-telemetry` — `feat(voice): AUTO_LISTEN + voice failure telemetry`. Devin Review SUCCESS. Hosted Gate (Ubuntu/macOS/Windows) all **FAILURE** with empty step lists (billing lock), not treated as a code bug. Do **not** merge #132 until hosted Rust Gate is green after billing unlock.
+
+**Live Abbey (claim-honest, this pass):** managed abbey-bot PID **87677**; build includes **AUTO_LISTEN**; Office Hours unmuted. This continue does not re-hash the binary or claim installed-artifact identity qualification.
+
+**Audio stack (claim-honest):**
+
+- `abbey-audio-tap` installed via launchd; `GET :8182/health` reports service `abbey-audio-tap`, idle, `ready:false` until capture.
+- `mlx-audio` on `:8181` healthy.
+
+**Music / Discord mirror:** Spotify host playing; music channel notified. Discord mirror still needs Donald to click `/voice play` — bots cannot invoke that slash command.
+
+**Activity / Portal:** GitHub Pages returns **200** with Abbey title. `discordsays` is still the Discord marketing shell. Portal Activity URL map remains **human-gated** (no agent-side flip).
+
+**Ops / skills (recorded, not repo-shipped here):** Live pulse routine prompt updated (smarter quiet-when-green). `donald-mode` skill updated under `~/.cursor/skills/donald-mode` (home skill path; not necessarily present in this repo).
+
+**Still Donald / still open (no status flips):**
+
+- **P0 — Portal Activity URL map:** PREFIX `/`, TARGET
+  `donaldfilimon.github.io/abbey-bot/activity` (no scheme, no `index.html`);
+  Desktop + Web; Office Hours rocket → Abbey `ready()` in the **discordsays**
+  iframe.
+- **Billing unlock:** https://github.com/settings/billing → unlock → re-run Rust on tip + #132 (and any other open Gate-red PRs).
+- **Discord `/voice play` click** for music mirror (human; bots cannot invoke).
+- **Human Play acceptance** still open.
+- Brand freeze unchanged. No invented metrics.
+
+Still not established, and unchanged: installed artifact identity
+qualification, provider qualification, live two-guild member/manager Discord
+checks, fresh unanimous consent, human-witnessed audible voice acceptance,
+Portal Activity URL map (P0), OAuth secret host (P2), Components V2
+(crate-blocked), and episode-gate human approval.
+
+#### Tip `d256fb9` — branch consolidation; 29 local branches retired; `/goal continue` (2026-09-16 ~23:4x EDT)
+
+Executed as "merge all branches into main" + `/goal continue`. `origin/main` is
+`d256fb9` after squash-merging **#139**, **#137** (toml 1.1.5→1.1.6) and **#138**
+(mlx-vlm 0.6.17→0.7.0). **Zero open PRs remain.**
+
+**Correction — a stale claim above.** The `#### Tip b793af0 (#129)` entry near the
+end of this file still says "**Open: #132** … Do **not** merge #132 until hosted Rust
+Gate is green after billing unlock." That is **stale as of 2026-09-16**: #132 merged
+at 03:21 UTC, recorded in the `- **2026-09-16:**` bullet near the TOP of this file.
+Measured with `gh pr list --state all --json number,state,mergedAt`. The ledger is
+append-ordered by writing session, so the newest state was sitting above the stale
+line, not below it — reading only the tail inverts the truth here.
+
+**Branch audit (the substantive finding).** 29 local branches. 28 had a MERGED PR
+(#103–#136), which is *not* sufficient evidence: comparing each local tip against the
+PR's actual `headRefOid` found **two** divergent. `fix/voice-failure-telemetry` was
+behind (harmless). **`cursor/goal-continue-2026-09-08` was 3 commits AHEAD** — work
+committed after #133 merged that reached no remote (`git cherry origin/main` = three
+`+`). Landed as **#139** by cherry-picking onto current `main`, not by merging the
+stale branch, whose base predated ~20 files of later work (`git diff --numstat` was
+almost entirely deletions; a merge would have reverted them).
+
+- Near-miss worth recording: `git fetch --prune` turned that branch's `ahead 3` into
+  `gone`, visually identical to the 27 genuinely-landed branches. A cleanup keyed on
+  "gone" would have `-D`'d three commits. Separately, the `clean_gone` skill greps
+  `'\[gone\]'` while git's real format is `[origin/<branch>: gone]`, so it matches
+  **nothing** and reports "no cleanup needed" on 27 stale branches — a false clean.
+- #127's branch (`docs/monetization-guild-pro-quesar-design-20260908`) is correctly
+  closed/superseded: `main` holds all four of its files in richer form (its README
+  version even reverts "list not exhaustive" back to a hardcoded "(6 plans)"). Local
+  branch deleted; the **remote** branch is left in place as Donald's closed-PR record.
+- 29 local branches deleted; worktree removed; tips recorded to
+  `~/at-risk-bundles/abbey-bot-branch-tips-20260916.txt`. Only `main` remains local.
+
+**Gate (claim-honest).** `./check.sh` content run on the exact combined state (docs +
+both bumps) before merge: fmt, deployment/privacy/installer, Pages, contracts,
+security and the Python suites passed in the **foreground** (the installer signal
+tests fail spuriously when backgrounded, inheriting `SIG_IGN`); then
+`CLIPPY_EXIT=0`, `TEST_EXIT=0` (**1294 passed, 0 failed**, 5 intentional ignores),
+`RELEASE_EXIT=0`. Exit codes read from the log's own markers, not a harness summary.
+
+**This is macOS-local evidence only, and does not satisfy this repo's standard.**
+Hosted Actions remain **billing-locked**: every Gate on #139's head `e3e796e` ended in
+2–6 s with zero steps and the annotation "The job was not started because your account
+is locked due to a billing issue." Those reds were **not** treated as defects and no
+code was changed to green them. The three-platform run on `main`'s own tip — the
+closing evidence AGENTS.md requires — is **not established**, and Windows-specific
+classes are unverified. Unlock billing, then re-run Rust on tip.
+
+Still not established, and unchanged: installed artifact identity qualification,
+provider qualification, live two-guild member/manager Discord checks, fresh unanimous
+consent, human-witnessed audible voice acceptance, Portal Activity URL map (P0),
+OAuth secret host (P2), Components V2 (crate-blocked), and episode-gate human approval.
+The live launchd services were not touched this pass.
+
+**Blocker re-verification (`/goal continue and finish all`, 2026-09-16 ~23:5x EDT).**
+Ran against the source, not the prose. `tasks/todo.md` has **42** open items and every
+one is human-gated, deployment-gated, platform-gated or crate-gated; no agent-actionable
+source slice remained this pass, so none was invented.
+
+- **Serenity is still the wall, confirmed today.** crates.io reports serenity
+  `max_stable_version` = `newest_version` = **0.12.5**, which is exactly what
+  `Cargo.lock` pins. Components V2 stays crate-blocked, and the
+  `security/rustsec-accepted-debt.json` review trigger "a compatible fixed
+  rustls-webpki line becomes available" has **not** fired — `rustls-webpki` 0.102.8
+  remains correctly accepted, not stale. poise 0.7.0 is published but requires
+  serenity `^0.12.5`; per AGENTS.md it unlocks neither, so it was deliberately not
+  bumped (churn without benefit).
+- Live launchd services were not touched, per the standing rule against stopping,
+  unloading or reinstalling them on agent initiative.
+- Remaining blockers are all outside the source: GitHub billing unlock (hosted
+  three-platform Gate), Portal Activity URL map (P0, human), human-witnessed audible
+  voice acceptance, Discord `/voice play` click, two-guild live checks, Linux/Windows
+  runtime acceptance, and staged MLX-Audio / MLX-VLM install qualification.
+
+**Concurrent-actor note (open unknown, not resolved).** `git reflog show --date=iso main`
+records `d82620d` committed at 23:23:06 — before this session started — and
+`69b540f main@{23:35:21}: merge gate/combined-20260916: Fast-forward`, an explicit merge
+of a branch this session had created ~60 s earlier, matching no command it ran. Two other
+Claude sessions were live (cwd `~` and a scratch workspace); neither appears in an
+`lsof -d cwd` sweep of this repo, because `git -C` works from any directory. Content was
+identical and local `main` was realigned to `origin/main` after an empty-diff check, so
+nothing was lost — but **another session may hold the same "merge all branches" instruction**.
+Attribute ref moves with `git reflog --date=iso`, not a cwd sweep.
+
+**Concurrent-actor note — RESOLVED to "unattributed", not to another session (2026-09-16 00:2x EDT).**
+The paragraph above said another session may hold the same instruction. Checked, and no:
+the two app sessions were on cell-lang and unsloth PR #10373; the "Merge all branches into
+main across repos" hit was a `done` line in `~/tasks/goals.md`, not a live instruction.
+Every actor that could run `git merge gate/combined-20260916` in this checkout at 23:35:21
+was enumerated and cleared with evidence: all tool calls from all five sessions in the
+03:34:30–03:36:00Z window; every transcript and background-job output (none names the
+branch or SHA); zsh history and the Terminal panel (no human command); Codex (launched
+23:36:54, after); the desktop app (its only fast-forward merges a 40-hex SHA from
+`ls-remote`, only for a branch behind origin — cannot write a branch name); the CLI binary
+(no `ff-only` string; ExitWorktree applies a tree diff, not `git merge`); user, repo and
+Codex hooks (read-only + append); the `remember` plugin (git-restore off by default,
+session-start only, and its 23:34:29 save was skipped at 23:34:30: "0 human msgs < 3");
+GitKraken (unauthenticated, fetch skipped); the live bot (no git subprocess, WorkingDirectory
+elsewhere); abbey/abi CLIs (not running; gitops is diff-only); cron/launchd; the self-hosted
+runners (cwd `<runner>/`, no job at 23:35); repo gate scripts (no merge). The `.git/logs`
+entry is genuine (`AGENTS.md`/`CLAUDE.md`/`Cargo.lock`/`deploy/*` mtimes all 23:35:21) and
+carries the machine's single git identity, which cannot discriminate actors. Residual: the
+merge is unattributed; the content was byte-identical to what `origin/main` later received,
+local `main` was realigned after an empty-diff check, and nothing was lost. Practical rule
+kept: attribute ref moves with `git reflog --date=iso`; a cwd sweep cannot see `git -C`.
+
+**Concurrent-actor note — ATTRIBUTED (2026-09-16 00:2x EDT). Supersedes the "unattributed" paragraph above.**
+Both silent writes to this checkout were made by a **Grok CLI goal loop**, not a Claude
+session and not a human: `grok --yolo /goal set and organize and update all dirs, hidden
+dirs, and codedirs and projects and cleanup all .md and docs and files --effort high`,
+PID 49762, launched 2026-09-15 22:15:31 from a Ghostty terminal with cwd `~`, model
+`grok-4.6-build`, session `01a0a7ff-7700-7273-896c-a073149c5387`, **still running** at
+00:17. Its own log (`~/.grok/sessions/%2FUsers%2Fdonaldfilimon/01a0a7ff…/`) records the
+`run_terminal_command` executed 03:35:21.2–03:35:22.0Z:
+`cd "$BOT"; git status -sb; git merge --ff-only gate/combined-20260916` — described by the
+model as "Fast-forward abbey-bot main to combined land branch" — seven seconds after it had
+inspected that branch's mirror, AGENTS.md hunk, mlx-vlm pin and toml lock. It also produced
+`4f70323` (00:15:06, AGENTS/CLAUDE docs) inside a command running 04:15:05.9–04:15:08.0Z.
+Why every earlier sweep missed it: its cwd is `~` and it reaches repos with `cd`/`git -C`,
+its transcript lives under `~/.grok/sessions/`, not `~/.claude/projects/`, and its commit
+carries no `Co-Authored-By` trailer. Rule that follows: when attributing a ref move, enumerate
+**every** agentic CLI's session store on this machine (`~/.grok`, `~/.codex`, `~/.hermes`,
+`~/.openclaw`, …), not only Claude's, and check `ps` for `--yolo`/goal loops rooted at `~`.
+Practical state: main is `540d54c` = origin, tree clean; the Grok loop and this session are
+now writing the same files, which is the hazard to resolve, not the history.
+
+**Review of the foreign docs commit `4f70323` (`/goal continue`, 2026-09-16 00:2x EDT).**
+Reviewed claim by claim against primary sources rather than trusting a commit that no
+session of Donald's reviewed: the three `Gate` lanes are `ubuntu-24.04` / `macos-15` /
+`windows-2025` in `.github/workflows` (the `runs-on` value is the matrix `os` field); `main`'s run for
+`8dbdb18` (id 35053305472, 2026-09-16 03:50:21Z) has all three jobs `failure` with
+`steps=0`; `.gitignore` line 22 is `/abbey-bot-wt-*`; no `../abbey-bot-wt-*` directory
+exists, so removing "where the live ones sit" was a correction, not a loss; the twin
+mirror is intact. **Accurate; no follow-up commit needed.** Grok loop PID 49762 still
+active (last inference 00:25 EDT); its plan targets `project-registry`, `~/CLAUDE.md`
+and `~/tasks/goals.md` next, none of which this session will touch while it runs.
+Open goals unchanged: all 42 `tasks/todo.md` items remain human-, deployment-,
+platform- or crate-gated; nothing source-actionable was found this pass.
+
+- **2026-09-16 00:30 EDT:** Grok loop PID 49762 killed on Donald's instruction (`kill 49762`); SIGTERM sufficed, its log shows a clean `session_end` (`outcome: joined`), all eight MCP children exited, this tree stayed clean at `a32d795`. The "still active" lines above are history.
+
+**`/goal continue` 2026-09-16 00:3x EDT — two residuals measured instead of re-listed.**
+
+**1. Strict WDBX conformance re-run on the current tip (new evidence).** The last strict
+run recorded here was on `ff5d594`, nine days old. Re-run now:
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1 python3 scripts/check-wdbx-conformance.py` → **EXIT 0**
+on tip `4fa1ec4` against sibling `../wdbx` at `2cf550c`, cross-repository fixture parity
+`sha256=a4ec232c6980e009b77936386c9b233b864abb2d6b66b6253624d2f7a474be90`
+(`wdbx/crates/abi-wdbx/tests/golden/abbey-bot-projection.seg.jsonl`); its twin
+`test-check-wdbx-conformance.py` → **EXIT 0** (3 tests). So the transcription contract
+still holds against the *current* sibling, not just the September 6 one.
+
+**2. Installed-artifact identity: the RUNTIME half is now proven; the SOURCE half is not,
+and cannot be from the artifact alone.** Every pass has re-listed this as flatly "not
+established". Measured read-only, nothing installed or restarted:
+
+- Installed `~/.local/libexec/abbey-bot/abbey-bot`: 32,622,896 bytes, mtime 2026-09-09
+  00:12:45 EDT, `sha256 8ab22e466b675ea4ccece46c933593049c116fd2ed5e3680a6c3366a9b970663`.
+- `readiness.json` self-reports `executable_sha256` = **that same digest**, `pid 1437`,
+  `phase ready`, `discord ready`, `scheduler running`, `last_persistence complete`,
+  published 7.2 s before the read (contract: refresh ≤10 s, stale >30 s → **fresh**).
+- `launchctl list` gives pid **1437** for `com.donaldfilimon.abbey-bot`, and that process's
+  `txt` descriptor is that exact path with that exact digest.
+- `bootstrap-status.json` is absent, i.e. a clean startup with no recorded failure.
+
+That chain — launchd pid ↔ readiness pid ↔ self-computed digest ↔ installed file ↔ the
+mapped executable of the live process — is **established**. `src/readiness.rs` earns it:
+`RunIdentity::current()` hashes `current_exe()` with a stat-before/stat-after guard, and
+`ReadinessPublisher::publish` refuses a document whose digest is not its own.
+
+**What is still NOT established, with the reason:** which *commit* produced those bytes.
+There is no `build.rs`, no `option_env!("GIT_SHA")`/`env!` build embedding anywhere in
+`src/`, and `Cargo.toml` carries only `version = "0.1.0"` — so the artifact contains no
+provenance to read. `main`'s tip at the binary's mtime was `ec5b35e`, but that is
+**inference from a timestamp, not proof**, and is recorded as such. Note the installer
+already proves the narrower claim it can: `deploy/service_transaction.py` phase `publish`
+compares `binary_digest(...)` against `sha256(candidate)` and raises
+`TransactionError('artifact')` on mismatch, so installed-equals-built is enforced *at
+install time* — it simply is not recoverable afterwards.
+
+**Proposed (NOT implemented, Donald's call):** embed build provenance so the source half
+becomes checkable — a `build.rs` emitting `GIT_SHA`/dirty state read via `option_env!`,
+surfaced in readiness. Deliberately not done autonomously tonight: it adds a build-time
+git dependency to every build including `--locked` CI, needs a clean fallback when git is
+absent, and changes the deployed artifact. `README.md`'s status row ("Installed artifact
+identity | **PENDING** | ... exact-head CI required before deployment") was **left
+untouched** — upgrading a status table on the strength of a runtime-only chain would be
+exactly the Current-laundering the iron rules forbid. The row is imprecise rather than
+wrong; this entry is the precise version.
+
+**`/goal continue` 2026-09-16 00:4x EDT — two ungated invariants checked; one held, one was wrong.**
+Both are rules `AGENTS.md` states but **no gate enforces**, so nothing would have caught drift.
+
+**1. Shell-versus-pure boundary: HOLDS.** `grep -rlE '^\s*use (serenity|poise)' src/` returns
+30 files, every one inside the documented shell set (`gateway/`, `commands*`, `forum.rs`,
+`startup`, `service/framework.rs`, `voice_session/playback.rs`, `server/{run,discord}.rs`,
+`main.rs`) plus exactly the four documented test-only files — that four is still exact. The
+wide pattern `\b(serenity|poise)::` adds 11 more, each re-classified by hand: 7 in-module,
+4 test-only, **zero outside the allowed set**. No leak. `voice_session/playback.rs` is
+confirmed invisible to the narrow grep for the stated reason — it carries
+`#[serenity::async_trait]` at line 50 and no `use serenity` line.
+
+**2. `AGENTS.md`'s own count was stale, and `.cursor/agents/abbey-reviewer.md` was wrong.**
+- The twins said the wide pattern "adds ten files"; it adds **eleven**. Replaced the
+  hardcoded number with a re-derivation (`comm -13 <(narrow) <(wide)`) and a note that the
+  count already went stale once — the same brittle-count anti-pattern `main` fixed in
+  `docs/superpowers/README.md` when it replaced "(6 plans)" with "list not exhaustive".
+  Edited in **both** twins together; `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)`
+  clean, which is the rule with no gate behind it.
+- `.cursor/agents/abbey-reviewer.md` carried the drift `AGENTS.md` names, still unfixed:
+  it described **`gateway.rs`**, a file that does not exist (it is `gateway/` with
+  `discord.rs`, `interaction_outcomes.rs`, `mod.rs`, `shared.rs`, `slack.rs`, `telegram.rs`),
+  and a **"Discord Shell (5 files)"** where 33 non-test files import serenity/poise. Fixed
+  both, and three further inaccuracies found while verifying: its **"Gate Checklist" listed
+  four cargo commands and never mentioned `./check.sh`**, so a reviewer following it would
+  skip the deployment/privacy/Pages/contracts stages entirely (the real gate has six); it
+  said "property test" where there is no `proptest`/`quickcheck` in `Cargo.toml`; and it
+  omitted the gated 1,000/800-line module-size rule. Added a closing clause that `AGENTS.md`
+  wins on conflict and must be changed here in the same commit. Its `Zig-compatible wyhash`
+  and `WDBX v1` claims were **checked and left alone** — both match the module headers.
+
+Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0,
+`check-rust-module-size` 0, `check-abbey-contracts` 0 (81 artifacts, digest `72e241e3…`).
+No Rust changed, so the compile stages were not re-run for this docs-only slice.
+
+**`/goal continue` 2026-09-16 00:4x EDT (second slice) — the same drift in a file nobody knew existed, and two stale README rows.**
+
+**1. `.codex/agents/abbey-reviewer.toml` had the identical drift just fixed in `.cursor`,**
+and the root cause is that `AGENTS.md` named only the Cursor copy ("a third, Cursor-side
+restatement"), so the Codex one was invisible to the fix-it-too instruction. There are in
+fact **four** copies of these rules: `AGENTS.md`, `CLAUDE.md`, `.cursor/agents/abbey-reviewer.md`,
+`.codex/agents/abbey-reviewer.toml`. Fixed the Codex file the same way (the non-existent
+`gateway.rs`, the "5 files" shell, the cargo-only Gate Checklist that never mentioned
+`./check.sh`, the `proptest` language, the missing module-size rule) and rewrote the twins'
+paragraph to name **both** restatements, state the four-copy count, and record a trap found
+doing it: the Codex file is TOML with a `"""` block, where a regex backslash is an invalid
+escape — verify with `tomllib.load` after editing. TOML re-parsed clean (5,149 chars).
+
+**2. `README.md` status table carried two materially wrong rows.**
+- Source gate said "904 Rust tests passed, 2 live tests ignored". Tonight's measured run is
+  **1,294 passed, 0 failed, 5 ignored** — off by 390 tests. Updated, dated, and bound to
+  `4bd8dbf`. **The Swift (27) and audio-tap (25) sub-counts were deliberately NOT updated**
+  and are now explicitly marked as from an earlier run: the 2026-09-16 foreground pass was
+  killed by the 10-minute cap *before* the `== offline macOS audio tap ==` stage (marker
+  count 0 in the log), so those numbers are unmeasured, not confirmed. Quoting them as
+  current would have been the exact laundering the iron rules forbid.
+- Cross-platform CI said "**Repaired, unverified at new head**" and described an August
+  `cargo fmt` repair. That is not the current state: hosted CI has been **billing-locked
+  since 2026-09-08** and no CI evidence is obtainable at all. Row changed to
+  **UNMEASURABLE — account billing lock**, a deliberate *downgrade* in claimed confidence.
+
+Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0, twin
+mirror clean, `.codex` TOML parses. No Rust changed; compile stages not re-run and not claimed.
+
+**`/goal continue` 2026-09-16 03:1x–04:1x EDT — main back to a green gate (pending #154).**
+
+Fixing stage 1 kept exposing the next red stage, in order: `cargo fmt` (7 files), the
+`test-check-pages-liquid.py` inventory pin (two docs added today, both intended Pages
+publications, added deliberately), clippy `-D warnings` (33 dead-code errors left by
+`dc861a0`, which cut every path to the Realtime actor but kept the module), then one stale
+test. Landed as #147 (twin doc drift: five live launchd agents, `permission_mirror.rs`
+exception), #148 (check.sh enumerates `deploy/*.sh scripts/*.sh` and `deploy/*.plist`:
+9→11 scripts, 4→6 plists; `install-oh-autolisten-launchd.sh`, the 5.8 KB watcher and two
+live-service plists were previously never checked), #149 (fmt + pages allowlist), #151/#153
+(drop the unreachable `voice_openai` actor, keep the load-bearing `VoiceMode::OpenAi` variant
+with ~50 live references; per-item allows with rationale for the four deliberately retained
+items; `ServerAction::OverwriteEdit` removed on Donald's instruction), and **#154, OPEN**:
+#153's own fmt slips plus `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`,
+which still asserted a stop route in the OpenAi notice that `dc861a0` correctly made a
+refusal. The test now pins the per-mode contract. Full `./check.sh` on #154's tree:
+`EXIT: 0`, 1,299 passed / 0 failed / 5 ignored, audio-tap Swift 12 + 16, release build.
+**`main` at `f9d6d62` stays red at fmt until #154 merges; the merge is Donald's** (the
+permission classifier blocked an agent merge as "Merge Without Review").
+
+Re-measured blockers, not re-opened as new goals: crates.io `serenity` max_stable is still
+**0.12.5** (2026-09-16 04:1x), so the four accepted `rustls-webpki` 0.102.8 records and
+Components V2 remain blocked upstream. Every other open `tasks/todo.md` item is human-gated
+live acceptance or a launchd install/deploy, which AGENTS.md forbids as agent-initiated
+validation. The deployed binary predates #145–#154; redeploying is Donald's.
+
+**`/goal` "pick best options to merge into main" 2026-09-16 04:2x EDT.** Every remote branch
+with commits not on `main` was content-tested after `git fetch --prune`. Only two exist:
+#154 (this branch; code byte-identical to the tree that passed the full gate, base still
+`origin/main` = `f9d6d62`) and `docs/monetization-guild-pro-quesar-design-20260908`
+(`2fea39a`, PR #127 closed). The latter is **fully landed**: its new spec is byte-identical
+on `main`, and every line it adds to the roadmap, `docs/superpowers/README.md` and the
+pages-liquid test is already present there, so merging it would be a no-op. **#154 is the
+only merge candidate.** Donald authorized the merge explicitly, but the Claude Code
+permission classifier blocked `gh pr merge 154` twice (once as "Merge Without Review"); the
+merge was not attempted by any other route. Redeploy waits on the merge.
+
+**Redeploy 2026-09-16 04:3x EDT (Donald: "deploy the #154 branch now").** #154 was still
+unmerged on GitHub (`merged=false`, no merge event). Deployed `933783e` from a disposable
+detached worktree through `deploy/install-launchd.sh` (the installer copies the binary to
+`~/.local/libexec/abbey-bot` and points `WorkingDirectory` at the state dir, so the
+checkout is not referenced after install): `installation: ready` at 04:32:42, PID 8381,
+installed SHA-256 == built == `readiness.json` (`a3c63fcd…`), `discord: ready`, voice back
+in Office Hours. **Superseded 76 s later:** a concurrent session merged #155 (`cb5b6d1`,
+08:31:31Z) and ran its own install from `main`, finishing 04:34:13. **Running now:** PID
+39743, `main` at `cb5b6d1`, installed == built == readiness (`3af8438a…`), `discord: ready`,
+`scheduler: running`, `last_persistence: complete`, install lock released, all five launchd
+agents loaded. `main` does **not** contain #154, and at `cb5b6d1` is still red: `cargo fmt
+--check` exit 1 and `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`
+fails. #154 still merges cleanly onto it (`git merge-tree`); its runtime delta is nil (fmt,
+a test, docs), so the running binary loses nothing by lacking it.

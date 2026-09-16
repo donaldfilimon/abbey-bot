@@ -381,6 +381,15 @@ pub async fn dispatch_admin_component(
                 runtime::now(),
             )?;
             let action = match &interaction.data.kind {
+                // `SelectPage` is a String Select sentinel: it only becomes a concrete
+                // action once `resolve_select_action` reads the chosen option value. A
+                // button carries no values, so a `SelectPage` reaching this arm is
+                // malformed by construction and must not pass through unresolved.
+                ComponentInteractionDataKind::Button
+                    if matches!(action, crate::admin_dashboard::AdminAction::SelectPage) =>
+                {
+                    return Err(crate::admin_dashboard::Rejection::Malformed);
+                }
                 ComponentInteractionDataKind::Button => action,
                 ComponentInteractionDataKind::StringSelect { values } => {
                     crate::admin_dashboard::resolve_select_action(action, values)?
@@ -406,8 +415,8 @@ pub async fn dispatch_admin_component(
     )
     .await;
     let (mut session, action, current) = match preparation {
-        Err(_) => {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+        Err(error) => {
+            crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, &error);
             return true;
         }
         Ok(AdminPreparation::Rejected(error)) => {
@@ -552,8 +561,8 @@ pub async fn dispatch_admin_component(
                         .allowed_mentions(crate::gateway::no_mentions()),
                 )
                 .await;
-            if delivery.is_err() {
-                crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+            if let Err(error) = &delivery {
+                crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
             }
             return true;
         }
@@ -597,8 +606,8 @@ async fn edit_admin(
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
-    if delivery.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &delivery {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
 }
 

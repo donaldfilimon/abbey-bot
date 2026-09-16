@@ -74,8 +74,8 @@ warnings; it is not a clean audit. Dated live observations remain in
 
 | Layer | Status | Evidence |
 |-------|--------|----------|
-| Source gate (`./check.sh`) | **PASS** | 904 Rust tests passed, 2 live tests ignored; clippy and locked release build passed; 27 named Swift tests and Swift release build passed; 25 fake audio-tap installer tests and strict sibling WDBX parity passed. See [catalog/audio-tap source evidence](docs/superpowers/plans/2026-09-04-catalog-audio-tap-evidence.md). |
-| Cross-platform CI (Ubuntu/macOS/Windows) | **Repaired, unverified at new head** | Run `33835423344` at `057e6b1` failed on all three at `cargo fmt --check`; PR #72 fixed it and merged as `e0825b9`. That fix was green on all three *on the PR branch* — no post-merge `main` run has been read here, so this is a repair, not a fresh pass. The older `33218303755` at `9716f00` is a pre-stabilization baseline, not current status. |
+| Source gate (`./check.sh`) | **PASS** (full gate re-measured 2026-09-16 04:1x on `6f47b4e`, PR #154; macOS only) | **Every stage passed in one run, `EXIT: 0`:** fmt; deployment and privacy validation (shell syntax enumerated over 11 scripts, plist lint over 6 plists); offline macOS audio tap (Swift Testing runs of **12 and 16 tests**, plus the release build); warnings-denied all-target locked clippy; **1,299 Rust tests passed, 0 failed, 5 intentional live ignores**; the locked release build. `main` at `f9d6d62` is **red at fmt** until #154 merges. Strict sibling WDBX conformance was **not** part of this run; its last pass was 2026-09-16 on `4bd8dbf` against `../wdbx` at `2cf550c`. See [catalog/audio-tap source evidence](docs/superpowers/plans/2026-09-04-catalog-audio-tap-evidence.md). |
+| Cross-platform CI (Ubuntu/macOS/Windows) | **UNMEASURABLE — account billing lock** | Since 2026-09-08 every hosted job on this account ends in 2-10 s with **0 steps** and the check-run annotation `The job was not started because your account is locked due to a billing issue.` All three Gate lanes are GitHub-hosted (`ubuntu-24.04` / `macos-15` / `windows-2025`), so **no CI evidence is obtainable at all** while the lock holds; `main`'s run for `8dbdb18` on 2026-09-16 still showed three 0-step failures. A red lane here is unmeasured, not a failing product gate — never edit code to satisfy one. Clearing it is GitHub billing settings. The older repair history (`33835423344` at `057e6b1`, PR #72 merged as `e0825b9`) predates the lock and is not current status. |
 | Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
 | Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
 | Live Discord (2-guild isolation) | **PENDING** | Requires exact-head CI green + operator sandbox guilds |
@@ -120,7 +120,15 @@ Active voice guidance includes a wake-name example and the stop command.
 | `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
 | `/perms` | guild | public | Explain a member's channel permissions. |
 | `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
-| `/server` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/server blueprint` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/server create-channel` | guild | private | Create a text channel when you and Abbey both have Manage Channels. |
+| `/server rename-channel` | guild | private | Rename a channel when you and Abbey both have Manage Channels. |
+| `/server slowmode` | guild | private | Set channel slowmode when you and Abbey both have Manage Channels. |
+| `/server delete-channel` | guild | private | Delete a channel with confirm:true when you and Abbey both have Manage Channels. |
+| `/server assign-role` | guild | private | Assign a role when you and Abbey both have Manage Roles. |
+| `/server remove-role` | guild | private | Remove a role when you and Abbey both have Manage Roles. |
+| `/server move-member` | guild | private | Move a member in voice when you and Abbey both have Move Members. |
+| `/server purge` | guild | private | Purge recent messages with confirm:true when you and Abbey both have Manage Messages. |
 | `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
 | `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |
 | `/forum post` | guild | private | Create a #help forum thread with a first-post template. |
@@ -151,19 +159,21 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/admin export` | guild | private | Export the server's brain snapshot privately. |
 | `/admin reset` | guild | private | Clear only this channel's transcript. |
 | `/admin dashboard` | guild | private | Open private administration controls. |
+| `/admin quarantine` | guild | private | Mark a member's stored fact as suspect for review. |
+| `/admin resolve` | guild | private | Close a memory review with a verdict. |
 | `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
 | `/voice notice` | guild | private | Publish the member voice consent controls. |
-| `/voice play` | guild | private | Play native music and mirror eligible host audio; requires macOS. |
-| `/voice pause` | guild | private | Pause music and close host capture without changing consent. |
-| `/voice resume-music` | guild | private | Resume music only; never renew listening consent. |
-| `/voice stop-music` | guild | private | Stop host audio capture and mirrored music. |
-| `/voice volume` | guild | private | Set music volume; duck to one quarter while Abbey speaks. |
+| `/voice play` | guild | private | Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent. |
+| `/voice pause` | guild | private | Pause mirrored music and close tap capture; listen consent unchanged. |
+| `/voice resume-music` | guild | private | Resume mirrored music only; never renews listen consent. |
+| `/voice stop-music` | guild | private | Stop tap capture and mirrored playback; listen consent unchanged. |
+| `/voice volume` | guild | private | Set mirror volume 0–100; Abbey speech ducks music to ¼. |
 | `/voice join` | guild | private | Start voice after every participant's saved agreement. |
 | `/voice resume` | guild | private | Resume voice after current participant consent checks. |
 | `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |
 | `/voice status` | guild | private | Read your privacy-bounded voice status. |
 | `/voice diagnostics` | guild | private | Read private content-free operator voice diagnostics. |
-| `/voice mode` | guild | private | Read or select a fully configured voice mode. |
+| `/voice mode` | guild | private | Read or select local/off voice mode (OpenAI Realtime removed). |
 | `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |
 | `/voice verify report` | guild | private | Read the private local voice acceptance report. |
 
@@ -565,11 +575,11 @@ runs fully offline.
 | `ABBEY_DATA_DIR` | Persistence: `abbey-state.json` (guild config, brain snapshots, reputation, memory), `wdbx.seg.0.jsonl` (semantic memory), and the independent `voice-consent.json` (member voice choices). Unset = in-memory learning and memory; conversational voice cannot activate without durable choices. |
 | `ABBEY_BOT_LLM_TOOLS` | `off` disables the complete seven-tool Core-plus-Inspect vocabulary; default on. There is no separate Inspect switch. A tool-contract rejection degrades only that provider's tool route. |
 | `ABBEY_FM_MODE` / `_ENDPOINT` / `_CLI` / `_FALLBACK` / `_CAPABILITY_MANIFEST` | Explicit Apple Foundation Models secondary. Mode defaults to `off`; fallback must separately be `1`; endpoint is loopback-only; CLI defaults to `/usr/bin/fm`. Enabling fallback also requires a matching owner-only qualification manifest. `system` is on-device; `pcc` is an explicit cloud selection and is not qualified by this repository's system-mode evidence. |
-| `ABBEY_EPISODE_GATE_CONFIG` | Absolute path to a JSON file that turns on the constitutional episode gate client (default off). `/admin learning on\|off` is then mirrored into the WDBX v3 ledger as a content-free `proposal` by running the `abi` binary (`abi wdbx episode propose --json`); the local toggle never waits on it. Keys: `abi_cli`, `endpoint`, `token_file`, `policy_version`, `contract_revision`, `contract_digest` (64 hex), optional `ca_cert`, `service_principal` (default `abbey-service`), `evidence_level` (`c0`..`c3`, default `c0`), `timeout_secs` (default 15). Optional `guilds` (a list of scoped guild ids such as `discord:123`) scopes the gate to those guilds; absent means every scope, and an uncovered scope behaves exactly as with no gate. The gateway policy must key the guild as `discord-<guild id>`. Since the memory-candidate amendment (2026-09-06) it also gates `/remember`, `/forget`, `/pending confirm`, the model's memory tool (queued and drained after the turn), and brain checkpoints; see `AGENTS.md`. The gateway itself is installed by `deploy/install-wdbx-gateway-launchd.sh` and must be up first. |
+| `ABBEY_EPISODE_GATE_CONFIG` | Absolute path to a JSON file that turns on the constitutional episode gate client (default off). `/admin learning on\|off` is then mirrored into the WDBX v3 ledger as a content-free `proposal` by running the `abi` binary (`abi wdbx episode propose --json`); the local toggle never waits on it. Keys: `abi_cli`, `endpoint`, `token_file`, `policy_version`, `contract_revision`, `contract_digest` (64 hex), optional `ca_cert`, `service_principal` (default `abbey-service`), `evidence_level` (`c0`..`c3`, default `c0`), `timeout_secs` (default 15). Optional `guilds` (a list of scoped guild ids such as `discord:123`) scopes the gate to those guilds; absent means every scope, and an uncovered scope behaves exactly as with no gate. The gateway policy must key the guild as `discord-<guild id>`. Since the memory-candidate amendment (2026-09-06) it also gates `/remember`, `/forget`, `/pending confirm`, the model's memory tool (queued and drained after the turn), and brain checkpoints; see `AGENTS.md`. Since the memory-edge amendment (2026-09-16), `/admin quarantine` records a content-free quarantine edge against a stored fact's ledger receipt and `/admin resolve` closes it with a verdict (server owner, Administrator, or Manage Server only; resolutions are recorded under the reviewer's keyed principal). Neither hides nor deletes the fact. The gateway itself is installed by `deploy/install-wdbx-gateway-launchd.sh` and must be up first. |
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_PROVIDER` / `_ENDPOINT` / `_MODEL` / `_KEY` | `remote` (default) selects one verified OpenAI-compatible endpoint, `fm` selects only a manifest-qualified FM CLI, and `off` disables vision. Abbey never retries an image through another provider. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. A 2026-08-19 Ollama/e4b screenshot result is historical only; it does not qualify the current MLX-VLM target or an installed FM CLI. |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. `ABBEY_VOICE_MODE` is the startup selection; every other mode whose variables are complete is retained inert, and `/voice mode` switches among them at runtime without a restart. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or mention Abbey and write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS or `disabled` for presence only (OpenAI Realtime cloud backup was removed); Linux/Windows reject `local` configuration and require `disabled`. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. `ABBEY_VOICE_MODE` is the startup selection; every other mode whose variables are complete is retained inert, and `/voice mode` switches among them at runtime without a restart. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or mention Abbey and write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -727,8 +737,7 @@ sides. `/voice status` is the member-safe summary; Manage Server members use
 bounded-queue counters without content or credentials. The local-only `/voice verify start|report` surface is
 further limited to the owner or an administrator. It keeps one ephemeral,
 redacted acceptance run across consent epochs and suppresses voice transcript
-commits while armed; a process restart clears it. In explicit `openai` backup
-mode, Realtime is a degraded direct provider path: spoken stop detection is not authoritative, so
+commits while armed; a process restart clears it. Local voice spoken stop detection follows the local consent path; for an authoritative stop,
 any participant must use `/voice leave` or mention Abbey and write
 `stop listening` in the configured voice chat for a deterministic stop.
 Discord Go Live video is not
@@ -895,7 +904,7 @@ Whisper plus Songbird-playable formatting without Discord, a microphone, or
 cloud credentials. It does not prove deployment, a reply heard by a human, or
 barge-in. A fresh everyone-present consent epoch, renewed `/voice resume`, an
 audible wake/reply, and interruption acceptance require their own current
-record and remain unclaimed by source evidence. OpenAI Realtime is
+record and remain unclaimed by source evidence. OpenAI Realtime was removed; historical notes may still mention it. It is
 an explicit degraded backup, not an offline path, and its spoken control is not
 authoritative. `tasks/goals.md` retains the dated dependency-audit history.
 The Linux graph is now Rustls/WebPKI-only: the gate rejects `native-tls`,

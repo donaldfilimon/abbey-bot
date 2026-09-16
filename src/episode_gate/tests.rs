@@ -532,7 +532,9 @@ fn candidate_of(write: &EpisodeWrite) -> (&ActorRef, &MemoryCandidate) {
             recorded_by,
             candidate,
         } => (recorded_by, candidate),
-        EpisodeEvent::Proposal { .. } => panic!("a memory request builds a memory candidate"),
+        EpisodeEvent::Proposal { .. } | EpisodeEvent::MemoryEdge { .. } => {
+            panic!("a memory request builds a memory candidate")
+        }
     }
 }
 
@@ -719,4 +721,171 @@ fn malformed_append_receipts_never_authorize_local_memory() {
             "{json}"
         );
     }
+}
+
+#[test]
+fn memory_edge_json_matches_the_canonical_fixture() {
+    // Copied byte-for-byte from wdbx `crates/abi-wdbx/tests/golden/` on
+    // 2026-09-16 (generated there from `abi-wdbx::v3::episode` with
+    // `WDBX_WRITE_GOLDEN=1`, after admitting the two candidates it names);
+    // the store pins its digest as
+    // dfc839a6d6e6a39a0e3bccf837ea232f291ae74999241422efc26167eb47d47f.
+    let fixture = include_str!("../../tests/fixtures/episode_write_memory_edge.json");
+    let write = EpisodeWrite {
+        request_id: "req-edge-00000000deadbeef".into(),
+        operation_id: "memory-edge-0123456789abcdef".into(),
+        contract_revision: 2,
+        contract_digest: pattern(7, 1),
+        guild_ref: "discord-123456789012345678".into(),
+        consent_epoch: None,
+        source_type: EpisodeSource::DiscordGuild,
+        policy_version: "policy_v1".into(),
+        evidence_level: EvidenceLevel::C0,
+        event: EpisodeEvent::MemoryEdge {
+            recorded_by: ActorRef {
+                principal_id: "abbey-service".into(),
+                kind: ActorKind::Service,
+            },
+            edge: MemoryEdge {
+                kind: super::edge::MemoryEdgeKind::Contradicts,
+                target: parse_digest(
+                    "2e1f84373df6012bc87a0acf27102a2795df076c9f061d6aa8a80ee971f829e0",
+                )
+                .unwrap(),
+                counterpart: parse_digest(
+                    "5561ff2dd590a911b61244ceff25e194776c0c627e8f80499baac8a756cfa778",
+                ),
+                reason: EdgeReason::ConflictingObservation,
+            },
+        },
+        token_cost: 1,
+        expected_commitment: None,
+        quiet: false,
+    };
+    assert_eq!(serde_json::to_string(&write).unwrap(), fixture.trim_end());
+    let round_trip: EpisodeWrite = serde_json::from_str(fixture).unwrap();
+    assert_eq!(round_trip, write);
+}
+
+fn edge_of(write: &EpisodeWrite) -> (&ActorRef, &MemoryEdge) {
+    match &write.event {
+        EpisodeEvent::MemoryEdge { recorded_by, edge } => (recorded_by, edge),
+        _ => panic!("a review request builds a memory edge"),
+    }
+}
+
+#[test]
+fn a_quarantine_is_recorded_by_the_service_against_the_receipt() {
+    use super::edge::{MemoryEdgeKind, memory_edge_write};
+
+    let config = config();
+    let quarantine = MemoryEdgeRequest::Quarantine {
+        scoped_guild: "discord:123456789012345678".into(),
+        target: [7; 32],
+        reason: EdgeReason::OperatorReport,
+        now: 1_700_000_000,
+        nonce: 0,
+    };
+    let write = memory_edge_write(&config, &quarantine).unwrap();
+    let (recorded_by, edge) = edge_of(&write);
+    assert_eq!(recorded_by.kind, ActorKind::Service);
+    assert_eq!(recorded_by.principal_id, "abbey-service");
+    assert_eq!(edge.kind, MemoryEdgeKind::Quarantines);
+    assert_eq!(edge.target, [7; 32]);
+    assert_eq!(edge.counterpart, None);
+    assert_eq!(write.guild_ref, "discord-123456789012345678");
+    assert!(write.operation_id.starts_with("memory-edge-quarantines-"));
+    let json = serde_json::to_string(&write).unwrap();
+    assert!(json.contains("\"kind\":\"memory_edge\""));
+    assert!(json.contains("\"reason\":\"operator_report\""));
+
+    // Two reviews in one second stay distinct operations.
+    let again = MemoryEdgeRequest::Quarantine {
+        scoped_guild: "discord:123456789012345678".into(),
+        target: [7; 32],
+        reason: EdgeReason::OperatorReport,
+        now: 1_700_000_000,
+        nonce: 1,
+    };
+    let second = memory_edge_write(&config, &again).unwrap();
+    assert_ne!(second.operation_id, write.operation_id);
+    assert_ne!(second.request_id, write.request_id);
+
+    // Reasons that do not describe a quarantine, and the zero digest, are
+    // refused before anything is sent.
+    for reason in [
+        EdgeReason::ConflictingObservation,
+        EdgeReason::ReviewedValid,
+        EdgeReason::ReviewedInvalid,
+    ] {
+        let wrong = MemoryEdgeRequest::Quarantine {
+            scoped_guild: "discord:123456789012345678".into(),
+            target: [7; 32],
+            reason,
+            now: 1,
+            nonce: 0,
+        };
+        assert!(memory_edge_write(&config, &wrong).is_err(), "{reason:?}");
+    }
+    let zero = MemoryEdgeRequest::Quarantine {
+        scoped_guild: "discord:123456789012345678".into(),
+        target: [0; 32],
+        reason: EdgeReason::OperatorReport,
+        now: 1,
+        nonce: 0,
+    };
+    assert!(memory_edge_write(&config, &zero).is_err());
+}
+
+#[test]
+fn a_resolution_is_recorded_by_the_reviewing_human() {
+    use super::edge::{MemoryEdgeKind, memory_edge_write};
+
+    let config = config();
+    let resolve = |reviewer, valid| MemoryEdgeRequest::Resolve {
+        scoped_guild: "discord:123456789012345678".into(),
+        scoped_user: "discord:42".into(),
+        reviewer,
+        edge: [9; 32],
+        valid,
+        now: 1_700_000_000,
+        nonce: 3,
+    };
+    for (reviewer, kind) in [
+        (Reviewer::Owner, ActorKind::GuildOwner),
+        (Reviewer::Administrator, ActorKind::GuildAdministrator),
+        (Reviewer::Manager, ActorKind::GuildManager),
+    ] {
+        let write = memory_edge_write(&config, &resolve(reviewer, true)).unwrap();
+        let (recorded_by, edge) = edge_of(&write);
+        assert_eq!(recorded_by.kind, kind);
+        // The same keyed, content-free principal a learning toggle uses.
+        assert_eq!(
+            recorded_by.principal_id,
+            requester_principal("discord:123456789012345678", "discord:42")
+        );
+        assert!(!recorded_by.principal_id.contains("42"));
+        assert_eq!(edge.kind, MemoryEdgeKind::Resolves);
+        assert_eq!(edge.target, [9; 32]);
+        assert_eq!(edge.reason, EdgeReason::ReviewedValid);
+    }
+    let invalid = memory_edge_write(&config, &resolve(Reviewer::Manager, false)).unwrap();
+    assert_eq!(edge_of(&invalid).1.reason, EdgeReason::ReviewedInvalid);
+    assert!(invalid.operation_id.starts_with("memory-edge-resolves-"));
+
+    // A reviewer whose keyed id equals the service principal is refused.
+    let colliding = EpisodeGateConfig::from_json(
+        &serde_json::json!({
+            "abi_cli": abi_path(),
+            "endpoint": "http://127.0.0.1:50051",
+            "token_file": token_path(),
+            "policy_version": "policy_v1",
+            "contract_revision": 2,
+            "contract_digest": DIGEST_HEX,
+            "service_principal": requester_principal("discord:123456789012345678", "discord:42"),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(memory_edge_write(&colliding, &resolve(Reviewer::Owner, true)).is_err());
 }

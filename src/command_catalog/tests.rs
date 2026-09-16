@@ -126,6 +126,9 @@ fn access_rule_truth_tables_cover_roles_subject_and_voice_presence() {
         Some(ModerateMembers),
         Some(ManageWebhooks),
         Some(ManageServer),
+        Some(ManageChannels),
+        Some(ManageRoles),
+        Some(MoveMembers),
         Some(Administrator),
     ] {
         for self_subject in [false, true] {
@@ -151,6 +154,10 @@ fn access_rule_truth_tables_cover_roles_subject_and_voice_presence() {
                         manager && present,
                         manager || present,
                         owner || admin,
+                        permission == Some(ManageChannels) || admin,
+                        permission == Some(ManageRoles) || admin,
+                        permission == Some(MoveMembers) || admin,
+                        permission == Some(ManageMessages) || admin,
                     ];
                     for (rule, expected) in [
                         AccessId::A0,
@@ -161,6 +168,10 @@ fn access_rule_truth_tables_cover_roles_subject_and_voice_presence() {
                         AccessId::A5,
                         AccessId::A6,
                         AccessId::A7,
+                        AccessId::A8,
+                        AccessId::A9,
+                        AccessId::A10,
+                        AccessId::A11,
                     ]
                     .into_iter()
                     .zip(expected)
@@ -333,8 +344,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(access_valid(spec.eligibility.access.rule(), 0));
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
-    assert_eq!(keys.len(), 54);
-    assert_eq!(registered_commands().len(), 54);
+    assert_eq!(keys.len(), 64);
+    assert_eq!(registered_commands().len(), 64);
     assert!(planned_commands().is_empty());
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
@@ -670,6 +681,10 @@ fn registered_invocation_and_discovery_match_independent_requirement_tables() {
                     AccessId::A7 => {
                         input.application_owner || permission(DiscordPermission::Administrator)
                     }
+                    AccessId::A8 => permission(DiscordPermission::ManageChannels),
+                    AccessId::A9 => permission(DiscordPermission::ManageRoles),
+                    AccessId::A10 => permission(DiscordPermission::MoveMembers),
+                    AccessId::A11 => permission(DiscordPermission::ManageMessages),
                 } && spec.registration.contexts.contains(&input.context)
                     && !(input.context == InteractionContext::BotDm
                         && spec.eligibility.access == AccessId::A1

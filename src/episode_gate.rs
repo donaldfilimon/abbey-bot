@@ -173,7 +173,7 @@ pub struct MemoryCandidate {
     pub forgets: Option<[u8; 32]>,
 }
 
-/// Operation lifecycle event. This bot emits `proposal` and `memory_candidate`.
+/// Operation lifecycle event: `proposal`, `memory_candidate`, `memory_edge`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EpisodeEvent {
@@ -184,6 +184,10 @@ pub enum EpisodeEvent {
     MemoryCandidate {
         recorded_by: ActorRef,
         candidate: MemoryCandidate,
+    },
+    MemoryEdge {
+        recorded_by: ActorRef,
+        edge: MemoryEdge,
     },
 }
 
@@ -794,5 +798,7 @@ mod acceptance;
 mod tests;
 
 mod config;
+mod edge;
 mod process;
+pub use edge::{EdgeReason, MemoryEdge, MemoryEdgeRequest, Reviewer};
 use process::{run_abi, run_abi_owned};

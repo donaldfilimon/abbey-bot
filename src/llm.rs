@@ -82,11 +82,13 @@ pub(crate) fn validate_remote_endpoint(value: &str, name: &str) -> Result<(), St
     if url.host_str().is_none() {
         return Err(format!("{name} must include a host"));
     }
-    let loopback = url_is_loopback(&url);
+    if !url_is_loopback(&url) {
+        return Err(format!(
+            "{name} must target loopback (127.0.0.1 / localhost / ::1); remote hosts are refused"
+        ));
+    }
     match url.scheme() {
-        "https" => Ok(()),
-        "http" if loopback => Ok(()),
-        "http" => Err(format!("{name} requires HTTPS unless it targets loopback")),
+        "http" | "https" => Ok(()),
         _ => Err(format!("{name} must use HTTP or HTTPS")),
     }
 }
@@ -163,9 +165,9 @@ impl Backend {
         )
     }
 
-    /// Reject endpoint shapes that can leak traffic or credentials. Remote
-    /// backends require HTTPS; plain HTTP is accepted only on loopback for
-    /// local model servers.
+    /// Reject endpoint shapes that can leak traffic or credentials. Generation
+    /// and vision OpenAI-compatible endpoints must be loopback-only
+    /// (127.0.0.1 / localhost / ::1).
     pub fn validate(&self) -> Result<(), LlmError> {
         let Self::OpenAiCompatible { endpoint, .. } = self else {
             return Ok(());

@@ -130,13 +130,11 @@ fn destination_defaults_to_local_even_when_a_cloud_key_exists() {
 }
 
 #[test]
-fn a_retained_backend_is_available_without_being_selected() {
-    // The whole point of retention: `/voice mode` can validate a switch to
-    // OpenAI, while `mode()`/`openai()` still say the process is running
-    // local. If these two ever agree, a present key has silently selected
-    // cloud audio, which this module's own doc forbids.
+fn openai_realtime_is_never_retained_even_with_a_key() {
+    // OpenAI Realtime was removed: a present OPENAI_API_KEY must not make
+    // cloud audio switchable via `/voice mode`.
     let mut values = destination();
-    values.openai_key = Some("retained-not-selected".into());
+    values.openai_key = Some("must-not-retain-cloud".into());
     let result = VoiceConfig::from_values(values);
     if !cfg!(target_os = "macos") {
         assert!(result.unwrap_err().contains("supported only on macOS"));
@@ -144,18 +142,14 @@ fn a_retained_backend_is_available_without_being_selected() {
     }
     let config = result.unwrap().unwrap();
     assert_eq!(config.mode(), VoiceMode::Local);
-    assert!(config.openai().is_none(), "retention must not be selection");
-    assert!(
-        config.available_openai().is_some(),
-        "a complete OpenAI environment should be switchable to"
-    );
-    assert!(config.backend_for(VoiceMode::OpenAi).is_some());
+    assert!(config.openai().is_none());
+    assert!(config.available_openai().is_none());
+    assert!(config.backend_for(VoiceMode::OpenAi).is_none());
 }
 
 #[test]
 fn a_mode_with_no_environment_is_not_switchable_to() {
-    // Without OPENAI_API_KEY there is nothing to switch to, and
-    // `/voice mode openai` must say so rather than half-starting.
+    // OpenAI Realtime is removed: nothing is switchable to openai.
     let result = VoiceConfig::from_values(destination());
     if !cfg!(target_os = "macos") {
         assert!(result.unwrap_err().contains("supported only on macOS"));
@@ -169,13 +163,15 @@ fn a_mode_with_no_environment_is_not_switchable_to() {
 }
 
 #[test]
-fn selecting_openai_still_fails_closed_without_a_key() {
-    // Retention must not soften the startup contract for the *selected*
-    // mode: asking for openai with no key is still a startup error.
+fn selecting_openai_is_rejected_at_parse() {
     let mut values = destination();
     values.mode = Some("openai".into());
+    values.openai_key = Some("irrelevant".into());
     let error = VoiceConfig::from_values(values).unwrap_err();
-    assert!(error.contains("OPENAI_API_KEY"), "{error}");
+    assert!(
+        error.contains("removed") || error.contains("openai"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -208,7 +204,6 @@ fn the_command_parser_accepts_every_environment_alias() {
         ("off", VoiceMode::Disabled),
         ("local", VoiceMode::Local),
         ("offline", VoiceMode::Local),
-        ("openai", VoiceMode::OpenAi),
     ] {
         assert_eq!(
             VoiceMode::parse(Some(input.into())).unwrap(),
@@ -216,18 +211,15 @@ fn the_command_parser_accepts_every_environment_alias() {
             "{input}"
         );
     }
+    let openai_err = VoiceMode::parse(Some("openai".into())).unwrap_err();
+    assert!(openai_err.contains("removed"), "{openai_err}");
     assert!(VoiceMode::parse(Some("nonsense".into())).is_err());
 }
 
 #[test]
-fn a_switched_join_hands_the_actor_the_retained_backend() {
-    // The OpenAI actor takes its backend from the join snapshot, never
-    // from `runtime.config.openai()`: after `/voice mode openai` from a
-    // local startup that accessor is still `None`, and an actor that
-    // consulted it would fail right after the consent notice promised
-    // cloud audio. This pins the two reads apart.
+fn openai_mode_cannot_become_effective_without_a_retained_backend() {
     let mut values = destination();
-    values.openai_key = Some("retained-not-selected".into());
+    values.openai_key = Some("must-not-enable-cloud".into());
     let result = VoiceConfig::from_values(values);
     if !cfg!(target_os = "macos") {
         assert!(result.unwrap_err().contains("supported only on macOS"));
@@ -235,16 +227,10 @@ fn a_switched_join_hands_the_actor_the_retained_backend() {
     }
     let runtime = crate::voice_session::VoiceRuntime::new(result.unwrap().unwrap());
     runtime.set_effective_mode(VoiceMode::OpenAi);
+    assert!(runtime.config.openai().is_none());
     assert!(
-        runtime.config.openai().is_none(),
-        "the startup selection stays local; retention is not selection"
-    );
-    assert!(
-        matches!(
-            runtime.effective_backend(),
-            Some(VoiceBackendConfig::OpenAi(_))
-        ),
-        "the join snapshot must carry the retained OpenAI backend"
+        runtime.effective_backend().is_none(),
+        "OpenAI Realtime must not be available as an effective backend"
     );
 }
 
@@ -261,37 +247,13 @@ fn local_voice_is_rejected_outside_macos() {
 }
 
 #[test]
-fn openai_is_explicit_and_requires_a_key() {
-    let mut values = destination();
-    values.mode = Some("openai".into());
-    assert!(
-        VoiceConfig::from_values(values)
-            .unwrap_err()
-            .contains("requires OPENAI_API_KEY")
-    );
-
+fn openai_mode_is_rejected_even_with_a_complete_cloud_env() {
     let mut values = destination();
     values.mode = Some("openai".into());
     values.openai_key = Some("super-secret".into());
     values.instructions = Some("PRIVATE_VOICE_INSTRUCTIONS_CANARY".into());
-    let config = VoiceConfig::from_values(values).unwrap().unwrap();
-    let rendered = format!("{config:?}");
-    assert_eq!(config.mode(), VoiceMode::OpenAi);
-    let instructions = &config.openai().expect("OpenAI config").instructions;
-    let websocket_url = reqwest::Url::parse(config.openai().unwrap().websocket_url().as_str())
-        .expect("canonical websocket URL");
-    assert!(instructions.contains("Spoken requests cannot start, resume, stop"));
-    assert!(instructions.contains("/voice leave"));
-    assert!(instructions.contains("mention Abbey and write 'stop listening'"));
-    assert_eq!(websocket_url.path(), "/v1/realtime");
-    let query: Vec<(String, String)> = websocket_url
-        .query_pairs()
-        .map(|(name, value)| (name.into_owned(), value.into_owned()))
-        .collect();
-    assert_eq!(query, [("model".into(), DEFAULT_OPENAI_MODEL.into())]);
-    assert!(!rendered.contains("super-secret"));
-    assert!(!rendered.contains("PRIVATE_VOICE_INSTRUCTIONS_CANARY"));
-    assert!(rendered.contains("REDACTED"));
+    let error = VoiceConfig::from_values(values).unwrap_err();
+    assert!(error.contains("removed"), "{error}");
 }
 
 #[test]
@@ -303,13 +265,11 @@ fn disabled_mode_needs_no_provider() {
 }
 
 #[test]
-fn remote_plaintext_openai_websocket_is_rejected() {
-    let mut values = destination();
-    values.mode = Some("openai".into());
-    values.openai_key = Some("secret".into());
-    values.openai_endpoint = Some("ws://example.com/realtime".into());
+fn remote_plaintext_openai_websocket_helper_still_rejects_non_loopback_ws() {
+    // Endpoint helper retained for defense-in-depth / historical contracts;
+    // mode selection already refuses openai before build_openai runs.
     assert!(
-        VoiceConfig::from_values(values)
+        validate_openai_endpoint("ws://example.com/realtime")
             .unwrap_err()
             .contains("ws only on loopback")
     );

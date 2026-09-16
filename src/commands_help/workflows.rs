@@ -259,8 +259,8 @@ pub(super) async fn dispatch_component(
             Ok(())
         },
     ).await;
-    if result.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &result {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     true
 }
@@ -384,8 +384,8 @@ pub async fn dispatch_modal(
         },
     )
     .await;
-    if result.is_err() {
-        crate::gateway::interaction_outcomes::delivery_failed(&data.state);
+    if let Err(error) = &result {
+        crate::gateway::interaction_outcomes::delivery_failed_from(&data.state, error);
     }
     true
 }

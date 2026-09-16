@@ -269,7 +269,10 @@ pub(super) async fn start_voice(
             wait_for_voice_session_gone(ctx.serenity_context(), guild_id, old_session_id).await
     {
         runtime
-            .fail_safe("old Discord voice session did not finish leaving")
+            .fail_safe(
+                "old Discord voice session did not finish leaving",
+                crate::observability::OperationalErrorCategory::Timeout,
+            )
             .await;
         drop(transition);
         ctx.say(error).await?;
@@ -294,7 +297,10 @@ pub(super) async fn start_voice(
     if let Err(error) = set_muted_self_deafened(&prepared_call).await {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("could not prepare the required muted/self-deafened state")
+            .fail_safe(
+                "could not prepare the required muted/self-deafened state",
+                crate::observability::OperationalErrorCategory::Protocol,
+            )
             .await;
         drop(transition);
         ctx.say(format!(
@@ -327,7 +333,10 @@ pub(super) async fn start_voice(
         Err(error) => {
             let _ = manager.remove(guild_id).await;
             runtime
-                .fail_safe("Discord refused the configured voice join")
+                .fail_safe(
+                    "Discord refused the configured voice join",
+                    crate::observability::OperationalErrorCategory::Protocol,
+                )
                 .await;
             drop(transition);
             ctx.say(format!("Discord refused the voice join: {error}"))
@@ -338,7 +347,10 @@ pub(super) async fn start_voice(
     if let Err(error) = set_muted_self_deafened(&call).await {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("could not establish the required muted/self-deafened state")
+            .fail_safe(
+                "could not establish the required muted/self-deafened state",
+                crate::observability::OperationalErrorCategory::Protocol,
+            )
             .await;
         drop(transition);
         ctx.say(format!(
@@ -353,7 +365,10 @@ pub(super) async fn start_voice(
             Err(error) => {
                 let _ = manager.remove(guild_id).await;
                 runtime
-                    .fail_safe("Discord did not confirm a speak-capable bot voice state")
+                    .fail_safe(
+                        "Discord did not confirm a speak-capable bot voice state",
+                        crate::observability::OperationalErrorCategory::Timeout,
+                    )
                     .await;
                 drop(transition);
                 ctx.say(format!("Voice stayed off: {error}")).await?;
@@ -398,7 +413,10 @@ pub(super) async fn start_voice(
     if let Err(error) = channel_id.say(ctx.http(), notice).await {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("public consent disclosure could not be posted")
+            .fail_safe(
+                "public consent disclosure could not be posted",
+                crate::observability::OperationalErrorCategory::Protocol,
+            )
             .await;
         drop(transition);
         ctx.say(format!(
@@ -442,7 +460,10 @@ pub(super) async fn start_voice(
     if driver_disconnected {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("Discord voice transport disconnected during startup")
+            .fail_safe(
+                "Discord voice transport disconnected during startup",
+                crate::observability::OperationalErrorCategory::Unavailable,
+            )
             .await;
         drop(transition);
         ctx.say("Discord voice transport disconnected during startup; no audio was captured.")
@@ -451,7 +472,6 @@ pub(super) async fn start_voice(
     }
     let playback: SharedPlayback = Arc::new(Mutex::new(None));
     let (cancel_tx, cancel_rx) = watch::channel(false);
-    let mut cloud_ready = None;
     let task = match (&effective_backend, local_runtime) {
         (VoiceBackendConfig::Local(_), Some((client, backend))) => {
             let session = LocalSession {
@@ -470,28 +490,28 @@ pub(super) async fn start_voice(
             };
             runtime.spawn_actor(cancel_tx.clone(), crate::voice_local::run(session))
         }
-        (VoiceBackendConfig::OpenAi(config), None) => {
-            let (ready_tx, ready_rx) = oneshot::channel();
-            cloud_ready = Some(ready_rx);
-            let session = OpenAiSession {
-                runtime: Arc::clone(&runtime),
-                config: config.clone(),
-                call: Arc::clone(&call),
-                epoch,
-                input,
-                lifecycle,
-                events: events.clone(),
-                driver_disconnect,
-                cancel: cancel_rx,
-                playback: Arc::clone(&playback),
-                ready: Some(ready_tx),
-            };
-            runtime.spawn_actor(cancel_tx.clone(), crate::voice_openai::run(session))
+        (VoiceBackendConfig::OpenAi(_config), None) => {
+            let _ = manager.remove(guild_id).await;
+            runtime
+                .fail_safe(
+                    "OpenAI Realtime voice path removed — use local mode",
+                    crate::observability::OperationalErrorCategory::Configuration,
+                )
+                .await;
+            drop(transition);
+            ctx.say(
+                "OpenAI Realtime voice was removed. Set `ABBEY_VOICE_MODE=local` and use loopback MLX-Audio on this Mac.",
+            )
+            .await?;
+            return Ok(());
         }
         _ => {
             let _ = manager.remove(guild_id).await;
             runtime
-                .fail_safe("selected voice backend was unavailable")
+                .fail_safe(
+                    "selected voice backend was unavailable",
+                    crate::observability::OperationalErrorCategory::Configuration,
+                )
                 .await;
             drop(transition);
             ctx.say("The selected voice backend was unavailable; no audio was captured.")
@@ -504,7 +524,10 @@ pub(super) async fn start_voice(
         Err(message) => {
             let _ = manager.remove(guild_id).await;
             runtime
-                .fail_safe("service stopped during voice startup")
+                .fail_safe(
+                    "service stopped during voice startup",
+                    crate::observability::OperationalErrorCategory::Internal,
+                )
                 .await;
             drop(transition);
             ctx.say(message).await?;
@@ -529,35 +552,6 @@ pub(super) async fn start_voice(
         return Ok(());
     }
 
-    if let Some(ready) = cloud_ready {
-        match tokio::time::timeout(OPENAI_READY_TIMEOUT, ready).await {
-            Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) => {
-                let _ = manager.remove(guild_id).await;
-                runtime
-                    .fail_safe("OpenAI Realtime setup was rejected")
-                    .await;
-                drop(transition);
-                ctx.say(format!(
-                    "OpenAI Realtime did not start: {}",
-                    public_error(&error)
-                ))
-                .await?;
-                return Ok(());
-            }
-            Ok(Err(_)) | Err(_) => {
-                let _ = manager.remove(guild_id).await;
-                runtime
-                    .fail_safe("OpenAI Realtime readiness timed out")
-                    .await;
-                drop(transition);
-                ctx.say("OpenAI Realtime did not become ready within 20 seconds; no participant audio was captured.")
-                    .await?;
-                return Ok(());
-            }
-        }
-    }
-
     if !runtime.start_is_current(start_generation) || !runtime.is_current(epoch) {
         let _ = manager.remove(guild_id).await;
         runtime
@@ -573,7 +567,10 @@ pub(super) async fn start_voice(
     if !bot_is_exact {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("Discord moved or disconnected Abbey during startup")
+            .fail_safe(
+                "Discord moved or disconnected Abbey during startup",
+                crate::observability::OperationalErrorCategory::Unavailable,
+            )
             .await;
         drop(transition);
         ctx.say("Discord moved or disconnected Abbey during startup; no audio was captured.")
@@ -616,7 +613,10 @@ pub(super) async fn start_voice(
     {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("required Discord voice permissions could not be verified before activation")
+            .fail_safe(
+                "required Discord voice permissions could not be verified before activation",
+                error.category(),
+            )
             .await;
         drop(transition);
         ctx.say(error).await?;
@@ -626,7 +626,10 @@ pub(super) async fn start_voice(
     if let Err(error) = enable_conversation(&call).await {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("could not leave the muted/self-deafened startup state")
+            .fail_safe(
+                "could not leave the muted/self-deafened startup state",
+                crate::observability::OperationalErrorCategory::Protocol,
+            )
             .await;
         drop(transition);
         ctx.say(format!(
@@ -642,19 +645,27 @@ pub(super) async fn start_voice(
     {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("Discord did not confirm Abbey was unmuted and undeafened")
+            .fail_safe(
+                "Discord did not confirm Abbey was unmuted and undeafened",
+                crate::observability::OperationalErrorCategory::Timeout,
+            )
             .await;
         drop(transition);
         ctx.say(format!("Voice stayed off: {error}")).await?;
         return Ok(());
     }
 
+    runtime.arm_unmute_grace(std::time::Duration::from_secs(3));
+
     if let Err(error) =
         verify_required_voice_permissions_live(ctx.serenity_context(), guild_id, channel_id).await
     {
         let _ = manager.remove(guild_id).await;
         runtime
-            .fail_safe("required Discord voice permissions changed during activation")
+            .fail_safe(
+                "required Discord voice permissions changed during activation",
+                error.category(),
+            )
             .await;
         drop(transition);
         ctx.say(error).await?;
@@ -705,7 +716,7 @@ pub(super) async fn start_voice(
             start_generation,
             match effective_mode {
                 VoiceMode::Local => "local inference ready; listening for Abbey",
-                VoiceMode::OpenAi => "direct OpenAI backup ready; buffered output; listening",
+                VoiceMode::OpenAi => "OpenAI Realtime removed — use local mode",
                 VoiceMode::Disabled => unreachable!(),
             },
             VerificationActivation {

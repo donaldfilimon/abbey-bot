@@ -27,7 +27,7 @@ use crate::voice_session::{
     authoritative_text_reply, register_playback_termination, requests_consent_withdrawal,
 };
 
-const VOICE_SYSTEM_SUFFIX: &str = "You are speaking aloud in a consented Discord voice session. Respond in one to three short, natural sentences unless the user explicitly asks for detail. Avoid Markdown, raw URLs, emoji, tables, headings, and unspoken formatting. Pronounce code, symbols, and acronyms clearly. Voice turns are read-only: never claim an external action or durable memory change succeeded.";
+const VOICE_SYSTEM_SUFFIX: &str = "You are speaking aloud in a consented Discord voice session. Sound warm and human — conversational, lightly expressive, never robotic. Respond in one to three short, natural sentences unless the user explicitly asks for detail. Avoid Markdown, raw URLs, emoji, tables, headings, and unspoken formatting. Pronounce code, symbols, and acronyms clearly. Voice turns are read-only: never claim an external action or durable memory change succeeded.";
 const CONTINUATION_WINDOW: Duration = Duration::from_secs(45);
 const MAX_PENDING_UTTERANCES: usize = 4;
 // Preparation has already warmed the speech models. A stalled live STT call
@@ -204,9 +204,16 @@ async fn set_activity_status(
         .await;
 }
 
-async fn fail_session(session: &LocalSession, detail: impl Into<String>) {
+async fn fail_session(
+    session: &LocalSession,
+    detail: impl Into<String>,
+    error: crate::observability::OperationalErrorCategory,
+) {
     let _ = session.runtime.revoke_media(session.epoch);
-    session.runtime.actor_failed(session.epoch, detail).await;
+    session
+        .runtime
+        .actor_failed(session.epoch, detail, error)
+        .await;
     let _ = stop_playback(&session.playback).await;
     disconnect_call(&session.call).await;
 }
@@ -254,7 +261,12 @@ pub async fn run(mut session: LocalSession) {
             }
             changed = session.driver_disconnect.changed() => {
                 if changed.is_err() || *session.driver_disconnect.borrow() {
-                    fail_session(&session, "Discord voice transport disconnected; audio stopped").await;
+                    fail_session(
+                        &session,
+                        "Discord voice transport disconnected; audio stopped",
+                        crate::observability::OperationalErrorCategory::Unavailable,
+                    )
+                    .await;
                     break;
                 }
             }
@@ -392,6 +404,7 @@ pub async fn run(mut session: LocalSession) {
                                 fail_session(
                                     &session,
                                     "speech recognition fell behind; audio stopped",
+                                    crate::observability::OperationalErrorCategory::Capacity,
                                 ).await;
                                 break 'session;
                             }
@@ -451,6 +464,7 @@ pub async fn run(mut session: LocalSession) {
                         fail_session(
                             &session,
                             "local voice task failed unexpectedly; audio stopped. Use /voice resume consent:true after recovery.",
+                            crate::observability::OperationalErrorCategory::UnexpectedReturn,
                         ).await;
                         break;
                     }
@@ -495,6 +509,7 @@ pub async fn run(mut session: LocalSession) {
                         fail_session(
                             &session,
                             "local speech recognition exceeded its 10-second deadline; audio stopped. Let the speech service recover, then use /voice resume consent:true.",
+                            crate::observability::OperationalErrorCategory::Timeout,
                         ).await;
                         break;
                     }
@@ -604,7 +619,7 @@ pub async fn run(mut session: LocalSession) {
                             // unclassified. Do not silently discard it.
                             fail_session(&session, format!(
                                 "local {stage} failed; audio stopped. Use /voice resume consent:true after recovery."
-                            )).await;
+                            ), crate::observability::OperationalErrorCategory::Unavailable).await;
                             break;
                         }
                         tracing::warn!(stage, error = %brief(&error), "local voice turn failed");
