@@ -1646,3 +1646,59 @@ qualification, provider qualification, live two-guild member/manager Discord
 checks, fresh unanimous consent, human-witnessed audible voice acceptance,
 Portal Activity URL map (P0), OAuth secret host (P2), Components V2
 (crate-blocked), and episode-gate human approval.
+
+#### Tip `d256fb9` — branch consolidation; 29 local branches retired; `/goal continue` (2026-09-16 ~23:4x EDT)
+
+Executed as "merge all branches into main" + `/goal continue`. `origin/main` is
+`d256fb9` after squash-merging **#139**, **#137** (toml 1.1.5→1.1.6) and **#138**
+(mlx-vlm 0.6.17→0.7.0). **Zero open PRs remain.**
+
+**Correction — a stale claim above.** The `#### Tip b793af0 (#129)` entry near the
+end of this file still says "**Open: #132** … Do **not** merge #132 until hosted Rust
+Gate is green after billing unlock." That is **stale as of 2026-09-16**: #132 merged
+at 03:21 UTC, recorded in the `- **2026-09-16:**` bullet near the TOP of this file.
+Measured with `gh pr list --state all --json number,state,mergedAt`. The ledger is
+append-ordered by writing session, so the newest state was sitting above the stale
+line, not below it — reading only the tail inverts the truth here.
+
+**Branch audit (the substantive finding).** 29 local branches. 28 had a MERGED PR
+(#103–#136), which is *not* sufficient evidence: comparing each local tip against the
+PR's actual `headRefOid` found **two** divergent. `fix/voice-failure-telemetry` was
+behind (harmless). **`cursor/goal-continue-2026-09-08` was 3 commits AHEAD** — work
+committed after #133 merged that reached no remote (`git cherry origin/main` = three
+`+`). Landed as **#139** by cherry-picking onto current `main`, not by merging the
+stale branch, whose base predated ~20 files of later work (`git diff --numstat` was
+almost entirely deletions; a merge would have reverted them).
+
+- Near-miss worth recording: `git fetch --prune` turned that branch's `ahead 3` into
+  `gone`, visually identical to the 27 genuinely-landed branches. A cleanup keyed on
+  "gone" would have `-D`'d three commits. Separately, the `clean_gone` skill greps
+  `'\[gone\]'` while git's real format is `[origin/<branch>: gone]`, so it matches
+  **nothing** and reports "no cleanup needed" on 27 stale branches — a false clean.
+- #127's branch (`docs/monetization-guild-pro-quesar-design-20260908`) is correctly
+  closed/superseded: `main` holds all four of its files in richer form (its README
+  version even reverts "list not exhaustive" back to a hardcoded "(6 plans)"). Local
+  branch deleted; the **remote** branch is left in place as Donald's closed-PR record.
+- 29 local branches deleted; worktree removed; tips recorded to
+  `~/at-risk-bundles/abbey-bot-branch-tips-20260916.txt`. Only `main` remains local.
+
+**Gate (claim-honest).** `./check.sh` content run on the exact combined state (docs +
+both bumps) before merge: fmt, deployment/privacy/installer, Pages, contracts,
+security and the Python suites passed in the **foreground** (the installer signal
+tests fail spuriously when backgrounded, inheriting `SIG_IGN`); then
+`CLIPPY_EXIT=0`, `TEST_EXIT=0` (**1294 passed, 0 failed**, 5 intentional ignores),
+`RELEASE_EXIT=0`. Exit codes read from the log's own markers, not a harness summary.
+
+**This is macOS-local evidence only, and does not satisfy this repo's standard.**
+Hosted Actions remain **billing-locked**: every Gate on #139's head `e3e796e` ended in
+2–6 s with zero steps and the annotation "The job was not started because your account
+is locked due to a billing issue." Those reds were **not** treated as defects and no
+code was changed to green them. The three-platform run on `main`'s own tip — the
+closing evidence AGENTS.md requires — is **not established**, and Windows-specific
+classes are unverified. Unlock billing, then re-run Rust on tip.
+
+Still not established, and unchanged: installed artifact identity qualification,
+provider qualification, live two-guild member/manager Discord checks, fresh unanimous
+consent, human-witnessed audible voice acceptance, Portal Activity URL map (P0),
+OAuth secret host (P2), Components V2 (crate-blocked), and episode-gate human approval.
+The live launchd services were not touched this pass.
