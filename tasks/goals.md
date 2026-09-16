@@ -1754,3 +1754,23 @@ carries the machine's single git identity, which cannot discriminate actors. Res
 merge is unattributed; the content was byte-identical to what `origin/main` later received,
 local `main` was realigned after an empty-diff check, and nothing was lost. Practical rule
 kept: attribute ref moves with `git reflog --date=iso`; a cwd sweep cannot see `git -C`.
+
+**Concurrent-actor note — ATTRIBUTED (2026-09-16 00:2x EDT). Supersedes the "unattributed" paragraph above.**
+Both silent writes to this checkout were made by a **Grok CLI goal loop**, not a Claude
+session and not a human: `grok --yolo /goal set and organize and update all dirs, hidden
+dirs, and codedirs and projects and cleanup all .md and docs and files --effort high`,
+PID 49762, launched 2026-09-15 22:15:31 from a Ghostty terminal with cwd `~`, model
+`grok-4.6-build`, session `01a0a7ff-7700-7273-896c-a073149c5387`, **still running** at
+00:17. Its own log (`~/.grok/sessions/%2FUsers%2Fdonaldfilimon/01a0a7ff…/`) records the
+`run_terminal_command` executed 03:35:21.2–03:35:22.0Z:
+`cd "$BOT"; git status -sb; git merge --ff-only gate/combined-20260916` — described by the
+model as "Fast-forward abbey-bot main to combined land branch" — seven seconds after it had
+inspected that branch's mirror, AGENTS.md hunk, mlx-vlm pin and toml lock. It also produced
+`4f70323` (00:15:06, AGENTS/CLAUDE docs) inside a command running 04:15:05.9–04:15:08.0Z.
+Why every earlier sweep missed it: its cwd is `~` and it reaches repos with `cd`/`git -C`,
+its transcript lives under `~/.grok/sessions/`, not `~/.claude/projects/`, and its commit
+carries no `Co-Authored-By` trailer. Rule that follows: when attributing a ref move, enumerate
+**every** agentic CLI's session store on this machine (`~/.grok`, `~/.codex`, `~/.hermes`,
+`~/.openclaw`, …), not only Claude's, and check `ps` for `--yolo`/goal loops rooted at `~`.
+Practical state: main is `540d54c` = origin, tree clean; the Grok loop and this session are
+now writing the same files, which is the hazard to resolve, not the history.
