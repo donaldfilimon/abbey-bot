@@ -1,7 +1,7 @@
 # Goals
 
 ## Merge-all, systemd unit hardening, redeploy + rebuild abi/abbey fleet
-status: in_progress
+status: done
 - **2026-09-16 capture (/goal):** merge everything to `main` via PR, finish `deploy/abbey-bot.service`
   leftovers, managed Mac redeploy, rebuild/gate abi, wdbx, abbey, delete what is provably unneeded.
   Survey at 05:55: abbey-bot 0 open PRs, 0 extra worktrees; only unmerged ref is
@@ -11,6 +11,25 @@ status: in_progress
 - **Slice 1:** unit gains `UMask=0077`, `StateDirectoryMode=0700`, `TimeoutStopSec=30` and ten more
   hardening keys; new `scripts/check-systemd-unit.py` + `test-check-systemd-unit.py` (8 tests) wired
   into `check.sh` and `check.ps1`. Unit still UNVERIFIED on a real systemd host.
+- **Slice 2 (06:0x-06:23):** #159 merged as `fbc8396` on local `./check.sh` exit 0 (1299 passed) +
+  strict `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` parity (sha256 `a4ec232c…`); hosted Gate = billing lock,
+  UNMEASURABLE. wdbx 9788ae7 fmt/clippy/test (620 passed)/release green; abi 2e5ca7e3
+  `./tools/check.sh` all green (854 passed). Deployed gateway-first: `abi-wdbx-gateway` + `abi` from
+  abi 2e5ca7e3 (installed SHA = built), gateway pid ready; then managed bot reinstall `installation:
+  ready`, `service-status.py` Discord ready / scheduler running / persistence complete. Deleted merged
+  local branches (3) and merged remote `fix/clippy-allows-after-151` (#153); moved three 2026-09-08
+  `abbey-bot.bak-*` binaries to `~/.Trash/abbey-bot-libexec-bak-20260916` (no script references them).
+- **Residuals:** Dependabot #1-#4 are all `rustls-webpki 0.102.8` via serenity 0.12.5, already
+  accepted debt (RUSTSEC-2026-0049/0098/0099/0104); blocked on a Serenity release, not fixable here.
+  `nightly-2026-09-01`'s `rust-objcopy` cannot find `libLLVM.dylib` (rpath looks under
+  `rustlib/…/lib`; the dylib is in `lib/`), so abi release binaries keep debuginfo: upstream packaging,
+  harmless. Unmerged `docs/monetization-…-20260908` kept (PR #127 closed unmerged, Donald's call).
+  AbbeyBot (Swift) and the live `abbey-bot-wt-memory-edge-review-20260916` worktree belong to other
+  sessions and were not touched.
+- **Outcome (06:28):** abbey `./check.sh` -> `check.sh: OK` (3064 passed); its stale lock
+  (`ed25519-dalek` from abi 0cd6eb41) merged as abbey#107 `9d29c5d`; `./install.sh` reinstalled
+  `~/.local/bin/abbey` + `abbeyd` (abbey 2.6.0, were 2026-09-03 builds). All four Rust repos are on
+  `main` = `origin/main`, gated green locally, and deployed. Systemd unit still host-unverified.
 
 ## Discord UX: embed replies + slash-aware guidance
 status: done
