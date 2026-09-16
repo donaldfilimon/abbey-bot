@@ -20,6 +20,7 @@ status: done
 
 ## Full-duplex Abbey voice in Discord Engineering
 status: in_progress
+- **2026-09-16:** PRs #132/#134/#135/#136 landed on `origin/main` (`935247d`) via the existing merge queue; worktrees removed. Local `./check.sh` EXIT 0 (1294 passed). rustls 0.23.45 closed RUSTSEC-2026-0285 on the reqwest line; serenity 0.22.4 debt unchanged. Live launchd service not touched.
 - Design: `docs/superpowers/specs/2026-08-20-live-voice-design.md`. Delivery now follows the
   canonical checkout on `main`; dated branch names are archival context, not current guidance.
 - The source contract remains participant-attested and fail-closed: bounded Songbird media,
