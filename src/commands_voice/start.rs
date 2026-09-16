@@ -472,7 +472,6 @@ pub(super) async fn start_voice(
     }
     let playback: SharedPlayback = Arc::new(Mutex::new(None));
     let (cancel_tx, cancel_rx) = watch::channel(false);
-    let mut cloud_ready = None;
     let task = match (&effective_backend, local_runtime) {
         (VoiceBackendConfig::Local(_), Some((client, backend))) => {
             let session = LocalSession {
@@ -491,23 +490,20 @@ pub(super) async fn start_voice(
             };
             runtime.spawn_actor(cancel_tx.clone(), crate::voice_local::run(session))
         }
-        (VoiceBackendConfig::OpenAi(config), None) => {
-            let (ready_tx, ready_rx) = oneshot::channel();
-            cloud_ready = Some(ready_rx);
-            let session = OpenAiSession {
-                runtime: Arc::clone(&runtime),
-                config: config.clone(),
-                call: Arc::clone(&call),
-                epoch,
-                input,
-                lifecycle,
-                events: events.clone(),
-                driver_disconnect,
-                cancel: cancel_rx,
-                playback: Arc::clone(&playback),
-                ready: Some(ready_tx),
-            };
-            runtime.spawn_actor(cancel_tx.clone(), crate::voice_openai::run(session))
+        (VoiceBackendConfig::OpenAi(_config), None) => {
+            let _ = manager.remove(guild_id).await;
+            runtime
+                .fail_safe(
+                    "OpenAI Realtime voice path removed — use local mode",
+                    crate::observability::OperationalErrorCategory::Configuration,
+                )
+                .await;
+            drop(transition);
+            ctx.say(
+                "OpenAI Realtime voice was removed. Set `ABBEY_VOICE_MODE=local` and use loopback MLX-Audio on this Mac.",
+            )
+            .await?;
+            return Ok(());
         }
         _ => {
             let _ = manager.remove(guild_id).await;
@@ -556,40 +552,6 @@ pub(super) async fn start_voice(
         return Ok(());
     }
 
-    if let Some(ready) = cloud_ready {
-        match tokio::time::timeout(OPENAI_READY_TIMEOUT, ready).await {
-            Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) => {
-                let _ = manager.remove(guild_id).await;
-                runtime
-                    .fail_safe(
-                        "OpenAI Realtime setup was rejected",
-                        crate::observability::OperationalErrorCategory::Protocol,
-                    )
-                    .await;
-                drop(transition);
-                ctx.say(format!(
-                    "OpenAI Realtime did not start: {}",
-                    public_error(&error)
-                ))
-                .await?;
-                return Ok(());
-            }
-            Ok(Err(_)) | Err(_) => {
-                let _ = manager.remove(guild_id).await;
-                runtime
-                    .fail_safe(
-                        "OpenAI Realtime readiness timed out",
-                        crate::observability::OperationalErrorCategory::Timeout,
-                    )
-                    .await;
-                drop(transition);
-                ctx.say("OpenAI Realtime did not become ready within 20 seconds; no participant audio was captured.")
-                    .await?;
-                return Ok(());
-            }
-        }
-    }
 
     if !runtime.start_is_current(start_generation) || !runtime.is_current(epoch) {
         let _ = manager.remove(guild_id).await;
@@ -755,7 +717,7 @@ pub(super) async fn start_voice(
             start_generation,
             match effective_mode {
                 VoiceMode::Local => "local inference ready; listening for Abbey",
-                VoiceMode::OpenAi => "direct OpenAI backup ready; buffered output; listening",
+                VoiceMode::OpenAi => "OpenAI Realtime removed — use local mode",
                 VoiceMode::Disabled => unreachable!(),
             },
             VerificationActivation {
