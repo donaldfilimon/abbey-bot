@@ -100,7 +100,10 @@ impl Outbound for DiscordOutbound {
                 MessageId::new(Snowflake::parse(native_message_id)?.get()),
                 &EditMessage::new()
                     .content("")
-                    .embed(abbey_reply_embed(&clamp(text, DISCORD_EMBED_DESCRIPTION_CAP)))
+                    .embed(abbey_reply_embed(&clamp(
+                        text,
+                        DISCORD_EMBED_DESCRIPTION_CAP,
+                    )))
                     .allowed_mentions(no_mentions()),
                 Vec::new(),
             )

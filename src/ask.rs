@@ -247,7 +247,9 @@ mod tests {
         assert!(!contract_character(Persona::Abbey).contains('\''));
         assert!(contract_description(Persona::Abbey).contains("local-first Discord companion"));
         assert!(contract_description(Persona::Abbey).contains("not OpenAI Realtime"));
-        assert!(contract_description(Persona::Abbey).contains("music mirroring is not listen consent"));
+        assert!(
+            contract_description(Persona::Abbey).contains("music mirroring is not listen consent")
+        );
     }
 
     #[test]
