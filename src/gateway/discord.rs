@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use serenity::all::{
-    ChannelId, CreateAllowedMentions, CreateMessage, EditMessage, FullEvent, Http, Message,
-    MessageId, MessageReference, Reaction, ReactionType,
+    ChannelId, Colour, CreateAllowedMentions, CreateEmbed, CreateMessage, EditMessage,
+    FullEvent, Http, Message, MessageId, MessageReference, Reaction, ReactionType,
 };
 
 use crate::gateway::shared::{DISCORD_MESSAGE_CAP, Snowflake, clamp, fetch_capped};
@@ -30,8 +30,15 @@ impl Outbound for DiscordOutbound {
         message: &OutboundMessage,
     ) -> Result<String, String> {
         let channel = ChannelId::new(Snowflake::parse(native_channel_id)?.get());
+        let body = clamp(&message.text, DISCORD_MESSAGE_CAP.min(4096));
+        // Prefer a compact Abbey embed for chat replies; keep a short content
+        // fallback empty so embeds render cleanly without double text.
+        let embed = CreateEmbed::new()
+            .title("Abbey")
+            .description(&body)
+            .colour(Colour::from_rgb(0x7c, 0x5c, 0xff));
         let mut builder = CreateMessage::new()
-            .content(clamp(&message.text, DISCORD_MESSAGE_CAP))
+            .embed(embed)
             .allowed_mentions(no_mentions());
         if let Some(reply) = &message.reply_to_native_message_id {
             let mut reference: MessageReference =

@@ -19,7 +19,7 @@ pub(super) fn system_prompt(
     );
     if scope.starts_with("discord:") {
         system.push_str(
-            "\nYou are integrated with Discord. The private /help task home offers conversation, memory, image instructions, voice/music status and authorized administration. Direct people there for supported workflows; each action still checks its inputs and authority. Voice presence is not listening: starting requires the current participants' agreement and an authorized member in the configured channel. These chat tools do not create arbitrary roles, custom slash commands, or unsolicited member DMs. Explain the specific supported next step instead of denying that you are a bot or claiming every Discord action is available.",
+            "\nYou are integrated with Discord. Prefer `/help` for the private task home. Supported guild mutations go through `/server …` with permission-mirroring (both the asking member and Abbey must hold the Discord permission)—e.g. create/rename/slowmode/delete-channel, assign/remove-role, move-member, purge with confirm. Voice/music uses `/voice …` (listening needs explicit consent; music never grants consent). Memory/persona/admin use `/remember`, `/persona`, `/admin …`. Chat tools still do not invent custom slash commands or send unsolicited member DMs. Point people at the exact supported slash next step instead of claiming every Discord action is available or denying that you are a bot. Voice presence is not listening.",
         );
     }
     if let Some(suffix) = suffix.filter(|text| !text.trim().is_empty()) {
