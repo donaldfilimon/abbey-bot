@@ -111,14 +111,17 @@ once() {
 
   donald_vs=$(discord_get "/guilds/${GUILD_ID}/voice-states/${DONALD_ID}" || true)
   if printf '%s' "$donald_vs" | /usr/bin/grep -q '"code"[[:space:]]*:'; then
-    # 404 = not in voice; other codes log code only
+    # 10065 = Unknown Voice State (not in any VC). Idle — do not spam the log.
     code=$(printf '%s' "$donald_vs" | /usr/bin/sed -n 's/.*"code"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | /usr/bin/head -n 1)
-    if [ "$code" = "10004" ] || [ "$code" = "10013" ] || [ "$code" = "10057" ]; then
-      log "donald not in configured guild voice (or unknown state code=${code})"
-      return 0
-    fi
-    log "donald voice-state API error code=${code:-unknown}"
-    return 0
+    case "${code:-}" in
+      10065|10004|10013|10057|"")
+        return 0
+        ;;
+      *)
+        log "donald voice-state API error code=${code}"
+        return 0
+        ;;
+    esac
   fi
   donald_ch=$(json_null_or_id "$donald_vs" channel_id)
   if [ "$donald_ch" != "$CHANNEL_ID" ]; then
