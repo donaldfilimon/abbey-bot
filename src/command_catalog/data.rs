@@ -557,6 +557,28 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Open private administration controls."
     ),
     spec!(
+        AdminQuarantine,
+        Slash,
+        "admin quarantine",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Mark a member's stored fact as suspect for review."
+    ),
+    spec!(
+        AdminResolve,
+        Slash,
+        "admin resolve",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Close a memory review with a verdict."
+    ),
+    spec!(
         VoiceConsent,
         Slash,
         "voice consent",

@@ -249,7 +249,12 @@ section it ports. Read that header before the code.
   on-disk rows; shutdown must not propose. Preserve receipts and regenerate episode
   fixtures from canonical types, not by hand (`episode_gate/tests.rs`). Budgets
   charge each candidate cumulatively without refunds; size for changed checkpoints,
-  not current live state. Keep the existing accounting policy.
+  not current live state. Keep the existing accounting policy. Memory-edge
+  episodes (quarantine/resolve, amendment 2026-09-16) are emitted only by
+  `/admin quarantine` and `/admin resolve`: a quarantine is recorded by the
+  service against the fact's receipt, a resolution by the reviewing human's
+  keyed principal (the one write under a human principal), and neither hides
+  or deletes the fact. Add no automatic quarantine without Donald's decision.
 - Live episode acceptance is deliberately ignored: run
   `ABBEY_EPISODE_GATE_ACCEPTANCE_CONFIG=... cargo test --locked acceptance -- --ignored --nocapture`
   only against a scratch gateway. It permanently charges that guild's budget;
