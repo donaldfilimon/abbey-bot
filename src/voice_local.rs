@@ -27,7 +27,7 @@ use crate::voice_session::{
     authoritative_text_reply, register_playback_termination, requests_consent_withdrawal,
 };
 
-const VOICE_SYSTEM_SUFFIX: &str = "You are speaking aloud in a consented Discord voice session. Respond in one to three short, natural sentences unless the user explicitly asks for detail. Avoid Markdown, raw URLs, emoji, tables, headings, and unspoken formatting. Pronounce code, symbols, and acronyms clearly. Voice turns are read-only: never claim an external action or durable memory change succeeded.";
+const VOICE_SYSTEM_SUFFIX: &str = "You are speaking aloud in a consented Discord voice session. Sound warm and human — conversational, lightly expressive, never robotic. Respond in one to three short, natural sentences unless the user explicitly asks for detail. Avoid Markdown, raw URLs, emoji, tables, headings, and unspoken formatting. Pronounce code, symbols, and acronyms clearly. Voice turns are read-only: never claim an external action or durable memory change succeeded.";
 const CONTINUATION_WINDOW: Duration = Duration::from_secs(45);
 const MAX_PENDING_UTTERANCES: usize = 4;
 // Preparation has already warmed the speech models. A stalled live STT call
