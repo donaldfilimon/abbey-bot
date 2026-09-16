@@ -1925,3 +1925,55 @@ escape — verify with `tomllib.load` after editing. TOML re-parsed clean (5,149
 
 Gates on the changed files: `check-pages-liquid` 0, its twin 0, `check-privacy` 0, twin
 mirror clean, `.codex` TOML parses. No Rust changed; compile stages not re-run and not claimed.
+
+**`/goal continue` 2026-09-16 03:1x–04:1x EDT — main back to a green gate (pending #154).**
+
+Fixing stage 1 kept exposing the next red stage, in order: `cargo fmt` (7 files), the
+`test-check-pages-liquid.py` inventory pin (two docs added today, both intended Pages
+publications, added deliberately), clippy `-D warnings` (33 dead-code errors left by
+`dc861a0`, which cut every path to the Realtime actor but kept the module), then one stale
+test. Landed as #147 (twin doc drift: five live launchd agents, `permission_mirror.rs`
+exception), #148 (check.sh enumerates `deploy/*.sh scripts/*.sh` and `deploy/*.plist`:
+9→11 scripts, 4→6 plists; `install-oh-autolisten-launchd.sh`, the 5.8 KB watcher and two
+live-service plists were previously never checked), #149 (fmt + pages allowlist), #151/#153
+(drop the unreachable `voice_openai` actor, keep the load-bearing `VoiceMode::OpenAi` variant
+with ~50 live references; per-item allows with rationale for the four deliberately retained
+items; `ServerAction::OverwriteEdit` removed on Donald's instruction), and **#154, OPEN**:
+#153's own fmt slips plus `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`,
+which still asserted a stop route in the OpenAi notice that `dc861a0` correctly made a
+refusal. The test now pins the per-mode contract. Full `./check.sh` on #154's tree:
+`EXIT: 0`, 1,299 passed / 0 failed / 5 ignored, audio-tap Swift 12 + 16, release build.
+**`main` at `f9d6d62` stays red at fmt until #154 merges; the merge is Donald's** (the
+permission classifier blocked an agent merge as "Merge Without Review").
+
+Re-measured blockers, not re-opened as new goals: crates.io `serenity` max_stable is still
+**0.12.5** (2026-09-16 04:1x), so the four accepted `rustls-webpki` 0.102.8 records and
+Components V2 remain blocked upstream. Every other open `tasks/todo.md` item is human-gated
+live acceptance or a launchd install/deploy, which AGENTS.md forbids as agent-initiated
+validation. The deployed binary predates #145–#154; redeploying is Donald's.
+
+**`/goal` "pick best options to merge into main" 2026-09-16 04:2x EDT.** Every remote branch
+with commits not on `main` was content-tested after `git fetch --prune`. Only two exist:
+#154 (this branch; code byte-identical to the tree that passed the full gate, base still
+`origin/main` = `f9d6d62`) and `docs/monetization-guild-pro-quesar-design-20260908`
+(`2fea39a`, PR #127 closed). The latter is **fully landed**: its new spec is byte-identical
+on `main`, and every line it adds to the roadmap, `docs/superpowers/README.md` and the
+pages-liquid test is already present there, so merging it would be a no-op. **#154 is the
+only merge candidate.** Donald authorized the merge explicitly, but the Claude Code
+permission classifier blocked `gh pr merge 154` twice (once as "Merge Without Review"); the
+merge was not attempted by any other route. Redeploy waits on the merge.
+
+**Redeploy 2026-09-16 04:3x EDT (Donald: "deploy the #154 branch now").** #154 was still
+unmerged on GitHub (`merged=false`, no merge event). Deployed `933783e` from a disposable
+detached worktree through `deploy/install-launchd.sh` (the installer copies the binary to
+`~/.local/libexec/abbey-bot` and points `WorkingDirectory` at the state dir, so the
+checkout is not referenced after install): `installation: ready` at 04:32:42, PID 8381,
+installed SHA-256 == built == `readiness.json` (`a3c63fcd…`), `discord: ready`, voice back
+in Office Hours. **Superseded 76 s later:** a concurrent session merged #155 (`cb5b6d1`,
+08:31:31Z) and ran its own install from `main`, finishing 04:34:13. **Running now:** PID
+39743, `main` at `cb5b6d1`, installed == built == readiness (`3af8438a…`), `discord: ready`,
+`scheduler: running`, `last_persistence: complete`, install lock released, all five launchd
+agents loaded. `main` does **not** contain #154, and at `cb5b6d1` is still red: `cargo fmt
+--check` exit 1 and `consent_notices_name_guaranteed_written_stop_route_and_fit_discord`
+fails. #154 still merges cleanly onto it (`git merge-tree`); its runtime delta is nil (fmt,
+a test, docs), so the running binary loses nothing by lacking it.
