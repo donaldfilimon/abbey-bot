@@ -3,6 +3,8 @@
 ## Discord UX: embed replies + slash-aware guidance
 status: done
 - **2026-09-16:** #145 merged (`e1ccc5b`). Chat replies use Abbey embed; capability guidance points at `/help`, permission-mirrored `/server …`, `/voice …`. Live Mac managed redeploy verified (PID fresh, mlx/tap 200, 24 guild cmds). Hosted Gate empty-step = UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock. NL auto-execute of `/server` from chat not shipped (hint-via-guidance only).
+- **2026-09-16 continue:** MLAI `default_persona` had drifted to `aviva`; restored to `abbey` (private `abbey-state.json` mode 600 required — world-readable write caused managed EX_CONFIG 78). Live PID ready; Discord @me 200; unsolicited still on. Docs tip `ab45d02`.
+
 
 
 ## Program 1 stable-Rust contract conformance
