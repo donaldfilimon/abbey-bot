@@ -2,6 +2,7 @@
 
 ## Discord UX: embed replies + slash-aware guidance
 status: done
+- **2026-09-16 continue (embed+music UX):** Shared `abbey_reply_embed` on send+edit; clearer `/voice play|pause|resume-music|stop-music|volume` docs + catalog + ephemeral music embeds. Music ≠ listen consent. Local check/catalog green; Gate UNMEASURABLE.
 - **2026-09-16 /goal continue:** Dead `voice_openai` actor removed (`feat/drop-dead-voice-openai`). `OpenAiSession` was import-only / never constructed; live start already fail-closed on Realtime. `VoiceMode::OpenAi` kept inert for consent/tests. Aftercare: `abbey-state.json.bak-*` already chmod 600. Mac redeploy only if binary behavior changed (dead-code drop → yes, rebuild).
 - **2026-09-16:** #145 merged (`e1ccc5b`). Chat replies use Abbey embed; capability guidance points at `/help`, permission-mirrored `/server …`, `/voice …`. Live Mac managed redeploy verified (PID fresh, mlx/tap 200, 24 guild cmds). Hosted Gate empty-step = UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock. NL auto-execute of `/server` from chat not shipped (hint-via-guidance only).
 - **2026-09-16 continue (#150):** Warmer local SFW `VOICE_SYSTEM_SUFFIX` (human/conversational spoken turns). Merged `6c12962`. Mac managed redeploy verified; state+env mode 600; `af_heart` pins. Gate UNMEASURABLE. Still Donald-gated: Portal map, `/voice play`, billing unlock.

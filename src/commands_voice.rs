@@ -115,7 +115,7 @@ impl Drop for StartAttempt {
     }
 }
 
-/// Consent-gated Discord voice and redacted operator verification.
+/// Voice listen (consent), status, and macOS music mirror (`play` / `pause` / `stop-music`).
 #[poise::command(
     slash_command,
     guild_only,
