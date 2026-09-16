@@ -99,6 +99,11 @@ pub struct GuildSettings {
     pub unsolicited_per_hour: u32,
     /// Reply language hint.
     pub locale: String,
+    /// Opt-in gate for `/roleplay` → Aviva. Default **off** (fail-closed).
+    /// Guild: `/admin nsfw on|off`. Bot DM: `/nsfw on|off`. SFW guild channels
+    /// never admit Aviva via `/roleplay` even when this flag is on.
+    #[serde(default)]
+    pub nsfw_roleplay_enabled: bool,
 }
 
 impl Default for GuildSettings {
@@ -114,6 +119,7 @@ impl Default for GuildSettings {
             unsolicited: false,
             unsolicited_per_hour: DEFAULT_BUDGET_PER_HOUR,
             locale: "en".to_owned(),
+            nsfw_roleplay_enabled: false,
         }
     }
 }
@@ -325,13 +331,14 @@ fn on_off(flag: bool) -> &'static str {
 /// The `/admin show` text.
 pub fn render_settings(scoped_guild_id: &str, settings: &GuildSettings) -> String {
     format!(
-        "**Abbey — {scoped_guild_id}**\npersona: {} · learning: {} · vision: {} · cooldown: {}s · act: {} · budget: {}/h",
+        "**Abbey — {scoped_guild_id}**\npersona: {} · learning: {} · vision: {} · cooldown: {}s · act: {} · budget: {}/h · nsfw roleplay: {}",
         persona_name(settings.default_persona),
         on_off(settings.learning_enabled),
         on_off(settings.vision_enabled),
         settings.reply_cooldown_seconds,
         on_off(settings.unsolicited),
         settings.unsolicited_per_hour,
+        on_off(settings.nsfw_roleplay_enabled),
     )
 }
 
@@ -382,6 +389,18 @@ mod tests {
         assert_eq!(d.reply_cooldown_seconds, 20);
         assert_eq!(d.epsilon_override, None);
         assert_eq!(d.locale, "en");
+        assert!(
+            !d.nsfw_roleplay_enabled,
+            "nsfw/roleplay gate must be opt-in and fail-closed"
+        );
+    }
+
+    #[test]
+    fn nsfw_roleplay_is_off_until_opted_in() {
+        assert!(
+            !GuildSettings::default().nsfw_roleplay_enabled,
+            "/roleplay Aviva must stay refused until /admin nsfw on or /nsfw on"
+        );
     }
 
     #[test]
@@ -569,7 +588,7 @@ mod tests {
         };
         assert_eq!(
             render_settings("discord:42", &s),
-            "**Abbey — discord:42**\npersona: abbey · learning: on · vision: off · cooldown: 20s · act: off · budget: 6/h"
+            "**Abbey — discord:42**\npersona: abbey · learning: on · vision: off · cooldown: 20s · act: off · budget: 6/h · nsfw roleplay: off"
         );
     }
 
@@ -586,6 +605,10 @@ mod tests {
         let s: GuildSettings = serde_json::from_str(old).expect("older row loads");
         assert!(!s.unsolicited);
         assert_eq!(s.unsolicited_per_hour, 6);
+        assert!(
+            !s.nsfw_roleplay_enabled,
+            "absent nsfw_roleplay_enabled must deserialize as off"
+        );
     }
 
     #[test]

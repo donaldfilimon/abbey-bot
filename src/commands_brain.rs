@@ -181,6 +181,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_show",
         "admin_persona",
         "admin_learning",
+        "admin_nsfw",
         "admin_vision",
         "admin_cooldown",
         "admin_act",
@@ -204,11 +205,19 @@ fn update_settings(
     mutate: impl FnOnce(&mut GuildSettings),
 ) -> Option<(String, GuildSettings)> {
     ctx.guild_id()?;
+    Some(update_scoped_settings(ctx, mutate))
+}
+
+/// Persist settings for the current scope (guild or one-person DM guild).
+fn update_scoped_settings(
+    ctx: Context<'_>,
+    mutate: impl FnOnce(&mut GuildSettings),
+) -> (String, GuildSettings) {
     let g = scoped_guild(ctx);
     let state = &ctx.data().state;
     let mut stores = AppState::lock(&state.stores);
     let settings = AppState::lock(&state.guilds).update(&g, &mut *stores, mutate);
-    Some((g, settings))
+    (g, settings)
 }
 
 /// Show current settings with a classic page select into the admin dashboard.
@@ -297,6 +306,54 @@ pub async fn admin_learning(
             gate.record_learning_toggle(request).await;
         });
     }
+    Ok(())
+}
+
+/// Toggle Aviva `/roleplay` for this server (NSFW channels only when on).
+#[poise::command(slash_command, guild_only, ephemeral, rename = "nsfw")]
+pub async fn admin_nsfw(
+    ctx: Context<'_>,
+    #[description = "on | off"] state: OnOff,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let on = state.is_on();
+    let Some(_) = update_settings(ctx, |s| s.nsfw_roleplay_enabled = on) else {
+        ctx.say(NO_GUILD).await?;
+        return Ok(());
+    };
+    if !on {
+        // Clear sticky roleplay on this channel when the operator disables the gate.
+        let scope = scoped_channel(ctx);
+        AppState::lock(&ctx.data().state.engine).reset(&scope);
+    }
+    ctx.say(format!(
+        "nsfw roleplay is now **{}** for this server. `/roleplay` still requires an NSFW channel.",
+        state.label()
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Toggle Aviva `/roleplay` in this DM (personal one-person guild settings).
+#[poise::command(slash_command, ephemeral)]
+pub async fn nsfw(ctx: Context<'_>, #[description = "on | off"] state: OnOff) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if ctx.guild_id().is_some() {
+        ctx.say("In a server, use `/admin nsfw on|off` instead.")
+            .await?;
+        return Ok(());
+    }
+    let on = state.is_on();
+    let (_, _) = update_scoped_settings(ctx, |s| s.nsfw_roleplay_enabled = on);
+    if !on {
+        let scope = scoped_channel(ctx);
+        AppState::lock(&ctx.data().state.engine).reset(&scope);
+    }
+    ctx.say(format!(
+        "nsfw roleplay is now **{}** in this DM.",
+        state.label()
+    ))
+    .await?;
     Ok(())
 }
 
