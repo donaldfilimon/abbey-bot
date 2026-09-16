@@ -42,7 +42,8 @@ pub(super) async fn send_post_join_panel(
         .insert(session.clone())
         .map_err(Error::from)?;
     let is_playable = live_playable(ctx.data(), runtime).await;
-    let status = status_body(runtime, resumed, is_playable).await;
+    let label = channel_mention(channel_id.get());
+    let status = status_body(runtime, resumed, is_playable, &label).await;
     let content = voice_ux::panel_content(Phase::Status, &status, is_playable);
     ctx.send(
         poise::CreateReply::default()
@@ -61,6 +62,7 @@ pub(super) async fn send_status_command_panel(
     runtime: &VoiceRuntime,
     channel_id: ChannelId,
     member_summary: &str,
+    reveal_channel: bool,
 ) -> Result<(), Error> {
     let sid = voice_ux::mint_sid();
     let now = crate::runtime::now();
@@ -78,7 +80,12 @@ pub(super) async fn send_status_command_panel(
         .insert(session.clone())
         .map_err(Error::from)?;
     let is_playable = live_playable(ctx.data(), runtime).await;
-    let status = status_body(runtime, false, is_playable).await;
+    let label = if reveal_channel {
+        channel_mention(channel_id.get())
+    } else {
+        "configured channel".into()
+    };
+    let status = status_body(runtime, false, is_playable, &label).await;
     let panel = voice_ux::panel_content(Phase::Status, &status, is_playable);
     let content = format!("{member_summary}\n\n{panel}");
     ctx.send(
@@ -589,7 +596,16 @@ async fn live_playable_http(
     live_playable(data, runtime).await
 }
 
-async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -> String {
+fn channel_mention(channel_id: u64) -> String {
+    format!("<#{channel_id}>")
+}
+
+async fn status_body(
+    runtime: &VoiceRuntime,
+    resumed: bool,
+    is_playable: bool,
+    channel_label: &str,
+) -> String {
     let snapshot = runtime.snapshot().await;
     let player = match runtime.music.player() {
         Some(crate::player_control::Player::Spotify) => "spotify",
@@ -611,7 +627,8 @@ async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -
     .unwrap_or_default();
     let music = runtime.music.status();
     format!(
-        "{} <#{channel}> · mode `{}` · phase {} · media {} · playable {} · player `{player}`{pending}{why}\n{music}",
+        "{} {channel_label} · mode `{}` · phase {} · media {} · playable {} · player `{player}`{pending}{why}
+{music}",
         if resumed { "Resumed" } else { "Joined" },
         runtime.effective_mode().label(),
         snapshot.phase.label(),
@@ -621,7 +638,6 @@ async fn status_body(runtime: &VoiceRuntime, resumed: bool, is_playable: bool) -
             "closed"
         },
         if is_playable { "yes" } else { "no" },
-        channel = runtime.config.channel_id,
     )
 }
 
@@ -631,7 +647,8 @@ async fn status_body_http(
     resumed: bool,
     is_playable: bool,
 ) -> String {
-    status_body(runtime, resumed, is_playable).await
+    let label = channel_mention(runtime.config.channel_id);
+    status_body(runtime, resumed, is_playable, &label).await
 }
 
 async fn update_message(

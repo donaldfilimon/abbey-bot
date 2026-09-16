@@ -771,23 +771,6 @@ pub async fn modcall(
     Ok(())
 }
 
-/// Produce a server blueprint: role hierarchy, channel structure, numbered steps.
-///
-/// Emits a plan; it creates nothing. The slash command never builds a server:
-/// the boundary now lives in the plan engine's `server::diff::Change` type,
-/// which has no delete variant and is driven only from the operator CLI
-/// (`abbey-bot --server-plan`, dry run by default), never from a guild
-/// interaction.
-#[poise::command(slash_command, ephemeral)]
-pub async fn server(
-    ctx: Context<'_>,
-    #[description = "What kind of server"] kind: ArchetypeChoice,
-) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    ctx.say(clamp_message(server::render(kind.into()))).await?;
-    Ok(())
-}
-
 /// Emit the incoming-webhook setup guide for a channel.
 ///
 /// Emit-only, like `/server`: creating the webhook is one click in a settings

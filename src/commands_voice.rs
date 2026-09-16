@@ -355,7 +355,14 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         caller_can_manage: permissions.contains(serenity::all::Permissions::MANAGE_GUILD),
     });
     // Attach classic Action Row controls (Refresh/Leave[/Play]) when a session exists.
-    match ux::send_status_command_panel(ctx, &runtime, channel_id, &view.render()).await {
+    match ux::send_status_command_panel(
+        ctx,
+        &runtime,
+        channel_id,
+        &view.render(),
+        permissions.contains(serenity::all::Permissions::VIEW_CHANNEL),
+    )
+    .await {
         Ok(()) => Ok(()),
         Err(error) => {
             tracing::warn!(%error, "voice status Action Row panel failed; falling back to text");

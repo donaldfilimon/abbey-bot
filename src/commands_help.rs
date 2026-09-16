@@ -52,6 +52,9 @@ fn discord_permission(permission: DiscordPermission) -> Permissions {
         DiscordPermission::ModerateMembers => Permissions::MODERATE_MEMBERS,
         DiscordPermission::ManageWebhooks => Permissions::MANAGE_WEBHOOKS,
         DiscordPermission::ManageServer => Permissions::MANAGE_GUILD,
+        DiscordPermission::ManageChannels => Permissions::MANAGE_CHANNELS,
+        DiscordPermission::ManageRoles => Permissions::MANAGE_ROLES,
+        DiscordPermission::MoveMembers => Permissions::MOVE_MEMBERS,
         DiscordPermission::Administrator => Permissions::ADMINISTRATOR,
     }
 }
@@ -61,6 +64,9 @@ pub fn permissions_input(permissions: Permissions) -> Vec<DiscordPermission> {
         DiscordPermission::ModerateMembers,
         DiscordPermission::ManageWebhooks,
         DiscordPermission::ManageServer,
+        DiscordPermission::ManageChannels,
+        DiscordPermission::ManageRoles,
+        DiscordPermission::MoveMembers,
         DiscordPermission::Administrator,
     ]
     .into_iter()

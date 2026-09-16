@@ -120,7 +120,15 @@ Active voice guidance includes a wake-name example and the stop command.
 | `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
 | `/perms` | guild | public | Explain a member's channel permissions. |
 | `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
-| `/server` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/server blueprint` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/server create-channel` | guild | private | Create a text channel when you and Abbey both have Manage Channels. |
+| `/server rename-channel` | guild | private | Rename a channel when you and Abbey both have Manage Channels. |
+| `/server slowmode` | guild | private | Set channel slowmode when you and Abbey both have Manage Channels. |
+| `/server delete-channel` | guild | private | Delete a channel with confirm:true when you and Abbey both have Manage Channels. |
+| `/server assign-role` | guild | private | Assign a role when you and Abbey both have Manage Roles. |
+| `/server remove-role` | guild | private | Remove a role when you and Abbey both have Manage Roles. |
+| `/server move-member` | guild | private | Move a member in voice when you and Abbey both have Move Members. |
+| `/server purge` | guild | private | Purge recent messages with confirm:true when you and Abbey both have Manage Messages. |
 | `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
 | `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |
 | `/forum post` | guild | private | Create a #help forum thread with a first-post template. |

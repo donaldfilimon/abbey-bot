@@ -331,7 +331,7 @@ pub async fn admin_cooldown(
     Ok(())
 }
 
-/// Let Abbey speak unsolicited in this server (the per-guild policy decides).
+/// Opt Abbey into unsolicited replies in this server (not guild mutations — use `/server …` for those).
 #[poise::command(slash_command, guild_only, ephemeral, rename = "act")]
 pub async fn admin_act(
     ctx: Context<'_>,
