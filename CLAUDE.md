@@ -18,12 +18,12 @@ if you change a rule it repeats.
   HEAD belongs to whoever is typing in it. Never `git checkout`
   here. Push refs, read another ref's files with `git show <ref>:<path>`, and
   when you need a second branch checked out, `git worktree add` it **beside**
-  the repo (`../abbey-bot-wt-<topic>`, which is where the live ones sit), then
-  remove it when done. Never create one inside the repo root. `.gitignore`
-  covers `/abbey-bot-wt-*` as a backstop, because a nested worktree is an
-  embedded repo that `git add -A` would otherwise commit into this tree as a
-  gitlink; but the ignore also hides it from `git status`, so the placement
-  rule is the real protection, not the pattern.
+  the repo (`../abbey-bot-wt-<topic>`), then remove it when done. Never create
+  one inside the repo root. `.gitignore` covers `/abbey-bot-wt-*` as a backstop,
+  because a nested worktree is an embedded repo that `git add -A` would
+  otherwise commit into this tree as a gitlink; but the ignore also hides it
+  from `git status`, so the placement rule is the real protection, not the
+  pattern.
 - `tasks/goals.md` is the goal ledger and `tasks/todo.md` its checklists. The
   ledger is append-ordered by writing session, not by time, so the newest text
   in a section is not the newest state and a stale "not done" line can sit at
@@ -35,6 +35,17 @@ if you change a rule it repeats.
   the `cancel-in-progress` group means a merge burst leaves about half of
   `main`'s SHAs with a cancelled run (15 of the last 30 on 2026-09-08). The
   evidence is the run at the final head.
+- A `Gate` job that completes in 2–10 s with **0 steps** (`gh run view <run>
+  --json jobs` shows `steps: []`) is not red, it is unmeasured: its check-run annotation
+  (`gh api repos/donaldfilimon/abbey-bot/check-runs/<job id>/annotations`) reads
+  `The job was not started because your account is locked due to a billing
+  issue.` Every hosted job on this account has carried it since 2026-09-08, and
+  `main`'s run for `8dbdb18` at 2026-09-16 03:50Z still does, which is why all
+  three lanes on every open PR are red at once. All three lanes here are
+  GitHub-hosted (`ubuntu-24.04` / `macos-15` / `windows-2025`), so this repo has
+  no CI evidence at all while the lock holds; the evidence is a local
+  `./check.sh` run with its exit code read from the log. Never edit code to
+  satisfy a locked check. Clearing it is GitHub billing settings, Donald's.
 - Do **not** stack merges onto `main` while the tip SHA's three-platform Rust
   Gate is still `in_progress`. Each merge cancels in-flight tip evidence
   (`cancel-in-progress`). Open improve PRs in parallel; leave merge to a
