@@ -7,7 +7,7 @@ pub mod slack;
 pub mod telegram;
 
 #[allow(unused_imports)]
-pub use discord::{DiscordOutbound, on_discord_event};
+pub use discord::{DiscordOutbound, abbey_reply_embed, on_discord_event};
 #[allow(unused_imports)]
 pub(crate) use discord::{no_mentions, strip_bot_mention};
 #[allow(unused_imports)]
