@@ -1950,3 +1950,14 @@ Re-measured blockers, not re-opened as new goals: crates.io `serenity` max_stabl
 Components V2 remain blocked upstream. Every other open `tasks/todo.md` item is human-gated
 live acceptance or a launchd install/deploy, which AGENTS.md forbids as agent-initiated
 validation. The deployed binary predates #145–#154; redeploying is Donald's.
+
+**`/goal` "pick best options to merge into main" 2026-09-16 04:2x EDT.** Every remote branch
+with commits not on `main` was content-tested after `git fetch --prune`. Only two exist:
+#154 (this branch; code byte-identical to the tree that passed the full gate, base still
+`origin/main` = `f9d6d62`) and `docs/monetization-guild-pro-quesar-design-20260908`
+(`2fea39a`, PR #127 closed). The latter is **fully landed**: its new spec is byte-identical
+on `main`, and every line it adds to the roadmap, `docs/superpowers/README.md` and the
+pages-liquid test is already present there, so merging it would be a no-op. **#154 is the
+only merge candidate.** Donald authorized the merge explicitly, but the Claude Code
+permission classifier blocked `gh pr merge 154` twice (once as "Merge Without Review"); the
+merge was not attempted by any other route. Redeploy waits on the merge.
