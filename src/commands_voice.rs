@@ -483,7 +483,7 @@ pub async fn voice_diagnostics(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn voice_mode(
     ctx: Context<'_>,
-    #[description = "Off, Local, or OpenAI. Omit to show the current mode."] mode: Option<
+    #[description = "Off or Local. Omit to show the current mode."] mode: Option<
         VoiceModeChoice,
     >,
 ) -> Result<(), Error> {
@@ -552,9 +552,6 @@ fn selectable_modes(runtime: &VoiceRuntime) -> String {
     if runtime.config.available_local().is_some() {
         names.push("`local`");
     }
-    if runtime.config.available_openai().is_some() {
-        names.push("`openai`");
-    }
     names.join(", ")
 }
 
@@ -562,9 +559,6 @@ fn selectable_modes_raw(runtime: &VoiceRuntime) -> Vec<String> {
     let mut modes = vec!["Off".into()];
     if runtime.config.available_local().is_some() {
         modes.push("Local".into());
-    }
-    if runtime.config.available_openai().is_some() {
-        modes.push("OpenAI".into());
     }
     modes
 }
@@ -575,8 +569,6 @@ pub enum VoiceModeChoice {
     Off,
     #[name = "Local"]
     Local,
-    #[name = "OpenAI"]
-    OpenAi,
 }
 
 impl From<VoiceModeChoice> for VoiceMode {
@@ -584,7 +576,6 @@ impl From<VoiceModeChoice> for VoiceMode {
         match value {
             VoiceModeChoice::Off => Self::Disabled,
             VoiceModeChoice::Local => Self::Local,
-            VoiceModeChoice::OpenAi => Self::OpenAi,
         }
     }
 }

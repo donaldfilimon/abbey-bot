@@ -697,7 +697,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         C4,
         Voice,
         true,
-        "Read or select a fully configured voice mode."
+        "Read or select local/off voice mode (OpenAI Realtime removed)."
     ),
     spec!(
         VoiceVerifyStart,

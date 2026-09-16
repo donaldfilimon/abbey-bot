@@ -25,15 +25,16 @@ impl Choice {
 pub fn button_id(mode: VoiceMode) -> Option<&'static str> {
     match mode {
         VoiceMode::Local => Some("abbey:voice:agree:1:local"),
-        VoiceMode::OpenAi => Some("abbey:voice:agree:1:openai"),
-        VoiceMode::Disabled => None,
+        // OpenAI Realtime consent path removed — no Agree button.
+        VoiceMode::OpenAi | VoiceMode::Disabled => None,
     }
 }
 
 pub fn parse_button(id: &str) -> Option<Choice> {
     match id {
         "abbey:voice:agree:1:local" => Some(Choice::Agree(VoiceMode::Local)),
-        "abbey:voice:agree:1:openai" => Some(Choice::Agree(VoiceMode::OpenAi)),
+        // Stale OpenAI agree custom_ids are ignored (inert).
+        "abbey:voice:agree:1:openai" => None,
         STOP_ID => Some(Choice::Withdraw),
         _ => None,
     }
@@ -45,14 +46,14 @@ pub fn notice(mode: VoiceMode, channel: u64) -> String {
             "Local processing: Discord transports the call. Speech recognition, reasoning and speech synthesis run on Donald's Mac. Abbey can use your existing saved context for clearly attributed speech and save addressed conversation text as server-scoped context; raw audio is not retained by Abbey."
         }
         VoiceMode::OpenAi => {
-            "OpenAI processing: Discord transports the call and participant audio is sent to OpenAI Realtime for recognition and replies, subject to that provider's data handling. Abbey does not retain raw audio locally. This mode does not use local persona routing or WDBX context."
+            "OpenAI Realtime voice was removed. Use local mode (loopback MLX-Audio on this Mac)."
         }
         VoiceMode::Disabled => {
             "Voice processing is disabled. Abbey's automatic presence is muted and self-deafened."
         }
     };
     format!(
-        "**Abbey voice — your choice in this server**\n{processing}\n\nChoose **Agree** only if you want this processing in <#{channel}>. Your own agreement is remembered across visits and restarts for this processing mode and notice version; membership, silence and output mute are not agreement. Voice starts only when everyone present has agreed and a manager uses `/voice join consent:true` or `/voice resume consent:true`. New arrivals pause the call.\n\n**Stop / withdraw** clears your saved agreement for both modes. If you are in the call, it stops audio processing and disconnects Abbey. You can also mention Abbey and type `stop listening` in this voice channel. `/voice leave` stops the current call without deleting your saved choice. Use `/voice consent` anytime to review or change your choice. Saying a wake name starts a question only while voice is active.\n\nNotice version {POLICY_VERSION}."
+        "**Abbey voice — your choice in this server**\n{processing}\n\nChoose **Agree** only if you want this processing in <#{channel}>. Your own agreement is remembered across visits and restarts for this processing mode and notice version; membership, silence and output mute are not agreement. Voice starts only when everyone present has agreed and a manager uses `/voice join consent:true` or `/voice resume consent:true`. New arrivals pause the call.\n\n**Stop / withdraw** clears your saved agreement. If you are in the call, it stops audio processing and disconnects Abbey. You can also mention Abbey and type `stop listening` in this voice channel. `/voice leave` stops the current call without deleting your saved choice. Use `/voice consent` anytime to review or change your choice. Saying a wake name starts a question only while voice is active.\n\nNotice version {POLICY_VERSION}."
     )
 }
 
@@ -104,6 +105,7 @@ impl Ledger {
         if user == 0
             || (event == 0 && choice != Choice::WithdrawSpoken)
             || choice == Choice::Agree(VoiceMode::Disabled)
+            || choice == Choice::Agree(VoiceMode::OpenAi)
         {
             return false;
         }
@@ -124,12 +126,11 @@ impl Ledger {
         });
         match choice {
             Choice::Agree(VoiceMode::Local) => member.local = receipt,
-            Choice::Agree(VoiceMode::OpenAi) => member.openai = receipt,
             Choice::Withdraw | Choice::WithdrawSpoken => {
                 member.local = None;
                 member.openai = None;
             }
-            Choice::Agree(VoiceMode::Disabled) => unreachable!(),
+            Choice::Agree(VoiceMode::Disabled | VoiceMode::OpenAi) => unreachable!(),
         }
         true
     }
@@ -157,7 +158,10 @@ mod tests {
         assert!(!ledger.agrees(21, VoiceMode::Local));
         assert!(!ledger.agrees(20, VoiceMode::OpenAi));
         assert!(ledger.apply(20, 102, Choice::Withdraw, 2));
-        assert!(!ledger.apply(20, 101, Choice::Agree(VoiceMode::OpenAi), 1));
+        assert!(
+            !ledger.apply(20, 101, Choice::Agree(VoiceMode::OpenAi), 1),
+            "OpenAI agree is inert"
+        );
         assert!(!ledger.agrees(20, VoiceMode::Local));
         assert!(!ledger.agrees(20, VoiceMode::OpenAi));
         assert!(ledger.apply(20, 103, Choice::Agree(VoiceMode::Local), 3));
@@ -171,10 +175,8 @@ mod tests {
             .policy = 0;
         assert!(!ledger.agrees(20, VoiceMode::Local));
         assert_eq!(parse_button("abbey:voice:agree:0:local"), None);
-        assert_eq!(
-            parse_button(button_id(VoiceMode::OpenAi).unwrap()),
-            Some(Choice::Agree(VoiceMode::OpenAi))
-        );
+        assert_eq!(button_id(VoiceMode::OpenAi), None);
+        assert_eq!(parse_button("abbey:voice:agree:1:openai"), None);
     }
 
     #[test]
@@ -184,7 +186,7 @@ mod tests {
         assert!(ledger.apply(20, 100, Choice::WithdrawSpoken, 9));
         assert!(!ledger.agrees(20, VoiceMode::Local));
         assert_eq!(ledger.members[&20].last_event, 1_000_000);
-        assert!(!ledger.apply(20, 999_999, Choice::Agree(VoiceMode::OpenAi), 10));
+        assert!(!ledger.apply(20, 999_999, Choice::Agree(VoiceMode::OpenAi), 10)); // inert
     }
 
     #[test]

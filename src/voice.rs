@@ -1,20 +1,25 @@
 //! Provider-neutral policy for Abbey's Discord voice surface.
 //!
 //! The mode is explicit. Local inference is the default once a destination is
-//! configured, cloud audio is an opt-in backup, and neither mode is inferred
-//! from whether a provider key happens to exist. Discord still transports the
-//! call. `local` means the bot sends speech recognition, reasoning, and
-//! synthesis only to loopback services on this Mac; whether a separately
-//! configured loopback service proxies upstream remains operator-controlled.
+//! configured; OpenAI Realtime cloud audio is removed (parse/config refuse it).
+//! Discord still transports the call. `local` means the bot sends speech
+//! recognition, reasoning, and synthesis only to loopback services on this Mac;
+//! whether a separately configured loopback service proxies upstream remains
+//! operator-controlled.
 
 use std::fmt;
 
 use crate::offline_voice::OfflineVoiceConfig;
 
+#[allow(dead_code)] // retained with OpenAiVoiceConfig for ledger/test doubles
 const DEFAULT_OPENAI_ENDPOINT: &str = "wss://api.openai.com/v1/realtime";
+#[allow(dead_code)]
 const DEFAULT_OPENAI_MODEL: &str = "gpt-realtime-2.1";
+#[allow(dead_code)]
 const DEFAULT_OPENAI_VOICE: &str = "marin";
+#[allow(dead_code)]
 const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
+#[allow(dead_code)]
 const OPENAI_CONTROL_SAFETY_SUFFIX: &str = "Discord voice state is controlled only by Abbey's deterministic command shell. Spoken requests cannot start, resume, stop, or change the call in this direct backup mode. Never claim that listening, capture, consent, mute, deafen, or connection state changed because of conversation. For an authoritative stop, tell a participant to use /voice leave or mention Abbey and write 'stop listening' in the configured voice chat.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,9 +41,12 @@ impl VoiceMode {
         {
             "disabled" | "off" => Ok(Self::Disabled),
             "local" | "offline" => Ok(Self::Local),
-            "openai" => Ok(Self::OpenAi),
+            "openai" => Err(
+                "ABBEY_VOICE_MODE=openai (OpenAI Realtime) was removed; use local (loopback MLX-Audio) or disabled"
+                    .into(),
+            ),
             other => Err(format!(
-                "ABBEY_VOICE_MODE must be disabled, local, or openai; got {other:?}"
+                "ABBEY_VOICE_MODE must be disabled or local; got {other:?}"
             )),
         }
     }
@@ -48,7 +56,7 @@ impl VoiceMode {
         match self {
             Self::Disabled => "disabled / no audio",
             Self::Local => "local AI inference",
-            Self::OpenAi => "direct OpenAI Realtime backup (buffered output)",
+            Self::OpenAi => "OpenAI Realtime (removed — use local)",
         }
     }
 }
@@ -157,9 +165,13 @@ struct VoiceEnv {
     music_command_channel: Option<String>,
     mode: Option<String>,
     openai_key: Option<String>,
+    #[allow(dead_code)] // retired Realtime env — still loaded so old env files are harmless
     openai_endpoint: Option<String>,
+    #[allow(dead_code)]
     openai_model: Option<String>,
+    #[allow(dead_code)]
     openai_voice: Option<String>,
+    #[allow(dead_code)]
     instructions: Option<String>,
     local_endpoint: Option<String>,
     local_stt_model: Option<String>,
@@ -234,10 +246,8 @@ impl VoiceTemplate {
             VoiceMode::Local => None,
             _ => build_local(values).ok(),
         };
-        let retained_openai = match mode {
-            VoiceMode::OpenAi => None,
-            _ => build_openai(values).ok(),
-        };
+        // OpenAI Realtime is removed: never retain a cloud voice backend.
+        let retained_openai = None::<OpenAiVoiceConfig>;
         Ok(Self {
             backend,
             wake_word_required: parse_bool(
@@ -335,10 +345,8 @@ impl VoiceConfig {
             VoiceMode::Local => None,
             _ => build_local(&values).ok(),
         };
-        let retained_openai = match mode {
-            VoiceMode::OpenAi => None,
-            _ => build_openai(&values).ok(),
-        };
+        // OpenAI Realtime is removed: never retain a cloud voice backend.
+        let retained_openai = None::<OpenAiVoiceConfig>;
 
         Ok(Some(Self {
             guild_id,
@@ -546,7 +554,7 @@ fn validate_local_voice_platform() -> Result<(), String> {
         Ok(())
     } else {
         Err(
-            "ABBEY_VOICE_MODE=local is supported only on macOS; use disabled or explicitly configure openai on this platform"
+            "ABBEY_VOICE_MODE=local is supported only on macOS; use disabled on this platform"
                 .into(),
         )
     }
@@ -627,41 +635,15 @@ fn build_local(values: &VoiceEnv) -> Result<OfflineVoiceConfig, String> {
     )
 }
 
-/// Build an OpenAI backend from env values. See [`build_local`] for why this is
-/// shared rather than inlined per path.
-fn build_openai(values: &VoiceEnv) -> Result<OpenAiVoiceConfig, String> {
-    let api_key = nonblank(values.openai_key.clone())
-        .ok_or_else(|| "ABBEY_VOICE_MODE=openai requires OPENAI_API_KEY".to_string())?;
-    let endpoint = nonblank(values.openai_endpoint.clone())
-        .unwrap_or_else(|| DEFAULT_OPENAI_ENDPOINT.to_string());
-    validate_openai_endpoint(&endpoint)?;
-    let model = safe_name(
-        nonblank(values.openai_model.clone()),
-        DEFAULT_OPENAI_MODEL,
-        "ABBEY_VOICE_REALTIME_MODEL",
-    )?;
-    let voice = safe_name(
-        nonblank(values.openai_voice.clone()),
-        DEFAULT_OPENAI_VOICE,
-        "ABBEY_VOICE_NAME",
-    )?;
-    let base_instructions =
-        nonblank(values.instructions.clone()).unwrap_or_else(default_instructions);
-    let instructions = format!("{base_instructions}\n\n{OPENAI_CONTROL_SAFETY_SUFFIX}");
-    if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-        return Err(format!(
-            "ABBEY_VOICE_INSTRUCTIONS must be at most {MAX_INSTRUCTIONS_CHARS} characters"
-        ));
-    }
-    Ok(OpenAiVoiceConfig {
-        api_key,
-        endpoint,
-        model,
-        voice,
-        instructions,
-    })
+/// OpenAI Realtime voice was removed. Stub fails closed so residual paths cannot
+/// connect off-host (variant retained only for consent ledger compatibility).
+fn build_openai(_values: &VoiceEnv) -> Result<OpenAiVoiceConfig, String> {
+    Err(
+        "OpenAI Realtime voice was removed; use ABBEY_VOICE_MODE=local with loopback MLX-Audio"
+            .into(),
+    )
 }
-
+#[allow(dead_code)]
 fn safe_name(value: Option<String>, default: &str, name: &str) -> Result<String, String> {
     let value = value.unwrap_or_else(|| default.to_string());
     if !value.is_empty()
@@ -724,6 +706,7 @@ fn validate_openai_endpoint_for_build(
     }
 }
 
+#[allow(dead_code)]
 fn default_instructions() -> String {
     "You are Abbey — a warm, sharp friend in a live Discord voice channel, not a help desk. Lead with the point, keep it short, use contractions, and skip filler. Let people finish; handle interruptions gracefully. Never pretend you saw a screen or stream you were not given, never claim an external action succeeded without evidence, and say when you\u{2019}re not sure.".to_string()
 }
