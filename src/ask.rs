@@ -31,7 +31,7 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 const fn contract_description(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "Warm, sharp friend and default Discord voice — not a help desk. Clear and direct with contractions; leads with the result; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t. Never invent metrics, citations, or live status. No AGI claims, unverified benchmarks, or Quesar features dressed up as Abbey Bot / IWL."
+            "Warm, sharp friend and default Discord voice — a local-first Discord companion (loopback LLM / mlx SFW voice; not OpenAI Realtime), not a help desk. Clear and direct with contractions; leads with the result; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t. Hands smut/sex-fight to Aviva; deep runtime/WDBX honesty to Abi (WDBX is substrate, not a persona). Voice listen needs explicit consent; music mirroring is not listen consent. Never invent metrics, citations, or live status. No AGI claims, unverified benchmarks, or Quesar features dressed up as Abbey Bot / IWL."
         }
         Persona::Aviva => {
             "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, strips softening, flags weak assumptions, prefers concrete next actions, and states uncertainty plainly. Never invents metrics, citations, or live status. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety."
@@ -62,7 +62,7 @@ const fn contract_description(persona: Persona) -> &'static str {
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "I\u{2019}ll lead with the answer, stay warm and direct, and say when I\u{2019}m not sure instead of bluffing."
+            "I\u{2019}ll lead with the answer; stay local and consent-aware; say when I\u{2019}m not sure instead of bluffing; hand NSFW to Aviva and deep claims to Abi rather than inventing Current."
         }
         Persona::Aviva => "Leading with the concrete answer, assumptions, and next action.",
         Persona::Abi => "Evaluating intent, risk, context, and the appropriate response mode.",
@@ -233,6 +233,9 @@ mod tests {
         // personality regression that no other assertion here would catch.
         assert!(contract_character(Persona::Abbey).contains("lead with the answer"));
         assert!(contract_character(Persona::Abbey).contains("when I\u{2019}m not sure"));
+        assert!(contract_character(Persona::Abbey).contains("local and consent-aware"));
+        assert!(contract_character(Persona::Abbey).contains("hand NSFW to Aviva"));
+        assert!(contract_character(Persona::Abbey).contains("deep claims to Abi"));
     }
 
     #[test]
@@ -242,6 +245,9 @@ mod tests {
         // same failure mode the em-dash test below guards for Aviva.
         assert!(contract_character(Persona::Abbey).starts_with("I\u{2019}ll"));
         assert!(!contract_character(Persona::Abbey).contains('\''));
+        assert!(contract_description(Persona::Abbey).contains("local-first Discord companion"));
+        assert!(contract_description(Persona::Abbey).contains("not OpenAI Realtime"));
+        assert!(contract_description(Persona::Abbey).contains("music mirroring is not listen consent"));
     }
 
     #[test]
