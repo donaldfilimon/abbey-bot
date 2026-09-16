@@ -34,6 +34,7 @@ use crate::{Context, Error};
 mod dashboard;
 mod media;
 mod memory_commands;
+mod memory_review;
 
 pub(crate) use dashboard::open_dashboard_component;
 pub use dashboard::{admin_dashboard, dispatch_admin_component};
@@ -44,6 +45,7 @@ pub use memory_commands::{
     forget, memory_context_menu, pending_confirm, pending_dismiss, pending_list, recall, remember,
     reputation,
 };
+pub use memory_review::{admin_quarantine, admin_resolve};
 
 const NO_GUILD: &str = "This one only works inside a server.";
 
@@ -187,7 +189,9 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_flush",
         "admin_export",
         "admin_reset",
-        "admin_dashboard"
+        "admin_dashboard",
+        "admin_quarantine",
+        "admin_resolve"
     )
 )]
 pub async fn admin(_ctx: Context<'_>) -> Result<(), Error> {

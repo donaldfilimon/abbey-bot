@@ -91,6 +91,7 @@ mod memory;
 mod memory_browser;
 mod memory_card;
 mod memory_gate;
+mod memory_review;
 mod moderation;
 mod music;
 mod observability;
