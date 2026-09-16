@@ -20,7 +20,6 @@ pub enum ServerAction {
     RoleRemove,
     /// Never succeeds when [`ActionContext::role_holders`] is `Some(n)` with `n > 0`.
     RoleDelete,
-    OverwriteEdit,
     Slowmode,
     MoveMember,
     PurgeMessages,
@@ -33,9 +32,7 @@ impl ServerAction {
             Self::ChannelCreate | Self::ChannelEdit | Self::ChannelDelete | Self::Slowmode => {
                 Permissions::MANAGE_CHANNELS
             }
-            Self::RoleAssign | Self::RoleRemove | Self::RoleDelete | Self::OverwriteEdit => {
-                Permissions::MANAGE_ROLES
-            }
+            Self::RoleAssign | Self::RoleRemove | Self::RoleDelete => Permissions::MANAGE_ROLES,
             Self::MoveMember => Permissions::MOVE_MEMBERS,
             Self::PurgeMessages => Permissions::MANAGE_MESSAGES,
         }
@@ -50,7 +47,6 @@ impl ServerAction {
             Self::RoleAssign => "assign a role",
             Self::RoleRemove => "remove a role",
             Self::RoleDelete => "delete a role",
-            Self::OverwriteEdit => "edit channel overwrites",
             Self::Slowmode => "set slowmode",
             Self::MoveMember => "move a member in voice",
             Self::PurgeMessages => "purge messages",
@@ -366,28 +362,6 @@ mod tests {
         assert_eq!(plan, Ok(()));
     }
 
-    #[test]
-    fn overwrite_edit_requires_manage_roles_on_both_sides() {
-        let bits = Permissions::MANAGE_ROLES;
-        assert!(
-            authorize(
-                ServerAction::OverwriteEdit,
-                bits,
-                bits,
-                ActionContext::default()
-            )
-            .is_ok()
-        );
-        assert!(matches!(
-            authorize(
-                ServerAction::OverwriteEdit,
-                bits,
-                Permissions::empty(),
-                ActionContext::default()
-            ),
-            Err(Denial::BotMissing { .. })
-        ));
-    }
 
     #[test]
     fn non_destructive_channel_edit_needs_no_confirm() {

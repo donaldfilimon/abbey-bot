@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serenity::all::{ChannelId, ChannelType, GuildId};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 
 use crate::gateway::shared::clamp_message;
 use crate::offline_voice::MlxAudioClient;
@@ -99,7 +99,6 @@ pub use ux::dispatch_ux_component;
 pub use verification::voice_verify;
 
 const INPUT_QUEUE_FRAMES: usize = 64;
-const OPENAI_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const LOCAL_HEALTH_TIMEOUT: Duration = Duration::from_secs(600);
 const SIDECAR_STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 

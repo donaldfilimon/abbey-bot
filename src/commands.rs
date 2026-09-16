@@ -34,7 +34,9 @@ use crate::pipeline;
 use crate::profile::{self, ProfileFacts};
 use crate::routing_signals;
 use crate::runtime::{self, AppState};
-use crate::server::{self, Archetype};
+use crate::server::Archetype;
+#[cfg(test)]
+use crate::server;
 use crate::webhook;
 use crate::{Context, Error};
 
