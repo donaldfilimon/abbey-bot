@@ -22,8 +22,8 @@ use crate::{Context, Error};
 mod acknowledgement;
 mod play;
 use play::{voice_pause, voice_play, voice_resume_music, voice_stop_music, voice_volume};
-mod auto_listen_gate;
 mod auto_listen;
+mod auto_listen_gate;
 mod consent;
 mod discord;
 mod events;
@@ -362,7 +362,8 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         &view.render(),
         permissions.contains(serenity::all::Permissions::VIEW_CHANNEL),
     )
-    .await {
+    .await
+    {
         Ok(()) => Ok(()),
         Err(error) => {
             tracing::warn!(%error, "voice status Action Row panel failed; falling back to text");
@@ -483,9 +484,7 @@ pub async fn voice_diagnostics(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn voice_mode(
     ctx: Context<'_>,
-    #[description = "Off or Local. Omit to show the current mode."] mode: Option<
-        VoiceModeChoice,
-    >,
+    #[description = "Off or Local. Omit to show the current mode."] mode: Option<VoiceModeChoice>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let Some(runtime) = ctx

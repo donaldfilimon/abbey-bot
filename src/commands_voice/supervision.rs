@@ -288,17 +288,12 @@ pub(super) async fn on_voice_state_update(
         let upgrade_state = Arc::clone(&data.state);
         let upgrade_ctx = ctx.clone();
         tokio::spawn(async move {
-            match super::try_auto_listen_while_present(
-                &upgrade_ctx,
-                upgrade_runtime,
-                upgrade_state,
-            )
-            .await
+            match super::try_auto_listen_while_present(&upgrade_ctx, upgrade_runtime, upgrade_state)
+                .await
             {
-                Ok(outcome) => tracing::info!(
-                    ?outcome,
-                    "PresenceOnly auto-listen join hook finished"
-                ),
+                Ok(outcome) => {
+                    tracing::info!(?outcome, "PresenceOnly auto-listen join hook finished")
+                }
                 Err(error) => tracing::warn!(
                     %error,
                     "PresenceOnly auto-listen join hook failed; muted presence kept"
