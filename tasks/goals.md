@@ -1778,7 +1778,7 @@ now writing the same files, which is the hazard to resolve, not the history.
 **Review of the foreign docs commit `4f70323` (`/goal continue`, 2026-09-16 00:2x EDT).**
 Reviewed claim by claim against primary sources rather than trusting a commit that no
 session of Donald's reviewed: the three `Gate` lanes are `ubuntu-24.04` / `macos-15` /
-`windows-2025` in `.github/workflows` (`runs-on: ${{ matrix.os }}`); `main`'s run for
+`windows-2025` in `.github/workflows` (the `runs-on` value is the matrix `os` field); `main`'s run for
 `8dbdb18` (id 35053305472, 2026-09-16 03:50:21Z) has all three jobs `failure` with
 `steps=0`; `.gitignore` line 22 is `/abbey-bot-wt-*`; no `../abbey-bot-wt-*` directory
 exists, so removing "where the live ones sit" was a correction, not a loss; the twin
