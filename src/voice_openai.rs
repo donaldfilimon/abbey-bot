@@ -1,4 +1,4 @@
-//! Explicit OpenAI Realtime backup for Discord voice.
+//! OpenAI Realtime Discord voice actor (retired at config/parse — module kept so historical call sites compile; selection always fails closed).
 //!
 //! This path is never selected by key presence. It runs only when the join
 //! that spawned it snapshotted the OpenAI backend (`ABBEY_VOICE_MODE=openai`

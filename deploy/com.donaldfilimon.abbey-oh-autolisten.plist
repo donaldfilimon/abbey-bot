@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.donaldfilimon.abbey-oh-autolisten</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>__HOME__/.local/libexec/abbey-bot/watch-office-hours-auto-listen.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/abbey-bot/oh-autolisten.launchd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/abbey-bot/oh-autolisten.launchd.err.log</string>
+	<key>WorkingDirectory</key>
+	<string>__HOME__/.local/share/abbey-bot</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>

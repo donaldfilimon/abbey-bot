@@ -120,7 +120,15 @@ Active voice guidance includes a wake-name example and the stop command.
 | `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
 | `/perms` | guild | public | Explain a member's channel permissions. |
 | `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
-| `/server` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/server blueprint` | guild, bot DM | private | Create a server blueprint without changing the server. |
+| `/server create-channel` | guild | private | Create a text channel when you and Abbey both have Manage Channels. |
+| `/server rename-channel` | guild | private | Rename a channel when you and Abbey both have Manage Channels. |
+| `/server slowmode` | guild | private | Set channel slowmode when you and Abbey both have Manage Channels. |
+| `/server delete-channel` | guild | private | Delete a channel with confirm:true when you and Abbey both have Manage Channels. |
+| `/server assign-role` | guild | private | Assign a role when you and Abbey both have Manage Roles. |
+| `/server remove-role` | guild | private | Remove a role when you and Abbey both have Manage Roles. |
+| `/server move-member` | guild | private | Move a member in voice when you and Abbey both have Move Members. |
+| `/server purge` | guild | private | Purge recent messages with confirm:true when you and Abbey both have Manage Messages. |
 | `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
 | `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |
 | `/forum post` | guild | private | Create a #help forum thread with a first-post template. |
@@ -569,7 +577,7 @@ runs fully offline.
 | `ABBEY_QUIET=1` | Never speak unsolicited, anywhere — mentions, DMs, and commands still answer. The operator's guard while the policy is untrained. Wins over every server's `/admin act on`. |
 | `ABBEY_MESSAGE_CONTENT=1` | Requests the privileged MESSAGE_CONTENT intent (must also be on in the Dev Portal). Without it, only mentions and DMs carry a body, and the pipeline learns from those alone. |
 | `ABBEY_VISION_PROVIDER` / `_ENDPOINT` / `_MODEL` / `_KEY` | `remote` (default) selects one verified OpenAI-compatible endpoint, `fm` selects only a manifest-qualified FM CLI, and `off` disables vision. Abbey never retries an image through another provider. JPEG, PNG, WebP, and GIF are decoded under 8192×8192-pixel and 96 MiB allocation limits before transport; GIF's first frame is converted to PNG. A 2026-08-19 Ollama/e4b screenshot result is historical only; it does not qualify the current MLX-VLM target or an installed FM CLI. |
-| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS, `disabled` for presence only, or `openai` as an explicit cloud backup; Linux/Windows reject `local` configuration and require `disabled` or explicitly configured OpenAI Realtime. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. `ABBEY_VOICE_MODE` is the startup selection; every other mode whose variables are complete is retained inert, and `/voice mode` switches among them at runtime without a restart. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or mention Abbey and write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
+| `ABBEY_VOICE_GUILD_ID` + `ABBEY_VOICE_CHANNEL_ID` | Enables `/voice` for exactly one Discord voice channel. With no destination, voice remains off on every OS. `ABBEY_VOICE_MODE` is `local` by default on macOS or `disabled` for presence only (OpenAI Realtime cloud backup was removed); Linux/Windows reject `local` configuration and require `disabled`. Local mode uses the loopback-only `ABBEY_VOICE_LOCAL_ENDPOINT` (default `http://127.0.0.1:8181`) with Whisper STT, Kokoro TTS, `af_heart`, and the existing loopback Abbey text backend. OpenAI mode alone requires `OPENAI_API_KEY`; a key never selects it. `ABBEY_VOICE_MODE` is the startup selection; every other mode whose variables are complete is retained inert, and `/voice mode` switches among them at runtime without a restart. It is a direct, whole-response-buffered degraded backup without local ABI routing or WDBX context, and spoken control is non-authoritative—use `/voice leave` or mention Abbey and write `stop listening` in voice chat. `ABBEY_VOICE_AUTOJOIN=1` always uses muted/self-deafened `DecodeMode::Pass` with no receive/playback actor. Conversation still requires `/voice join consent:true`; consent invalidation disconnects the conversational call and renewed consent requires `/voice resume consent:true`. |
 | `TELEGRAM_BOT_TOKEN` | Runs the Telegram long-poll adapter beside the Discord gateway. |
 | `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` | Runs Slack over Socket Mode (`xoxb-` + `xapp-`). |
 
@@ -727,8 +735,7 @@ sides. `/voice status` is the member-safe summary; Manage Server members use
 bounded-queue counters without content or credentials. The local-only `/voice verify start|report` surface is
 further limited to the owner or an administrator. It keeps one ephemeral,
 redacted acceptance run across consent epochs and suppresses voice transcript
-commits while armed; a process restart clears it. In explicit `openai` backup
-mode, Realtime is a degraded direct provider path: spoken stop detection is not authoritative, so
+commits while armed; a process restart clears it. Local voice spoken stop detection follows the local consent path; for an authoritative stop,
 any participant must use `/voice leave` or mention Abbey and write
 `stop listening` in the configured voice chat for a deterministic stop.
 Discord Go Live video is not
@@ -895,7 +902,7 @@ Whisper plus Songbird-playable formatting without Discord, a microphone, or
 cloud credentials. It does not prove deployment, a reply heard by a human, or
 barge-in. A fresh everyone-present consent epoch, renewed `/voice resume`, an
 audible wake/reply, and interruption acceptance require their own current
-record and remain unclaimed by source evidence. OpenAI Realtime is
+record and remain unclaimed by source evidence. OpenAI Realtime was removed; historical notes may still mention it. It is
 an explicit degraded backup, not an offline path, and its spoken control is not
 authoritative. `tasks/goals.md` retains the dated dependency-audit history.
 The Linux graph is now Rustls/WebPKI-only: the gate rejects `native-tls`,

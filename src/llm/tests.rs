@@ -419,22 +419,24 @@ fn blank_env_values_count_as_unset() {
 }
 
 #[test]
-fn endpoint_policy_allows_https_and_loopback_http_only() {
+fn endpoint_policy_requires_loopback_only() {
     let backend = |endpoint: &str| Backend::OpenAiCompatible {
         endpoint: endpoint.into(),
         model: "m".into(),
     };
-    assert!(backend("https://models.example.com").validate().is_ok());
     assert!(backend("http://127.0.0.1:11434").validate().is_ok());
+    assert!(backend("http://localhost:11434").validate().is_ok());
     assert!(backend("http://[::1]:11434").validate().is_ok());
+    assert!(backend("https://127.0.0.1:8443").validate().is_ok());
+    assert!(backend("https://models.example.com").validate().is_err());
     assert!(backend("http://models.example.com").validate().is_err());
     assert!(
-        backend("https://user:secret@models.example.com")
+        backend("https://user:secret@127.0.0.1:8443")
             .validate()
             .is_err()
     );
     assert!(
-        backend("https://models.example.com?token=secret")
+        backend("http://127.0.0.1:11434?token=secret")
             .validate()
             .is_err()
     );

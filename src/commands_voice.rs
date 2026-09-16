@@ -22,6 +22,7 @@ use crate::{Context, Error};
 mod acknowledgement;
 mod play;
 use play::{voice_pause, voice_play, voice_resume_music, voice_stop_music, voice_volume};
+mod auto_listen_gate;
 mod auto_listen;
 mod consent;
 mod discord;
@@ -87,7 +88,11 @@ async fn configure_disconnected_call(call: &Arc<Mutex<songbird::Call>>, mode: Vo
     call.lock().await.set_config(initial_songbird_config(mode));
 }
 
-pub use auto_listen::{AutoListenStartup, try_auto_listen_at_startup};
+#[allow(unused_imports)] // public API for callers outside this module tree
+pub use auto_listen::{
+    AutoListenStartup, AutoListenWhilePresent, try_auto_listen_at_startup,
+    try_auto_listen_while_present,
+};
 pub use consent::{voice_consent, voice_notice};
 pub use events::on_gateway_event;
 pub use supervision::autojoin_self_deafened;
@@ -349,8 +354,22 @@ pub async fn voice_status(ctx: Context<'_>) -> Result<(), Error> {
         caller_present,
         caller_can_manage: permissions.contains(serenity::all::Permissions::MANAGE_GUILD),
     });
-    ctx.say(clamp_message(view.render())).await?;
-    Ok(())
+    // Attach classic Action Row controls (Refresh/Leave[/Play]) when a session exists.
+    match ux::send_status_command_panel(
+        ctx,
+        &runtime,
+        channel_id,
+        &view.render(),
+        permissions.contains(serenity::all::Permissions::VIEW_CHANNEL),
+    )
+    .await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::warn!(%error, "voice status Action Row panel failed; falling back to text");
+            ctx.say(clamp_message(view.render())).await?;
+            Ok(())
+        }
+    }
 }
 
 /// Show content-free operational detail to current server managers.
@@ -464,7 +483,7 @@ pub async fn voice_diagnostics(ctx: Context<'_>) -> Result<(), Error> {
 )]
 pub async fn voice_mode(
     ctx: Context<'_>,
-    #[description = "Off, Local, or OpenAI. Omit to show the current mode."] mode: Option<
+    #[description = "Off or Local. Omit to show the current mode."] mode: Option<
         VoiceModeChoice,
     >,
 ) -> Result<(), Error> {
@@ -533,9 +552,6 @@ fn selectable_modes(runtime: &VoiceRuntime) -> String {
     if runtime.config.available_local().is_some() {
         names.push("`local`");
     }
-    if runtime.config.available_openai().is_some() {
-        names.push("`openai`");
-    }
     names.join(", ")
 }
 
@@ -543,9 +559,6 @@ fn selectable_modes_raw(runtime: &VoiceRuntime) -> Vec<String> {
     let mut modes = vec!["Off".into()];
     if runtime.config.available_local().is_some() {
         modes.push("Local".into());
-    }
-    if runtime.config.available_openai().is_some() {
-        modes.push("OpenAI".into());
     }
     modes
 }
@@ -556,8 +569,6 @@ pub enum VoiceModeChoice {
     Off,
     #[name = "Local"]
     Local,
-    #[name = "OpenAI"]
-    OpenAi,
 }
 
 impl From<VoiceModeChoice> for VoiceMode {
@@ -565,7 +576,6 @@ impl From<VoiceModeChoice> for VoiceMode {
         match value {
             VoiceModeChoice::Off => Self::Disabled,
             VoiceModeChoice::Local => Self::Local,
-            VoiceModeChoice::OpenAi => Self::OpenAi,
         }
     }
 }

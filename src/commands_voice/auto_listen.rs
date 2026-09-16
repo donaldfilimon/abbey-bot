@@ -2,7 +2,8 @@
 //!
 //! This reuses the same Songbird/local-session helpers as `/voice join consent:true`
 //! (`configure_disconnected_call`, receive handlers, `enable_conversation`, local
-//! actor). It is not a second voice stack.
+//! actor). It is not a second voice stack. Decision helpers live in
+//! `auto_listen_gate` so PresenceOnly join gating can be unit-tested without Discord.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -10,45 +11,16 @@ use std::sync::Arc;
 use serenity::all::{ChannelId, GuildId};
 use tokio::sync::{Mutex, mpsc, watch};
 
+use super::auto_listen_gate::{AutoListenDecision, decide_auto_listen};
 use super::discord::*;
 use super::receive::{ReceiveHandlerInstall, install_receive_handlers};
 use super::{INPUT_QUEUE_FRAMES, LOCAL_HEALTH_TIMEOUT, StartAttempt, configure_disconnected_call};
 use crate::offline_voice::MlxAudioClient;
 use crate::voice::{VoiceBackendConfig, VoiceMode};
 use crate::voice_local::LocalSession;
-use crate::voice_session::{SessionControl, SharedPlayback, VerificationActivation, VoiceRuntime};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AutoListenDecision {
-    Disabled,
-    WrongMode(VoiceMode),
-    EmptyChannel,
-    ConsentUnavailable(&'static str),
-    ConsentIncomplete(Vec<u64>),
-    Ready,
-}
-
-pub(crate) fn decide_auto_listen(
-    enabled: bool,
-    mode: VoiceMode,
-    participants: &HashSet<u64>,
-    coverage: Result<Vec<u64>, &'static str>,
-) -> AutoListenDecision {
-    if !enabled {
-        return AutoListenDecision::Disabled;
-    }
-    if mode != VoiceMode::Local {
-        return AutoListenDecision::WrongMode(mode);
-    }
-    if participants.is_empty() {
-        return AutoListenDecision::EmptyChannel;
-    }
-    match coverage {
-        Err(message) => AutoListenDecision::ConsentUnavailable(message),
-        Ok(missing) if missing.is_empty() => AutoListenDecision::Ready,
-        Ok(missing) => AutoListenDecision::ConsentIncomplete(missing),
-    }
-}
+use crate::voice_session::{
+    SessionControl, SharedPlayback, VerificationActivation, VoicePhase, VoiceRuntime,
+};
 
 fn auto_listen_enabled() -> bool {
     std::env::var("ABBEY_VOICE_AUTO_LISTEN")
@@ -64,11 +36,46 @@ pub enum AutoListenStartup {
     MutedPresence,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoListenWhilePresent {
+    /// Runtime is not in PresenceOnly; no-op.
+    NotPresenceOnly,
+    /// Decision was not Ready; muted presence unchanged.
+    RemainedPresent,
+    /// Consented Local listening is now active.
+    Listening,
+}
+
+/// Upgrade muted PresenceOnly autojoin to Local listening when consent covers
+/// everyone currently present. Returns Ok without changing presence unless
+/// `runtime` is `VoicePhase::PresenceOnly` and the decision is Ready.
+pub async fn try_auto_listen_while_present(
+    ctx: &serenity::all::Context,
+    runtime: Arc<VoiceRuntime>,
+    state: Arc<crate::runtime::AppState>,
+) -> Result<AutoListenWhilePresent, String> {
+    if runtime.snapshot().await.phase != VoicePhase::PresenceOnly {
+        return Ok(AutoListenWhilePresent::NotPresenceOnly);
+    }
+    match evaluate_auto_listen(ctx, runtime, state).await? {
+        AutoListenStartup::Listening => Ok(AutoListenWhilePresent::Listening),
+        AutoListenStartup::MutedPresence => Ok(AutoListenWhilePresent::RemainedPresent),
+    }
+}
+
 /// Startup entry for `ABBEY_VOICE_AUTOJOIN` + optional `ABBEY_VOICE_AUTO_LISTEN`.
 /// When auto-listen is enabled and Local consent already covers everyone present,
 /// start the same listening path as `/voice join consent:true` without a prior
 /// muted Pass-mode bounce. Otherwise ask the caller to take muted autojoin.
 pub async fn try_auto_listen_at_startup(
+    ctx: &serenity::all::Context,
+    runtime: Arc<VoiceRuntime>,
+    state: Arc<crate::runtime::AppState>,
+) -> Result<AutoListenStartup, String> {
+    evaluate_auto_listen(ctx, runtime, state).await
+}
+
+async fn evaluate_auto_listen(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
     state: Arc<crate::runtime::AppState>,
@@ -560,38 +567,4 @@ async fn activate_local_auto_listen(
         )
         .await;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auto_listen_requires_env_local_mode_members_and_complete_consent() {
-        let members = HashSet::from([1122140354737623110]);
-        assert_eq!(
-            decide_auto_listen(false, VoiceMode::Local, &members, Ok(vec![])),
-            AutoListenDecision::Disabled
-        );
-        assert_eq!(
-            decide_auto_listen(true, VoiceMode::OpenAi, &members, Ok(vec![])),
-            AutoListenDecision::WrongMode(VoiceMode::OpenAi)
-        );
-        assert_eq!(
-            decide_auto_listen(true, VoiceMode::Local, &HashSet::new(), Ok(vec![])),
-            AutoListenDecision::EmptyChannel
-        );
-        assert_eq!(
-            decide_auto_listen(true, VoiceMode::Local, &members, Err("unavailable")),
-            AutoListenDecision::ConsentUnavailable("unavailable")
-        );
-        assert_eq!(
-            decide_auto_listen(true, VoiceMode::Local, &members, Ok(vec![99])),
-            AutoListenDecision::ConsentIncomplete(vec![99])
-        );
-        assert_eq!(
-            decide_auto_listen(true, VoiceMode::Local, &members, Ok(vec![])),
-            AutoListenDecision::Ready
-        );
-    }
 }

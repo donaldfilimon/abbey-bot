@@ -64,6 +64,7 @@ mod commands;
 mod commands_brain;
 mod commands_context;
 mod commands_forum;
+mod commands_server;
 mod commands_help;
 mod commands_memory_browser;
 mod commands_voice;
@@ -95,6 +96,7 @@ mod music;
 mod observability;
 mod offline_voice;
 mod operator_guidance;
+mod permission_mirror;
 mod perms;
 mod persist;
 mod persona;
@@ -602,7 +604,7 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_context::read_image_text(),
         commands::perms(),
         commands::modcall(),
-        commands::server(),
+        commands_server::server(),
         commands::webhook(),
         commands_forum::forum(),
         commands_brain::remember(),
