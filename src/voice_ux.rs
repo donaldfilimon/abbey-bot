@@ -252,6 +252,12 @@ pub fn skip_no_player_note() -> &'static str {
     "Select a player with `/voice play` before skipping. Play can also pick Spotify by default."
 }
 
+/// Empty-query Play (slash omit or Action Row Play): clarifies default player vs search.
+#[must_use]
+pub fn empty_play_note() -> &'static str {
+    "Empty Play resumes/mirrors the selected native player (Spotify if none selected). Use `/voice play query:…` for a URI or library search."
+}
+
 /// Ephemeral deny when Play/Stop/Skip are clicked while disabled/unplayable.
 #[must_use]
 pub fn music_controls_unavailable_note(reason: &str) -> String {
@@ -441,6 +447,14 @@ mod tests {
         assert_eq!(phase, Phase::Left);
         // Refresh on status never leaves.
         assert_eq!(reduce(Phase::Status, Act::Ref).unwrap(), Phase::Status);
+    }
+
+    #[test]
+    fn empty_play_note_mentions_spotify_default_and_query_path() {
+        let note = empty_play_note();
+        assert!(note.contains("Spotify"), "{note}");
+        assert!(note.contains("/voice play"), "{note}");
+        assert!(note.contains("query"), "{note}");
     }
 
     #[test]
