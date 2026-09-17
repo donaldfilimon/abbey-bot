@@ -318,11 +318,12 @@ pub async fn roleplay(
     };
 
     let decision = roleplay_gate::decide(context, enabled);
-    if !decision.allow() {
+    // Both views must agree; any disagreement fails closed as a refusal.
+    let (true, Some(persona)) = (decision.allow(), decision.persona()) else {
         ctx.say(clamp_message(decision.message().to_string()))
             .await?;
         return Ok(());
-    }
+    };
 
     let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) else {
         // Stick Aviva on this channel session so follow-up freeform can stay Aviva.
@@ -330,7 +331,7 @@ pub async fn roleplay(
         let now = runtime::now();
         AppState::lock(&state.engine).prepare(
             &scope,
-            Persona::Aviva,
+            persona,
             &crate::memory::PersonaContext::empty(),
             "",
             now,
@@ -340,7 +341,7 @@ pub async fn roleplay(
         return Ok(());
     };
 
-    let reply = answer_question(ctx, &prompt, Some(Persona::Aviva), Commit::Yes).await;
+    let reply = answer_question(ctx, &prompt, Some(persona), Commit::Yes).await;
     let delivery = deliver_generated_reply(
         &ctx.data().state,
         reply.memory,
