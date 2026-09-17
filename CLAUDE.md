@@ -59,8 +59,8 @@ invalid escape — verify with `python3 -c "import tomllib,sys;tomllib.load(open
 
 ## Layout and local run
 
-`src/` is the entire product: one binary crate, ~250 `.rs` files (247 on
-2026-09-16), no library target and no workspace. Everything else is support — `deploy/` the launchd installers
+`src/` is the entire product: one binary crate, roughly 250 `.rs` files (count
+with `find src -name '*.rs' | wc -l`), no library target and no workspace. Everything else is support — `deploy/` the launchd installers
 plus the Python tests that gate them (and a systemd unit, `abbey-bot.service`,
 which with the root `Dockerfile` is documented in README but never exercised
 on this host), `scripts/` the `check-*.py` gates and
@@ -170,9 +170,8 @@ section it ports. Read that header before the code.
   is listed as shell above and is invisible to that grep because it writes
   `#[serenity::async_trait]`. Widening it to `\b(serenity|poise)::` adds a
   further set of files — re-derive it with
-  `comm -13 <(narrow|sort) <(wide|sort)` rather than trusting a count here, which
-  has already gone stale once (it read "ten" while the answer was eleven early
-  on 2026-09-16, and twelve by 13:2x that afternoon). What matters is not the number but that every one of them is
+  `comm -13 <(narrow|sort) <(wide|sort)` rather than trusting a count here; any
+  number written down goes stale within a day. What matters is not the number but that every one of them is
   either test-only or already inside a module listed above, which is what makes
   the wide pattern a no-leak confirmation at the cost of noise. Read the new
   module either way.
@@ -212,6 +211,13 @@ section it ports. Read that header before the code.
 - Keep decisions in pure modules and Discord translation in `commands*`/`gateway`.
   `pipeline::Outbound` is the fakeable shell seam; pass time and seeds into pure
   policy code rather than adding wall-clock/random reads.
+- `/roleplay` admission is decided only in pure `roleplay_gate.rs`: Aviva is
+  allowed in a bot DM, or in an NSFW guild channel, and only while the durable
+  gate is on (`/nsfw` in DMs, `/admin nsfw` in guilds). A SFW guild channel
+  always refuses and never falls back to Abbey roleplay. The caller takes the
+  persona from `RoleplayDecision::persona()`, not from its own match (#171
+  removed exactly that duplicate). Widening the six-case admission table is
+  Donald's decision.
 - Transcribe, never depend on ABI: `wdbx.rs`, `embedding.rs`, `wyhash.rs` and
   `persona.rs` are pinned by golden contracts. Do not substitute the wyhash crate.
   Keep `persona.rs` frozen; compose new routing in `routing_signals.rs`. Preserve

@@ -3,7 +3,7 @@ name: abbey-reviewer
 description: Expert code reviewer for the abbey-bot Rust codebase. Proactively reviews code for quality, focusing on the pure core modules, Discord shell boundaries, and traps already identified in AGENTS.md. Use immediately after writing or modifying pure core code.
 ---
 
-You are a senior code reviewer for the abbey-bot Rust project. This is a binary crate with `cargo clippy --all-targets --locked -- -D warnings` as the gate.
+You are a senior code reviewer for the abbey-bot Rust project. This is a single binary crate whose gate is `./check.sh`; `cargo clippy --all-targets --locked -- -D warnings` is one of its stages, not the gate.
 
 ## When to Review
 - Immediately after writing or modifying pure core modules (brain/, guild.rs, memory.rs, engine.rs, wdbx.rs)
@@ -19,6 +19,8 @@ You are a senior code reviewer for the abbey-bot Rust project. This is a binary 
 - `brain/social.rs`, `brain/registry.rs`, `guild.rs` — SocialBrain, BrainRegistry per guild
 - `wyhash.rs`, `embedding.rs`, `wdbx.rs` — Zig-compatible wyhash, text_embedding, WDBX v1 JSONL
 - `memory.rs`, `engine.rs`, `llm.rs` — UserMemory, ChannelContext, InteractionLog, PersonaContext
+- `roleplay_gate.rs` — pure `/roleplay` admission (RoleplayContext, RoleplayDecision)
+- `permission_mirror.rs` — pure despite importing the serenity `Permissions` bitflag type
 
 ### Discord Shell (a module list, not a file count)
 AGENTS.md defines the boundary by module, and it is wider than any fixed number:
@@ -42,6 +44,10 @@ attribute (`#[serenity::async_trait]` in `voice_session/playback.rs`) is invisib
 - Match on snowflake id, never on name — `perms::Scope` carries id alongside name
 - `GuildId::new` panics on zero — explicit zero check guard exists
 - `MAX_TIMEOUT_MINUTES` clamp every `Action::Timeout` is constructed through
+- `/roleplay` admission lives only in `roleplay_gate.rs`: Aviva only in a bot DM or an NSFW
+  guild channel while the durable gate is on; a SFW guild channel always refuses. Callers take
+  the persona from `RoleplayDecision::persona()`, never a local match. Widening the table is
+  Donald's decision
 - Dead-code lints: `pub` exempts nothing in binary crate, clippy `-D warnings`
 - Discord rewrites text channel names, leaves voice names alone
 - Everything pure takes `now: u64` and a seed — nothing pure reads the clock or `rand`
