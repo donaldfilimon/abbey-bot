@@ -2156,3 +2156,9 @@ acceptance filter; `export_command_registration_payload` is an operator export, 
 Lesson, same shape twice today: an ignored test only proves what it asserted the last time
 someone ran it; the gate's green covers none of the five. Uncommitted at the time of writing:
 `src/episode_gate/acceptance.rs`, `src/pipeline/tests.rs`, this ledger.
+
+2026-09-17 05:1x EDT (docs/roleplay-guidance-20260917): agent guidance caught up with #170/#171.
+CLAUDE.md/AGENTS.md gained a Boundaries bullet for pure `roleplay_gate.rs` admission and dropped
+two dated counts in favour of the commands that produce them; both reviewer restatements
+(`.cursor`, `.codex`) now name `./check.sh` as the gate and list `roleplay_gate.rs` and
+`permission_mirror.rs` as pure. Docs only; evidence is the local `./check.sh` exit read from its log.
