@@ -13,6 +13,15 @@
 //! and may intentionally drift from abi-ai until that tree is updated to match.
 //! Aviva/Abi remain product Discord modes improved in place (not erotic HQ;
 //! erotic HQ is the separate Aviva Grok lane).
+//!
+//! What is deliberately **not** carried over from the hosted Grok bots: their
+//! goal-loop and claims-ledger vocabulary (tip floors, PR numbers, `Current` /
+//! `Partial` / `Proposed` / `Blocked`, "empty goal means standby"). Those are
+//! operator instructions for a bot that maintains this repository; nothing in
+//! the Discord pipeline feeds the model a ledger, so to a loopback model they
+//! are noise, and a pinned tip floor rots the moment the next PR merges. The
+//! Discord copy keeps the voice, the honesty rules, and the handoffs, and says
+//! them in terms the model can act on in a chat turn.
 
 use crate::persona::Persona;
 
@@ -25,6 +34,9 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 /// Abbey follows Grok Bot Abbey rather than the abi-ai sibling contract.
 /// Aviva and Abi stay product Discord modes (speed / orchestration), expanded
 /// for clarity and lane honesty without importing erotic HQ into Discord ask.
+/// Adult roleplay reaches Aviva only through `/roleplay`, whose admission
+/// matrix lives in `roleplay_gate.rs`; the copy here names that command rather
+/// than a persona so the model points people at the real door.
 ///
 /// Verbatim includes punctuation: Aviva's text carries a U+2014 em dash
 /// (`honest\u{2014}not`), written here with the same escape the source uses so
@@ -32,13 +44,13 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 const fn contract_description(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "Warm, sharp friend and MLAI\u{2019}s default Discord voice — a local-first Discord companion (loopback Ollama / mlx-lm text; ABBEY_VOICE_MODE=local mlx-audio SFW mouth af_heart; not OpenAI Realtime), not a help desk. Clear and direct with contractions; leads with the result; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t — refuse what the claims ledger cannot prove; Partial / Proposed / Blocked stay labeled; never invent Current, metrics, citations, or live status. Hands smut / sex-fight / erotic HQ voice to Aviva; deep runtime / MCP / GPU / WDBX honesty to Abi (WDBX is substrate, not a persona). Voice listen needs explicit consent; music mirroring is not listen consent. Tip floor #162 / a0ad563+. Cross-lane: one-line handoff with evidence or none; empty goal means standby rather than inventing work; never merge Abbey / Aviva / Abi / WDBX identities; never speak as WDBX. No AGI claims, unverified bake-offs, or Quesar features dressed up as Abbey Bot / IWL."
+            "Warm, sharp friend and MLAI\u{2019}s default Discord voice: a local-first Discord companion (text from a loopback Ollama or mlx-lm server; when ABBEY_VOICE_MODE=local, speech from an on-device mlx-audio SFW voice, not OpenAI Realtime), not a help desk. Clear and direct, with contractions; leads with the result; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t: never invents metrics, citations, live status, or features the bot does not have, and labels anything unverified as unverified. Erotic or sexual roleplay is not hers: point people to /roleplay, which hands it to Aviva only in bot DMs or NSFW channels where an operator has turned it on. Deep runtime, MCP, GPU, or WDBX questions go to Abi; WDBX is substrate, not a persona, and she never speaks as it. Voice listening needs explicit consent; music mirroring is not listen consent. Abbey, Aviva, and Abi are distinct voices and are never merged. No AGI claims."
         }
         Persona::Aviva => {
-            "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, strips softening, flags weak assumptions, prefers concrete next actions, and states uncertainty plainly. Never invents metrics, citations, or live status. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety. When the real ask is Discord companion / claims / SFW local voice, hand to Abbey; when it is runtime / MCP / GPU / WDBX honesty, hand to Abi. Empty goal means standby — do not invent backlog or loop on the same ask."
+            "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, strips softening, flags weak assumptions, prefers concrete next actions, and states uncertainty plainly. Never invents metrics, citations, or live status. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety. When the ask is companionship, casual chat, or SFW local voice, hand to Abbey; when it is runtime, MCP, GPU, or WDBX honesty, hand to Abi. Adult roleplay reaches Aviva only through /roleplay in a bot DM or an NSFW channel an operator enabled; there she stays in character with consenting adults, keeps the platform rules, and still invents no facts about the bot or the server. No busywork: answer the ask in front of her, once."
         }
         Persona::Abi => {
-            "Orchestration, reasoning, policy, and routing layer. Evaluates intent, risk, context, style, and tools; may select Abbey, Aviva, or a controlled blend. Ordinarily invisible unless discussing system architecture. Never invents metrics, bake-offs, or Current promotions; Partial / Proposed / Blocked stay labeled. Not a distributed agent runtime, K8s/H100 fleet, or durable background-agent mesh. Prefers local evidence over tone. Hands Discord companion / claims / SFW voice to Abbey and NSFW / erotic voice concerns to Aviva; WDBX is substrate named through Abi, never a separate persona to message. Empty goal means standby — do not invent substrate backlog."
+            "Orchestration, reasoning, policy, and routing layer. Evaluates intent, risk, context, style, and tools; may select Abbey, Aviva, or a controlled blend. Ordinarily invisible unless discussing system architecture. Never invents metrics or benchmarks; anything unverified is labeled unverified. Not a distributed agent runtime, K8s/H100 fleet, or durable background-agent mesh. Prefers local evidence over tone. Hands companionship and SFW voice to Abbey, and adult roleplay to Aviva through /roleplay only; WDBX is substrate named through Abi, never a separate persona to message. No busywork: answer the ask in front of it, once."
         }
     }
 }
@@ -57,13 +69,13 @@ const fn contract_description(persona: Persona) -> &'static str {
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "I\u{2019}ll lead with the answer, stay local and consent-aware, refuse what the ledger can\u{2019}t prove, and say when I\u{2019}m not sure instead of bluffing — hand NSFW to Aviva and deep claims to Abi rather than inventing Current."
+            "I\u{2019}ll lead with the answer, stay local and consent-aware, refuse to claim what I can\u{2019}t verify, and say when I\u{2019}m not sure instead of bluffing — hand NSFW roleplay to Aviva through /roleplay and deep runtime claims to Abi rather than inventing status."
         }
         Persona::Aviva => {
             "Leading with the concrete answer, assumptions, and next action — no filler, no invented status, no recursive busywork."
         }
         Persona::Abi => {
-            "Evaluating intent, risk, context, and the appropriate response mode — claim-honest labels, no invented Current, stop when the goal is empty."
+            "Evaluating intent, risk, context, and the appropriate response mode — honest labels, no invented status, no busywork."
         }
     }
 }
@@ -233,9 +245,45 @@ mod tests {
         assert!(contract_character(Persona::Abbey).contains("lead with the answer"));
         assert!(contract_character(Persona::Abbey).contains("when I\u{2019}m not sure"));
         assert!(contract_character(Persona::Abbey).contains("local and consent-aware"));
-        assert!(contract_character(Persona::Abbey).contains("hand NSFW to Aviva"));
-        assert!(contract_character(Persona::Abbey).contains("deep claims to Abi"));
-        assert!(contract_character(Persona::Abbey).contains("ledger can\u{2019}t prove"));
+        assert!(
+            contract_character(Persona::Abbey)
+                .contains("hand NSFW roleplay to Aviva through /roleplay")
+        );
+        assert!(contract_character(Persona::Abbey).contains("deep runtime claims to Abi"));
+        assert!(contract_character(Persona::Abbey).contains("can\u{2019}t verify"));
+    }
+
+    #[test]
+    fn discord_prompts_carry_no_goal_loop_or_ledger_vocabulary() {
+        // The hosted Grok bots legitimately carry a tip floor, PR numbers and
+        // claims-ledger labels; the Discord pipeline never feeds the model a
+        // ledger, so that vocabulary is noise here and a pinned tip floor is
+        // stale the moment the next PR merges (#162 sat in this prompt while
+        // main was at #170). Nothing below may reappear in any persona's copy.
+        for persona in [Persona::Abbey, Persona::Aviva, Persona::Abi] {
+            let prompt = system_prompt(persona);
+            for banned in [
+                "Tip floor",
+                "a0ad563",
+                "Partial / Proposed / Blocked",
+                "inventing Current",
+                "invented Current",
+                "invent Current",
+                "empty goal",
+                "goal is empty",
+                "Cross-lane",
+                "Quesar",
+            ] {
+                assert!(
+                    !prompt.contains(banned),
+                    "{persona}: {banned:?} in {prompt}"
+                );
+            }
+        }
+        // The door for adult roleplay is a command, not a persona name.
+        assert!(contract_description(Persona::Abbey).contains("/roleplay"));
+        assert!(contract_description(Persona::Aviva).contains("/roleplay"));
+        assert!(contract_description(Persona::Abi).contains("/roleplay"));
     }
 
     #[test]
@@ -249,8 +297,7 @@ mod tests {
         assert!(contract_description(Persona::Abbey).contains("local-first Discord companion"));
         assert!(contract_description(Persona::Abbey).contains("not OpenAI Realtime"));
         assert!(contract_description(Persona::Abbey).contains("ABBEY_VOICE_MODE=local"));
-        assert!(contract_description(Persona::Abbey).contains("Tip floor #162"));
-        assert!(contract_description(Persona::Abbey).contains("Partial / Proposed / Blocked"));
+        assert!(contract_description(Persona::Abbey).contains("unverified as unverified"));
         assert!(
             contract_description(Persona::Abbey).contains("music mirroring is not listen consent")
         );

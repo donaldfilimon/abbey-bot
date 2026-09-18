@@ -36,6 +36,7 @@ status: done
 - **2026-09-16 continue (help+guidance embeds):** `/help` + ephemeral command-error guidance use `abbey_reply_embed` (same brand/footer as chat/music). Tip hygiene after `6604593`. Gate UNMEASURABLE.
 - **2026-09-16 continue (#154):** Local `./check.sh` green again — fmt after #153 + consent-notice test pins Local stop route / OpenAi refusal without stop route. Merged `53b69cc`. Gate UNMEASURABLE.
 - **2026-09-16 continue (#156):** Abbey `ask.rs` local-first + consent + lane handoffs (Aviva/Abi contracts untouched). Merged `289c5e5`; Mac redeploy verified. Gate UNMEASURABLE.
+- **2026-09-16 18:3x EDT (ask.rs de-jargon):** Discord persona copy in `src/ask.rs` stripped of hosted-Grok goal-loop / claims-ledger vocabulary (stale `Tip floor #162` while main sat at #170, `Partial / Proposed / Blocked`, `Current`, `empty goal means standby`, `Cross-lane`, the private product name); adult roleplay handoff now names `/roleplay` (the real door since #170) instead of a persona; Aviva's copy admits the `/roleplay` lane it already serves (engine.rs hands `/roleplay` `system_prompt(Aviva)`); new test bans the vocabulary from every persona prompt. Findings, not fixed here: `/roleplay` with an empty prompt calls `engine.prepare` and discards the result, so it sticks nothing (`commit` always creates sessions as Abbey); and `/roleplay` still shares Aviva's speed/candor prompt rather than a roleplay-specific one. Hosted Gate = UNMEASURABLE.
 - **2026-09-16 continue-with-all (#162+#163):** Abbey `ask.rs` system-prompt quality raised and merged `#162` → tip `a0ad563`; Mac managed redeploy verified (PID 32972, voice local/`af_heart`, mlx/tap 200). `#163` docs monetization Guild Pro + Quesar pilot merged → checkout `827f01f` (docs-only; no binary redeploy). Hosted Gate = UNMEASURABLE. Still Donald-gated: full-duplex Portal/`/voice play`, billing unlock, empty New Bot sidebar rows, `/admin brain` post-load for `step_count`.
 - **2026-09-16 continue (embed+music UX):** Shared `abbey_reply_embed` on send+edit; clearer `/voice play|pause|resume-music|stop-music|volume` docs + catalog + ephemeral music embeds. Music ≠ listen consent. Local check/catalog green; Gate UNMEASURABLE.
 - **2026-09-16 /goal continue:** Dead `voice_openai` actor removed (`feat/drop-dead-voice-openai`). `OpenAiSession` was import-only / never constructed; live start already fail-closed on Realtime. `VoiceMode::OpenAi` kept inert for consent/tests. Aftercare: `abbey-state.json.bak-*` already chmod 600. Mac redeploy only if binary behavior changed (dead-code drop → yes, rebuild).
@@ -2156,9 +2157,3 @@ acceptance filter; `export_command_registration_payload` is an operator export, 
 Lesson, same shape twice today: an ignored test only proves what it asserted the last time
 someone ran it; the gate's green covers none of the five. Uncommitted at the time of writing:
 `src/episode_gate/acceptance.rs`, `src/pipeline/tests.rs`, this ledger.
-
-2026-09-17 05:1x EDT (docs/roleplay-guidance-20260917): agent guidance caught up with #170/#171.
-CLAUDE.md/AGENTS.md gained a Boundaries bullet for pure `roleplay_gate.rs` admission and dropped
-two dated counts in favour of the commands that produce them; both reviewer restatements
-(`.cursor`, `.codex`) now name `./check.sh` as the gate and list `roleplay_gate.rs` and
-`permission_mirror.rs` as pure. Docs only; evidence is the local `./check.sh` exit read from its log.
