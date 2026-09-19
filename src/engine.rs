@@ -370,6 +370,18 @@ mod tests {
     }
 
     #[test]
+    fn empty_roleplay_prepare_sticks_aviva_without_a_turn() {
+        // Empty `/roleplay` (no prompt) calls `prepare` with empty input and
+        // discards the `PreparedTurn`. The persona switch itself is the effect
+        // that matters: follow-up freeform reads `session_persona`, so Aviva
+        // must stick even though no transcript turn is recorded.
+        let mut engine = Engine::new();
+        let _ = engine.prepare("discord:1", Persona::Aviva, &ctx(), "", 1);
+        assert_eq!(engine.session_persona("discord:1"), Some(Persona::Aviva));
+        assert_eq!(engine.session_len("discord:1"), 0);
+    }
+
+    #[test]
     fn prepared_grounding_is_a_pre_candidate_snapshot() {
         let mut engine = Engine::new();
         engine.commit(
