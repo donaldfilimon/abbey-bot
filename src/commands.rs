@@ -327,15 +327,10 @@ pub async fn roleplay(
 
     let Some(prompt) = prompt.filter(|p| !p.trim().is_empty()) else {
         // Stick Aviva on this channel session so follow-up freeform can stay Aviva.
+        // Explicit persona stick — no transcript turn is recorded.
         let scope = format!("discord:{}", ctx.channel_id().get());
         let now = runtime::now();
-        AppState::lock(&state.engine).prepare(
-            &scope,
-            persona,
-            &crate::memory::PersonaContext::empty(),
-            "",
-            now,
-        );
+        AppState::lock(&state.engine).set_session_persona(&scope, persona, now);
         ctx.say(clamp_message(decision.message().to_string()))
             .await?;
         return Ok(());

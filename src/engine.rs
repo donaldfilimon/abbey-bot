@@ -199,6 +199,19 @@ impl Engine {
         self.sessions.get(scope).map_or(0, |s| s.turns.len())
     }
 
+    /// Stick `persona` on `scope` without recording a transcript turn.
+    /// The empty `/roleplay` arm calls this (not `prepare` with a discarded
+    /// return): same create-or-update defaults and timestamp handling as
+    /// `prepare`, minus the prompt assembly.
+    pub fn set_session_persona(&mut self, scope: &str, persona: Persona, now: u64) {
+        let session = self
+            .sessions
+            .entry(scope.to_string())
+            .or_insert_with(|| Session::new(persona, now));
+        session.persona = persona;
+        session.last_used = now;
+    }
+
     pub fn session_persona(&self, scope: &str) -> Option<Persona> {
         self.sessions.get(scope).map(|s| s.persona)
     }
@@ -370,13 +383,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_roleplay_prepare_sticks_aviva_without_a_turn() {
-        // Empty `/roleplay` (no prompt) calls `prepare` with empty input and
-        // discards the `PreparedTurn`. The persona switch itself is the effect
-        // that matters: follow-up freeform reads `session_persona`, so Aviva
-        // must stick even though no transcript turn is recorded.
+    fn empty_roleplay_stick_sets_aviva_without_a_turn() {
+        // Wiring pin for the empty `/roleplay` arm in `commands.rs`: it calls
+        // `set_session_persona` (not `prepare` with a discarded return), so
+        // follow-up freeform reads Aviva via `session_persona` with no
+        // transcript turn recorded. `persona_switch_keeps_the_transcript`
+        // already covers `prepare`'s persona mutation — this owns the stick.
         let mut engine = Engine::new();
-        let _ = engine.prepare("discord:1", Persona::Aviva, &ctx(), "", 1);
+        engine.set_session_persona("discord:1", Persona::Aviva, 1);
         assert_eq!(engine.session_persona("discord:1"), Some(Persona::Aviva));
         assert_eq!(engine.session_len("discord:1"), 0);
     }
