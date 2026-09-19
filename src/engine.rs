@@ -108,6 +108,19 @@ impl Engine {
         Self::default()
     }
 
+    /// Create-or-update the session for `scope`: insert with `persona` on first
+    /// use, then switch the persona and refresh the timestamp. The transcript
+    /// is untouched — [`Engine::commit`] owns turn recording.
+    fn touch_session(&mut self, scope: &str, persona: Persona, now: u64) -> &mut Session {
+        let session = self
+            .sessions
+            .entry(scope.to_string())
+            .or_insert_with(|| Session::new(persona, now));
+        session.persona = persona;
+        session.last_used = now;
+        session
+    }
+
     /// Assemble the next request for `scope`. Creates the session on first
     /// use; on a persona change switches the persona and keeps the transcript.
     /// The transcript is not mutated — [`Engine::commit`] does that once the
@@ -120,12 +133,7 @@ impl Engine {
         user_input: &str,
         now: u64,
     ) -> PreparedTurn {
-        let session = self
-            .sessions
-            .entry(scope.to_string())
-            .or_insert_with(|| Session::new(persona, now));
-        session.persona = persona;
-        session.last_used = now;
+        self.touch_session(scope, persona, now);
         self.prepare_ephemeral(scope, persona, context, user_input)
     }
 
@@ -204,12 +212,7 @@ impl Engine {
     /// return): same create-or-update defaults and timestamp handling as
     /// `prepare`, minus the prompt assembly.
     pub fn set_session_persona(&mut self, scope: &str, persona: Persona, now: u64) {
-        let session = self
-            .sessions
-            .entry(scope.to_string())
-            .or_insert_with(|| Session::new(persona, now));
-        session.persona = persona;
-        session.last_used = now;
+        self.touch_session(scope, persona, now);
     }
 
     pub fn session_persona(&self, scope: &str) -> Option<Persona> {

@@ -521,13 +521,7 @@ pub async fn handle<O: Outbound + Sync>(
     // A tool may have switched the persona; the transcript keeps its history
     // and the next turn prepares with the new persona.
     if persona != initial_persona {
-        let _ = AppState::lock(&state.engine).prepare(
-            &scoped_channel,
-            persona,
-            &context,
-            &enriched,
-            now,
-        );
+        AppState::lock(&state.engine).set_session_persona(&scoped_channel, persona, now);
     }
     AppState::lock(&state.engine).commit(&scoped_channel, &enriched, &answer, now);
 
