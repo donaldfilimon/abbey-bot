@@ -582,14 +582,9 @@ mlx-audio==0.5.0 \
     --hash=sha256:90f4619186708a2cd4df9824d2ef3d2e427707264414fb604a3ca9dc499cc820 \
     --hash=sha256:d5aba4b99c006acd735408189d127eaf6ed53be0cad789e2eb51aa57f4f6bf13
     # via mlx-vlm
-mlx-metal==0.32.2 \
-    --hash=sha256:3825fff379dbc107dd3413e564a06caeaa24819910ec49c0439e454c06a1b9b8 \
-    --hash=sha256:55a369250d220b2cf10213a87a2ac1b1a420608c5b35b1df4e7147ac8e32f121 \
-    --hash=sha256:e6abeac9ac5265830c9c1541b6f96e9be37a85c2446763a46ad466c63a3837ab
-    # via mlx
-mlx-vlm==0.7.0 \
-    --hash=sha256:0bfc3ae1f82cb0a7866bf9f1257d672f6450c5fbd13f22b2d62fddb72b759379 \
-    --hash=sha256:5ea0c2b8182c055068cb0da59cb2503c238c428a07daaa0bebc246e8c666f4d3
+mlx-vlm==0.7.1 \
+    --hash=sha256:b8abd3cc7e3513d9915bf9f6903833c697dc4c3084c2acdc880029c33e331a03 \
+    --hash=sha256:d9696bc3a2e961f43b5948a101dc0c966b5989d382e6910c37e2f3d555bc3408
     # via -r mlx-vlm-requirements.in
 numpy==2.4.6 \
     --hash=sha256:001fbb8e08d942dd57599e781f2472269ee7f2755fae407b4f67b2f0b17da3f1 \
