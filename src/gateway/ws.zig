@@ -193,6 +193,9 @@ pub const Client = struct {
     max_message: usize,
     message: std.ArrayList(u8) = .empty,
     close_sent: bool = false,
+    /// Serializes frame writes when another thread (the heartbeat timer)
+    /// sends while this thread reads and answers pings.
+    write_lock: ?*std.Io.Mutex = null,
 
     pub fn init(gpa: Allocator, io: std.Io, reader: *Reader, writer: *Writer, flusher: Flusher, max_message: usize) Client {
         return .{ .gpa = gpa, .io = io, .reader = reader, .writer = writer, .flusher = flusher, .max_message = max_message };
@@ -210,6 +213,8 @@ pub const Client = struct {
     }
 
     pub fn send(c: *Client, opcode: Opcode, payload: []const u8) Error!void {
+        if (c.write_lock) |m| m.lockUncancelable(c.io);
+        defer if (c.write_lock) |m| m.unlock(c.io);
         try writeFrame(c.writer, true, opcode, payload, c.maskKey());
         try c.flusher.call();
     }

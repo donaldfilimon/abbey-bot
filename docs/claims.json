@@ -31,9 +31,10 @@
         "close codes follow the oracle transport's table",
         "resume after reconnect sends Resume on Hello; invalid session decides the path",
         "payloads are the documented JSON shapes",
-        "gateway URLs parse to host and port"
+        "gateway URLs parse to host and port; plain ws is loopback-only",
+        "offline gateway run: identify, heartbeat, register, answer /help and a persona reply"
       ],
-      "note": "Pure state machine and payloads tested against serenity 0.12.5's shard.rs table; WSS Hello observed live without a token. Gap: the Identify/Ready/Resume round trip needs a test-guild bot token (pending, Donald)."
+      "note": "State machine follows serenity 0.12.5's shard.rs; the runtime (timer-thread heartbeats, zombie detection, dispatch to workers) runs end to end offline against std.http.Server's WebSocket server. Gap: a live Identify/Ready/Resume needs a test-guild bot token (pending, Donald)."
     },
     {
       "group": "Transport",
@@ -74,16 +75,22 @@
       "group": "Transport",
       "capability": "Global + optional home-guild slash command registration (bulk overwrite)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "registration is a subset of the frozen surface and the rest is claimed Proposed",
+        "offline gateway run: identify, heartbeat, register, answer /help and a persona reply"
+      ],
+      "note": "Bulk overwrite of the handled projection only; the home-guild PUT follows the same code path after the global one."
     },
     {
       "group": "Transport",
       "capability": "Allowed-mentions policy: generated text never pings",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "edit bodies never ping and carry the Abbey embed",
+        "offline gateway run: identify, heartbeat, register, answer /help and a persona reply"
+      ],
       "note": ""
     },
     {
@@ -105,49 +112,67 @@
       "group": "Command surface",
       "capability": "/help private task home and section reference",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Partial",
+      "tests": [
+        "handlers: /help renders the section reference with owner-bound controls",
+        "help controls: strict protocol and fixed expiry",
+        "help controls: malformed, unknown, overlong and future controls fail closed",
+        "offline gateway run: identify, heartbeat, register, answer /help and a persona reply"
+      ],
+      "note": "Section reference and owner-bound section select are ported; the Start section's five private task workflows (Talk with Abbey, Review memory, Use an image, Voice & Music, Manage Abbey) are not, so the sentence advertising them is dropped."
     },
     {
       "group": "Command surface",
       "capability": "/persona route",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "handlers: /persona route explains the composed route; /persona ask without a backend is the honesty copy"
+      ],
       "note": ""
     },
     {
       "group": "Command surface",
       "capability": "/persona ask (generation through the configured backend)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "handlers: /persona route explains the composed route; /persona ask without a backend is the honesty copy",
+        "handlers: /persona ask answers through the local endpoint, tidies, grounds and commits",
+        "offline gateway run: identify, heartbeat, register, answer /help and a persona reply"
+      ],
       "note": ""
     },
     {
       "group": "Command surface",
       "capability": "/roleplay (Aviva lane, NSFW gate)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "handlers: /roleplay refuses in SFW channels, sticks Aviva when empty in an enabled DM"
+      ],
       "note": ""
     },
     {
       "group": "Command surface",
       "capability": "/nsfw and /admin nsfw toggles",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Partial",
+      "tests": [
+        "handlers: /roleplay refuses in SFW channels, sticks Aviva when empty in an enabled DM"
+      ],
+      "note": "/nsfw (DM) is ported; /admin nsfw belongs to the unregistered /admin group."
     },
     {
       "group": "Command surface",
       "capability": "/remember, /forget, /recall",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Partial",
+      "tests": [
+        "handlers: /remember, /recall and /forget keep memory self-scoped unless moderators act",
+        "memory gate: an appended candidate yields its receipt, and forget proposes a tombstone for it"
+      ],
+      "note": "Gap: /recall has no Browse facts button (memory browser is Phase 2) and shows the neutral 0.50 standing because reputation signals come from the Phase-2 learning pipeline; /remember's replaces autocomplete is not wired."
     },
     {
       "group": "Command surface",
@@ -169,8 +194,14 @@
       "group": "Command surface",
       "capability": "/modcall moderation recommendation",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "handlers: /modcall recommends from live guild data and reports hierarchy blockers",
+        "severity outranks history completely and a first minor incident is only noted",
+        "serious incidents escalate through timeouts then ban, and more history is never lighter",
+        "hierarchy refusals and rendering match the oracle's copy",
+        "member permissions follow serenity: @everyone plus roles, all for owner or Administrator"
+      ],
       "note": ""
     },
     {

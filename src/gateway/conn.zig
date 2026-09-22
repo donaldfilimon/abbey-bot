@@ -30,18 +30,28 @@ pub fn ensureBundle(client: *HttpClient) error{ CertificateBundleLoadFailure, Ca
     std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
 }
 
+pub const Target = struct { host: []const u8, port: u16, tls: bool };
+
 /// Split `wss://host[:port][/...]` into host and port. Discord hands out
-/// `wss://gateway.discord.gg` and resume URLs of the same form.
-pub fn parseGatewayUrl(url: []const u8) Error!struct { host: []const u8, port: u16 } {
-    const rest = if (std.mem.startsWith(u8, url, "wss://")) url["wss://".len..] else return error.InvalidGatewayUrl;
+/// `wss://gateway.discord.gg` and resume URLs of the same form. Plain
+/// `ws://` is accepted only for a loopback host (offline tests and local
+/// fakes); anything reaching a real network must be TLS.
+pub fn parseGatewayUrl(url: []const u8) Error!Target {
+    const tls = std.mem.startsWith(u8, url, "wss://");
+    const plain = std.mem.startsWith(u8, url, "ws://");
+    if (!tls and !plain) return error.InvalidGatewayUrl;
+    const rest = url[(if (tls) "wss://".len else "ws://".len)..];
     const end = std.mem.indexOfAny(u8, rest, "/?#") orelse rest.len;
     const authority = rest[0..end];
     if (authority.len == 0) return error.InvalidGatewayUrl;
+    var host = authority;
+    var port: u16 = if (tls) 443 else 80;
     if (std.mem.lastIndexOfScalar(u8, authority, ':')) |colon| {
-        const port = std.fmt.parseInt(u16, authority[colon + 1 ..], 10) catch return error.InvalidGatewayUrl;
-        return .{ .host = authority[0..colon], .port = port };
+        port = std.fmt.parseInt(u16, authority[colon + 1 ..], 10) catch return error.InvalidGatewayUrl;
+        host = authority[0..colon];
     }
-    return .{ .host = authority, .port = 443 };
+    if (plain and !(std.mem.eql(u8, host, "127.0.0.1") or std.mem.eql(u8, host, "localhost"))) return error.InvalidGatewayUrl;
+    return .{ .host = host, .port = port, .tls = tls };
 }
 
 /// std/http/Client.zig Connection.flush: TLS writer, then socket writer.
@@ -58,12 +68,12 @@ pub const Conn = struct {
     /// Connect, complete TLS and the WebSocket opening handshake.
     pub fn open(gpa: Allocator, client: *HttpClient, url: []const u8, max_message: usize) Error!Conn {
         const target = try parseGatewayUrl(url);
-        ensureBundle(client) catch |e| return switch (e) {
+        if (target.tls) ensureBundle(client) catch |e| return switch (e) {
             error.OutOfMemory => error.OutOfMemory,
             else => error.CertificateBundleLoadFailure,
         };
         const host = std.Io.net.HostName.init(target.host) catch return error.InvalidGatewayUrl;
-        const connection = client.connectTcp(host, target.port, .tls) catch return error.TransportFailed;
+        const connection = client.connectTcp(host, target.port, if (target.tls) .tls else .plain) catch return error.TransportFailed;
         errdefer {
             connection.closing = true;
             client.connection_pool.release(connection, client.io);
@@ -91,13 +101,17 @@ pub const Conn = struct {
     }
 };
 
-test "gateway URLs parse to host and port" {
+test "gateway URLs parse to host and port; plain ws is loopback-only" {
     const a = try parseGatewayUrl("wss://gateway.discord.gg");
     try std.testing.expectEqualStrings("gateway.discord.gg", a.host);
     try std.testing.expectEqual(@as(u16, 443), a.port);
     const b = try parseGatewayUrl("wss://gateway-us-east1-b.discord.gg:8443/?v=10");
     try std.testing.expectEqualStrings("gateway-us-east1-b.discord.gg", b.host);
     try std.testing.expectEqual(@as(u16, 8443), b.port);
+    try std.testing.expect(b.tls);
     try std.testing.expectError(error.InvalidGatewayUrl, parseGatewayUrl("https://discord.com"));
     try std.testing.expectError(error.InvalidGatewayUrl, parseGatewayUrl("wss://"));
+    const local = try parseGatewayUrl("ws://127.0.0.1:9000");
+    try std.testing.expect(!local.tls);
+    try std.testing.expectError(error.InvalidGatewayUrl, parseGatewayUrl("ws://gateway.discord.gg"));
 }

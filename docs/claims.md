@@ -11,34 +11,34 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 22, Partial 2, Proposed 40, Out-of-scope 2.
+Totals: Current 28, Partial 5, Proposed 31, Out-of-scope 2.
 
 ## Transport
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
 | RFC 6455 WebSocket client framing (src/gateway/ws.zig) | 1 | Current | `RFC 6455 1.3: the sample key yields the sample accept value`<br>`RFC 6455 5.7: single-frame masked and unmasked text encode to the sample bytes`<br>`RFC 6455 5.7: 256-byte and 64 KiB binary frames use 16- and 64-bit lengths`<br>`RFC 6455 5.7: a fragmented unmasked text message reassembles to Hello`<br>`a ping between fragments is answered with a masked pong carrying the same payload`<br>`server close frames surface their code and are echoed once`<br>`protocol violations are rejected`<br>`messages over the configured maximum are refused before allocation`<br>`handshake sends the upgrade request and validates the 101 response` | Also observed live against gateway.discord.gg (docs/evidence/2026-09-22-gateway-probe.md). |
-| Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect | 1 | Partial | `identify after Hello, heartbeat after interval times jitter, then every interval`<br>`a missed heartbeat ACK reconnects, resuming when a session exists`<br>`close codes follow the oracle transport's table`<br>`resume after reconnect sends Resume on Hello; invalid session decides the path`<br>`payloads are the documented JSON shapes`<br>`gateway URLs parse to host and port` | Pure state machine and payloads tested against serenity 0.12.5's shard.rs table; WSS Hello observed live without a token. Gap: the Identify/Ready/Resume round trip needs a test-guild bot token (pending, Donald). |
+| Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect | 1 | Partial | `identify after Hello, heartbeat after interval times jitter, then every interval`<br>`a missed heartbeat ACK reconnects, resuming when a session exists`<br>`close codes follow the oracle transport's table`<br>`resume after reconnect sends Resume on Hello; invalid session decides the path`<br>`payloads are the documented JSON shapes`<br>`gateway URLs parse to host and port; plain ws is loopback-only`<br>`offline gateway run: identify, heartbeat, register, answer /help and a persona reply` | State machine follows serenity 0.12.5's shard.rs; the runtime (timer-thread heartbeats, zombie detection, dispatch to workers) runs end to end offline against std.http.Server's WebSocket server. Gap: a live Identify/Ready/Resume needs a test-guild bot token (pending, Donald). |
 | zlib-stream transport compression | - | Out-of-scope | none | Deliberately OFF per the rewrite scope; the gateway URL requests no compression. |
 | TLS 1.2/1.3 client for Discord and HTTPS providers (std.crypto.tls) | 1 | Current | `tls loopback: TLS 1.3 with an ECDSA P-256 certificate verifies and carries HTTP`<br>`tls loopback: TLS 1.2 with an RSA-2048 certificate verifies and carries HTTP`<br>`tls loopback: a certificate for another host is refused` | std.crypto.tls.Client through std.http.Client; the loopback server is openssl s_server (std has no TLS server). Live HTTPS and WSS to Discord observed 2026-09-22 with the system CA bundle (docs/evidence/2026-09-22-gateway-probe.md). |
 | REST client with per-route rate-limit buckets from response headers | 1 | Current | `route keys keep major parameters and mask the rest`<br>`reset-after seconds parse to milliseconds, rounding up`<br>`remaining zero waits until the bucket resets and shared buckets share budgets`<br>`a 429 sets the retry deadline; a global 429 pauses every route`<br>`rest client authenticates, follows buckets and retries a 429 after retry_after`<br>`persistent 429s stop after the retry budget` | Exercised against a loopback std.http.Server; live Discord REST calls beyond the unauthenticated GET /gateway need a test-guild token (pending). |
-| Global + optional home-guild slash command registration (bulk overwrite) | 1 | Proposed | none |  |
-| Allowed-mentions policy: generated text never pings | 1 | Proposed | none |  |
+| Global + optional home-guild slash command registration (bulk overwrite) | 1 | Current | `registration is a subset of the frozen surface and the rest is claimed Proposed`<br>`offline gateway run: identify, heartbeat, register, answer /help and a persona reply` | Bulk overwrite of the handled projection only; the home-guild PUT follows the same code path after the global one. |
+| Allowed-mentions policy: generated text never pings | 1 | Current | `edit bodies never ping and carry the Abbey embed`<br>`offline gateway run: identify, heartbeat, register, answer /help and a persona reply` |  |
 
 ## Command surface
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
 | Frozen slash-command catalog: serialized payload equals the oracle export (26 top-level, 68 commands) | 1 | Current | `catalog parity: the Zig registration payload is byte-identical to the oracle export`<br>`catalog parity: the compact request body parses to the same document`<br>`catalog specs match the oracle's 68 registered commands in order`<br>`every registered leaf maps to the payload with its contexts and default permission`<br>`availability golden: 72 inputs x 68 commands match the oracle`<br>`help golden: every section renders byte-identically for five permission shapes` | Gate also runs abbey-bot-zig catalog-json and cmp's it against contracts/catalog/command-payload.json. The full 26-command surface is frozen; registration of commands whose handlers are Proposed is decided in the serve row. |
-| /help private task home and section reference | 1 | Proposed | none |  |
-| /persona route | 1 | Proposed | none |  |
-| /persona ask (generation through the configured backend) | 1 | Proposed | none |  |
-| /roleplay (Aviva lane, NSFW gate) | 1 | Proposed | none |  |
-| /nsfw and /admin nsfw toggles | 1 | Proposed | none |  |
-| /remember, /forget, /recall | 1 | Proposed | none |  |
+| /help private task home and section reference | 1 | Partial | `handlers: /help renders the section reference with owner-bound controls`<br>`help controls: strict protocol and fixed expiry`<br>`help controls: malformed, unknown, overlong and future controls fail closed`<br>`offline gateway run: identify, heartbeat, register, answer /help and a persona reply` | Section reference and owner-bound section select are ported; the Start section's five private task workflows (Talk with Abbey, Review memory, Use an image, Voice & Music, Manage Abbey) are not, so the sentence advertising them is dropped. |
+| /persona route | 1 | Current | `handlers: /persona route explains the composed route; /persona ask without a backend is the honesty copy` |  |
+| /persona ask (generation through the configured backend) | 1 | Current | `handlers: /persona route explains the composed route; /persona ask without a backend is the honesty copy`<br>`handlers: /persona ask answers through the local endpoint, tidies, grounds and commits`<br>`offline gateway run: identify, heartbeat, register, answer /help and a persona reply` |  |
+| /roleplay (Aviva lane, NSFW gate) | 1 | Current | `handlers: /roleplay refuses in SFW channels, sticks Aviva when empty in an enabled DM` |  |
+| /nsfw and /admin nsfw toggles | 1 | Partial | `handlers: /roleplay refuses in SFW channels, sticks Aviva when empty in an enabled DM` | /nsfw (DM) is ported; /admin nsfw belongs to the unregistered /admin group. |
+| /remember, /forget, /recall | 1 | Partial | `handlers: /remember, /recall and /forget keep memory self-scoped unless moderators act`<br>`memory gate: an appended candidate yields its receipt, and forget proposes a tombstone for it` | Gap: /recall has no Browse facts button (memory browser is Phase 2) and shows the neutral 0.50 standing because reputation signals come from the Phase-2 learning pipeline; /remember's replaces autocomplete is not wired. |
 | /pending list\|confirm\|dismiss | 1 | Proposed | none | Memory service supports confirm/dismiss (tested there); the command with its confirm/dismiss buttons is not ported yet, so it is not registered. |
 | /reputation | 1 | Proposed | none |  |
-| /modcall moderation recommendation | 1 | Proposed | none |  |
+| /modcall moderation recommendation | 1 | Current | `handlers: /modcall recommends from live guild data and reports hierarchy blockers`<br>`severity outranks history completely and a first minor incident is only noted`<br>`serious incidents escalate through timeouts then ban, and more history is never lighter`<br>`hierarchy refusals and rendering match the oracle's copy`<br>`member permissions follow serenity: @everyone plus roles, all for owner or Administrator` |  |
 | /whois, Abbey: profile, /perms | 1 | Proposed | none |  |
 | Ask Abbey message menu | 1 | Proposed | none |  |
 | /summarize | 1 | Proposed | none |  |
