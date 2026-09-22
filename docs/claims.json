@@ -405,9 +405,13 @@
       "group": "Memory",
       "capability": "Zig-native append-only JSONL episodic store (STM/LTM)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "store appends durably, replays in order and never shares scopes",
+        "a torn final line is dropped and a corrupt middle line fails closed",
+        "a persistent service replays facts, settings and the projection after restart"
+      ],
+      "note": "Decision 2. episodes.jsonl (0600, dir 0700, exclusive advisory lock, fsync per append); LTM facts/pending/receipts/settings and STM messages/summaries. No SQLite."
     },
     {
       "group": "Memory",
@@ -428,9 +432,15 @@
       "group": "Memory",
       "capability": "Memory gate: episode-gated /remember, /forget, /pending confirm",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "memory gate: an unreachable gate stores nothing and says so; an uncovered scope is ungated",
+        "memory gate: an appended candidate yields its receipt, and forget proposes a tombstone for it",
+        "explicit replaces supersedes atomically and an absent target is refused without storing",
+        "a model proposal stores without removing anything; confirm and dismiss behave like the oracle",
+        "remember validates once, updates both representations and the projection never crosses scopes"
+      ],
+      "note": "Propose-before-write for /remember and /forget with receipts keyed per fact, transcribed from memory_gate.rs and runtime/memory_service.rs. The model-tool write queue is Phase 2 with the tools."
     },
     {
       "group": "Memory",
@@ -449,9 +459,14 @@
       "group": "Memory",
       "capability": "Checkpoint gate against the frozen corpus",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Partial",
+      "tests": [
+        "checkpoints: unchanged rows are not re-proposed and changed rows supersede their receipt",
+        "checkpoints: a refused checkpoint falls back to the last admitted row or is dropped",
+        "checkpoints: the synchronous path persists only admitted rows and uncovered guilds are untouched",
+        "corpus verifier: the vendored Abbey corpus matches its pinned lock, inventory, digests and aggregate"
+      ],
+      "note": "Gap: plan/settle/restrict are ported and tested as pure functions, but the rows they gate are DQN brain snapshots and the learning loop is Phase 2, so nothing produces checkpoints yet. The frozen-corpus side is the Zig corpus verifier."
     },
     {
       "group": "Memory",
