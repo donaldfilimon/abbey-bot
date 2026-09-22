@@ -59,9 +59,16 @@
       "group": "Transport",
       "capability": "REST client with per-route rate-limit buckets from response headers",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "route keys keep major parameters and mask the rest",
+        "reset-after seconds parse to milliseconds, rounding up",
+        "remaining zero waits until the bucket resets and shared buckets share budgets",
+        "a 429 sets the retry deadline; a global 429 pauses every route",
+        "rest client authenticates, follows buckets and retries a 429 after retry_after",
+        "persistent 429s stop after the retry budget"
+      ],
+      "note": "Exercised against a loopback std.http.Server; live Discord REST calls beyond the unauthenticated GET /gateway need a test-guild token (pending)."
     },
     {
       "group": "Transport",

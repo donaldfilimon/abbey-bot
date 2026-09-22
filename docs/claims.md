@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 13, Partial 1, Proposed 49, Out-of-scope 2.
+Totals: Current 14, Partial 1, Proposed 48, Out-of-scope 2.
 
 ## Transport
 
@@ -21,7 +21,7 @@ Totals: Current 13, Partial 1, Proposed 49, Out-of-scope 2.
 | Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect | 1 | Partial | `identify after Hello, heartbeat after interval times jitter, then every interval`<br>`a missed heartbeat ACK reconnects, resuming when a session exists`<br>`close codes follow the oracle transport's table`<br>`resume after reconnect sends Resume on Hello; invalid session decides the path`<br>`payloads are the documented JSON shapes`<br>`gateway URLs parse to host and port` | Pure state machine and payloads tested against serenity 0.12.5's shard.rs table; WSS Hello observed live without a token. Gap: the Identify/Ready/Resume round trip needs a test-guild bot token (pending, Donald). |
 | zlib-stream transport compression | - | Out-of-scope | none | Deliberately OFF per the rewrite scope; the gateway URL requests no compression. |
 | TLS 1.2/1.3 client for Discord and HTTPS providers (std.crypto.tls) | 1 | Current | `tls loopback: TLS 1.3 with an ECDSA P-256 certificate verifies and carries HTTP`<br>`tls loopback: TLS 1.2 with an RSA-2048 certificate verifies and carries HTTP`<br>`tls loopback: a certificate for another host is refused` | std.crypto.tls.Client through std.http.Client; the loopback server is openssl s_server (std has no TLS server). Live HTTPS and WSS to Discord observed 2026-09-22 with the system CA bundle (docs/evidence/2026-09-22-gateway-probe.md). |
-| REST client with per-route rate-limit buckets from response headers | 1 | Proposed | none |  |
+| REST client with per-route rate-limit buckets from response headers | 1 | Current | `route keys keep major parameters and mask the rest`<br>`reset-after seconds parse to milliseconds, rounding up`<br>`remaining zero waits until the bucket resets and shared buckets share budgets`<br>`a 429 sets the retry deadline; a global 429 pauses every route`<br>`rest client authenticates, follows buckets and retries a 429 after retry_after`<br>`persistent 429s stop after the retry budget` | Exercised against a loopback std.http.Server; live Discord REST calls beyond the unauthenticated GET /gateway need a test-guild token (pending). |
 | Global + optional home-guild slash command registration (bulk overwrite) | 1 | Proposed | none |  |
 | Allowed-mentions policy: generated text never pings | 1 | Proposed | none |  |
 

@@ -41,7 +41,8 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run abbey-bot-zig");
     run_step.dependOn(&run_cmd.step);
 
-    const lib_tests = b.addTest(.{ .root_module = lib_mod });
+    const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose names contain this (repeatable)") orelse &.{};
+    const lib_tests = b.addTest(.{ .root_module = lib_mod, .filters = test_filters });
     const exe_tests = b.addTest(.{ .root_module = exe_mod });
     const test_step = b.step("test", "Run unit tests (leak-checked by the test runner)");
     // std/Build/Step/Run.zig: has_side_effects forces a re-run, so a cached

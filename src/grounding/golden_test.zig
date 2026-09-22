@@ -25,15 +25,27 @@ test "grounding golden: specifics, verdicts and hedged replies match the oracle"
     defer parsed.deinit();
     var checked: usize = 0;
     var panicked: usize = 0;
+    // Every "all" row shares one source list; build that grounding once.
+    var shared: ?grounding.Grounding = null;
+    defer if (shared) |*g| g.deinit(gpa);
     for (golden.items(parsed.value, "rows")) |row| {
         const reply = golden.str(row, "reply");
         const src_values = golden.items(row, "sources");
-        const sources = try gpa.alloc([]const u8, src_values.len);
-        defer gpa.free(sources);
-        for (src_values, sources) |v, *s| s.* = v.string;
-        var g = try grounding.fromSources(gpa, sources);
-        defer g.deinit(gpa);
-        var v = try grounding.check(gpa, reply, &g);
+        const is_all = std.mem.eql(u8, golden.str(row, "mode"), "all");
+        var own: grounding.Grounding = .{};
+        defer own.deinit(gpa);
+        if (!is_all or shared == null) {
+            const sources = try gpa.alloc([]const u8, src_values.len);
+            defer gpa.free(sources);
+            for (src_values, sources) |val, *s| s.* = val.string;
+            own = try grounding.fromSources(gpa, sources);
+            if (is_all) {
+                shared = own;
+                own = .{};
+            }
+        }
+        const g: *const grounding.Grounding = if (is_all) &shared.? else &own;
+        var v = try grounding.check(gpa, reply, g);
         defer v.deinit(gpa);
         const hedged = try grounding.hedged(gpa, reply, &v);
         defer gpa.free(hedged);
