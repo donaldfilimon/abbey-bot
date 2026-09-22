@@ -110,7 +110,8 @@ fn invocation_uses_argv_and_stdin_without_transcript_saving() {
     let cfg = config(FmMode::Pcc);
     let private = "private memory: favorite color blue; $(touch /tmp/nope)";
     let prompt = render_transcript(private, &[ChatTurn::user("hello")]).unwrap();
-    let invocation = CliInvocation::new(&cfg, &prompt, Path::new("/tmp/schema.json"));
+    let schema = std::env::temp_dir().join("schema.json");
+    let invocation = CliInvocation::new(&cfg, &prompt, &schema);
     assert_eq!(invocation.program, Path::new(DEFAULT_FM_CLI));
     assert!(String::from_utf8_lossy(&invocation.stdin).contains(private));
     let args = invocation
@@ -129,19 +130,19 @@ fn invocation_uses_argv_and_stdin_without_transcript_saving() {
 #[test]
 fn image_invocation_keeps_prompt_off_argv_and_enables_ocr_only_for_ocr() {
     let cfg = config(FmMode::System);
-    let image = Path::new("/tmp/synthetic.png");
+    let image = std::env::temp_dir().join("synthetic.png");
     for (task, expected_ocr) in [
         (FmImageTask::QualificationShapes, false),
         (FmImageTask::QualificationOcr, true),
     ] {
-        let invocation = CliInvocation::for_image(&cfg, task, image);
+        let invocation = CliInvocation::for_image(&cfg, task, &image);
         let args = invocation
             .args
             .iter()
             .map(|arg| arg.to_string_lossy())
             .collect::<Vec<_>>();
         assert!(args.iter().any(|arg| arg == "--image"));
-        assert!(args.iter().any(|arg| arg == "/tmp/synthetic.png"));
+        assert!(args.iter().any(|arg| *arg == image.to_string_lossy()));
         assert!(!args.iter().any(|arg| arg.contains("red square")));
         assert!(!args.iter().any(|arg| arg == "--save-transcript"));
         assert_eq!(args.iter().any(|arg| arg == "ocr"), expected_ocr);
@@ -342,12 +343,12 @@ fn every_tool_argument_adapter_rejects_invalid_values() {
     let too_long = "x".repeat(crate::memory::MAX_FACT_CHARS + 1);
     let invalid = [
         r#"{"remember_fact":7}"#.to_string(),
-        format!(r#"{{"remember_fact":"{too_long}"}}"#),
+        json!({ "remember_fact": too_long }).to_string(),
         r#"{"lookup_reputation":""}"#.to_string(),
         r#"{"recall":{}}"#.to_string(),
         r#"{"switch_persona":"unknown"}"#.to_string(),
         r#"{"recent_messages":0}"#.to_string(),
-        format!(r#"{{"recent_messages":{}}}"#, crate::tools::MAX_RECENT + 1),
+        json!({ "recent_messages": crate::tools::MAX_RECENT + 1 }).to_string(),
         r#"{"recent_messages":"ten"}"#.to_string(),
     ];
     for raw in invalid {

@@ -10,3 +10,7 @@ README.md text eol=lf
 tests/fixtures/service-protocol/*.json text eol=lf
 # Consent serialization is also compared byte for byte after its LF.
 tests/fixtures/voice_consent_v1.json text eol=lf
+# episode_gate/tests.rs compares serde_json::to_string output with these
+# fixtures byte for byte (after trim_end); pin LF so an autocrlf checkout
+# cannot pass today only because each fixture happens to be one line.
+tests/fixtures/episode_write_*.json text eol=lf

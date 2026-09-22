@@ -200,7 +200,7 @@ async fn live_memory_path_round_trips_through_a_real_gateway() {
     // 4. A changed brain checkpoint is proposed by the gated persist and its
     //    receipt recorded; the persist itself is memory-only here.
     let row = BrainRow {
-        snapshot_json: format!("{{\"acceptance\":{run}}}"),
+        snapshot_json: serde_json::json!({ "acceptance": run }).to_string(),
         experience_count: 1,
     };
     AppState::lock(&state.stores)
