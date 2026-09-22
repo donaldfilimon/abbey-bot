@@ -108,6 +108,19 @@ impl Engine {
         Self::default()
     }
 
+    /// Create-or-update the session for `scope`: insert with `persona` on first
+    /// use, then switch the persona and refresh the timestamp. The transcript
+    /// is untouched — [`Engine::commit`] owns turn recording.
+    fn touch_session(&mut self, scope: &str, persona: Persona, now: u64) -> &mut Session {
+        let session = self
+            .sessions
+            .entry(scope.to_string())
+            .or_insert_with(|| Session::new(persona, now));
+        session.persona = persona;
+        session.last_used = now;
+        session
+    }
+
     /// Assemble the next request for `scope`. Creates the session on first
     /// use; on a persona change switches the persona and keeps the transcript.
     /// The transcript is not mutated — [`Engine::commit`] does that once the
@@ -120,12 +133,7 @@ impl Engine {
         user_input: &str,
         now: u64,
     ) -> PreparedTurn {
-        let session = self
-            .sessions
-            .entry(scope.to_string())
-            .or_insert_with(|| Session::new(persona, now));
-        session.persona = persona;
-        session.last_used = now;
+        self.touch_session(scope, persona, now);
         self.prepare_ephemeral(scope, persona, context, user_input)
     }
 
@@ -197,6 +205,14 @@ impl Engine {
     /// Turns held for `scope` (0 when there is no session).
     pub fn session_len(&self, scope: &str) -> usize {
         self.sessions.get(scope).map_or(0, |s| s.turns.len())
+    }
+
+    /// Stick `persona` on `scope` without recording a transcript turn.
+    /// The empty `/roleplay` arm calls this (not `prepare` with a discarded
+    /// return): same create-or-update defaults and timestamp handling as
+    /// `prepare`, minus the prompt assembly.
+    pub fn set_session_persona(&mut self, scope: &str, persona: Persona, now: u64) {
+        self.touch_session(scope, persona, now);
     }
 
     pub fn session_persona(&self, scope: &str) -> Option<Persona> {
@@ -367,6 +383,19 @@ mod tests {
         assert!(prepared.system_prompt.starts_with("You are Aviva. "));
         assert_eq!(prepared.turns.len(), 3, "history survived the switch");
         assert_eq!(prepared.turns[0], ChatTurn::user("q1"));
+    }
+
+    #[test]
+    fn empty_roleplay_stick_sets_aviva_without_a_turn() {
+        // Wiring pin for the empty `/roleplay` arm in `commands.rs`: it calls
+        // `set_session_persona` (not `prepare` with a discarded return), so
+        // follow-up freeform reads Aviva via `session_persona` with no
+        // transcript turn recorded. `persona_switch_keeps_the_transcript`
+        // already covers `prepare`'s persona mutation — this owns the stick.
+        let mut engine = Engine::new();
+        engine.set_session_persona("discord:1", Persona::Aviva, 1);
+        assert_eq!(engine.session_persona("discord:1"), Some(Persona::Aviva));
+        assert_eq!(engine.session_len("discord:1"), 0);
     }
 
     #[test]

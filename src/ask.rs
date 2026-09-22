@@ -5,7 +5,8 @@
 //! (answer, failure, or no backend at all) into the reply text Discord posts —
 //! every one of which passes through `clamp_message` in the command layer.
 //!
-//! The persona text is a **transcription, not a dependency**. The canonical
+//! The persona text carries abi-ai's pinned sentences verbatim (Aviva's first
+//! sentence, the em dash) and paraphrases the rest — it is **not a dependency**.
 //! abi-ai contracts live in `../abi/crates/abi-ai/src/identity.rs`
 //! (`profile_contract`); abbey-bot deliberately does not take the sibling path
 //! dependency. **Abbey\u{2019}s Discord voice (2026-09-16) follows Donald\u{2019}s
@@ -207,7 +208,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_execution_cues_assemble_avivas_prompt() {
+    fn avivas_prompt_carries_the_contract_first_sentence() {
         let route = crate::persona::route("execute deploy run the build quickly", None);
         assert_eq!(route.persona, Persona::Aviva);
 
@@ -217,12 +218,12 @@ mod tests {
             prompt.contains(
                 "Focused response mode optimized for speed, clarity, candor, and technical precision."
             ),
-            "the prompt must carry the abi-ai ProfileContract transcription: {prompt}"
+            "the prompt must carry the abi-ai ProfileContract first sentence verbatim (the rest is paraphrase): {prompt}"
         );
     }
 
     #[test]
-    fn each_personas_prompt_carries_its_own_transcription() {
+    fn each_personas_prompt_carries_its_own_description() {
         for persona in [Persona::Abbey, Persona::Aviva, Persona::Abi] {
             let prompt = system_prompt(persona);
             assert!(
@@ -319,9 +320,9 @@ mod tests {
     }
 
     #[test]
-    fn avivas_transcription_keeps_the_em_dash() {
+    fn avivas_copy_keeps_the_em_dash() {
         // identity.rs writes `honest\u{2014}not` with a real em dash; an ASCII
-        // hyphen here would be a silent mis-transcription of the contract.
+        // hyphen here would silently mismatch the contract.
         assert!(contract_description(Persona::Aviva).contains("honest\u{2014}not"));
         assert!(contract_description(Persona::Aviva).contains("hand to Abbey"));
         assert!(contract_description(Persona::Abi).contains("WDBX is substrate"));
