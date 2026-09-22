@@ -56,6 +56,9 @@ pub const interaction = @import("discord/interaction.zig");
 pub const llm = @import("llm/openai.zig");
 pub const llm_guidance = @import("llm/guidance.zig");
 pub const tls_test = @import("net/tls_test.zig");
+pub const service_config = @import("service/config.zig");
+pub const service_readiness = @import("service/readiness.zig");
+pub const service_serve = @import("service/serve.zig");
 
 pub const version = "0.1.0";
 

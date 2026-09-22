@@ -10,15 +10,17 @@ const usage =
     \\  abbey-bot-zig <command>
     \\
     \\COMMANDS:
+    \\  serve [--managed-service]  Run the bot (token from DISCORD_TOKEN or DISCORD_BOT_TOKEN)
     \\  catalog-json   Print the frozen slash-command registration payload
     \\  gateway-probe  Token-free live check: HTTPS /gateway, WSS Hello, close
     \\  wdbx-interop <abi>  Query a Zig-written fact segment through the real abi binary
+    \\  readiness-sample <home>  Publish sample v1 documents under <home> (gate use)
     \\  version        Print the version
     \\  help           Show this help
     \\
 ;
 
-const Command = enum { @"catalog-json", @"gateway-probe", @"wdbx-interop", version, help };
+const Command = enum { serve, @"readiness-sample", @"catalog-json", @"gateway-probe", @"wdbx-interop", version, help };
 
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
@@ -30,12 +32,37 @@ pub fn main(init: std.process.Init) !u8 {
     const out = &stdout.interface;
     defer out.flush() catch {};
 
+    // The launchd contract (deploy/*.plist, service_installation.py) runs
+    // the binary with `--managed-service` as its sole argument.
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--managed-service")) {
+        var ebuf: [4096]u8 = undefined;
+        var stderr = std.Io.File.stderr().writer(io, &ebuf);
+        defer stderr.interface.flush() catch {};
+        return @backingInt(try abbey.service_serve.run(init.gpa, io, init.environ_map, args[1..], &stderr.interface));
+    }
     const name = if (args.len >= 2) args[1] else "help";
     const command = std.meta.stringToEnum(Command, name) orelse {
         try out.print("unknown command: {s}\n\n{s}", .{ name, usage });
         return 2;
     };
     switch (command) {
+        .serve => {
+            var ebuf: [4096]u8 = undefined;
+            var stderr = std.Io.File.stderr().writer(io, &ebuf);
+            defer stderr.interface.flush() catch {};
+            const code = try abbey.service_serve.run(init.gpa, io, init.environ_map, args[2..], &stderr.interface);
+            return @backingInt(code);
+        },
+        .@"readiness-sample" => {
+            if (args.len != 3) {
+                try out.writeAll("usage: abbey-bot-zig readiness-sample <home>\n");
+                return 2;
+            }
+            abbey.service_serve.publishSample(init.gpa, io, args[2]) catch |err| {
+                try out.print("readiness-sample: FAILED ({s})\n", .{@errorName(err)});
+                return 1;
+            };
+        },
         .help => try out.writeAll(usage),
         .version => try out.print("abbey-bot-zig {s}\n", .{abbey.version}),
         .@"wdbx-interop" => {

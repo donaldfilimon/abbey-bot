@@ -63,3 +63,29 @@ private temp directory) writes the JSON object of `abi wdbx query ... --json`
 to **stderr** when stdout is not a terminal. `src/memory/wdbx_bridge.zig`
 accepts the object from either stream. This is an abi defect to fix in the abi
 repository (read-only for this rewrite), not a Zig behavior.
+
+## deploy/ copies (2026-09-22)
+
+Copied from the oracle's `deploy/` at 281ee3b:
+
+- `service-protocol-v1.json`: byte-identical, and the gate compares it by content through the Python suites.
+- `service_protocol.py`, `service_installation.py`, `service_readiness.py`, `service_status.py`, `check-service-readiness.py`, `service-status.py`, and `test-service-{protocol,installation,readiness,status}.py`.
+
+The only edits are mechanical identity substitutions, made with `perl -pi -e 's/abbey-bot(?![-\w])/abbey-bot-zig/g; s#tests/fixtures/service-protocol#contracts/fixtures/service-protocol#g'`. After them:
+
+- the component directory is `~/.local/share/abbey-bot-zig`
+- the binary is `~/.local/libexec/abbey-bot-zig/abbey-bot-zig`
+- the launchd label is `com.donaldfilimon.abbey-bot-zig`
+- the fixtures are read from `contracts/fixtures/service-protocol`
+
+No logic changed. `diff` against the oracle shows only those lines. The rewrite never writes the live bot's `~/.local/share/abbey-bot`, and its plist can never carry the live label: `tools/check_managed_service.py` asserts that the validator rejects the live label.
+
+`deploy/com.donaldfilimon.abbey-bot-zig.plist` is the oracle's plist with the same substitution. `EnvironmentVariables.RUST_LOG` is dropped because it has no Zig consumer.
+
+Not copied:
+
+- The installers (`install-*.sh`), because installing is Donald's call.
+- `service_transaction.py` and `service_environment.py`, because they belong to the installer.
+- The audio, MLX and provider-qualification scripts, because they cover Proposed rows.
+
+`scripts/check-privacy.py` is not copied. It parses Rust logging macros (`tracing::`, `println!` and the like), so on Zig source it would match nothing and pass vacuously. In the rewrite the equivalent property is structural: `serve` prints only fixed diagnostics that name a variable and never its value. The credential tests pin those diagnostics. A Zig-aware privacy scanner is future work, and no claim rests on it.

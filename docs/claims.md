@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 28, Partial 5, Proposed 31, Out-of-scope 2.
+Totals: Current 31, Partial 6, Proposed 27, Out-of-scope 2.
 
 ## Transport
 
@@ -95,10 +95,10 @@ Totals: Current 28, Partial 5, Proposed 31, Out-of-scope 2.
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
-| serve subcommand with the .env.example environment contract | 1 | Proposed | none |  |
-| Readiness and bootstrap documents in service-protocol-v1 format | 1 | Proposed | none |  |
-| launchd plist under deploy/ (distinct label, never the live bot's) | 1 | Proposed | none |  |
-| Refusal to run against a live token while the managed Rust service is loaded | 1 | Proposed | none |  |
+| serve subcommand with the .env.example environment contract | 1 | Partial | `token selection is source-aware and fail-closed`<br>`environment contract: blank values are unset and remote primaries are refused`<br>`serve arguments: only the sole --managed-service flag is accepted`<br>`serve refuses a blank primary token before touching the network`<br>`application owners come from the team when present, else the owner` | serve and the launchd --managed-service entry select the credential with the oracle's messages, refuse beside the live service, run the Discord preflight (GET /oauth2/applications/@me; 401 maps to the oracle's rejected diagnostic) and the gateway bot. Gap: the authenticated path has never run, because it needs Donald's test-guild token. The gate also runs the binary for missing and blank credentials (tools/check_managed_service.py). .env.example lists only keys the Zig bot reads; the gate fails on a listed key with no reader. |
+| Readiness and bootstrap documents in service-protocol-v1 format | 1 | Current | `readiness bytes are the oracle's canonical v1 encoding`<br>`ready is refused until every checkpoint and state agrees`<br>`private directory is created 0700 and documents are published 0600 by rename`<br>`identity of the running test binary hashes the executable`<br>`readiness observation reaches ready only after READY and registration` | Published under ~/.local/share/abbey-bot-zig (0700 dir, 0600 files, temp plus rename), never the live bot's path. The gate parses Zig-written documents with the copied deploy/service_protocol.py read_private and checks executable_sha256 against the built binary. deploy/service-protocol-v1.json is byte-identical to the oracle's. |
+| launchd plist under deploy/ (distinct label, never the live bot's) | 1 | Current | `the launchd plist runs this binary with the sole --managed-service argument under its own label` | deploy/com.donaldfilimon.abbey-bot-zig.plist is validated by the copied deploy/service_installation.validate_managed_plist in the gate, which also rejects the live label. It is not installed; installing it is Donald's call. |
+| Refusal to run against a live token while the managed Rust service is loaded | 1 | Current | `serve refuses beside the live Rust service unless this is an explicit test-guild run` | Exact-label query (launchctl print gui/<uid>/com.donaldfilimon.abbey-bot), fail-closed when the query cannot run, checked before any network I/O. ABBEY_BOT_ZIG_TEST_GUILD=1 overrides it, for a separate test-guild token only. The gate runs the binary with a placeholder token while the live service is loaded and expects exit 3. |
 | Typed operational event log with rotation | 2 | Proposed | none | Not in the phase-1 list. |
 | Live test-guild acceptance: connects, answers /help and one persona reply | 1 | Proposed | none | Pending: needs a test-guild bot token from Donald; the production token is never used. |
 

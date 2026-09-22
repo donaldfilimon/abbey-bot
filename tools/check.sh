@@ -70,6 +70,14 @@ cat "$LOG_DIR/wdbx.log"
 run_logged wdbx-selftest python3 scripts/test-check-wdbx-conformance.py
 echo "check-wdbx-conformance self-test: ok"
 
+stage "managed service (deploy contract)"
+for t in deploy/test-service-protocol.py deploy/test-service-readiness.py deploy/test-service-installation.py deploy/test-service-status.py; do
+  run_logged "$(basename "$t" .py)" python3 "$t"
+done
+echo "copied deploy/ validator suites: ok"
+run_logged managed python3 tools/check_managed_service.py
+cat "$LOG_DIR/managed.log"
+
 stage "generated tables"
 run_logged unicode python3 tools/gen_unicode_tables.py --check
 cat "$LOG_DIR/unicode.log"
@@ -80,7 +88,7 @@ cat "$LOG_DIR/claims.log"
 
 stage "size guard"
 over=0
-for f in $(find src tools scripts -type f \( -name '*.zig' -o -name '*.py' -o -name '*.sh' \)); do
+for f in $(find src tools scripts deploy -type f \( -name '*.zig' -o -name '*.py' -o -name '*.sh' \)); do
   n=$(wc -l < "$f")
   if [ "$n" -gt 1000 ]; then echo "over 1000 lines: $f ($n)"; over=1; fi
 done

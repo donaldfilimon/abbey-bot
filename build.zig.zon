@@ -10,5 +10,6 @@
         "src",
         "contracts",
         "docs",
+        "deploy",
     },
 }
