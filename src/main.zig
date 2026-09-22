@@ -12,12 +12,13 @@ const usage =
     \\COMMANDS:
     \\  catalog-json   Print the frozen slash-command registration payload
     \\  gateway-probe  Token-free live check: HTTPS /gateway, WSS Hello, close
+    \\  wdbx-interop <abi>  Query a Zig-written fact segment through the real abi binary
     \\  version        Print the version
     \\  help           Show this help
     \\
 ;
 
-const Command = enum { @"catalog-json", @"gateway-probe", version, help };
+const Command = enum { @"catalog-json", @"gateway-probe", @"wdbx-interop", version, help };
 
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
@@ -37,6 +38,18 @@ pub fn main(init: std.process.Init) !u8 {
     switch (command) {
         .help => try out.writeAll(usage),
         .version => try out.print("abbey-bot-zig {s}\n", .{abbey.version}),
+        .@"wdbx-interop" => {
+            if (args.len < 3) {
+                try out.writeAll("usage: abbey-bot-zig wdbx-interop <absolute path to abi>\n");
+                return 2;
+            }
+            const tmp_root = init.environ_map.get("TMPDIR") orelse "/tmp";
+            const report = abbey.wdbx_interop.run(init.gpa, io, args[2], tmp_root) catch |err| {
+                try out.print("wdbx-interop: FAILED ({s})\n", .{@errorName(err)});
+                return 1;
+            };
+            try out.print("wdbx-interop: ok ({d} vectors scored by abi, max |abi - zig| = {e:.3})\n", .{ report.compared, report.max_abs_diff });
+        },
         .@"catalog-json" => try abbey.catalog_serialize.writePayload(out, abbey.catalog_serialize.frozen()),
         .@"gateway-probe" => {
             var client = abbey.http.Client.init(init.gpa, io);

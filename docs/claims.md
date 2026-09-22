@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 16, Partial 1, Proposed 46, Out-of-scope 2.
+Totals: Current 19, Partial 1, Proposed 43, Out-of-scope 2.
 
 ## Transport
 
@@ -73,12 +73,12 @@ Totals: Current 16, Partial 1, Proposed 46, Out-of-scope 2.
 | Fact validation and memory bank semantics (300-char facts, 100 facts, pending supersessions) | 1 | Current | `memory golden: persona context render, grounding sources and fact validation match the oracle`<br>`remember rejects duplicates and the cap; forget removes by exact text`<br>`pending supersessions are bounded and never touch facts`<br>`channel recent window is capped at 50 and counts every message` |  |
 | Fact relevance selection for prompt context (recall ranking) | 1 | Current | `recall golden: selection order and omitted counts match the oracle`<br>`rare terms dominate and zero-score facts fill newest first` |  |
 | Zig-native append-only JSONL episodic store (STM/LTM) | 1 | Proposed | none |  |
-| WDBX vector memory through the abi wdbx subprocess | 1 | Proposed | none |  |
+| WDBX vector memory through the abi wdbx subprocess | 1 | Current | `bridge runs abi wdbx query with a scrubbed environment and keeps only the caller's scope`<br>`wdbx golden: embeddings match the oracle bit for bit and render as serde_json does`<br>`wdbx golden: segment renders, recall ranking and reconciliation match the oracle`<br>`the conformance fixture parses and re-renders byte-identically`<br>`std Wyhash reproduces the pinned Zig reference vectors`<br>`f32 text matches serde_json's ryu layout` | Facts project into the oracle's byte-compatible v1 JSONL segment; ranking runs through 'abi wdbx query' (never linked). The gate's wdbx-interop stage scores a Zig-written segment with the installed abi and requires abi's semantic scores to equal the Zig cosine to abi's printed precision (observed max diff 4.061e-7 on 2026-09-22); it prints SKIP when no abi binary is present. |
 | Memory gate: episode-gated /remember, /forget, /pending confirm | 1 | Proposed | none |  |
 | Episode gate client: content-free proposal and memory_candidate writes via abi wdbx episode propose | 1 | Proposed | none |  |
 | Checkpoint gate against the frozen corpus | 1 | Proposed | none |  |
-| Abbey contract corpus guard (scripts/check-abbey-contracts.py) | 1 | Proposed | none |  |
-| WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py) | 1 | Proposed | none |  |
+| Abbey contract corpus guard (scripts/check-abbey-contracts.py) | 1 | Current | `the conformance fixture parses and re-renders byte-identically` | scripts/check-abbey-contracts.py (copied unchanged) verifies 81 artifacts, 88328 bytes, digest 72e241e3...; its own self-test runs first. A Zig re-implementation of the corpus verifier is not part of this row. |
+| WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py) | 1 | Current | `the conformance fixture parses and re-renders byte-identically` | The gate also runs the oracle's own scripts/check-wdbx-conformance.py against ../wdbx's golden copy; that compares fixtures, and the Zig test adds parse/render identity for the same bytes. |
 
 ## Generation backends
 

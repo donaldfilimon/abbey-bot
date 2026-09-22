@@ -413,9 +413,16 @@
       "group": "Memory",
       "capability": "WDBX vector memory through the abi wdbx subprocess",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "bridge runs abi wdbx query with a scrubbed environment and keeps only the caller's scope",
+        "wdbx golden: embeddings match the oracle bit for bit and render as serde_json does",
+        "wdbx golden: segment renders, recall ranking and reconciliation match the oracle",
+        "the conformance fixture parses and re-renders byte-identically",
+        "std Wyhash reproduces the pinned Zig reference vectors",
+        "f32 text matches serde_json's ryu layout"
+      ],
+      "note": "Facts project into the oracle's byte-compatible v1 JSONL segment; ranking runs through 'abi wdbx query' (never linked). The gate's wdbx-interop stage scores a Zig-written segment with the installed abi and requires abi's semantic scores to equal the Zig cosine to abi's printed precision (observed max diff 4.061e-7 on 2026-09-22); it prints SKIP when no abi binary is present."
     },
     {
       "group": "Memory",
@@ -445,17 +452,21 @@
       "group": "Memory",
       "capability": "Abbey contract corpus guard (scripts/check-abbey-contracts.py)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "the conformance fixture parses and re-renders byte-identically"
+      ],
+      "note": "scripts/check-abbey-contracts.py (copied unchanged) verifies 81 artifacts, 88328 bytes, digest 72e241e3...; its own self-test runs first. A Zig re-implementation of the corpus verifier is not part of this row."
     },
     {
       "group": "Memory",
       "capability": "WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "the conformance fixture parses and re-renders byte-identically"
+      ],
+      "note": "The gate also runs the oracle's own scripts/check-wdbx-conformance.py against ../wdbx's golden copy; that compares fixtures, and the Zig test adds parse/render identity for the same bytes."
     },
     {
       "group": "Generation backends",

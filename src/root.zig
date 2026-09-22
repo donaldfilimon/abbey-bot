@@ -4,6 +4,12 @@ const std = @import("std");
 
 pub const text = @import("text/text.zig");
 pub const decimal = @import("text/decimal.zig");
+pub const ryu_style = @import("text/ryu_style.zig");
+pub const embedding = @import("memory/embedding.zig");
+pub const wdbx_segment = @import("memory/wdbx_segment.zig");
+pub const wdbx_golden_test = @import("memory/wdbx_golden_test.zig");
+pub const wdbx_bridge = @import("memory/wdbx_bridge.zig");
+pub const wdbx_interop = @import("memory/wdbx_interop.zig");
 pub const persona = @import("persona/persona.zig");
 pub const signals = @import("persona/signals.zig");
 pub const prompts = @import("persona/prompts.zig");

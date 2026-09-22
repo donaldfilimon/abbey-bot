@@ -13,6 +13,9 @@ const goldens = [_][2][]const u8{
     .{ "golden_grounding", "contracts/golden/grounding.json" },
     .{ "golden_availability", "contracts/golden/availability.json" },
     .{ "golden_episode", "contracts/golden/episode.json" },
+    .{ "golden_wdbx", "contracts/golden/wdbx.json" },
+    .{ "golden_wyhash_refs", "contracts/fixtures/wyhash_zig_refs.txt" },
+    .{ "golden_wdbx_fixture", "contracts/fixtures/wdbx_v1_conformance.seg.jsonl" },
 };
 
 pub fn build(b: *std.Build) void {

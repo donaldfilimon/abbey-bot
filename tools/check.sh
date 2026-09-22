@@ -46,6 +46,15 @@ run_logged catalog ./zig-out/bin/abbey-bot-zig catalog-json
 run_logged catalog-cmp cmp contracts/catalog/command-payload.json "$LOG_DIR/catalog.log"
 echo "abbey-bot-zig catalog-json is byte-identical to contracts/catalog/command-payload.json"
 
+stage "abi wdbx interop"
+abi_cli="${ABBEY_ABI_CLI:-$HOME/.local/libexec/abbey-bot/abi}"
+if [ -x "$abi_cli" ]; then
+  run_logged wdbx-interop ./zig-out/bin/abbey-bot-zig wdbx-interop "$abi_cli"
+  cat "$LOG_DIR/wdbx-interop.log"
+else
+  echo "SKIP: no abi binary at $abi_cli (set ABBEY_ABI_CLI); the vector bridge stays claim-Partial"
+fi
+
 stage "contract corpus"
 run_logged contracts python3 scripts/check-abbey-contracts.py
 cat "$LOG_DIR/contracts.log"
