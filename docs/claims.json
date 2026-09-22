@@ -454,9 +454,11 @@
       "phase": "1",
       "status": "Current",
       "tests": [
-        "the conformance fixture parses and re-renders byte-identically"
+        "corpus verifier: the vendored Abbey corpus matches its pinned lock, inventory, digests and aggregate",
+        "corpus verifier: a modified, extra or missing artifact fails closed",
+        "layout matches serde_json and python indent=2"
       ],
-      "note": "scripts/check-abbey-contracts.py (copied unchanged) verifies 81 artifacts, 88328 bytes, digest 72e241e3...; its own self-test runs first. A Zig re-implementation of the corpus verifier is not part of this row."
+      "note": "Zig port of scripts/check-abbey-contracts.py (pins, inventory, per-artifact SHA-256, privacy taxonomy, aggregate digest over the Python indent=2 manifest render). The copied Python guard and its self-test also run in the gate."
     },
     {
       "group": "Memory",

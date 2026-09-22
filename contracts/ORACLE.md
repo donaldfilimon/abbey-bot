@@ -54,3 +54,12 @@ panics. Any model reply or grounding source containing such a token panics the
 grounding check. `golden/grounding.json` records those rows as `"panic": true`;
 the Zig port treats such a tail as "not a suffixed statistic" and pins it by
 test. This is a divergence by necessity, not a behavior change anyone relied on.
+
+## abi CLI quirk measured 2026-09-22
+
+The installed `abi` at `~/.local/libexec/abbey-bot/abi` (the one the live Rust
+bot's episode gateway uses; run read-only here with HOME and TMPDIR set to a
+private temp directory) writes the JSON object of `abi wdbx query ... --json`
+to **stderr** when stdout is not a terminal. `src/memory/wdbx_bridge.zig`
+accepts the object from either stream. This is an abi defect to fix in the abi
+repository (read-only for this rewrite), not a Zig behavior.

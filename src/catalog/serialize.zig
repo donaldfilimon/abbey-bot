@@ -4,86 +4,10 @@
 const std = @import("std");
 const p = @import("payload_types.zig");
 const payload = @import("payload.zig");
+const pretty_json = @import("../json/pretty.zig");
+pub const Pretty = pretty_json.Pretty;
+pub const writeString = pretty_json.writeString;
 const Writer = std.Io.Writer;
-
-/// Minimal pretty JSON emitter mirroring serde_json's PrettyFormatter.
-pub const Pretty = struct {
-    w: *Writer,
-    depth: usize = 0,
-    /// Whether the current container already has an element.
-    has_value: [64]bool = @splat(false),
-
-    fn indent(j: *Pretty) Writer.Error!void {
-        try j.w.writeByte('\n');
-        for (0..j.depth) |_| try j.w.writeAll("  ");
-    }
-
-    fn element(j: *Pretty) Writer.Error!void {
-        if (j.has_value[j.depth]) try j.w.writeByte(',');
-        j.has_value[j.depth] = true;
-        try j.indent();
-    }
-
-    pub fn beginArray(j: *Pretty) Writer.Error!void {
-        try j.w.writeByte('[');
-        j.depth += 1;
-        j.has_value[j.depth] = false;
-    }
-
-    pub fn endArray(j: *Pretty) Writer.Error!void {
-        const had = j.has_value[j.depth];
-        j.depth -= 1;
-        if (had) try j.indent();
-        try j.w.writeByte(']');
-    }
-
-    pub fn beginObject(j: *Pretty) Writer.Error!void {
-        try j.w.writeByte('{');
-        j.depth += 1;
-        j.has_value[j.depth] = false;
-    }
-
-    pub fn endObject(j: *Pretty) Writer.Error!void {
-        const had = j.has_value[j.depth];
-        j.depth -= 1;
-        if (had) try j.indent();
-        try j.w.writeByte('}');
-    }
-
-    /// Start an array element (the caller then writes the value).
-    pub fn item(j: *Pretty) Writer.Error!void {
-        try j.element();
-    }
-
-    pub fn key(j: *Pretty, name: []const u8) Writer.Error!void {
-        try j.element();
-        try writeString(j.w, name);
-        try j.w.writeAll(": ");
-    }
-
-    pub fn emptyObject(j: *Pretty) Writer.Error!void {
-        try j.w.writeAll("{}");
-    }
-};
-
-/// serde_json string escaping: `"`, `\\`, and C0 controls; everything else raw.
-pub fn writeString(w: *Writer, s: []const u8) Writer.Error!void {
-    try w.writeByte('"');
-    for (s) |b| {
-        switch (b) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            '\n' => try w.writeAll("\\n"),
-            '\r' => try w.writeAll("\\r"),
-            '\t' => try w.writeAll("\\t"),
-            0x08 => try w.writeAll("\\b"),
-            0x0C => try w.writeAll("\\f"),
-            0...0x07, 0x0B, 0x0E...0x1F => try w.print("\\u{x:0>4}", .{b}),
-            else => try w.writeByte(b),
-        }
-    }
-    try w.writeByte('"');
-}
 
 /// serde_json f64: integral values within 2^53 print as `N.0`.
 fn writeFloat(w: *Writer, v: f64) Writer.Error!void {

@@ -77,7 +77,7 @@ Totals: Current 19, Partial 1, Proposed 43, Out-of-scope 2.
 | Memory gate: episode-gated /remember, /forget, /pending confirm | 1 | Proposed | none |  |
 | Episode gate client: content-free proposal and memory_candidate writes via abi wdbx episode propose | 1 | Proposed | none |  |
 | Checkpoint gate against the frozen corpus | 1 | Proposed | none |  |
-| Abbey contract corpus guard (scripts/check-abbey-contracts.py) | 1 | Current | `the conformance fixture parses and re-renders byte-identically` | scripts/check-abbey-contracts.py (copied unchanged) verifies 81 artifacts, 88328 bytes, digest 72e241e3...; its own self-test runs first. A Zig re-implementation of the corpus verifier is not part of this row. |
+| Abbey contract corpus guard (scripts/check-abbey-contracts.py) | 1 | Current | `corpus verifier: the vendored Abbey corpus matches its pinned lock, inventory, digests and aggregate`<br>`corpus verifier: a modified, extra or missing artifact fails closed`<br>`layout matches serde_json and python indent=2` | Zig port of scripts/check-abbey-contracts.py (pins, inventory, per-artifact SHA-256, privacy taxonomy, aggregate digest over the Python indent=2 manifest render). The copied Python guard and its self-test also run in the gate. |
 | WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py) | 1 | Current | `the conformance fixture parses and re-renders byte-identically` | The gate also runs the oracle's own scripts/check-wdbx-conformance.py against ../wdbx's golden copy; that compares fixtures, and the Zig test adds parse/render identity for the same bytes. |
 
 ## Generation backends
