@@ -139,7 +139,7 @@ and fail. A `.rs` edit already triggers it through the PostToolUse hook in
 - **`$TMPDIR` ends in `/` on macOS.** The driver strips it; if you build
   paths by hand you get `//` in output, harmless but confusing in logs.
 - **A filtered `cargo test` that matches nothing exits 0** (measured:
-  `running 0 tests … ok`). Per the project `CLAUDE.md`, `--lib`, `-p`, and
+  `running 0 tests … ok`). Per the project `AGENTS.md`, `--lib`, `-p`, and
   `--workspace` behave the same way in this single binary crate. Read the
   `running N tests` line, or use `smoke.sh test`, which does.
 - **`ABBEY_EPISODE_GATE_CONFIG` is set in the live env.** Any local run that

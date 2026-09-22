@@ -1,21 +1,23 @@
 # AGENTS.md
 
 Rust/Serenity/Poise bot, not the separate Swift AbbeyBot product (archived to `~/Archive/experimental-2026-09-18/AbbeyBot` on 2026-09-18).
-`AGENTS.md` and `CLAUDE.md` are verbatim mirrors except for the first heading;
-edit both bodies together. No gate enforces the mirror, so verify it yourself
-with `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)` before committing
-either file. `README.md` owns commands, configuration and feature details;
-`docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
-The Boundaries below are restated in **two** editor-side files —
-`.cursor/agents/abbey-reviewer.md` and `.codex/agents/abbey-reviewer.toml` — which
-makes four copies of these rules in the repo counting this file and its twin. Both
-restatements had drifted the same way and were corrected on 2026-09-16 (each described
-a `gateway.rs` that does not exist, a five-file Discord shell where 33 non-test files
-import serenity/poise, and a Gate Checklist of four cargo commands that never mentioned
-`./check.sh`). Trust this file over both; a rule changed here must be changed in **both**
-of them in the same commit, and the `.codex` one is easy to forget because editors load
-it silently. It is TOML with a `"""` block, so a regex backslash written into it is an
-invalid escape — verify with `python3 -c "import tomllib,sys;tomllib.load(open(sys.argv[1],'rb'))"`.
+This file is the canonical agent instruction file. `CLAUDE.md` is only a pointer
+that imports it (`@AGENTS.md`). `README.md` owns commands, configuration and feature
+details; `docs/MLAI-LIVE-ACCEPTANCE.md` owns dated live evidence, not this file.
+The two editor-side reviewer agents, `.cursor/agents/abbey-reviewer.md` and
+`.codex/agents/abbey-reviewer.toml`, carry the `## Boundaries` section below verbatim
+between markers. `scripts/check-instructions.py` (run by `./check.sh` and
+`./check.ps1`) fails if either block drifts from this file, if the two editor bodies
+differ, if `CLAUDE.md` grows back into a copy, or if the TOML stops parsing. Change a
+Boundaries rule here, edit reviewer-only text in the `.md`, then run
+`python3 scripts/check-instructions.py --write` to regenerate the block and render the
+`.toml`. The gate exists because both restatements once drifted the same way (corrected
+2026-09-16: a `gateway.rs` that does not exist, a five-file Discord shell where 33
+non-test files import serenity/poise, and a Gate Checklist that never mentioned
+`./check.sh`) while a hand-kept mirror rule said to edit all four copies together. The
+TOML body is a `"""` basic string, so a backslash typed into it by hand is an escape
+(`\b` is a backspace, not a regex word boundary); `--write` escapes it, a hand edit
+does not.
 
 ## Working in this checkout
 
@@ -227,9 +229,9 @@ section it ports. Read that header before the code.
   `tests.rs` and `*_tests.rs`) share the 1,000-line cap without the review note;
   split an oversized one into child modules by the surface under test, keeping
   every test name and the old module path as a prefix (`cargo test --locked
-  voice_session::tests::` still selects all of them). Inline tests count. Preserve test module paths; no module-wide
-  unused/dead-code suppression. A binary crate's `pub` does not exempt it from
-  dead-code linting.
+  voice_session::tests::` still selects all of them). Inline tests count.
+  Preserve test module paths; no module-wide unused/dead-code suppression. A
+  binary crate's `pub` does not exempt it from dead-code linting.
 - Defer interactions before network calls; accept `ChannelId`, not `GuildChannel`
   (the latter fetches before the body). `/voice leave` instead closes media and
   music gates before its first await. Clamp rendered replies with `clamp_message`.

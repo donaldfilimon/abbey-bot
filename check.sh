@@ -53,6 +53,8 @@ python3 deploy/test-patch-mlx-vlm-tool-encoding.py
 python3 scripts/check-privacy.py
 python3 scripts/test-check-rust-module-size.py
 python3 scripts/check-rust-module-size.py
+python3 scripts/test-check-instructions.py
+python3 scripts/check-instructions.py
 python3 scripts/test-check-pages-liquid.py
 python3 scripts/check-pages-liquid.py
 python3 scripts/test-check-abbey-contracts.py

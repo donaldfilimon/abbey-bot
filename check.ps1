@@ -38,6 +38,8 @@ Invoke-Checked -Executable "python" -Arguments @("deploy/test-patch-mlx-vlm-tool
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-privacy.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-rust-module-size.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-rust-module-size.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-instructions.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-instructions.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-pages-liquid.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-pages-liquid.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-abbey-contracts.py")
