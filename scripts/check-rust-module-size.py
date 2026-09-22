@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Keep production Rust modules below 1,000 lines and report review-sized files.
+"""Keep Rust modules below 1,000 lines and report review-sized production files.
 
-External modules explicitly declared under cfg(test) are excluded, including
-their descendants. Inline tests still count toward their containing source file.
-The gate does not permit module-wide dead-code/import suppression to hide seams.
+External modules explicitly declared under cfg(test), including their
+descendants (every `tests.rs` and `*_tests.rs` here), are held to the same
+1,000-line cap but get no 800-line review note and no suppression scan. Inline
+tests still count toward their containing source file. The gate does not permit
+module-wide dead-code/import suppression to hide seams in production modules.
 """
 from __future__ import annotations
 
@@ -123,9 +125,11 @@ def inspect(source: pathlib.Path) -> tuple[list[str], list[str]]:
     errors, reviews = [], []
     for path, text in sorted(files.items()):
         relative = path.relative_to(source).as_posix()
-        if path not in production and (path in excluded or any(tree in path.parents for tree in excluded_trees)):
-            continue
         count = len(text.splitlines())
+        if path not in production and (path in excluded or any(tree in path.parents for tree in excluded_trees)):
+            if count >= 1000:
+                errors.append(f"{relative}: {count} lines; test modules must have fewer than 1000")
+            continue
         if count >= 1000:
             errors.append(f"{relative}: {count} lines; production modules must have fewer than 1000")
         elif count > 800:
@@ -151,7 +155,7 @@ def main() -> int:
     for error in errors:
         print(f"error: {error}")
     if not errors:
-        print("Rust production module size and suppression checks passed")
+        print("Rust module size (production and test) and suppression checks passed")
     return int(bool(errors))
 
 

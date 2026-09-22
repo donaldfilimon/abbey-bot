@@ -56,7 +56,7 @@ lines only, so a module reaching serenity through a path-qualified attribute
 - Must pass with zero warnings
 - `pub` constants used only by tests are an error — resolved as `#[cfg(test)]` or made load-bearing
 - Production Rust modules must be below 1,000 lines; above 800 requires review
-  (`scripts/check-rust-module-size.py`). Inline tests count; external test-only modules do not
+  (`scripts/check-rust-module-size.py`). Inline tests count; external test-only modules share the 1,000-line cap without the review note
 
 ### Gate Checklist
 **The gate is `./check.sh`, not a list of cargo commands.** It runs six stages — fmt,

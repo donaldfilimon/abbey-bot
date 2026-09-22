@@ -223,9 +223,13 @@ section it ports. Read that header before the code.
   Keep `persona.rs` frozen; compose new routing in `routing_signals.rs`. Preserve
   Abbey's distinct voice in `ask.rs`, not a generic help-desk prompt.
 - Production Rust modules must be below 1,000 lines; above 800 requires review
-  (`scripts/check-rust-module-size.py`). External test-only modules are exempt,
-  inline tests count. Preserve test module paths; no module-wide unused/dead-code
-  suppression. A binary crate's `pub` does not exempt it from dead-code linting.
+  (`scripts/check-rust-module-size.py`). External test-only modules (every
+  `tests.rs` and `*_tests.rs`) share the 1,000-line cap without the review note;
+  split an oversized one into child modules by the surface under test, keeping
+  every test name and the old module path as a prefix (`cargo test --locked
+  voice_session::tests::` still selects all of them). Inline tests count. Preserve test module paths; no module-wide
+  unused/dead-code suppression. A binary crate's `pub` does not exempt it from
+  dead-code linting.
 - Defer interactions before network calls; accept `ChannelId`, not `GuildChannel`
   (the latter fetches before the body). `/voice leave` instead closes media and
   music gates before its first await. Clamp rendered replies with `clamp_message`.

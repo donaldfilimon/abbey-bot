@@ -33,17 +33,31 @@ class ModuleSizeTests(unittest.TestCase):
         self.write("main.rs", "// line\n" * 1000)
         self.assertEqual(len(MODULE.inspect(self.source)[0]), 1)
 
-    def test_only_explicit_test_modules_and_their_descendants_are_excluded(self):
+    def test_only_explicit_test_modules_and_their_descendants_skip_review(self):
         self.write("main.rs", "#[cfg(test)]\nmod fixtures;\nmod latest;\nmod service;\n")
-        self.write("fixtures.rs", "// test\n" * 1400)
-        self.write("fixtures/nested.rs", "// test\n" * 1400)
+        self.write("fixtures.rs", "// test\n" * 999)
+        self.write("fixtures/nested.rs", "// test\n" * 999)
         self.write("latest.rs", "// production\n" * 1000)
         self.write("service.rs", "#[cfg(test)]\npub(crate) mod tests;\n")
-        self.write("service/tests.rs", "// test\n" * 1400)
+        self.write("service/tests.rs", "// test\n" * 999)
         self.write("pipeline.rs", '#[cfg(test)]\n#[path = "pipeline/tests.rs"]\nmod tests;\n')
-        self.write("pipeline/tests.rs", "// test\n" * 1400)
-        self.assertEqual(len(MODULE.inspect(self.source)[0]), 1)
-        self.assertIn("latest.rs", MODULE.inspect(self.source)[0][0])
+        self.write("pipeline/tests.rs", "// test\n" * 999)
+        errors, reviews = MODULE.inspect(self.source)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("latest.rs", errors[0])
+        self.assertFalse(reviews)
+
+    def test_test_modules_share_the_1000_line_cap(self):
+        self.write("main.rs", "#[cfg(test)]\nmod dispatch_tests;\nmod service;\n")
+        self.write("service.rs", "#[cfg(test)]\nmod tests;\n")
+        for path in ("dispatch_tests.rs", "dispatch_tests/help_tests.rs", "service/tests.rs"):
+            self.write(path, "// test\n" * 999)
+            self.assertFalse(MODULE.inspect(self.source)[0], path)
+            self.write(path, "// test\n" * 1000)
+            errors = MODULE.inspect(self.source)[0]
+            self.assertEqual(len(errors), 1, path)
+            self.assertIn(f"{path}: 1000 lines; test modules", errors[0])
+            self.write(path, "// test\n")
 
     def test_module_suppression_is_rejected_without_banning_local_attributes(self):
         for text in ("# [allow(dead_code)]\nmod hidden;\n", "#![allow(dead_code)]\n", "#[allow(unused_imports)]\npub mod adapter;\n", "#[expect(dead_code)]\nmod adapter {}\n"):
@@ -72,9 +86,9 @@ class ModuleSizeTests(unittest.TestCase):
         self.assertEqual(len(MODULE.inspect(self.source)[0]), 1)
 
     def test_attribute_order_and_normalized_test_path_are_supported(self):
-        self.write("fixtures.rs", "// test\n" * 1400)
+        self.write("fixtures.rs", "// test\n" * 999)
         self.write("main.rs", '#[path="child/../fixtures.rs"]\n#[cfg(test)]\nmod fixtures;\n')
-        self.assertFalse(MODULE.inspect(self.source)[0])
+        self.assertEqual(MODULE.inspect(self.source), ([], []))
 
     def test_rust_character_quotes_do_not_mask_following_module_attributes(self):
         self.write("main.rs", "const QUOTE: char = '\"';\n#[allow(dead_code)]\nmod hidden;\n")
