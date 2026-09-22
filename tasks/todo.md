@@ -543,3 +543,53 @@ guilds. Member access, manager access, global/DM command scope, current unanimou
 voice agreement and human audible confirmation each need their own observation.
 No source test or synthetic speech probe substitutes for those checks. See
 `docs/live-test-protocol.md` for the workflow matrix and restoration requirements.
+
+## 2026-09-21 reconciliation of open items (append-only; verified at HEAD 281ee3b)
+
+Provenance: "measured" = read-only command run 2026-09-21 (`git log -S`, grep at HEAD,
+`launchctl list`); "prose" = read from `tasks/goals.md` ("goals") or
+`docs/MLAI-LIVE-ACCEPTANCE.md` ("MLAI"). No box above is ticked by this block; it records
+verdicts only. Counts: 42 open boxes (measured); 39 still open, 2 done, 1 obsolete.
+
+- L15 still open: tokens missing (prose, MLAI:122); adapters present (measured, `src/gateway/{telegram,slack}.rs`).
+- L27 still open: human-gated; 2026-09-04 partial records on superseded `b161f5b`, audible reply failed (prose, MLAI:41,43,55).
+- L29 still open: MLX not selected, fails closed (prose, MLAI:280; goals:950).
+- L51 still open: `/forget` `/ocr` `/webhook` and post-deploy `/see` unobserved; tokens missing (prose, goals:341-342,458).
+- L62 still open: only the `OverBudget` refusal remains, unobserved (prose, goals:289-292,317).
+- L106 still open: PASS observed on a staged temporary server only, not published (prose, MLAI:255; goals:950).
+- L107 still open: PASS on a staged temporary server only, not published (prose, MLAI:256; goals:950).
+- L108 still open: recorded FAIL 2026-09-03 and 2026-09-16 (prose, MLAI:257; goals:950-954); closes per goals:758.
+- L109 still open: not run (prose, MLAI:258).
+- L110 still open: not run (prose, MLAI:259).
+- L111 still open: no published service (prose, MLAI:260; measured, no `abbey-mlx-vlm` in `launchctl list`).
+- L112 still open: deployed bot still on the Ollama host-only `:11434` primary (prose, MLAI:261).
+- L114 still open: no live 12B tool evidence (prose, MLAI:262).
+- L203 still open: systemd unit unverified on a real systemd host (prose, goals:13,32); `Dockerfile` present (measured). Its "voice only through explicit OpenAI Realtime" clause is obsolete: Realtime was removed in `dc861a0`/`5d8e57c` (measured, `git log --grep`; README:586).
+- L205 still open: no Windows runtime record (prose, goals:1882).
+- L284 done-at-eb5468c for the install and its smoke: MLX-Audio live, installer smoke passed (prose, MLAI:81,274); running (measured, `launchctl` PID 8309, last exit -15). The "retaining the previous service for rollback" clause has no record; goals:1882 still lists this install as a blocker, and that wording is stale.
+- L285 still open: MLX-VLM installer exited 1 on 2026-09-16 (prose, goals:952-954).
+- L286 still open: no FM capability manifest (prose, MLAI:275; goals:2153).
+- L287 still open: blocked behind L112/L285 (prose, MLAI:108-111).
+- L288 done-at-490e29b: repeated managed installs with matching SHA-256 and retained rollback (prose, MLAI:1-29; goals:22); service running (measured, `launchctl` PID 1399).
+- L289 still open: SHA identity recorded only for superseded binaries (prose, MLAI:25,29); the rule is SHA-bound (todo:212-220); current binary vs HEAD unmeasured.
+- L290 still open: pinned-model identity fails (reasoner is Ollama); no-UDP-before-consent never recorded (prose, MLAI:261).
+- L362 still open: human-gated, no substitutable evidence.
+- L364 still open: human-gated, no substitutable evidence.
+- L366 still open: human-gated, no substitutable evidence.
+- L368 still open: the 2026-09-04 status showed media OPEN, not the required inactive state (prose, MLAI:41).
+- L369 still open: consent observed 2026-09-04 on a superseded binary; fresh consent is required each time (prose, MLAI:41,210,215).
+- L370 still open: human-gated, no current record (prose, MLAI:90).
+- L372 still open: observed failing, no audio heard (prose, MLAI:49,55).
+- L374 still open: log-only barge-in stop, not heard, no counter (prose, MLAI:43,208).
+- L375 still open: join withheld for a new participant; no epoch-close observation (prose, MLAI:51).
+- L376 still open: human-gated, no substitutable evidence.
+- L377 still open: human-gated, no substitutable evidence.
+- L378 still open: only disallowed 2026-08-20 history (prose, MLAI:90).
+- L379 still open: human-gated, no substitutable evidence.
+- L380 still open: human-gated live check; source tests are not substitutes (prose, todo:360-361).
+- L381 still open: human-gated, no substitutable evidence.
+- L386 still open: hosted exact-head CI is unmeasurable under the billing lock since 2026-09-08 (prose, goals:1775).
+- L392 still open: serenity 0.12.5 and the same four RUSTSEC ids (measured, `Cargo.lock` and `security/rustsec-accepted-debt.json`; prose, goals:1871-1876). Separately, RUSTSEC-2026-0293 (ringbuf 0.4.8 via songbird 0.6.0, published 2026-09-21) now fails `scripts/check-rustsec-debt.py`; accepting or fixing it is Donald's call and it is not in the accepted inventory.
+- L410 obsolete: no manually launched process exists; it is the launchd service (measured, `launchctl` PID 1399; prose, goals:116-124); its residual layers are tracked by L27, L203, L205, L289 and L290.
+- L472 still open: no typed-outcome settle recorded (prose, goals:275 is the untyped 2026-08-19 reward).
+- L483 still open: audio tap installed (measured, `launchctl` PID 1391; prose, goals:1782); human Play acceptance open (prose, goals:1796-1798).
