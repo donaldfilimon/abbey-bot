@@ -77,10 +77,13 @@ const Publisher = struct {
         return @intCast(@max(0, std.Io.Clock.real.now(p.io).toMilliseconds()));
     }
 
-    fn publish(p: *Publisher, state: readiness.State, cp: readiness.Checkpoints) void {
+    /// The oracle's `ManagedSink::readiness`: once a `ready` document is
+    /// published, the `starting` bootstrap document is removed.
+    fn publish(p: *Publisher, state: readiness.State, cp: readiness.Checkpoints) !void {
         var buf: [readiness.readiness_max_bytes]u8 = undefined;
-        const bytes = readiness.encodeReadiness(&buf, p.id, state, p.nowMs(), cp) catch return;
-        p.dir.publish(readiness.readiness_file, bytes) catch {};
+        const bytes = try readiness.encodeReadiness(&buf, p.id, state, p.nowMs(), cp);
+        try p.dir.publish(readiness.readiness_file, bytes);
+        if (state.phase == .ready) p.dir.remove(readiness.bootstrap_file);
     }
 
     fn bootstrap(p: *Publisher, phase: readiness.BootstrapPhase, code: readiness.BootstrapCode) void {
@@ -118,8 +121,10 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, args
     }
 
     var publisher: ?Publisher = null;
+    // The oracle's `ManagedSink::remove`: both documents go on exit.
     defer if (publisher) |*p| {
         p.dir.remove(readiness.readiness_file);
+        p.dir.remove(readiness.bootstrap_file);
         p.dir.close();
     };
     if (mode == .managed) {
@@ -137,7 +142,11 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, args
         };
         publisher = .{ .dir = dir, .id = id, .io = io };
         publisher.?.bootstrap(.starting, .none);
-        publisher.?.publish(.{}, .{});
+        publisher.?.publish(.{}, .{}) catch {
+            publisher.?.bootstrap(.failed, .readiness_file);
+            try err.writeAll("--managed-service: readiness.json could not be published\n");
+            return .runtime;
+        };
     }
 
     var client = http.Client.init(gpa, io);
@@ -203,6 +212,10 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, args
         .intents = session.intents.forBot(config.message_content),
         .home_guild = config.home_guild,
     });
+    // Honest persistence state: nothing has been written yet. Without a data
+    // directory the bot is memory-only by construction.
+    const persistence: readiness.Persistence = if (config.data_dir == null) .memory_only else .not_attempted;
+    var bot_done: std.atomic.Value(bool) = .init(false);
     installSignals();
     const runner = try std.Thread.spawn(.{}, struct {
         fn f(b: *bot_mod.Bot, done: *std.atomic.Value(bool)) void {
@@ -217,16 +230,16 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, args
         if (publisher) |*p| {
             const now = p.nowMs();
             if (now -| last_publish >= readiness.refresh_interval_ms / 2) {
-                const o = observe(bot.discord_state.load(.acquire), bot.registration_done.load(.acquire), bot.stop.load(.acquire), if (config.data_dir == null) .memory_only else .complete);
-                p.publish(o.state, o.checkpoints);
+                const o = observe(bot.discord_state.load(.acquire), bot.registration_done.load(.acquire), bot.stop.load(.acquire), persistence);
+                p.publish(o.state, o.checkpoints) catch {};
                 last_publish = now;
             }
         }
         std.Io.sleep(io, .fromMilliseconds(250), .awake) catch {};
     }
     if (publisher) |*p| {
-        const o = observe(.stopped, false, true, if (config.data_dir == null) .memory_only else .complete);
-        p.publish(o.state, o.checkpoints);
+        const o = observe(.stopped, false, true, persistence);
+        p.publish(o.state, o.checkpoints) catch {};
     }
     runner.join();
     bot.deinit();
@@ -240,8 +253,6 @@ pub fn run(gpa: Allocator, io: std.Io, env: *const std.process.Environ.Map, args
     }
     return .ok;
 }
-
-var bot_done: std.atomic.Value(bool) = .init(false);
 
 const testing = std.testing;
 
@@ -293,7 +304,7 @@ pub fn publishSample(gpa: Allocator, io: std.Io, home: []const u8) !void {
     defer p.dir.close();
     p.bootstrap(.starting, .none);
     const o = observe(.connecting, false, false, .memory_only);
-    p.publish(o.state, o.checkpoints);
+    try p.publish(o.state, o.checkpoints);
 }
 
 test "the launchd plist runs this binary with the sole --managed-service argument under its own label" {
@@ -303,4 +314,24 @@ test "the launchd plist runs this binary with the sole --managed-service argumen
     try testing.expect(std.mem.indexOf(u8, plist, "<string>__HOME__/.local/libexec/" ++ readiness.component ++ "/" ++ readiness.component ++ "</string>\n\t\t<string>--managed-service</string>\n\t</array>") != null);
     try testing.expect(std.mem.indexOf(u8, plist, "<string>__HOME__/.local/share/" ++ readiness.component ++ "</string>") != null);
     try testing.expectEqual(Mode.managed, parseArgs(&.{"--managed-service"}).?);
+}
+
+test "a ready publication removes the starting bootstrap document" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(home);
+    var p: Publisher = .{ .dir = try readiness.PrivateDir.open(testing.io, home), .id = try readiness.Identity.fromParts(9, @splat(3), @splat(4)), .io = testing.io };
+    defer p.dir.close();
+    p.bootstrap(.starting, .none);
+    const starting = observe(.ready, false, false, .not_attempted);
+    try p.publish(starting.state, starting.checkpoints);
+    _ = try p.dir.dir.statFile(testing.io, readiness.bootstrap_file, .{});
+    const ready = observe(.ready, true, false, .not_attempted);
+    try p.publish(ready.state, ready.checkpoints);
+    try testing.expectError(error.FileNotFound, p.dir.dir.statFile(testing.io, readiness.bootstrap_file, .{}));
+    var buf: [readiness.readiness_max_bytes]u8 = undefined;
+    const doc = try p.dir.dir.readFile(testing.io, readiness.readiness_file, &buf);
+    try testing.expect(std.mem.indexOf(u8, doc, "\"phase\":\"ready\"") != null);
+    try testing.expect(std.mem.indexOf(u8, doc, "\"last_persistence\":\"not_attempted\"") != null);
 }

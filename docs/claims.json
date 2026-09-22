@@ -123,6 +123,14 @@
     },
     {
       "group": "Command surface",
+      "capability": "Message replies: DMs, @mentions and MESSAGE_CREATE handling",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not implemented: the gateway loop ignores MESSAGE_CREATE. ABBEY_MESSAGE_CONTENT=1 only requests the privileged intent; nothing consumes message content yet."
+    },
+    {
+      "group": "Command surface",
       "capability": "/persona route",
       "phase": "1",
       "status": "Current",
@@ -600,9 +608,10 @@
         "ready is refused until every checkpoint and state agrees",
         "private directory is created 0700 and documents are published 0600 by rename",
         "identity of the running test binary hashes the executable",
-        "readiness observation reaches ready only after READY and registration"
+        "readiness observation reaches ready only after READY and registration",
+        "a ready publication removes the starting bootstrap document"
       ],
-      "note": "Published under ~/.local/share/abbey-bot-zig (0700 dir, 0600 files, temp plus rename), never the live bot's path. The gate parses Zig-written documents with the copied deploy/service_protocol.py read_private and checks executable_sha256 against the built binary. deploy/service-protocol-v1.json is byte-identical to the oracle's."
+      "note": "Published under ~/.local/share/abbey-bot-zig (0700 dir, 0600 files, temp plus rename), never the live bot's path. The gate parses Zig-written documents with the copied deploy/service_protocol.py read_private and checks executable_sha256 against the built binary. deploy/service-protocol-v1.json is byte-identical to the oracle's. Bootstrap lifecycle follows the oracle: starting at launch, failed/readiness_file if the first readiness write fails, removed on the first ready publication and on exit. last_persistence reports memory_only without ABBEY_DATA_DIR and not_attempted otherwise; it is not yet wired to store write outcomes."
     },
     {
       "group": "Managed service",
@@ -612,7 +621,7 @@
       "tests": [
         "the launchd plist runs this binary with the sole --managed-service argument under its own label"
       ],
-      "note": "deploy/com.donaldfilimon.abbey-bot-zig.plist is validated by the copied deploy/service_installation.validate_managed_plist in the gate, which also rejects the live label. It is not installed; installing it is Donald's call."
+      "note": "deploy/com.donaldfilimon.abbey-bot-zig.plist is validated by the copied deploy/service_installation.validate_managed_plist in the gate, which also rejects the live label. It is not installed; installing it is Donald's call. Like the oracle's plist it carries no credential: injecting DISCORD_TOKEN into the launchd environment is the installer's job (the oracle's check-launchd-env.sh), and no installer is ported, so the plist is not installable as-is."
     },
     {
       "group": "Managed service",

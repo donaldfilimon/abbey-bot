@@ -39,6 +39,8 @@ pub const Identity = struct {
         defer file.close(io);
         const before = try file.stat(io);
         if (before.kind != .file) return error.IdentityUnavailable;
+        // std/crypto/sha2.zig: Sha256; std/Io/File.zig: reader, stat;
+        // std/Io/Reader.zig: readSliceShort (0 only at end of stream).
         var hash: std.crypto.hash.sha2.Sha256 = .init(.{});
         var buf: [65536]u8 = undefined;
         var reader = file.reader(io, &.{});
@@ -51,12 +53,13 @@ pub const Identity = struct {
         if (before.size != after.size or before.mtime.nanoseconds != after.mtime.nanoseconds) return error.IdentityUnavailable;
         var digest: [32]u8 = undefined;
         hash.final(&digest);
-        const pid: u32 = @intCast(std.c.getpid());
+        const pid: u32 = @intCast(std.c.getpid()); // std/c.zig: getpid
         return fromParts(pid, entropy, digest);
     }
 
     pub fn fromParts(pid: u32, nonce: [32]u8, sha: [32]u8) error{IdentityUnavailable}!Identity {
         if (pid == 0 or pid > std.math.maxInt(i32)) return error.IdentityUnavailable;
+        // std/fmt.zig: bytesToHex returns a fixed [2N]u8 array.
         return .{ .pid = pid, .nonce = std.fmt.bytesToHex(nonce, .lower), .executable_sha256 = std.fmt.bytesToHex(sha, .lower) };
     }
 };
@@ -168,6 +171,7 @@ pub const PrivateDir = struct {
             errdefer p.dir.deleteFile(p.io, tmp) catch {};
             const m = try ownedMode(f.handle);
             if (m.mode != 0o600 or !m.reg) return error.UnsafeDirectory;
+            // std/Io/File.zig: writeStreamingAll, sync; std/Io/Dir.zig: rename.
             try f.writeStreamingAll(p.io, bytes);
             try f.sync(p.io);
         }
