@@ -9,15 +9,22 @@ pub const Pretty = pretty_json.Pretty;
 pub const writeString = pretty_json.writeString;
 const Writer = std.Io.Writer;
 
-/// serde_json f64: integral values within 2^53 print as `N.0`.
+/// serde_json f64: integral values within 2^53 print as `N.0`. The frozen
+/// payload holds no other f64, and std.fmt's shortest digits are not proven
+/// equal to serde_json's ryu text, so any other value is refused rather than
+/// written with unverified bytes.
 fn writeFloat(w: *Writer, v: f64) Writer.Error!void {
     if (@floor(v) == v and @abs(v) <= 9007199254740992.0) {
         try w.print("{d}.0", .{@as(i64, @intFromFloat(v))});
-    } else {
-        // NOTE(SDK): no payload value takes this branch; std.fmt's shortest
-        // round-trip digits are not guaranteed to match ryu's text here.
-        try w.print("{d}", .{v});
-    }
+    } else return error.WriteFailed;
+}
+
+test "payload floats: integral values print as N.0 and anything else is refused" {
+    var buf: [32]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+    try writeFloat(&w, 6000.0);
+    try std.testing.expectEqualStrings("6000.0", w.buffered());
+    try std.testing.expectError(error.WriteFailed, writeFloat(&w, 0.5));
 }
 
 fn writeOptional(j: *Pretty, name: []const u8, comptime T: type, value: ?T) Writer.Error!void {
