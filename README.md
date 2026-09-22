@@ -13,8 +13,8 @@ Persona routing · Durable memory · Ops with guardrails. Invite Abbey · `/pers
 Abbey's Discord operational layer, in Rust — [serenity](https://github.com/serenity-rs/serenity)
 0.12 with [poise](https://github.com/serenity-rs/poise) 0.6 for slash commands.
 
-This is the Rust implementation. A separate active Swift/Vapor/DiscordBM product
-lives at `~/dev/active/AbbeyBot`; it is an adjacent implementation, not a port,
+This is the Rust implementation. A separate Swift/Vapor/DiscordBM product
+(archived to `~/Archive/experimental-2026-09-18/AbbeyBot` on 2026-09-18); it is an adjacent implementation, not a port,
 dependency, or shared runtime. The archived `~/dev/archive/swift-discord` tree is
 a home-grown Swift Discord library, not either bot. The Rust and Swift products
 share no application code; cross-language agreement is established only through

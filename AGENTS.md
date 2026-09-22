@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Rust/Serenity/Poise bot, not the separate Swift `../AbbeyBot` product.
+Rust/Serenity/Poise bot, not the separate Swift AbbeyBot product (archived to `~/Archive/experimental-2026-09-18/AbbeyBot` on 2026-09-18).
 `AGENTS.md` and `CLAUDE.md` are verbatim mirrors except for the first heading;
 edit both bodies together. No gate enforces the mirror, so verify it yourself
 with `diff <(tail -n +2 CLAUDE.md) <(tail -n +2 AGENTS.md)` before committing
