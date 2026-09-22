@@ -25,11 +25,13 @@ CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
 EXPECTED_IDS = {
-    "RUSTSEC-2026-0049": "GHSA-pwjx-qhcg-rvj4",
-    "RUSTSEC-2026-0098": "GHSA-965h-392x-2mh5",
-    "RUSTSEC-2026-0099": "GHSA-xgp8-3hg3-c2mh",
-    "RUSTSEC-2026-0104": "GHSA-82j2-j2ch-gfr8",
+    "RUSTSEC-2026-0049": ["CVE-2026-93602", "GHSA-pwjx-qhcg-rvj4"],
+    "RUSTSEC-2026-0098": ["CVE-2026-93600", "GHSA-965h-392x-2mh5"],
+    "RUSTSEC-2026-0099": ["CVE-2026-93601", "GHSA-xgp8-3hg3-c2mh"],
+    "RUSTSEC-2026-0104": ["CVE-2026-93599", "GHSA-82j2-j2ch-gfr8"],
 }
+RINGBUF_ID = "RUSTSEC-2026-0293"
+RINGBUF_CHECKSUM = "fe47b720588c8702e34b5979cb3271a8b1842c7cb6f57408efa70c779363488c"
 EXPECTED_RANGES_AND_CATEGORIES = {
     "RUSTSEC-2026-0049": {
         "patched": [">=0.103.10"],
@@ -84,6 +86,16 @@ EXPECTED_DEPENDENCY_PATH = (
     ),
     ("rustls-webpki", "0.102.8", PACKAGE_CHECKSUM, None),
 )
+EXPECTED_RINGBUF_PATH = (
+    (
+        "songbird",
+        "0.6.0",
+        "5b9bf4ecb5083685b79a8fc60222f12e4f036e2817c5c341cd2b9ff2b429d237",
+        "ringbuf",
+    ),
+    ("ringbuf", "0.4.8", RINGBUF_CHECKSUM, None),
+)
+EXPECTED_PATHS = (EXPECTED_DEPENDENCY_PATH, EXPECTED_RINGBUF_PATH)
 
 
 def accepted_policy() -> dict[str, object]:
@@ -123,12 +135,28 @@ def exact_report() -> dict[str, object]:
     }
 
 
+def all_path_nodes(policy: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        node
+        for dependency_path in policy["locked_dependency_paths"]
+        for node in dependency_path["nodes"]
+    ]
+
+
 def exact_metadata() -> dict[str, object]:
     policy = accepted_policy()
-    path = policy["locked_dependency_path"]["nodes"]
+    path = all_path_nodes(policy)
     package_ids = [
         f"{node['source']}#{node['name']}@{node['version']}" for node in path
     ]
+    first_ids = {
+        dependency_path["nodes"][0]["name"]: (
+            f"{dependency_path['nodes'][0]['source']}#"
+            f"{dependency_path['nodes'][0]['name']}@"
+            f"{dependency_path['nodes'][0]['version']}"
+        )
+        for dependency_path in policy["locked_dependency_paths"]
+    }
     root_id = "path+file:///fixture/abbey-bot#0.1.0"
     packages = [
         {
@@ -152,10 +180,11 @@ def exact_metadata() -> dict[str, object]:
             "id": root_id,
             "deps": [
                 {
-                    "name": "serenity",
-                    "pkg": package_ids[0],
+                    "name": name,
+                    "pkg": package_id,
                     "dep_kinds": [{"kind": None, "target": None}],
                 }
+                for name, package_id in first_ids.items()
             ],
         }
     ]
@@ -196,7 +225,7 @@ def lockfile_for_path(path: list[dict[str, object]]) -> str:
 
 def exact_lockfile() -> str:
     policy = accepted_policy()
-    return lockfile_for_path(policy["locked_dependency_path"]["nodes"])
+    return lockfile_for_path(all_path_nodes(policy))
 
 
 def synchronize_count(report: dict[str, object]) -> None:
@@ -281,21 +310,21 @@ class RustsecDebtCheckTests(unittest.TestCase):
         self.assertIn(fragment, stderr)
         self.assertLessEqual(len(stderr), 1024)
 
-    def test_policy_pins_the_exact_four_vulnerabilities(self) -> None:
+    def test_policy_pins_the_exact_five_vulnerabilities(self) -> None:
         policy = accepted_policy()
 
-        self.assertEqual(policy["schema_version"], 2)
+        self.assertEqual(policy["schema_version"], 3)
         self.assertEqual(policy["cargo_audit_version"], "0.22.2")
         self.assertEqual(policy["audit_state"], "not-clean")
-        self.assertEqual(policy["accepted_vulnerability_count"], 4)
+        self.assertEqual(policy["accepted_vulnerability_count"], 5)
         records = {
             record["id"]: record for record in policy["accepted_vulnerabilities"]
         }
-        self.assertEqual(set(records), set(EXPECTED_IDS))
-        for advisory_id, alias in EXPECTED_IDS.items():
+        self.assertEqual(set(records), {*EXPECTED_IDS, RINGBUF_ID})
+        for advisory_id, aliases in EXPECTED_IDS.items():
             with self.subTest(advisory_id=advisory_id):
                 record = records[advisory_id]
-                self.assertEqual(record["advisory"]["aliases"], [alias])
+                self.assertEqual(record["advisory"]["aliases"], aliases)
                 self.assertEqual(record["advisory"]["source"], None)
                 self.assertEqual(
                     record["advisory"]["categories"],
@@ -323,40 +352,134 @@ class RustsecDebtCheckTests(unittest.TestCase):
                 )
                 self.assertEqual(record["package"]["replace"], None)
 
-        dependency_path = policy["locked_dependency_path"]
-        self.assertEqual(dependency_path["scope"], "all-resolved-targets")
-        nodes = dependency_path["nodes"]
-        self.assertEqual(len(nodes), len(EXPECTED_DEPENDENCY_PATH))
-        for node, (name, version, checksum, edge_name) in zip(
-            nodes,
-            EXPECTED_DEPENDENCY_PATH,
-            strict=True,
+        ringbuf = records[RINGBUF_ID]
+        self.assertEqual(ringbuf["advisory"]["package"], "ringbuf")
+        self.assertEqual(ringbuf["advisory"]["aliases"], [])
+        self.assertEqual(ringbuf["advisory"]["categories"], ["memory-corruption"])
+        self.assertEqual(ringbuf["versions"], {"patched": [">=0.5.2"], "unaffected": []})
+        self.assertEqual(
+            ringbuf["affected"]["functions"],
+            {
+                "ringbuf::traits::consumer::Consumer::clear": ["<0.5.2"],
+                "ringbuf::traits::consumer::Consumer::skip": ["<0.5.2"],
+            },
+        )
+        self.assertEqual(ringbuf["package"]["version"], "0.4.8")
+        self.assertEqual(ringbuf["package"]["checksum"], RINGBUF_CHECKSUM)
+
+        dependency_paths = policy["locked_dependency_paths"]
+        self.assertEqual(
+            [set(item["advisory_ids"]) for item in dependency_paths],
+            [set(EXPECTED_IDS), {RINGBUF_ID}],
+        )
+        for dependency_path, expected_path in zip(
+            dependency_paths, EXPECTED_PATHS, strict=True
         ):
-            self.assertEqual(node["name"], name)
-            self.assertEqual(node["version"], version)
-            self.assertEqual(node["source"], REGISTRY_SOURCE)
-            self.assertEqual(node["checksum"], checksum)
-            self.assertEqual(node["replace"], None)
-            if edge_name is None:
-                self.assertEqual(node["dependency_to_next"], None)
-            else:
-                self.assertEqual(node["dependency_to_next"]["name"], edge_name)
-                self.assertEqual(
-                    node["dependency_to_next"]["kinds"],
-                    [{"kind": None, "target": None}],
-                )
+            self.assertEqual(dependency_path["scope"], "all-resolved-targets")
+            self.assertTrue(dependency_path["rationale"])
+            self.assertTrue(dependency_path["review_triggers"])
+            nodes = dependency_path["nodes"]
+            self.assertEqual(len(nodes), len(expected_path))
+            for node, (name, version, checksum, edge_name) in zip(
+                nodes,
+                expected_path,
+                strict=True,
+            ):
+                self.assertEqual(node["name"], name)
+                self.assertEqual(node["version"], version)
+                self.assertEqual(node["source"], REGISTRY_SOURCE)
+                self.assertEqual(node["checksum"], checksum)
+                self.assertEqual(node["replace"], None)
+                if edge_name is None:
+                    self.assertEqual(node["dependency_to_next"], None)
+                else:
+                    self.assertEqual(node["dependency_to_next"]["name"], edge_name)
+                    self.assertEqual(
+                        node["dependency_to_next"]["kinds"],
+                        [{"kind": None, "target": None}],
+                    )
 
     def test_policy_pins_the_unfiltered_metadata_scope(self) -> None:
-        dependency_policy = copy.deepcopy(
-            accepted_policy()["locked_dependency_path"]
-        )
-        dependency_policy["scope"] = "x86_64-unknown-linux-gnu-only"
+        for index, approved in enumerate(CHECKER.APPROVED_DEPENDENCY_PATHS):
+            with self.subTest(path=index):
+                dependency_policy = copy.deepcopy(
+                    accepted_policy()["locked_dependency_paths"][index]
+                )
+                dependency_policy["scope"] = "x86_64-unknown-linux-gnu-only"
+
+                with self.assertRaisesRegex(
+                    CHECKER.DebtCheckError,
+                    "locked dependency scope mismatch",
+                ):
+                    CHECKER._load_dependency_path_policy(dependency_policy, approved)
+
+    def load_policy_from(self, policy: dict[str, object]) -> None:
+        with mock.patch.object(Path, "read_text", return_value=json.dumps(policy)):
+            CHECKER.load_policy(Path("/fixture/policy.json"))
+
+    def test_advisory_bound_to_the_wrong_path_is_rejected(self) -> None:
+        policy = accepted_policy()
+        first, second = policy["locked_dependency_paths"]
+        first["advisory_ids"].append(RINGBUF_ID)
+        second["advisory_ids"].remove(RINGBUF_ID)
 
         with self.assertRaisesRegex(
             CHECKER.DebtCheckError,
-            "locked dependency scope mismatch",
+            "advisory binding mismatch",
         ):
-            CHECKER._load_dependency_path_policy(dependency_policy)
+            self.load_policy_from(policy)
+
+    def test_advisory_listed_twice_in_a_path_is_rejected(self) -> None:
+        policy = accepted_policy()
+        policy["locked_dependency_paths"][1]["advisory_ids"].append(RINGBUF_ID)
+
+        with self.assertRaisesRegex(
+            CHECKER.DebtCheckError,
+            "lists an advisory twice",
+        ):
+            self.load_policy_from(policy)
+
+    def test_advisory_package_must_be_its_path_terminal(self) -> None:
+        policy = accepted_policy()
+        for record in policy["accepted_vulnerabilities"]:
+            if record["id"] == RINGBUF_ID:
+                record["package"]["checksum"] = PACKAGE_CHECKSUM
+
+        with self.assertRaisesRegex(
+            CHECKER.DebtCheckError,
+            "not its path's terminal package: RUSTSEC-2026-0293",
+        ):
+            self.load_policy_from(policy)
+
+    def test_missing_or_extra_dependency_path_is_rejected(self) -> None:
+        for mutation in ("missing", "extra"):
+            with self.subTest(mutation=mutation):
+                policy = accepted_policy()
+                paths = policy["locked_dependency_paths"]
+                if mutation == "missing":
+                    paths.pop()
+                else:
+                    paths.append(copy.deepcopy(paths[-1]))
+
+                with self.assertRaisesRegex(
+                    CHECKER.DebtCheckError,
+                    "locked dependency path count mismatch",
+                ):
+                    self.load_policy_from(policy)
+
+    def test_path_without_rationale_or_triggers_is_rejected(self) -> None:
+        for field, fragment in (
+            ("rationale", "rationale"),
+            ("review_triggers", "review triggers are missing"),
+        ):
+            with self.subTest(field=field):
+                policy = accepted_policy()
+                policy["locked_dependency_paths"][1][field] = (
+                    "" if field == "rationale" else []
+                )
+
+                with self.assertRaisesRegex(CHECKER.DebtCheckError, fragment):
+                    self.load_policy_from(policy)
 
     def test_cargo_lock_v4_package_fingerprints_are_bound_for_every_path_node(
         self,
@@ -373,7 +496,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
                 "replacement 1.0.0 (registry+https://example.invalid/index)",
             ),
         )
-        original_nodes = accepted_policy()["locked_dependency_path"]["nodes"]
+        original_nodes = all_path_nodes(accepted_policy())
         for index, original in enumerate(original_nodes):
             for field, value in mutations:
                 with self.subTest(node=original["name"], field=field):
@@ -400,7 +523,8 @@ class RustsecDebtCheckTests(unittest.TestCase):
 
     def test_metadata_binds_every_path_node_identity_and_source(self) -> None:
         _, _, _, expected_path = CHECKER.load_policy()
-        for index, expected in enumerate(expected_path):
+        flattened = [node for path in expected_path for node in path]
+        for index, expected in enumerate(flattened):
             for field, value in (
                 ("name", "changed-package"),
                 ("version", "999.0.0"),
@@ -416,15 +540,18 @@ class RustsecDebtCheckTests(unittest.TestCase):
                             expected_path,
                         )
 
+    def edge_node_indexes(self) -> list[int]:
+        nodes = exact_metadata()["resolve"]["nodes"]
+        return [index for index in range(1, len(nodes)) if nodes[index]["deps"]]
+
     def test_every_metadata_path_edge_fingerprint_is_bound(self) -> None:
         cases = ("name", "kind", "target")
-        for edge_index in range(len(EXPECTED_DEPENDENCY_PATH) - 1):
+        self.assertEqual(len(self.edge_node_indexes()), 4)
+        for edge_index in self.edge_node_indexes():
             for field in cases:
                 with self.subTest(edge=edge_index, field=field):
                     metadata = exact_metadata()
-                    dependency = metadata["resolve"]["nodes"][edge_index + 1][
-                        "deps"
-                    ][0]
+                    dependency = metadata["resolve"]["nodes"][edge_index]["deps"][0]
                     if field == "name":
                         dependency["name"] = "changed_edge"
                     elif field == "kind":
@@ -437,10 +564,10 @@ class RustsecDebtCheckTests(unittest.TestCase):
                     self.assert_failure(result, "edge fingerprint mismatch")
 
     def test_missing_metadata_path_edge_is_rejected(self) -> None:
-        for edge_index in range(len(EXPECTED_DEPENDENCY_PATH) - 1):
+        for edge_index in self.edge_node_indexes():
             with self.subTest(edge=edge_index):
                 metadata = exact_metadata()
-                metadata["resolve"]["nodes"][edge_index + 1]["deps"] = []
+                metadata["resolve"]["nodes"][edge_index]["deps"] = []
 
                 result = self.run_check(metadata=metadata)
 
@@ -453,24 +580,30 @@ class RustsecDebtCheckTests(unittest.TestCase):
             ("dev", None),
             (None, "cfg(windows)"),
         )
-        for kind, target in cases:
-            with self.subTest(kind=kind, target=target):
-                metadata = exact_metadata()
-                vulnerable_id = metadata["packages"][-1]["id"]
-                metadata["resolve"]["nodes"][0]["deps"].append(
-                    {
-                        "name": "bypass_webpki",
-                        "pkg": vulnerable_id,
-                        "dep_kinds": [{"kind": kind, "target": target}],
-                    }
-                )
+        terminals = (
+            ("rustls-webpki", "alternate route bypassing serenity 0.12.5"),
+            ("ringbuf", "alternate route bypassing songbird 0.6.0"),
+        )
+        for terminal, fragment in terminals:
+            for kind, target in cases:
+                with self.subTest(terminal=terminal, kind=kind, target=target):
+                    metadata = exact_metadata()
+                    vulnerable_id = next(
+                        package["id"]
+                        for package in metadata["packages"]
+                        if package["name"] == terminal
+                    )
+                    metadata["resolve"]["nodes"][0]["deps"].append(
+                        {
+                            "name": f"bypass_{terminal}",
+                            "pkg": vulnerable_id,
+                            "dep_kinds": [{"kind": kind, "target": target}],
+                        }
+                    )
 
-                result = self.run_check(metadata=metadata)
+                    result = self.run_check(metadata=metadata)
 
-                self.assert_failure(
-                    result,
-                    "alternate route bypassing serenity 0.12.5",
-                )
+                    self.assert_failure(result, fragment)
 
     def test_exact_exit_one_report_passes_and_says_not_clean(self) -> None:
         status, stdout, stderr, run = self.run_check()
@@ -480,7 +613,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
         self.assertEqual(
             stdout,
             "rustsec-debt-check: accepted temporary debt matches: "
-            "4 vulnerabilities remain; audit is NOT clean\n"
+            "5 vulnerabilities remain; audit is NOT clean\n"
             "rustsec-debt-check: informational warnings "
             "(not accepted vulnerability debt): 3 (unmaintained=3)\n",
         )
@@ -512,7 +645,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(stderr, "")
-        self.assertIn("4 vulnerabilities remain; audit is NOT clean", stdout)
+        self.assertIn("5 vulnerabilities remain; audit is NOT clean", stdout)
 
     def test_advisory_database_metadata_is_not_part_of_the_fingerprint(self) -> None:
         report = exact_report()
@@ -616,7 +749,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
             "5 (unmaintained=3, unsound=2)",
             stdout,
         )
-        self.assertIn("4 vulnerabilities remain", stdout)
+        self.assertIn("5 vulnerabilities remain", stdout)
 
     def test_missing_advisory_is_rejected(self) -> None:
         report = exact_report()
@@ -714,7 +847,7 @@ class RustsecDebtCheckTests(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(stderr, "")
-        self.assertIn("4 vulnerabilities remain; audit is NOT clean", stdout)
+        self.assertIn("5 vulnerabilities remain; audit is NOT clean", stdout)
 
     def test_duplicate_cargo_audit_dependency_is_rejected(self) -> None:
         report = exact_report()
@@ -778,13 +911,13 @@ class RustsecDebtCheckTests(unittest.TestCase):
 
     def test_declared_vulnerability_count_must_match_the_list(self) -> None:
         report = exact_report()
-        report["vulnerabilities"]["count"] = 5
+        report["vulnerabilities"]["count"] = 6
 
         result = self.run_check(report)
 
         self.assert_failure(
             result,
-            "vulnerability count mismatch (declared 5, observed 4)",
+            "vulnerability count mismatch (declared 6, observed 5)",
         )
 
     def test_found_state_must_match_the_count(self) -> None:

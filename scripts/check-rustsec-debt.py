@@ -15,27 +15,45 @@ ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = ROOT / "security/rustsec-accepted-debt.json"
 LOCKFILE_PATH = ROOT / "Cargo.lock"
 
-POLICY_SCHEMA_VERSION = 2
+POLICY_SCHEMA_VERSION = 3
 CARGO_AUDIT_VERSION = "0.22.2"
 RESOLUTION_SCOPE = "all-resolved-targets"
+# Each accepted debt is one locked dependency path ending at the vulnerable
+# package, plus the exact advisories that path carries. Adding a path or an
+# advisory is a reviewed change to this table, never a policy-file edit alone.
+APPROVED_DEPENDENCY_PATHS = (
+    (
+        (
+            "RUSTSEC-2026-0049",
+            "RUSTSEC-2026-0098",
+            "RUSTSEC-2026-0099",
+            "RUSTSEC-2026-0104",
+        ),
+        (
+            ("serenity", "0.12.5"),
+            ("tokio-tungstenite", "0.21.0"),
+            ("rustls", "0.22.4"),
+            ("rustls-webpki", "0.102.8"),
+        ),
+        ("tokio_tungstenite", "rustls", "webpki"),
+    ),
+    (
+        ("RUSTSEC-2026-0293",),
+        (
+            ("songbird", "0.6.0"),
+            ("ringbuf", "0.4.8"),
+        ),
+        ("ringbuf",),
+    ),
+)
 APPROVED_ADVISORY_IDS = frozenset(
-    {
-        "RUSTSEC-2026-0049",
-        "RUSTSEC-2026-0098",
-        "RUSTSEC-2026-0099",
-        "RUSTSEC-2026-0104",
-    }
+    advisory_id
+    for advisory_ids, _, _ in APPROVED_DEPENDENCY_PATHS
+    for advisory_id in advisory_ids
 )
 APPROVED_INFORMATIONAL_WARNINGS = frozenset(
     {"notice", "unmaintained", "unsound"}
 )
-APPROVED_DEPENDENCY_PATH = (
-    ("serenity", "0.12.5"),
-    ("tokio-tungstenite", "0.21.0"),
-    ("rustls", "0.22.4"),
-    ("rustls-webpki", "0.102.8"),
-)
-APPROVED_DEPENDENCY_EDGES = ("tokio_tungstenite", "rustls", "webpki")
 
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_LOCKFILE_BYTES = 8 * 1024 * 1024
@@ -61,9 +79,7 @@ _POLICY_KEYS = {
     "schema_version",
     "cargo_audit_version",
     "audit_state",
-    "rationale",
-    "review_triggers",
-    "locked_dependency_path",
+    "locked_dependency_paths",
     "accepted_vulnerability_count",
     "accepted_vulnerabilities",
 }
@@ -87,7 +103,13 @@ _POLICY_PACKAGE_KEYS = {
     "replace",
 }
 _AUDIT_DEPENDENCY_KEYS = {"name", "version", "source"}
-_DEPENDENCY_PATH_KEYS = {"scope", "nodes"}
+_DEPENDENCY_PATH_KEYS = {
+    "scope",
+    "advisory_ids",
+    "rationale",
+    "review_triggers",
+    "nodes",
+}
 _DEPENDENCY_PATH_NODE_KEYS = {
     "name",
     "version",
@@ -385,7 +407,11 @@ def _material_record(
 
 def _load_dependency_path_policy(
     value: Any,
-) -> tuple[str, tuple[dict[str, Any], ...]]:
+    approved: tuple[
+        tuple[str, ...], tuple[tuple[str, str], ...], tuple[str, ...]
+    ],
+) -> tuple[str, tuple[str, ...], tuple[dict[str, Any], ...]]:
+    approved_ids, approved_identities, approved_edges = approved
     policy = _mapping(value, label="accepted-debt locked dependency path")
     _exact_keys(
         policy,
@@ -399,11 +425,39 @@ def _load_dependency_path_policy(
     )
     if scope != RESOLUTION_SCOPE:
         raise DebtCheckError("accepted-debt locked dependency scope mismatch")
+    raw_ids = _list(
+        _required(policy, "advisory_ids", label="accepted-debt locked dependency path"),
+        label="accepted-debt locked dependency path advisory ids",
+    )
+    advisory_ids = tuple(
+        _text(item, label="accepted-debt locked dependency path advisory id", maximum=32)
+        for item in raw_ids
+    )
+    if len(set(advisory_ids)) != len(advisory_ids):
+        raise DebtCheckError(
+            "accepted-debt locked dependency path lists an advisory twice"
+        )
+    if set(advisory_ids) != set(approved_ids):
+        raise DebtCheckError(
+            "accepted-debt locked dependency path advisory binding mismatch"
+        )
+    _text(
+        _required(policy, "rationale", label="accepted-debt locked dependency path"),
+        label="accepted-debt rationale",
+        maximum=4096,
+    )
+    if not _string_set(
+        _required(
+            policy, "review_triggers", label="accepted-debt locked dependency path"
+        ),
+        label="accepted-debt review triggers",
+    ):
+        raise DebtCheckError("accepted-debt review triggers are missing")
     records = _list(
         _required(policy, "nodes", label="accepted-debt locked dependency path"),
         label="accepted-debt locked dependency path nodes",
     )
-    if len(records) != len(APPROVED_DEPENDENCY_PATH):
+    if len(records) != len(approved_identities):
         raise DebtCheckError("accepted-debt locked dependency path length mismatch")
 
     path: list[dict[str, Any]] = []
@@ -462,12 +516,12 @@ def _load_dependency_path_policy(
         path.append(node)
 
     identities = tuple((node["name"], node["version"]) for node in path)
-    if identities != APPROVED_DEPENDENCY_PATH:
+    if identities != approved_identities:
         raise DebtCheckError("accepted-debt locked dependency path identity mismatch")
     edges = tuple(node["dependency_to_next"]["name"] for node in path[:-1])
-    if edges != APPROVED_DEPENDENCY_EDGES:
+    if edges != approved_edges:
         raise DebtCheckError("accepted-debt locked dependency path edge mismatch")
-    return scope, tuple(path)
+    return scope, advisory_ids, tuple(path)
 
 
 def load_policy(
@@ -476,7 +530,7 @@ def load_policy(
     str,
     dict[str, dict[str, Any]],
     str,
-    tuple[dict[str, Any], ...],
+    tuple[tuple[dict[str, Any], ...], ...],
 ]:
     try:
         policy_text = path.read_text(encoding="utf-8")
@@ -504,20 +558,25 @@ def load_policy(
         raise DebtCheckError("accepted-debt cargo-audit version mismatch")
     if _required(policy, "audit_state", label="accepted-debt policy") != "not-clean":
         raise DebtCheckError("accepted-debt policy must remain explicitly not-clean")
-    _text(
-        _required(policy, "rationale", label="accepted-debt policy"),
-        label="accepted-debt rationale",
-        maximum=4096,
+    raw_paths = _list(
+        _required(policy, "locked_dependency_paths", label="accepted-debt policy"),
+        label="accepted-debt locked dependency paths",
     )
-    review_triggers = _string_set(
-        _required(policy, "review_triggers", label="accepted-debt policy"),
-        label="accepted-debt review triggers",
-    )
-    if not review_triggers:
-        raise DebtCheckError("accepted-debt review triggers are missing")
-    dependency_scope, dependency_path = _load_dependency_path_policy(
-        _required(policy, "locked_dependency_path", label="accepted-debt policy")
-    )
+    if len(raw_paths) != len(APPROVED_DEPENDENCY_PATHS):
+        raise DebtCheckError("accepted-debt locked dependency path count mismatch")
+    dependency_paths: list[tuple[dict[str, Any], ...]] = []
+    terminal_by_advisory: dict[str, dict[str, Any]] = {}
+    for raw_path, approved in zip(raw_paths, APPROVED_DEPENDENCY_PATHS, strict=True):
+        dependency_scope, advisory_ids, dependency_path = (
+            _load_dependency_path_policy(raw_path, approved)
+        )
+        for advisory_id in advisory_ids:
+            if advisory_id in terminal_by_advisory:
+                raise DebtCheckError(
+                    "accepted-debt advisory is bound to more than one path"
+                )
+            terminal_by_advisory[advisory_id] = dependency_path[-1]
+        dependency_paths.append(dependency_path)
 
     expected_count = _integer(
         _required(policy, "accepted_vulnerability_count", label="accepted-debt policy"),
@@ -544,12 +603,22 @@ def load_policy(
         fingerprints[advisory_id] = fingerprint
     if set(fingerprints) != APPROVED_ADVISORY_IDS:
         raise DebtCheckError("accepted-debt policy advisory inventory mismatch")
-    return version, fingerprints, dependency_scope, dependency_path
+    for advisory_id, fingerprint in fingerprints.items():
+        terminal = terminal_by_advisory.get(advisory_id)
+        if terminal is None or any(
+            fingerprint[f"package.{field}"] != terminal[field]
+            for field in ("name", "version", "source", "checksum")
+        ):
+            raise DebtCheckError(
+                "accepted-debt advisory package is not its path's terminal package: "
+                f"{advisory_id}"
+            )
+    return version, fingerprints, dependency_scope, tuple(dependency_paths)
 
 
 def _verify_lockfile_path(
     lockfile_text: str,
-    expected_path: tuple[dict[str, Any], ...],
+    expected_paths: tuple[tuple[dict[str, Any], ...], ...],
 ) -> None:
     if len(lockfile_text.encode("utf-8")) > MAX_LOCKFILE_BYTES:
         raise DebtCheckError("Cargo.lock exceeds the size limit")
@@ -588,7 +657,7 @@ def _verify_lockfile_path(
     if len(packages) > MAX_METADATA_PACKAGES:
         raise DebtCheckError("Cargo.lock package inventory exceeds the limit")
 
-    for expected in expected_path:
+    for expected in (node for path in expected_paths for node in path):
         matches: list[dict[str, str]] = []
         for package in packages:
             if (
@@ -632,19 +701,19 @@ def _verify_lockfile_path(
 
 
 def load_locked_dependency_path(
-    expected_path: tuple[dict[str, Any], ...],
+    expected_paths: tuple[tuple[dict[str, Any], ...], ...],
     path: Path = LOCKFILE_PATH,
 ) -> None:
     try:
         lockfile_text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         raise DebtCheckError("Cargo.lock is unavailable") from None
-    _verify_lockfile_path(lockfile_text, expected_path)
+    _verify_lockfile_path(lockfile_text, expected_paths)
 
 
 def _verify_metadata_path(
     metadata_text: str,
-    expected_path: tuple[dict[str, Any], ...],
+    expected_paths: tuple[tuple[dict[str, Any], ...], ...],
 ) -> None:
     metadata = _mapping(
         _parse_json(metadata_text, label="cargo metadata output"),
@@ -656,40 +725,6 @@ def _verify_metadata_path(
     )
     if len(packages) > MAX_METADATA_PACKAGES:
         raise DebtCheckError("cargo metadata package inventory exceeds the limit")
-
-    selected: list[tuple[str, dict[str, Any]]] = []
-    for expected in expected_path:
-        matches: list[dict[str, Any]] = []
-        for value in packages:
-            package = _mapping(value, label="cargo metadata package")
-            if (
-                package.get("name") == expected["name"]
-                and package.get("version") == expected["version"]
-            ):
-                matches.append(package)
-        identity = f"{expected['name']} {expected['version']}"
-        if len(matches) != 1:
-            raise DebtCheckError(
-                f"cargo metadata dependency path package identity mismatch: {identity}"
-            )
-        package = matches[0]
-        package_id = _text(
-            _required(package, "id", label="cargo metadata package"),
-            label="cargo metadata package id",
-            maximum=2048,
-        )
-        source = _optional_text(
-            _required(package, "source", label="cargo metadata package"),
-            label="cargo metadata package source",
-            maximum=1024,
-        )
-        if source != expected["source"]:
-            raise DebtCheckError(
-                f"cargo metadata dependency path package source mismatch: {identity}"
-            )
-        selected.append((package_id, expected))
-    if len({package_id for package_id, _ in selected}) != len(selected):
-        raise DebtCheckError("cargo metadata dependency path package ids are not unique")
 
     resolve = _mapping(
         _required(metadata, "resolve", label="cargo metadata output"),
@@ -720,48 +755,6 @@ def _verify_metadata_path(
     if root_id not in node_map:
         raise DebtCheckError("cargo metadata resolve root is missing")
 
-    for index, (from_id, expected) in enumerate(selected):
-        node = node_map.get(from_id)
-        if node is None:
-            raise DebtCheckError(
-                "cargo metadata dependency path resolve node is missing: "
-                f"{expected['name']} {expected['version']}"
-            )
-        dependencies = _list(
-            _required(node, "deps", label="cargo metadata resolve node"),
-            label="cargo metadata resolve dependencies",
-        )
-        if len(dependencies) > MAX_METADATA_DEPENDENCIES:
-            raise DebtCheckError("cargo metadata dependency inventory exceeds the limit")
-        edge = expected["dependency_to_next"]
-        if edge is None:
-            continue
-        to_id = selected[index + 1][0]
-        matches: list[dict[str, Any]] = []
-        for value in dependencies:
-            dependency = _mapping(value, label="cargo metadata dependency")
-            if dependency.get("pkg") == to_id:
-                matches.append(dependency)
-        if len(matches) != 1:
-            raise DebtCheckError(
-                "cargo metadata dependency path edge mismatch: "
-                f"{expected['name']} -> {selected[index + 1][1]['name']}"
-            )
-        dependency = matches[0]
-        observed_name = _text(
-            _required(dependency, "name", label="cargo metadata dependency"),
-            label="cargo metadata dependency name",
-        )
-        observed_kinds = _dependency_kinds(
-            _required(dependency, "dep_kinds", label="cargo metadata dependency"),
-            label="cargo metadata dependency kinds",
-        )
-        if observed_name != edge["name"] or observed_kinds != edge["kinds"]:
-            raise DebtCheckError(
-                "cargo metadata dependency path edge fingerprint mismatch: "
-                f"{expected['name']} -> {selected[index + 1][1]['name']}"
-            )
-
     graph: dict[str, set[str]] = {}
     for node_id, node in node_map.items():
         dependencies = _list(
@@ -789,17 +782,94 @@ def _verify_metadata_path(
             successors.add(package_id)
         graph[node_id] = successors
 
-    vulnerable_id = selected[-1][0]
-    if not _is_reachable(graph, root_id, vulnerable_id):
-        raise DebtCheckError(
-            "cargo metadata vulnerable package is unreachable from the workspace root"
-        )
-    for required_id, required in selected[:-1]:
-        if _is_reachable(graph, root_id, vulnerable_id, blocked=required_id):
-            raise DebtCheckError(
-                "cargo metadata dependency path has an alternate route bypassing "
-                f"{required['name']} {required['version']}"
+    for expected_path in expected_paths:
+        selected: list[tuple[str, dict[str, Any]]] = []
+        for expected in expected_path:
+            matches: list[dict[str, Any]] = []
+            for value in packages:
+                package = _mapping(value, label="cargo metadata package")
+                if (
+                    package.get("name") == expected["name"]
+                    and package.get("version") == expected["version"]
+                ):
+                    matches.append(package)
+            identity = f"{expected['name']} {expected['version']}"
+            if len(matches) != 1:
+                raise DebtCheckError(
+                    f"cargo metadata dependency path package identity mismatch: {identity}"
+                )
+            package = matches[0]
+            package_id = _text(
+                _required(package, "id", label="cargo metadata package"),
+                label="cargo metadata package id",
+                maximum=2048,
             )
+            source = _optional_text(
+                _required(package, "source", label="cargo metadata package"),
+                label="cargo metadata package source",
+                maximum=1024,
+            )
+            if source != expected["source"]:
+                raise DebtCheckError(
+                    f"cargo metadata dependency path package source mismatch: {identity}"
+                )
+            selected.append((package_id, expected))
+        if len({package_id for package_id, _ in selected}) != len(selected):
+            raise DebtCheckError("cargo metadata dependency path package ids are not unique")
+
+        for index, (from_id, expected) in enumerate(selected):
+            node = node_map.get(from_id)
+            if node is None:
+                raise DebtCheckError(
+                    "cargo metadata dependency path resolve node is missing: "
+                    f"{expected['name']} {expected['version']}"
+                )
+            dependencies = _list(
+                _required(node, "deps", label="cargo metadata resolve node"),
+                label="cargo metadata resolve dependencies",
+            )
+            if len(dependencies) > MAX_METADATA_DEPENDENCIES:
+                raise DebtCheckError("cargo metadata dependency inventory exceeds the limit")
+            edge = expected["dependency_to_next"]
+            if edge is None:
+                continue
+            to_id = selected[index + 1][0]
+            matches: list[dict[str, Any]] = []
+            for value in dependencies:
+                dependency = _mapping(value, label="cargo metadata dependency")
+                if dependency.get("pkg") == to_id:
+                    matches.append(dependency)
+            if len(matches) != 1:
+                raise DebtCheckError(
+                    "cargo metadata dependency path edge mismatch: "
+                    f"{expected['name']} -> {selected[index + 1][1]['name']}"
+                )
+            dependency = matches[0]
+            observed_name = _text(
+                _required(dependency, "name", label="cargo metadata dependency"),
+                label="cargo metadata dependency name",
+            )
+            observed_kinds = _dependency_kinds(
+                _required(dependency, "dep_kinds", label="cargo metadata dependency"),
+                label="cargo metadata dependency kinds",
+            )
+            if observed_name != edge["name"] or observed_kinds != edge["kinds"]:
+                raise DebtCheckError(
+                    "cargo metadata dependency path edge fingerprint mismatch: "
+                    f"{expected['name']} -> {selected[index + 1][1]['name']}"
+                )
+
+        vulnerable_id = selected[-1][0]
+        if not _is_reachable(graph, root_id, vulnerable_id):
+            raise DebtCheckError(
+                "cargo metadata vulnerable package is unreachable from the workspace root"
+            )
+        for required_id, required in selected[:-1]:
+            if _is_reachable(graph, root_id, vulnerable_id, blocked=required_id):
+                raise DebtCheckError(
+                    "cargo metadata dependency path has an alternate route bypassing "
+                    f"{required['name']} {required['version']}"
+                )
 
 
 def _is_reachable(
@@ -990,8 +1060,8 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def main() -> int:
     try:
-        expected_version, expected, _dependency_scope, expected_path = load_policy()
-        load_locked_dependency_path(expected_path)
+        expected_version, expected, _dependency_scope, expected_paths = load_policy()
+        load_locked_dependency_path(expected_paths)
 
         version_result = _run(["cargo", "audit", "--version"])
         if version_result.returncode != 0:
@@ -1018,7 +1088,7 @@ def main() -> int:
             raise DebtCheckError(
                 f"cargo metadata command failed with exit {metadata_result.returncode}"
             )
-        _verify_metadata_path(metadata_result.stdout, expected_path)
+        _verify_metadata_path(metadata_result.stdout, expected_paths)
     except DebtCheckError as error:
         print(f"rustsec-debt-check: FAIL: {error}", file=sys.stderr)
         return 1

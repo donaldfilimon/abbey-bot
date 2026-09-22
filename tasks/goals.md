@@ -333,6 +333,7 @@ status: done
 
 ## Breadth & ops (sub-project 4 of "improve all")
 status: in_progress
+- **2026-09-22 00:1x EDT: RUSTSEC-2026-0293 accepted by Donald.** `ringbuf` 0.4.8 via songbird 0.6.0 (songbird pins `ringbuf = "0.4"`; fixed 0.5.2 is not semver-compatible). Unreachable here: songbird's only ring buffer is `SharedRb<Heap<u8>>` and `u8` has no `Drop`. `security/rustsec-accepted-debt.json` moves to schema 3: a list of locked dependency paths, each binding its own advisories, rationale and review triggers; `scripts/check-rustsec-debt.py` verifies every path and rejects an advisory whose package is not its path's terminal. The four `rustls-webpki` records gained the CVE aliases the advisory database added on 2026-09-19 (fingerprint-only change, same packages and ranges). Audit is still NOT clean: 5 accepted.
 - 2026-08-19: vision works on a local VLM — ollama `gemma4:e4b` described a screenshot correctly; `/v1` needed a 1,024-token budget (reasoning first) and a reasoning-exhausted error is now honest. launchd user agent for this Mac: `deploy/com.donaldfilimon.abbey-bot.plist` + `deploy/install-launchd.sh` (build, install, load; `--uninstall`).
 - Historical 2026-08-20 installation evidence recorded the categories atomic launchd replacement,
   owner-only environment and data state, successful gateway/DM/reward paths, persistence reload,

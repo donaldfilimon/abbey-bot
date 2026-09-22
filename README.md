@@ -920,20 +920,29 @@ authoritative. `tasks/goals.md` retains the dated dependency-audit history.
 The Linux graph is now Rustls/WebPKI-only: the gate rejects `native-tls`,
 `openssl`, and `openssl-sys`, so the package-free Docker runtime uses compiled
 roots. Serenity 0.12.5's Rustls WebSocket edge still pins `rustls-webpki`
-0.102.8. Exactly four vulnerability records are accepted temporarily:
+0.102.8. Exactly five vulnerability records are accepted temporarily, on two
+locked dependency paths. Four ride serenity 0.12.5 to `rustls-webpki` 0.102.8:
 
 - `RUSTSEC-2026-0049` / `GHSA-pwjx-qhcg-rvj4`
 - `RUSTSEC-2026-0098` / `GHSA-965h-392x-2mh5`
 - `RUSTSEC-2026-0099` / `GHSA-xgp8-3hg3-c2mh`
 - `RUSTSEC-2026-0104` / `GHSA-82j2-j2ch-gfr8` — malformed-CRL reachable panic
 
+The fifth, accepted on 2026-09-22, rides songbird 0.6.0 to `ringbuf` 0.4.8:
+
+- `RUSTSEC-2026-0293` (no alias) — double free in `Consumer::skip`/`clear` when
+  an element's `Drop` panics. songbird pins `ringbuf = "0.4"`, so the fixed
+  0.5.2 needs a songbird release; its only ring buffer holds `u8`, which has
+  no `Drop`, so the precondition cannot occur in this build.
+
 The deterministic checker binds each record to the exact package, version,
 source, checksum, aliases, patched/unaffected ranges, categories, CVSS and
-informational state, withdrawal state, and dependency identity. Any missing,
-additional, or changed vulnerability fails closed. Its successful result says
-that four vulnerabilities remain and the audit is **not clean**. The
+informational state, withdrawal state, and dependency identity. Each advisory is bound to exactly one path whose
+terminal package it names. Any missing, additional, or changed vulnerability
+fails closed. Its successful result says that five vulnerabilities remain and the audit is **not clean**. The
 `cargo-audit` 0.22.2 pin stabilizes report parsing; it is tooling, not a fifth
-accepted finding. Informational warnings are reported separately. The fixed
+accepted finding. The records carry the CVE aliases the advisory
+database added on 2026-09-19. Informational warnings are reported separately. The fixed
 0.103 line is not compatible with Serenity's current `tokio-tungstenite` 0.21
 edge, so re-review is required when that upstream route or support policy
 changes. Abbey also carries the provenance-checked `openmls_rust_crypto` 0.5.1

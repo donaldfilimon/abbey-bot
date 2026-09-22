@@ -593,3 +593,4 @@ verdicts only. Counts: 42 open boxes (measured); 39 still open, 2 done, 1 obsole
 - L410 obsolete: no manually launched process exists; it is the launchd service (measured, `launchctl` PID 1399; prose, goals:116-124); its residual layers are tracked by L27, L203, L205, L289 and L290.
 - L472 still open: no typed-outcome settle recorded (prose, goals:275 is the untyped 2026-08-19 reward).
 - L483 still open: audio tap installed (measured, `launchctl` PID 1391; prose, goals:1782); human Play acceptance open (prose, goals:1796-1798).
+- 2026-09-22: RUSTSEC-2026-0293 accepted by Donald and bound to its own songbird 0.6.0 -> ringbuf 0.4.8 path in `security/rustsec-accepted-debt.json` (schema 3); L392's four rustls-webpki records stay open on the Serenity upstream, now carrying their 2026-09-19 CVE aliases.

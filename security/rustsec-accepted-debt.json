@@ -1,77 +1,125 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "cargo_audit_version": "0.22.2",
   "audit_state": "not-clean",
-  "rationale": "Serenity 0.12.5's WebSocket dependency path uses the rustls 0.22 compatibility line and resolves rustls-webpki 0.102.8. A fixed compatible line requires an upstream Serenity/tokio-tungstenite/rustls migration; replacing portable rustls or carrying a local cryptographic fork is outside this approved slice.",
-  "review_triggers": [
-    "The Serenity/tokio-tungstenite/rustls dependency path changes.",
-    "A compatible fixed rustls-webpki line becomes available.",
-    "The dependency topology, package source, version, or checksum changes.",
-    "Any accepted advisory fingerprint changes or a vulnerability appears or disappears.",
-    "The upstream support policy for rustls-webpki 0.102.x changes."
-  ],
-  "locked_dependency_path": {
-    "scope": "all-resolved-targets",
-    "nodes": [
-      {
-        "name": "serenity",
-        "version": "0.12.5",
-        "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "9bde37f42765dfdc34e2a039e0c84afbf79a3101c1941763b0beb816c2f17541",
-        "replace": null,
-        "dependency_to_next": {
-          "name": "tokio_tungstenite",
-          "kinds": [
-            {
-              "kind": null,
-              "target": null
-            }
-          ]
-        }
-      },
-      {
-        "name": "tokio-tungstenite",
-        "version": "0.21.0",
-        "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38",
-        "replace": null,
-        "dependency_to_next": {
+  "locked_dependency_paths": [
+    {
+      "scope": "all-resolved-targets",
+      "advisory_ids": [
+        "RUSTSEC-2026-0049",
+        "RUSTSEC-2026-0098",
+        "RUSTSEC-2026-0099",
+        "RUSTSEC-2026-0104"
+      ],
+      "rationale": "Serenity 0.12.5's WebSocket dependency path uses the rustls 0.22 compatibility line and resolves rustls-webpki 0.102.8. A fixed compatible line requires an upstream Serenity/tokio-tungstenite/rustls migration; replacing portable rustls or carrying a local cryptographic fork is outside this approved slice.",
+      "review_triggers": [
+        "The Serenity/tokio-tungstenite/rustls dependency path changes.",
+        "A compatible fixed rustls-webpki line becomes available.",
+        "The dependency topology, package source, version, or checksum changes.",
+        "Any accepted advisory fingerprint changes or a vulnerability appears or disappears.",
+        "The upstream support policy for rustls-webpki 0.102.x changes."
+      ],
+      "nodes": [
+        {
+          "name": "serenity",
+          "version": "0.12.5",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "9bde37f42765dfdc34e2a039e0c84afbf79a3101c1941763b0beb816c2f17541",
+          "replace": null,
+          "dependency_to_next": {
+            "name": "tokio_tungstenite",
+            "kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokio-tungstenite",
+          "version": "0.21.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38",
+          "replace": null,
+          "dependency_to_next": {
+            "name": "rustls",
+            "kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        },
+        {
           "name": "rustls",
-          "kinds": [
-            {
-              "kind": null,
-              "target": null
-            }
-          ]
+          "version": "0.22.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432",
+          "replace": null,
+          "dependency_to_next": {
+            "name": "webpki",
+            "kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "rustls-webpki",
+          "version": "0.102.8",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
+          "replace": null,
+          "dependency_to_next": null
         }
-      },
-      {
-        "name": "rustls",
-        "version": "0.22.4",
-        "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432",
-        "replace": null,
-        "dependency_to_next": {
-          "name": "webpki",
-          "kinds": [
-            {
-              "kind": null,
-              "target": null
-            }
-          ]
+      ]
+    },
+    {
+      "scope": "all-resolved-targets",
+      "advisory_ids": [
+        "RUSTSEC-2026-0293"
+      ],
+      "rationale": "Accepted by Donald on 2026-09-22. songbird 0.6.0 (the voice driver) depends on ringbuf \"0.4\" (its Cargo.toml [dependencies.ringbuf] version = \"0.4\"), so the fixed ringbuf 0.5.2 is not semver-compatible and cannot be selected without a songbird release. The advisory's double free needs an element whose Drop panics inside Consumer::skip or Consumer::clear. songbird's only ring buffer is the async input adapter's SharedRb<Heap<u8>> (HeapProd<u8>/HeapCons<u8> in src/input/adapters/async_adapter.rs, which calls rb.skip on seek), and u8 has no Drop, so the precondition cannot occur in this build. abbey-bot itself does not use ringbuf.",
+      "review_triggers": [
+        "songbird releases a version that depends on ringbuf >=0.5.2, or the songbird -> ringbuf edge changes.",
+        "songbird's ring buffer element type stops being u8, or songbird adds another ringbuf consumer.",
+        "abbey-bot takes a direct ringbuf dependency.",
+        "The dependency topology, package source, version, or checksum changes.",
+        "Any accepted advisory fingerprint changes or a vulnerability appears or disappears."
+      ],
+      "nodes": [
+        {
+          "name": "songbird",
+          "version": "0.6.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5b9bf4ecb5083685b79a8fc60222f12e4f036e2817c5c341cd2b9ff2b429d237",
+          "replace": null,
+          "dependency_to_next": {
+            "name": "ringbuf",
+            "kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "ringbuf",
+          "version": "0.4.8",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "fe47b720588c8702e34b5979cb3271a8b1842c7cb6f57408efa70c779363488c",
+          "replace": null,
+          "dependency_to_next": null
         }
-      },
-      {
-        "name": "rustls-webpki",
-        "version": "0.102.8",
-        "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9",
-        "replace": null,
-        "dependency_to_next": null
-      }
-    ]
-  },
-  "accepted_vulnerability_count": 4,
+      ]
+    }
+  ],
+  "accepted_vulnerability_count": 5,
   "accepted_vulnerabilities": [
     {
       "id": "RUSTSEC-2026-0049",
@@ -79,6 +127,7 @@
         "package": "rustls-webpki",
         "source": null,
         "aliases": [
+          "CVE-2026-93602",
           "GHSA-pwjx-qhcg-rvj4"
         ],
         "categories": [
@@ -128,6 +177,7 @@
         "package": "rustls-webpki",
         "source": null,
         "aliases": [
+          "CVE-2026-93600",
           "GHSA-965h-392x-2mh5"
         ],
         "categories": [],
@@ -174,6 +224,7 @@
         "package": "rustls-webpki",
         "source": null,
         "aliases": [
+          "CVE-2026-93601",
           "GHSA-xgp8-3hg3-c2mh"
         ],
         "categories": [],
@@ -220,6 +271,7 @@
         "package": "rustls-webpki",
         "source": null,
         "aliases": [
+          "CVE-2026-93599",
           "GHSA-82j2-j2ch-gfr8"
         ],
         "categories": [
@@ -256,6 +308,62 @@
           {
             "name": "untrusted",
             "version": "0.9.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        ],
+        "replace": null
+      }
+    },
+    {
+      "id": "RUSTSEC-2026-0293",
+      "advisory": {
+        "package": "ringbuf",
+        "source": null,
+        "aliases": [],
+        "categories": [
+          "memory-corruption"
+        ],
+        "cvss": null,
+        "informational": null,
+        "withdrawn": null
+      },
+      "versions": {
+        "patched": [
+          ">=0.5.2"
+        ],
+        "unaffected": []
+      },
+      "affected": {
+        "arch": [],
+        "os": [],
+        "functions": {
+          "ringbuf::traits::consumer::Consumer::clear": [
+            "<0.5.2"
+          ],
+          "ringbuf::traits::consumer::Consumer::skip": [
+            "<0.5.2"
+          ]
+        }
+      },
+      "package": {
+        "name": "ringbuf",
+        "version": "0.4.8",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "fe47b720588c8702e34b5979cb3271a8b1842c7cb6f57408efa70c779363488c",
+        "dependencies": [
+          {
+            "name": "crossbeam-utils",
+            "version": "0.8.23",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "portable-atomic",
+            "version": "1.15.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          },
+          {
+            "name": "portable-atomic-util",
+            "version": "0.2.8",
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         ],

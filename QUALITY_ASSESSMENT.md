@@ -128,6 +128,7 @@ Source: `abbey-bot/tasks/todo.md` (331 lines, `cargo test --locked` 750 passed 2
 | **Gated deployment** | 215-221 | Install/verify MLX-Audio, MLX-VLM 12B, FM capability manifest, atomic launchd install, gated-vs-installed SHA-256 identity, stable PIDs, local-only sockets, pinned model ids | **Proposed** | **Operator** — dependency-ordered deploy pipeline |
 | **Live acceptance (human-gated)** | 228-247 | Two-guild isolation (A on / B off), 7 Core+Inspect tools, `/voice status` local mode, fresh unanimous consent, `join consent:true`, wake-name + Kokoro, barge-in, membership-close, `resume`, `stop listening`, `leave` + no UDP, `/see`+`/ocr` on 12B, malformed/DoS rejections | **Blocked** | **Humans present + authorized manager** — historical 2026-08-20 categories retained only by commit hash, not current evidence |
 | **Debt** | 258-266 | Resolve 4 accepted `rustls-webpki 0.102.8` advisories (`RUSTSEC-2026-0049/-0098/-0099/-0104`) after Serenity publishes compatible Rustls/WebSocket edge | **Blocked** | **Upstream Serenity** — accepted debt is bound to exact package/version/checksum; any delta fails closed |
+| **Debt** | — | Accepted `RUSTSEC-2026-0293` (`ringbuf` 0.4.8 via songbird 0.6.0) on 2026-09-22; unreachable here (`u8` elements have no `Drop`); resolves when songbird moves to `ringbuf` >=0.5.2 | **Accepted** | **Upstream songbird** — bound to its own locked path in `security/rustsec-accepted-debt.json` |
 
 **Demand:** a green `cargo test` does not close any `Blocked` row. Only a witnessed live execution with its specified inputs does.
 
