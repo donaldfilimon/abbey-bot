@@ -26,6 +26,7 @@ pub const gateway_conn = @import("gateway/conn.zig");
 pub const gateway_probe = @import("gateway/probe.zig");
 pub const ratelimit = @import("discord/ratelimit.zig");
 pub const rest = @import("discord/rest.zig");
+pub const llm = @import("llm/openai.zig");
 pub const tls_test = @import("net/tls_test.zig");
 
 pub const version = "0.1.0";

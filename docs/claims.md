@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 14, Partial 1, Proposed 48, Out-of-scope 2.
+Totals: Current 16, Partial 1, Proposed 46, Out-of-scope 2.
 
 ## Transport
 
@@ -84,8 +84,8 @@ Totals: Current 14, Partial 1, Proposed 48, Out-of-scope 2.
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
-| OpenAI-compatible local endpoint (loopback HTTP, remote HTTPS) | 1 | Proposed | none |  |
-| Local-first provider order (local endpoint, then OpenAI-compatible HTTPS) | 1 | Proposed | none |  |
+| OpenAI-compatible local endpoint (loopback HTTP, remote HTTPS) | 1 | Current | `endpoint validation mirrors the oracle: loopback-only primary, HTTPS-only remote fallback`<br>`extraction: stop with content answers; reasoning-only is a budget failure; others are backend failures`<br>`provider posts the persona prompt and transcript to the local endpoint and returns its answer` | Loopback-only primary exactly as the oracle validates it; request shape and extraction transcribe llm/dialect.rs and llm/protocol.rs. Non-streaming (one interaction post). |
+| Local-first provider order (local endpoint, then OpenAI-compatible HTTPS) | 1 | Current | `a failed local endpoint falls through to the fallback tier with its bearer key`<br>`no configured tier yields null and a lone failing tier yields a backend failure` | Rewrite addition: ABBEY_BOT_LLM_FALLBACK_ENDPOINT/_MODEL/_KEY (HTTPS unless loopback) after the loopback primary; the oracle instead puts Anthropic first, which is Out-of-scope here. Read-only turns only, so a fallback never repeats a side effect. |
 | Anthropic Messages API backend | - | Out-of-scope | none | The rewrite's provider order is local endpoint then OpenAI-compatible HTTP. |
 | Apple Foundation Models secondary (fm serve / fm respond) | 2 | Proposed | none | Not in the phase-1 list. |
 | Provider self-test and qualification manifest | 2 | Proposed | none | Not in the phase-1 list. |

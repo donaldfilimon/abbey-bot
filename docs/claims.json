@@ -461,17 +461,24 @@
       "group": "Generation backends",
       "capability": "OpenAI-compatible local endpoint (loopback HTTP, remote HTTPS)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "endpoint validation mirrors the oracle: loopback-only primary, HTTPS-only remote fallback",
+        "extraction: stop with content answers; reasoning-only is a budget failure; others are backend failures",
+        "provider posts the persona prompt and transcript to the local endpoint and returns its answer"
+      ],
+      "note": "Loopback-only primary exactly as the oracle validates it; request shape and extraction transcribe llm/dialect.rs and llm/protocol.rs. Non-streaming (one interaction post)."
     },
     {
       "group": "Generation backends",
       "capability": "Local-first provider order (local endpoint, then OpenAI-compatible HTTPS)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "a failed local endpoint falls through to the fallback tier with its bearer key",
+        "no configured tier yields null and a lone failing tier yields a backend failure"
+      ],
+      "note": "Rewrite addition: ABBEY_BOT_LLM_FALLBACK_ENDPOINT/_MODEL/_KEY (HTTPS unless loopback) after the loopback primary; the oracle instead puts Anthropic first, which is Out-of-scope here. Read-only turns only, so a fallback never repeats a side effect."
     },
     {
       "group": "Generation backends",
