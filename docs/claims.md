@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 19, Partial 1, Proposed 43, Out-of-scope 2.
+Totals: Current 20, Partial 1, Proposed 42, Out-of-scope 2.
 
 ## Transport
 
@@ -75,7 +75,7 @@ Totals: Current 19, Partial 1, Proposed 43, Out-of-scope 2.
 | Zig-native append-only JSONL episodic store (STM/LTM) | 1 | Proposed | none |  |
 | WDBX vector memory through the abi wdbx subprocess | 1 | Current | `bridge runs abi wdbx query with a scrubbed environment and keeps only the caller's scope`<br>`wdbx golden: embeddings match the oracle bit for bit and render as serde_json does`<br>`wdbx golden: segment renders, recall ranking and reconciliation match the oracle`<br>`the conformance fixture parses and re-renders byte-identically`<br>`std Wyhash reproduces the pinned Zig reference vectors`<br>`f32 text matches serde_json's ryu layout` | Facts project into the oracle's byte-compatible v1 JSONL segment; ranking runs through 'abi wdbx query' (never linked). The gate's wdbx-interop stage scores a Zig-written segment with the installed abi and requires abi's semantic scores to equal the Zig cosine to abi's printed precision (observed max diff 4.061e-7 on 2026-09-22); it prints SKIP when no abi binary is present. |
 | Memory gate: episode-gated /remember, /forget, /pending confirm | 1 | Proposed | none |  |
-| Episode gate client: content-free proposal and memory_candidate writes via abi wdbx episode propose | 1 | Proposed | none |  |
+| Episode gate client: content-free proposal and memory_candidate writes via abi wdbx episode propose | 1 | Current | `episode golden: config validation, writes, edges, outcomes and principals match the oracle`<br>`episode fixtures: proposal, memory candidate and memory edge serialize exactly as the canonical types`<br>`propose runs abi with an owner-only write file, the configured flags and a scrubbed environment`<br>`a missing abi binary is unavailable, never an append` | Config, builders, serde-identical serialization and outcome classification replay oracle goldens (JSON-syntax errors keep the oracle's prefix; serde's line/column is not reproduced). Live proposal against the operator's gateway is not exercised: that gateway belongs to the running Rust bot. |
 | Checkpoint gate against the frozen corpus | 1 | Proposed | none |  |
 | Abbey contract corpus guard (scripts/check-abbey-contracts.py) | 1 | Current | `corpus verifier: the vendored Abbey corpus matches its pinned lock, inventory, digests and aggregate`<br>`corpus verifier: a modified, extra or missing artifact fails closed`<br>`layout matches serde_json and python indent=2` | Zig port of scripts/check-abbey-contracts.py (pins, inventory, per-artifact SHA-256, privacy taxonomy, aggregate digest over the Python indent=2 manifest render). The copied Python guard and its self-test also run in the gate. |
 | WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py) | 1 | Current | `the conformance fixture parses and re-renders byte-identically` | The gate also runs the oracle's own scripts/check-wdbx-conformance.py against ../wdbx's golden copy; that compares fixtures, and the Zig test adds parse/render identity for the same bytes. |

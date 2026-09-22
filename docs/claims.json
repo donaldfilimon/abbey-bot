@@ -436,9 +436,14 @@
       "group": "Memory",
       "capability": "Episode gate client: content-free proposal and memory_candidate writes via abi wdbx episode propose",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "episode golden: config validation, writes, edges, outcomes and principals match the oracle",
+        "episode fixtures: proposal, memory candidate and memory edge serialize exactly as the canonical types",
+        "propose runs abi with an owner-only write file, the configured flags and a scrubbed environment",
+        "a missing abi binary is unavailable, never an append"
+      ],
+      "note": "Config, builders, serde-identical serialization and outcome classification replay oracle goldens (JSON-syntax errors keep the oracle's prefix; serde's line/column is not reproduced). Live proposal against the operator's gateway is not exercised: that gateway belongs to the running Rust bot."
     },
     {
       "group": "Memory",

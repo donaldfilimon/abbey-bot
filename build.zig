@@ -16,6 +16,9 @@ const goldens = [_][2][]const u8{
     .{ "golden_wdbx", "contracts/golden/wdbx.json" },
     .{ "golden_wyhash_refs", "contracts/fixtures/wyhash_zig_refs.txt" },
     .{ "golden_wdbx_fixture", "contracts/fixtures/wdbx_v1_conformance.seg.jsonl" },
+    .{ "golden_episode_proposal", "contracts/fixtures/episode_write_proposal.json" },
+    .{ "golden_episode_candidate", "contracts/fixtures/episode_write_memory_candidate.json" },
+    .{ "golden_episode_edge", "contracts/fixtures/episode_write_memory_edge.json" },
 };
 
 pub fn build(b: *std.Build) void {
