@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 10, Partial 0, Proposed 53, Out-of-scope 2.
+Totals: Current 11, Partial 0, Proposed 52, Out-of-scope 2.
 
 ## Transport
 
@@ -29,7 +29,7 @@ Totals: Current 10, Partial 0, Proposed 53, Out-of-scope 2.
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
-| Frozen slash-command catalog: serialized payload equals the oracle export (26 top-level, 68 commands) | 1 | Proposed | none |  |
+| Frozen slash-command catalog: serialized payload equals the oracle export (26 top-level, 68 commands) | 1 | Current | `catalog parity: the Zig registration payload is byte-identical to the oracle export`<br>`catalog parity: the compact request body parses to the same document`<br>`catalog specs match the oracle's 68 registered commands in order`<br>`every registered leaf maps to the payload with its contexts and default permission`<br>`availability golden: 72 inputs x 68 commands match the oracle`<br>`help golden: every section renders byte-identically for five permission shapes` | Gate also runs abbey-bot-zig catalog-json and cmp's it against contracts/catalog/command-payload.json. The full 26-command surface is frozen; registration of commands whose handlers are Proposed is decided in the serve row. |
 | /help private task home and section reference | 1 | Proposed | none |  |
 | /persona route | 1 | Proposed | none |  |
 | /persona ask (generation through the configured backend) | 1 | Proposed | none |  |

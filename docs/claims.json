@@ -62,9 +62,16 @@
       "group": "Command surface",
       "capability": "Frozen slash-command catalog: serialized payload equals the oracle export (26 top-level, 68 commands)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "catalog parity: the Zig registration payload is byte-identical to the oracle export",
+        "catalog parity: the compact request body parses to the same document",
+        "catalog specs match the oracle's 68 registered commands in order",
+        "every registered leaf maps to the payload with its contexts and default permission",
+        "availability golden: 72 inputs x 68 commands match the oracle",
+        "help golden: every section renders byte-identically for five permission shapes"
+      ],
+      "note": "Gate also runs abbey-bot-zig catalog-json and cmp's it against contracts/catalog/command-payload.json. The full 26-command surface is frozen; registration of commands whose handlers are Proposed is decided in the serve row."
     },
     {
       "group": "Command surface",

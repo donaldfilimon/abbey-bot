@@ -41,6 +41,11 @@ sed -n 's/^Build Summary: .*; \([0-9]*\/[0-9]* tests passed\).*/\1/p' "$LOG_DIR/
 grep -q 'tests passed' "$LOG_DIR/test.log" || { echo "FAIL: no test count in log"; exit 1; }
 if grep -q 'leaked' "$LOG_DIR/test.log"; then echo "FAIL: leak reported"; exit 1; fi
 
+stage "catalog parity (CLI)"
+run_logged catalog ./zig-out/bin/abbey-bot-zig catalog-json
+run_logged catalog-cmp cmp contracts/catalog/command-payload.json "$LOG_DIR/catalog.log"
+echo "abbey-bot-zig catalog-json is byte-identical to contracts/catalog/command-payload.json"
+
 stage "contract corpus"
 run_logged contracts python3 scripts/check-abbey-contracts.py
 cat "$LOG_DIR/contracts.log"

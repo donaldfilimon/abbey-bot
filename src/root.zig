@@ -16,6 +16,9 @@ pub const memory_bank = @import("memory/bank.zig");
 pub const memory_context = @import("memory/context.zig");
 pub const memory_golden_test = @import("memory/golden_test.zig");
 pub const engine = @import("engine/engine.zig");
+pub const catalog = @import("catalog/catalog.zig");
+pub const catalog_serialize = @import("catalog/serialize.zig");
+pub const catalog_golden_test = @import("catalog/golden_test.zig");
 
 pub const version = "0.1.0";
 
