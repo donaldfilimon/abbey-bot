@@ -44,3 +44,13 @@ created the session as Abbey. At 281ee3b the oracle's empty arm calls
 persona, so the session is created as **Aviva with no transcript turn**. That
 merge fixed it ("explicit empty-roleplay persona stick"). The Zig engine pins
 the fixed behavior; see `docs/claims.md`, row "Conversation engine".
+
+## Oracle defect found by the goldens
+
+`grounding::classify` in the oracle calls `rest.split_at(rest.len() - 1)` on a
+token that starts with an ASCII digit. When the token's final scalar is
+multi-byte (for example `12é`), that index is not a char boundary and Rust
+panics. Any model reply or grounding source containing such a token panics the
+grounding check. `golden/grounding.json` records those rows as `"panic": true`;
+the Zig port treats such a tail as "not a suffixed statistic" and pins it by
+test. This is a divergence by necessity, not a behavior change anyone relied on.

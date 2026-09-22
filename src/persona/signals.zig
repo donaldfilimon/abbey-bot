@@ -228,7 +228,8 @@ pub fn describe(gpa: Allocator, r: ComposedRoute) Allocator.Error![]u8 {
     return out.toOwnedSlice();
 }
 
-/// Whole-word `contains` over normalized text (space-delimited).
+/// Whole-word `contains` over normalized text (space-delimited). Walks the
+/// same non-overlapping occurrences Rust's `match_indices` yields.
 fn containsPhrase(haystack: []const u8, phrase: []const u8) bool {
     var start: usize = 0;
     while (std.mem.indexOfPos(u8, haystack, start, phrase)) |at| {
@@ -236,7 +237,7 @@ fn containsPhrase(haystack: []const u8, phrase: []const u8) bool {
         const before = at == 0 or haystack[at - 1] == ' ';
         const after = end == haystack.len or haystack[end] == ' ';
         if (before and after) return true;
-        start = at + 1;
+        start = end;
     }
     return false;
 }

@@ -10,6 +10,9 @@ const goldens = [_][2][]const u8{
     .{ "golden_catalog", "contracts/golden/catalog.json" },
     .{ "golden_memory", "contracts/golden/memory.json" },
     .{ "golden_payload", "contracts/catalog/command-payload.json" },
+    .{ "golden_grounding", "contracts/golden/grounding.json" },
+    .{ "golden_availability", "contracts/golden/availability.json" },
+    .{ "golden_episode", "contracts/golden/episode.json" },
 };
 
 pub fn build(b: *std.Build) void {

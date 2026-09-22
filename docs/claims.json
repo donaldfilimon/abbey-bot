@@ -222,65 +222,101 @@
       "group": "Persona and conversation",
       "capability": "Canonical ABI persona routing (explicit selector, keyword weights, f32 prior, tie order)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "routing golden: canonical weights, reasons, signals and describe match the oracle byte for byte",
+        "neutral prior and ties favor Abbey",
+        "leading names are exact overrides",
+        "stems match only token prefixes"
+      ],
+      "note": "f32 bit patterns pinned for 212 corpus inputs; describe uses exact half-even {:.2}."
     },
     {
       "group": "Persona and conversation",
       "capability": "Routing signals over the neutral prior (distress, confusion, terse urgency)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "routing golden: canonical weights, reasons, signals and describe match the oracle byte for byte",
+        "signals only decide over the neutral prior"
+      ],
       "note": ""
     },
     {
       "group": "Persona and conversation",
       "capability": "Persona system prompts and honesty copy (byte-exact)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "prompt golden: system prompts, honesty copy, failures and roleplay messages are byte-exact"
+      ],
       "note": ""
     },
     {
       "group": "Persona and conversation",
       "capability": "Reply tidy (echo strip, headings, blank runs, 1,900-char sentence cut)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "tidy golden: echo stripping, headings, blank runs and sentence cuts match the oracle",
+        "the prefix echo is stripped and short text is untouched"
+      ],
       "note": ""
     },
     {
       "group": "Persona and conversation",
       "capability": "Roleplay admission gate",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "behavior matrix matches the product gate",
+        "prompt golden: system prompts, honesty copy, failures and roleplay messages are byte-exact"
+      ],
       "note": ""
     },
     {
       "group": "Persona and conversation",
       "capability": "Conversation engine: per-scope sessions, persona switch keeps transcript, trimming, empty /roleplay stick",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "prepare appends context and records nothing",
+        "trimming by turn count keeps the most recent",
+        "trimming by char budget starts on a user turn",
+        "persona switch keeps the transcript",
+        "empty roleplay stick creates the session as Aviva with no turn and follow-ups read it",
+        "prepared grounding is a pre-candidate snapshot",
+        "reset forgets one scope and evict_idle drops only stale sessions",
+        "will_overflow measures prompt plus turns"
+      ],
+      "note": "Oracle 281ee3b already fixed the empty /roleplay Abbey session (explicit persona stick); the Zig engine pins that fixed behavior, including that a neutral follow-up in the channel answers as Aviva."
     },
     {
       "group": "Persona and conversation",
       "capability": "Grounding check and hedging of unsupported specifics",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "grounding golden: specifics, verdicts and hedged replies match the oracle",
+        "prior user input grounds, assistant output does not",
+        "a multi-byte tail after digits is not a statistic and never crashes"
+      ],
+      "note": "Deliberate divergence: the oracle panics (str::split_at off a char boundary) on a digit run followed by a multi-byte letter, e.g. 12é; 6 golden rows record the panic and Zig completes them instead."
     },
     {
       "group": "Persona and conversation",
       "capability": "Unicode text semantics equal to Rust core::char (normalize, lowercase, whitespace)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "normalize matches the oracle's pinned cases",
+        "trim and collapse use Unicode whitespace",
+        "lowercase covers multi-scalar and final sigma",
+        "final sigma follows the oracle's Case_Ignorable and Cased sets",
+        "invalid utf-8 decodes as replacement without overrun",
+        "routing golden: canonical weights, reasons, signals and describe match the oracle byte for byte"
+      ],
+      "note": "Tables generated from Rust 1.98.0 core::char (Unicode 17.0.0)."
     },
     {
       "group": "Persona and conversation",
@@ -310,16 +346,24 @@
       "group": "Memory",
       "capability": "Fact validation and memory bank semantics (300-char facts, 100 facts, pending supersessions)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "memory golden: persona context render, grounding sources and fact validation match the oracle",
+        "remember rejects duplicates and the cap; forget removes by exact text",
+        "pending supersessions are bounded and never touch facts",
+        "channel recent window is capped at 50 and counts every message"
+      ],
       "note": ""
     },
     {
       "group": "Memory",
       "capability": "Fact relevance selection for prompt context (recall ranking)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
+      "status": "Current",
+      "tests": [
+        "recall golden: selection order and omitted counts match the oracle",
+        "rare terms dominate and zero-score facts fill newest first"
+      ],
       "note": ""
     },
     {

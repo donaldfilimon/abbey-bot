@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 0, Partial 0, Proposed 63, Out-of-scope 2.
+Totals: Current 10, Partial 0, Proposed 53, Out-of-scope 2.
 
 ## Transport
 
@@ -54,14 +54,14 @@ Totals: Current 0, Partial 0, Proposed 63, Out-of-scope 2.
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
-| Canonical ABI persona routing (explicit selector, keyword weights, f32 prior, tie order) | 1 | Proposed | none |  |
-| Routing signals over the neutral prior (distress, confusion, terse urgency) | 1 | Proposed | none |  |
-| Persona system prompts and honesty copy (byte-exact) | 1 | Proposed | none |  |
-| Reply tidy (echo strip, headings, blank runs, 1,900-char sentence cut) | 1 | Proposed | none |  |
-| Roleplay admission gate | 1 | Proposed | none |  |
-| Conversation engine: per-scope sessions, persona switch keeps transcript, trimming, empty /roleplay stick | 1 | Proposed | none |  |
-| Grounding check and hedging of unsupported specifics | 1 | Proposed | none |  |
-| Unicode text semantics equal to Rust core::char (normalize, lowercase, whitespace) | 1 | Proposed | none |  |
+| Canonical ABI persona routing (explicit selector, keyword weights, f32 prior, tie order) | 1 | Current | `routing golden: canonical weights, reasons, signals and describe match the oracle byte for byte`<br>`neutral prior and ties favor Abbey`<br>`leading names are exact overrides`<br>`stems match only token prefixes` | f32 bit patterns pinned for 212 corpus inputs; describe uses exact half-even {:.2}. |
+| Routing signals over the neutral prior (distress, confusion, terse urgency) | 1 | Current | `routing golden: canonical weights, reasons, signals and describe match the oracle byte for byte`<br>`signals only decide over the neutral prior` |  |
+| Persona system prompts and honesty copy (byte-exact) | 1 | Current | `prompt golden: system prompts, honesty copy, failures and roleplay messages are byte-exact` |  |
+| Reply tidy (echo strip, headings, blank runs, 1,900-char sentence cut) | 1 | Current | `tidy golden: echo stripping, headings, blank runs and sentence cuts match the oracle`<br>`the prefix echo is stripped and short text is untouched` |  |
+| Roleplay admission gate | 1 | Current | `behavior matrix matches the product gate`<br>`prompt golden: system prompts, honesty copy, failures and roleplay messages are byte-exact` |  |
+| Conversation engine: per-scope sessions, persona switch keeps transcript, trimming, empty /roleplay stick | 1 | Current | `prepare appends context and records nothing`<br>`trimming by turn count keeps the most recent`<br>`trimming by char budget starts on a user turn`<br>`persona switch keeps the transcript`<br>`empty roleplay stick creates the session as Aviva with no turn and follow-ups read it`<br>`prepared grounding is a pre-candidate snapshot`<br>`reset forgets one scope and evict_idle drops only stale sessions`<br>`will_overflow measures prompt plus turns` | Oracle 281ee3b already fixed the empty /roleplay Abbey session (explicit persona stick); the Zig engine pins that fixed behavior, including that a neutral follow-up in the channel answers as Aviva. |
+| Grounding check and hedging of unsupported specifics | 1 | Current | `grounding golden: specifics, verdicts and hedged replies match the oracle`<br>`prior user input grounds, assistant output does not`<br>`a multi-byte tail after digits is not a statistic and never crashes` | Deliberate divergence: the oracle panics (str::split_at off a char boundary) on a digit run followed by a multi-byte letter, e.g. 12é; 6 golden rows record the panic and Zig completes them instead. |
+| Unicode text semantics equal to Rust core::char (normalize, lowercase, whitespace) | 1 | Current | `normalize matches the oracle's pinned cases`<br>`trim and collapse use Unicode whitespace`<br>`lowercase covers multi-scalar and final sigma`<br>`final sigma follows the oracle's Case_Ignorable and Cased sets`<br>`invalid utf-8 decodes as replacement without overrun`<br>`routing golden: canonical weights, reasons, signals and describe match the oracle byte for byte` | Tables generated from Rust 1.98.0 core::char (Unicode 17.0.0). |
 | Adaptive learning loop (DQN stay/reply/react, rewards, budgets) | 2 | Proposed | none | Not in the phase-1 list. |
 | Rolling channel summaries | 2 | Proposed | none | Not in the phase-1 list. |
 | Model tools (remember_fact, lookup_reputation, recall, switch_persona, recent_messages, inspect_status, list_facts) | 2 | Proposed | none | Not in the phase-1 list. |
@@ -70,8 +70,8 @@ Totals: Current 0, Partial 0, Proposed 63, Out-of-scope 2.
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
-| Fact validation and memory bank semantics (300-char facts, 100 facts, pending supersessions) | 1 | Proposed | none |  |
-| Fact relevance selection for prompt context (recall ranking) | 1 | Proposed | none |  |
+| Fact validation and memory bank semantics (300-char facts, 100 facts, pending supersessions) | 1 | Current | `memory golden: persona context render, grounding sources and fact validation match the oracle`<br>`remember rejects duplicates and the cap; forget removes by exact text`<br>`pending supersessions are bounded and never touch facts`<br>`channel recent window is capped at 50 and counts every message` |  |
+| Fact relevance selection for prompt context (recall ranking) | 1 | Current | `recall golden: selection order and omitted counts match the oracle`<br>`rare terms dominate and zero-score facts fill newest first` |  |
 | Zig-native append-only JSONL episodic store (STM/LTM) | 1 | Proposed | none |  |
 | WDBX vector memory through the abi wdbx subprocess | 1 | Proposed | none |  |
 | Memory gate: episode-gated /remember, /forget, /pending confirm | 1 | Proposed | none |  |

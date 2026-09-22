@@ -128,35 +128,24 @@ pub fn toLowercase(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
     return out.toOwnedSlice(gpa);
 }
 
-/// Rust's `to_lowercase` maps U+03A3 to U+03C2 when it ends a word: preceded by
-/// a cased letter (skipping case-ignorable) and not followed by one. Cased and
-/// case-ignorable are approximated by alphabetic, which agrees on every
-/// scalar the goldens exercise; a divergence is pinned by test, not assumed.
+/// Rust's `str::to_lowercase` maps U+03A3 to U+03C2 when it is word-final:
+/// skipping Case_Ignorable scalars, the previous scalar is Cased and the next
+/// is not. Both sets come from the oracle's own behavior (see the tables).
 fn isFinalSigma(s: []const u8, start: usize, end: usize) bool {
-    var before = false;
     var i = start;
-    while (i > 0) {
+    const before_cased = while (i > 0) {
         var j = i - 1;
         while (j > 0 and (s[j] & 0xC0) == 0x80) j -= 1;
         const cp = decodeAt(s, j).cp;
-        if (isAlphabetic(cp)) {
-            before = true;
-            break;
-        }
-        if (!isCaseIgnorable(cp)) break;
+        if (!inRanges(&tables.case_ignorable, cp)) break inRanges(&tables.cased, cp);
         i = j;
-    }
-    if (!before) return false;
+    } else false;
+    if (!before_cased) return false;
     var it = Iterator{ .bytes = s, .index = end };
-    while (it.next()) |scalar| {
-        if (isAlphabetic(scalar.cp)) return false;
-        if (!isCaseIgnorable(scalar.cp)) break;
-    }
-    return true;
-}
-
-fn isCaseIgnorable(cp: u21) bool {
-    return cp == '\'' or cp == '.' or cp == ':' or cp == 0x2019 or cp == 0xB7;
+    const after_cased = while (it.next()) |scalar| {
+        if (!inRanges(&tables.case_ignorable, scalar.cp)) break inRanges(&tables.cased, scalar.cp);
+    } else false;
+    return !after_cased;
 }
 
 /// Count Unicode scalar values (`chars().count()`).
@@ -320,4 +309,19 @@ test "invalid utf-8 decodes as replacement without overrun" {
     try std.testing.expectEqual(replacement, it.next().?.cp);
     try std.testing.expectEqual(replacement, it.next().?.cp);
     try std.testing.expect(it.next() == null);
+}
+
+test "final sigma follows the oracle's Case_Ignorable and Cased sets" {
+    const gpa = std.testing.allocator;
+    const golden = @import("../testing/golden.zig");
+    var parsed = try golden.parse(gpa, @embedFile("golden_grounding"));
+    defer parsed.deinit();
+    var n: usize = 0;
+    for (golden.items(parsed.value, "sigma")) |row| {
+        const got = try toLowercase(gpa, golden.str(row, "input"));
+        defer gpa.free(got);
+        try std.testing.expectEqualStrings(golden.str(row, "lower"), got);
+        n += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 14), n);
 }
