@@ -11,7 +11,7 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 22, Partial 2, Proposed 39, Out-of-scope 2.
+Totals: Current 22, Partial 2, Proposed 40, Out-of-scope 2.
 
 ## Transport
 
@@ -35,7 +35,8 @@ Totals: Current 22, Partial 2, Proposed 39, Out-of-scope 2.
 | /persona ask (generation through the configured backend) | 1 | Proposed | none |  |
 | /roleplay (Aviva lane, NSFW gate) | 1 | Proposed | none |  |
 | /nsfw and /admin nsfw toggles | 1 | Proposed | none |  |
-| /remember, /forget, /recall, /pending list\|confirm\|dismiss | 1 | Proposed | none |  |
+| /remember, /forget, /recall | 1 | Proposed | none |  |
+| /pending list\|confirm\|dismiss | 1 | Proposed | none | Memory service supports confirm/dismiss (tested there); the command with its confirm/dismiss buttons is not ported yet, so it is not registered. |
 | /reputation | 1 | Proposed | none |  |
 | /modcall moderation recommendation | 1 | Proposed | none |  |
 | /whois, Abbey: profile, /perms | 1 | Proposed | none |  |
@@ -108,7 +109,7 @@ Totals: Current 22, Partial 2, Proposed 39, Out-of-scope 2.
 | Consented voice (Songbird/DAVE, STT/TTS, /voice consent\|join\|resume\|leave\|status\|diagnostics\|mode\|verify) | later | Proposed | none | requires Opus + MLS; C-link decision pending (Donald) |
 | Music mirroring (/voice play\|pause\|resume-music\|stop-music\|volume) | later | Proposed | none | requires Opus + MLS; C-link decision pending (Donald) |
 | macOS audio-tap sidecar | later | Proposed | none | requires Opus + MLS; C-link decision pending (Donald) |
-| Image attachments (/see, /ocr, describe/read image menus) | later | Proposed | none | requires Opus + MLS; C-link decision pending (Donald) |
+| Image attachments (/see, /ocr, Abbey: describe image, Abbey: read image text) | later | Proposed | none | requires Opus + MLS; C-link decision pending (Donald) |
 
 ## Other adapters
 

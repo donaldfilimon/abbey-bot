@@ -11,18 +11,20 @@ pub const Method = std.http.Method;
 pub const Header = struct { name: []const u8, value: []const u8 };
 
 pub const Response = struct {
+    /// The allocator that owns `headers` and `body` (the client's).
+    gpa: Allocator,
     status: u16,
     /// Owned copies of the requested headers that were present.
     headers: []Header,
     body: []u8,
 
-    pub fn deinit(r: *Response, gpa: Allocator) void {
+    pub fn deinit(r: *Response) void {
         for (r.headers) |h| {
-            gpa.free(h.name);
-            gpa.free(h.value);
+            r.gpa.free(h.name);
+            r.gpa.free(h.value);
         }
-        gpa.free(r.headers);
-        gpa.free(r.body);
+        r.gpa.free(r.headers);
+        r.gpa.free(r.body);
     }
 
     pub fn header(r: *const Response, name: []const u8) ?[]const u8 {
@@ -125,6 +127,6 @@ pub const Client = struct {
         };
         errdefer gpa.free(body);
         const headers = try kept.toOwnedSlice(gpa);
-        return .{ .status = status, .headers = headers, .body = body };
+        return .{ .gpa = gpa, .status = status, .headers = headers, .body = body };
     }
 };

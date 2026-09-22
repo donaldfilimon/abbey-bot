@@ -19,6 +19,7 @@ const goldens = [_][2][]const u8{
     .{ "golden_episode_proposal", "contracts/fixtures/episode_write_proposal.json" },
     .{ "golden_episode_candidate", "contracts/fixtures/episode_write_memory_candidate.json" },
     .{ "golden_episode_edge", "contracts/fixtures/episode_write_memory_edge.json" },
+    .{ "golden_claims", "docs/claims.json" },
 };
 
 pub fn build(b: *std.Build) void {

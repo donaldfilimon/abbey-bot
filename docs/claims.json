@@ -143,11 +143,19 @@
     },
     {
       "group": "Command surface",
-      "capability": "/remember, /forget, /recall, /pending list|confirm|dismiss",
+      "capability": "/remember, /forget, /recall",
       "phase": "1",
       "status": "Proposed",
       "tests": [],
       "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/pending list|confirm|dismiss",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Memory service supports confirm/dismiss (tested there); the command with its confirm/dismiss buttons is not ported yet, so it is not registered."
     },
     {
       "group": "Command surface",
@@ -614,7 +622,7 @@
     },
     {
       "group": "Voice, music and media",
-      "capability": "Image attachments (/see, /ocr, describe/read image menus)",
+      "capability": "Image attachments (/see, /ocr, Abbey: describe image, Abbey: read image text)",
       "phase": "later",
       "status": "Proposed",
       "tests": [],

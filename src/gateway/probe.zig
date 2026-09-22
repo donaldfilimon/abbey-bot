@@ -9,7 +9,7 @@ pub const Report = struct { gateway_url_ok: bool, heartbeat_interval_ms: u64 };
 
 pub fn run(gpa: std.mem.Allocator, client: *http.Client) !Report {
     var response = try client.send(.{ .method = .GET, .url = "https://discord.com/api/v10/gateway" });
-    defer response.deinit(gpa);
+    defer response.deinit();
     if (response.status != 200) return error.UnexpectedStatus;
     const Body = struct { url: []const u8 };
     var parsed = try std.json.parseFromSlice(Body, gpa, response.body, .{ .ignore_unknown_fields = true });

@@ -75,7 +75,7 @@ pub const Rest = struct {
             const headers = parseHeaders(&response);
             try r.limiter.record(route, headers, response.status, r.nowMs());
             if (response.status != 429) return response;
-            response.deinit(r.gpa);
+            response.deinit();
             if (attempt + 1 >= r.max_retries) return error.RateLimited;
         }
     }
@@ -122,7 +122,7 @@ test "rest client authenticates, follows buckets and retries a 429 after retry_a
     defer rest.deinit();
     const started = std.Io.Clock.awake.now(testing.io);
     var response = try rest.call(.POST, "/channels/123/messages", "{\"content\":\"hi\"}");
-    defer response.deinit(testing.allocator);
+    defer response.deinit();
     const elapsed = started.untilNow(testing.io, .awake).toMilliseconds();
     server.join();
     try testing.expect(server.failure == null);

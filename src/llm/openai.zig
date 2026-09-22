@@ -171,7 +171,7 @@ pub const Provider = struct {
         var auth_buf: [512]u8 = undefined;
         const auth: ?[]const u8 = if (e.key) |k| std.fmt.bufPrint(&auth_buf, "Bearer {s}", .{k}) catch return error.KeyTooLong else null;
         var response = try client.send(.{ .method = .POST, .url = url, .authorization = auth, .content_type = "application/json", .body = body.written() });
-        defer response.deinit(gpa);
+        defer response.deinit();
         if (response.status < 200 or response.status >= 300) return error.HttpStatus;
         return extractText(gpa, response.body);
     }

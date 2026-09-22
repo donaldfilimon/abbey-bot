@@ -110,7 +110,7 @@ test "tls loopback: TLS 1.3 with an ECDSA P-256 certificate verifies and carries
     defer tmp.cleanup();
     try makeCert(tmp.dir, &.{ "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1" }, "localhost", "ec");
     var response = try fetchStatusPage(tmp.dir, "ec", "-tls1_3", "localhost");
-    defer response.deinit(testing.allocator);
+    defer response.deinit();
     try testing.expectEqual(@as(u16, 200), response.status);
     try testing.expect(std.mem.indexOf(u8, response.body, "TLSv1.3") != null);
 }
@@ -120,7 +120,7 @@ test "tls loopback: TLS 1.2 with an RSA-2048 certificate verifies and carries HT
     defer tmp.cleanup();
     try makeCert(tmp.dir, &.{ "-newkey", "rsa:2048" }, "localhost", "rsa");
     var response = try fetchStatusPage(tmp.dir, "rsa", "-tls1_2", "localhost");
-    defer response.deinit(testing.allocator);
+    defer response.deinit();
     try testing.expectEqual(@as(u16, 200), response.status);
     try testing.expect(std.mem.indexOf(u8, response.body, "TLSv1.2") != null);
 }
