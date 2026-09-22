@@ -1,0 +1,9 @@
+# Vendored contract corpus: byte-identical to the oracle, never normalized.
+contracts/abbey/** -text
+# Oracle fixtures and goldens are compared byte for byte.
+contracts/fixtures/*.seg.jsonl text eol=lf
+contracts/fixtures/service-protocol/*.json text eol=lf
+contracts/fixtures/voice_consent_v1.json text eol=lf
+contracts/golden/*.json text eol=lf
+contracts/catalog/*.json text eol=lf
+*.zig text eol=lf

@@ -1,0 +1,198 @@
+[
+  {
+    "name": "exact-now",
+    "published": 50000,
+    "start": 50000,
+    "now": 50000,
+    "fresh": true
+  },
+  {
+    "name": "age-30s",
+    "published": 20000,
+    "start": 0,
+    "now": 50000,
+    "fresh": true
+  },
+  {
+    "name": "age-over",
+    "published": 19999,
+    "start": 0,
+    "now": 50000,
+    "fresh": false
+  },
+  {
+    "name": "future-2s",
+    "published": 52000,
+    "start": 0,
+    "now": 50000,
+    "fresh": true
+  },
+  {
+    "name": "future-over",
+    "published": 52001,
+    "start": 0,
+    "now": 50000,
+    "fresh": false
+  },
+  {
+    "name": "before-transaction",
+    "published": 49999,
+    "start": 50000,
+    "now": 50000,
+    "fresh": false
+  },
+  {
+    "name": "zero",
+    "published": 0,
+    "start": 0,
+    "now": 0,
+    "fresh": true
+  },
+  {
+    "name": "bool",
+    "published": true,
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "negative",
+    "published": -1,
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "float",
+    "published": 0.5,
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "string",
+    "published": "0",
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "max-now",
+    "published": 9223372036854775807,
+    "start": 9223372036854775807,
+    "now": 9223372036854775807,
+    "fresh": true
+  },
+  {
+    "name": "max-age",
+    "published": 9223372036854745807,
+    "start": 0,
+    "now": 9223372036854775807,
+    "fresh": true
+  },
+  {
+    "name": "max-age-over",
+    "published": 9223372036854745806,
+    "start": 0,
+    "now": 9223372036854775807,
+    "fresh": false
+  },
+  {
+    "name": "max-future",
+    "published": 9223372036854775807,
+    "start": 0,
+    "now": 9223372036854773807,
+    "fresh": true
+  },
+  {
+    "name": "max-future-over",
+    "published": 9223372036854775807,
+    "start": 0,
+    "now": 9223372036854773806,
+    "fresh": false
+  },
+  {
+    "name": "published-overflow",
+    "published": 9223372036854775808,
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "published-negative",
+    "published": -1,
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "published-bool",
+    "published": true,
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "published-string",
+    "published": "0",
+    "start": 0,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "start-overflow",
+    "published": 0,
+    "start": 9223372036854775808,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "start-negative",
+    "published": 0,
+    "start": -1,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "start-bool",
+    "published": 0,
+    "start": true,
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "start-string",
+    "published": 0,
+    "start": "0",
+    "now": 0,
+    "fresh": false
+  },
+  {
+    "name": "now-overflow",
+    "published": 0,
+    "start": 0,
+    "now": 9223372036854775808,
+    "fresh": false
+  },
+  {
+    "name": "now-negative",
+    "published": 0,
+    "start": 0,
+    "now": -1,
+    "fresh": false
+  },
+  {
+    "name": "now-bool",
+    "published": 0,
+    "start": 0,
+    "now": true,
+    "fresh": false
+  },
+  {
+    "name": "now-string",
+    "published": 0,
+    "start": 0,
+    "now": "0",
+    "fresh": false
+  }
+]

@@ -1,0 +1,736 @@
+{
+  "profiles": [
+    {
+      "evidence": {
+        "request_class": "text_read_only",
+        "successful_attempts": 4,
+        "mandatory_check_mask": 7,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          15500
+        ],
+        "locality": "private_network"
+      },
+      "components": [
+        1,
+        0.8,
+        0.5,
+        0.5
+      ],
+      "weighted": 0.79
+    },
+    {
+      "evidence": {
+        "request_class": "text_read_only",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 7,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          1000
+        ],
+        "locality": "same_host"
+      },
+      "components": [
+        1,
+        1.0,
+        1,
+        1
+      ],
+      "weighted": 1.0
+    },
+    {
+      "evidence": {
+        "request_class": "text_read_only",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 7,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          30000
+        ],
+        "locality": "public_remote"
+      },
+      "components": [
+        1,
+        1.0,
+        0,
+        0
+      ],
+      "weighted": 0.7
+    },
+    {
+      "evidence": {
+        "request_class": "text_with_tools",
+        "successful_attempts": 4,
+        "mandatory_check_mask": 15,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          23250
+        ],
+        "locality": "private_network"
+      },
+      "components": [
+        1,
+        0.8,
+        0.5,
+        0.5
+      ],
+      "weighted": 0.79
+    },
+    {
+      "evidence": {
+        "request_class": "text_with_tools",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 15,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          1500
+        ],
+        "locality": "same_host"
+      },
+      "components": [
+        1,
+        1.0,
+        1,
+        1
+      ],
+      "weighted": 1.0
+    },
+    {
+      "evidence": {
+        "request_class": "text_with_tools",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 15,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          45000
+        ],
+        "locality": "public_remote"
+      },
+      "components": [
+        1,
+        1.0,
+        0,
+        0
+      ],
+      "weighted": 0.7
+    },
+    {
+      "evidence": {
+        "request_class": "vision_describe",
+        "successful_attempts": 4,
+        "mandatory_check_mask": 3,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          31000
+        ],
+        "locality": "private_network"
+      },
+      "components": [
+        1,
+        0.8,
+        0.5,
+        0.5
+      ],
+      "weighted": 0.79
+    },
+    {
+      "evidence": {
+        "request_class": "vision_describe",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 3,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          2000
+        ],
+        "locality": "same_host"
+      },
+      "components": [
+        1,
+        1.0,
+        1,
+        1
+      ],
+      "weighted": 1.0
+    },
+    {
+      "evidence": {
+        "request_class": "vision_describe",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 3,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          60000
+        ],
+        "locality": "public_remote"
+      },
+      "components": [
+        1,
+        1.0,
+        0,
+        0
+      ],
+      "weighted": 0.7
+    },
+    {
+      "evidence": {
+        "request_class": "vision_ocr",
+        "successful_attempts": 4,
+        "mandatory_check_mask": 3,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          31000
+        ],
+        "locality": "private_network"
+      },
+      "components": [
+        1,
+        0.8,
+        0.5,
+        0.5
+      ],
+      "weighted": 0.79
+    },
+    {
+      "evidence": {
+        "request_class": "vision_ocr",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 3,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          2000
+        ],
+        "locality": "same_host"
+      },
+      "components": [
+        1,
+        1.0,
+        1,
+        1
+      ],
+      "weighted": 1.0
+    },
+    {
+      "evidence": {
+        "request_class": "vision_ocr",
+        "successful_attempts": 5,
+        "mandatory_check_mask": 3,
+        "successful_duration_ms": [
+          0,
+          0,
+          0,
+          0,
+          60000
+        ],
+        "locality": "public_remote"
+      },
+      "components": [
+        1,
+        1.0,
+        0,
+        0
+      ],
+      "weighted": 0.7
+    }
+  ],
+  "latency": [
+    {
+      "class": "text_read_only",
+      "duration_ms": 0,
+      "score": 1
+    },
+    {
+      "class": "text_read_only",
+      "duration_ms": 999,
+      "score": 1
+    },
+    {
+      "class": "text_read_only",
+      "duration_ms": 1000,
+      "score": 1
+    },
+    {
+      "class": "text_read_only",
+      "duration_ms": 15500,
+      "score": 0.5
+    },
+    {
+      "class": "text_read_only",
+      "duration_ms": 30000,
+      "score": 0
+    },
+    {
+      "class": "text_read_only",
+      "duration_ms": 30001,
+      "score": 0
+    },
+    {
+      "class": "text_read_only",
+      "duration_ms": 900000,
+      "score": 0
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 0,
+      "score": 1
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 1499,
+      "score": 1
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 1500,
+      "score": 1
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 23250,
+      "score": 0.5
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 45000,
+      "score": 0
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 45001,
+      "score": 0
+    },
+    {
+      "class": "text_with_tools",
+      "duration_ms": 900000,
+      "score": 0
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 0,
+      "score": 1
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 1999,
+      "score": 1
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 2000,
+      "score": 1
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 31000,
+      "score": 0.5
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 60000,
+      "score": 0
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 60001,
+      "score": 0
+    },
+    {
+      "class": "vision_describe",
+      "duration_ms": 900000,
+      "score": 0
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 0,
+      "score": 1
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 1999,
+      "score": 1
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 2000,
+      "score": 1
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 31000,
+      "score": 0.5
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 60000,
+      "score": 0
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 60001,
+      "score": 0
+    },
+    {
+      "class": "vision_ocr",
+      "duration_ms": 900000,
+      "score": 0
+    }
+  ],
+  "locality": [
+    {
+      "address": "127.0.0.1",
+      "locality": "same_host",
+      "score": 1
+    },
+    {
+      "address": "127.255.255.254",
+      "locality": "same_host",
+      "score": 1
+    },
+    {
+      "address": "::1",
+      "locality": "same_host",
+      "score": 1
+    },
+    {
+      "address": "10.0.0.1",
+      "locality": "private_network",
+      "score": 0.5
+    },
+    {
+      "address": "172.16.0.1",
+      "locality": "private_network",
+      "score": 0.5
+    },
+    {
+      "address": "172.31.255.255",
+      "locality": "private_network",
+      "score": 0.5
+    },
+    {
+      "address": "192.168.1.1",
+      "locality": "private_network",
+      "score": 0.5
+    },
+    {
+      "address": "fc00::1",
+      "locality": "private_network",
+      "score": 0.5
+    },
+    {
+      "address": "fdff::1",
+      "locality": "private_network",
+      "score": 0.5
+    },
+    {
+      "address": "172.15.255.255",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "172.32.0.0",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "192.169.1.1",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "169.254.1.1",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "fe80::1",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "::ffff:127.0.0.1",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "::",
+      "locality": "public_remote",
+      "score": 0
+    },
+    {
+      "address": "8.8.8.8",
+      "locality": "public_remote",
+      "score": 0
+    }
+  ],
+  "compatibility": [
+    {
+      "locality": "same_host",
+      "components": [
+        1,
+        1,
+        0.5,
+        1
+      ],
+      "weighted": 0.875
+    },
+    {
+      "locality": "private_network",
+      "components": [
+        1,
+        1,
+        0.5,
+        0.5
+      ],
+      "weighted": 0.85
+    },
+    {
+      "locality": "public_remote",
+      "components": [
+        1,
+        1,
+        0.5,
+        0
+      ],
+      "weighted": 0.825
+    }
+  ],
+  "outcomes": [
+    {
+      "kind": "success",
+      "quality": 1,
+      "reliability": 1,
+      "latency": 1
+    },
+    {
+      "kind": "transport_unavailable",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "timeout",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "http5xx",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "rate_limited",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "authentication",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "authorization",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "configuration",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "executable_identity",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "model_identity",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "sandbox_identity",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "tool_schema",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "response_schema",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "protocol_drift",
+      "quality": null,
+      "reliability": 0,
+      "latency": null
+    },
+    {
+      "kind": "cancelled",
+      "quality": null,
+      "reliability": null,
+      "latency": null
+    },
+    {
+      "kind": "invalid_request",
+      "quality": null,
+      "reliability": null,
+      "latency": null
+    },
+    {
+      "kind": "busy",
+      "quality": null,
+      "reliability": null,
+      "latency": null
+    }
+  ],
+  "partitions": [
+    {
+      "operation": "voice",
+      "request_class": "text_read_only"
+    },
+    {
+      "operation": "summary",
+      "request_class": "text_read_only"
+    },
+    {
+      "operation": "unsolicited",
+      "request_class": "text_read_only"
+    },
+    {
+      "operation": "mention_tools",
+      "request_class": "text_with_tools"
+    },
+    {
+      "operation": "dm_tools",
+      "request_class": "text_with_tools"
+    },
+    {
+      "operation": "persona_ask_tools",
+      "request_class": "text_with_tools"
+    },
+    {
+      "operation": "describe_image",
+      "request_class": "vision_describe"
+    },
+    {
+      "operation": "ocr_image",
+      "request_class": "vision_ocr"
+    }
+  ],
+  "rejections": [
+    {
+      "field": "successful_attempts",
+      "value": 3
+    },
+    {
+      "field": "successful_attempts",
+      "value": 6
+    },
+    {
+      "field": "successful_attempts",
+      "value": 4.0
+    },
+    {
+      "field": "mandatory_check_mask",
+      "value": 6
+    },
+    {
+      "field": "mandatory_check_mask",
+      "value": 15
+    },
+    {
+      "field": "mandatory_check_mask",
+      "value": null
+    },
+    {
+      "field": "successful_duration_ms",
+      "value": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "field": "successful_duration_ms",
+      "value": [
+        0,
+        0,
+        0,
+        900001
+      ]
+    },
+    {
+      "field": "successful_duration_ms",
+      "value": [
+        0,
+        0,
+        0,
+        -1
+      ]
+    },
+    {
+      "field": "successful_duration_ms",
+      "value": [
+        0,
+        0,
+        0,
+        1.5
+      ]
+    },
+    {
+      "field": "locality",
+      "value": "nearby"
+    },
+    {
+      "field": "locality",
+      "value": null
+    },
+    {
+      "field": "extra",
+      "value": true
+    }
+  ]
+}

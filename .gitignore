@@ -1,0 +1,6 @@
+.zig-cache/
+zig-out/
+*.log
+.env
+.env.*
+!.env.example

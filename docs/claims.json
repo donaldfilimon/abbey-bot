@@ -1,0 +1,530 @@
+{
+  "oracle": "abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231",
+  "phase_in_scope": "1",
+  "rows": [
+    {
+      "group": "Transport",
+      "capability": "RFC 6455 WebSocket client framing (src/gateway/ws.zig)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Transport",
+      "capability": "Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Transport",
+      "capability": "zlib-stream transport compression",
+      "phase": "-",
+      "status": "Out-of-scope",
+      "tests": [],
+      "note": "Deliberately OFF per the rewrite scope; the gateway URL requests no compression."
+    },
+    {
+      "group": "Transport",
+      "capability": "TLS 1.2/1.3 client for Discord and HTTPS providers (std.crypto.tls)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Transport",
+      "capability": "REST client with per-route rate-limit buckets from response headers",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Transport",
+      "capability": "Global + optional home-guild slash command registration (bulk overwrite)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Transport",
+      "capability": "Allowed-mentions policy: generated text never pings",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "Frozen slash-command catalog: serialized payload equals the oracle export (26 top-level, 68 commands)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/help private task home and section reference",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/persona route",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/persona ask (generation through the configured backend)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/roleplay (Aviva lane, NSFW gate)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/nsfw and /admin nsfw toggles",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/remember, /forget, /recall, /pending list|confirm|dismiss",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/reputation",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/modcall moderation recommendation",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/whois, Abbey: profile, /perms",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "Ask Abbey message menu",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/summarize",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/stats",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/admin show|persona|learning|cooldown|act|budget|brain|flush|export|reset",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/admin quarantine|contradict|resolve (memory review)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/server blueprint|create-channel|rename-channel|slowmode|delete-channel|assign-role|remove-role|move-member|purge",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/webhook guide",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/forum draft|post|perms",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Command surface",
+      "capability": "/admin dashboard (classic administration dashboard)",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Phase 2."
+    },
+    {
+      "group": "Command surface",
+      "capability": "Memory browser (Browse facts, Abbey: memory menu)",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Phase 2."
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Canonical ABI persona routing (explicit selector, keyword weights, f32 prior, tie order)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Routing signals over the neutral prior (distress, confusion, terse urgency)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Persona system prompts and honesty copy (byte-exact)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Reply tidy (echo strip, headings, blank runs, 1,900-char sentence cut)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Roleplay admission gate",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Conversation engine: per-scope sessions, persona switch keeps transcript, trimming, empty /roleplay stick",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Grounding check and hedging of unsupported specifics",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Unicode text semantics equal to Rust core::char (normalize, lowercase, whitespace)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Adaptive learning loop (DQN stay/reply/react, rewards, budgets)",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Rolling channel summaries",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Persona and conversation",
+      "capability": "Model tools (remember_fact, lookup_reputation, recall, switch_persona, recent_messages, inspect_status, list_facts)",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Memory",
+      "capability": "Fact validation and memory bank semantics (300-char facts, 100 facts, pending supersessions)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "Fact relevance selection for prompt context (recall ranking)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "Zig-native append-only JSONL episodic store (STM/LTM)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "WDBX vector memory through the abi wdbx subprocess",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "Memory gate: episode-gated /remember, /forget, /pending confirm",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "Episode gate client: content-free proposal and memory_candidate writes via abi wdbx episode propose",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "Checkpoint gate against the frozen corpus",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "Abbey contract corpus guard (scripts/check-abbey-contracts.py)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Memory",
+      "capability": "WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Generation backends",
+      "capability": "OpenAI-compatible local endpoint (loopback HTTP, remote HTTPS)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Generation backends",
+      "capability": "Local-first provider order (local endpoint, then OpenAI-compatible HTTPS)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Generation backends",
+      "capability": "Anthropic Messages API backend",
+      "phase": "-",
+      "status": "Out-of-scope",
+      "tests": [],
+      "note": "The rewrite's provider order is local endpoint then OpenAI-compatible HTTP."
+    },
+    {
+      "group": "Generation backends",
+      "capability": "Apple Foundation Models secondary (fm serve / fm respond)",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Generation backends",
+      "capability": "Provider self-test and qualification manifest",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Managed service",
+      "capability": "serve subcommand with the .env.example environment contract",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Managed service",
+      "capability": "Readiness and bootstrap documents in service-protocol-v1 format",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Managed service",
+      "capability": "launchd plist under deploy/ (distinct label, never the live bot's)",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Managed service",
+      "capability": "Refusal to run against a live token while the managed Rust service is loaded",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": ""
+    },
+    {
+      "group": "Managed service",
+      "capability": "Typed operational event log with rotation",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Managed service",
+      "capability": "Live test-guild acceptance: connects, answers /help and one persona reply",
+      "phase": "1",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Pending: needs a test-guild bot token from Donald; the production token is never used."
+    },
+    {
+      "group": "Voice, music and media",
+      "capability": "Consented voice (Songbird/DAVE, STT/TTS, /voice consent|join|resume|leave|status|diagnostics|mode|verify)",
+      "phase": "later",
+      "status": "Proposed",
+      "tests": [],
+      "note": "requires Opus + MLS; C-link decision pending (Donald)",
+      "media": true
+    },
+    {
+      "group": "Voice, music and media",
+      "capability": "Music mirroring (/voice play|pause|resume-music|stop-music|volume)",
+      "phase": "later",
+      "status": "Proposed",
+      "tests": [],
+      "note": "requires Opus + MLS; C-link decision pending (Donald)",
+      "media": true
+    },
+    {
+      "group": "Voice, music and media",
+      "capability": "macOS audio-tap sidecar",
+      "phase": "later",
+      "status": "Proposed",
+      "tests": [],
+      "note": "requires Opus + MLS; C-link decision pending (Donald)",
+      "media": true
+    },
+    {
+      "group": "Voice, music and media",
+      "capability": "Image attachments (/see, /ocr, describe/read image menus)",
+      "phase": "later",
+      "status": "Proposed",
+      "tests": [],
+      "note": "requires Opus + MLS; C-link decision pending (Donald)",
+      "media": true
+    },
+    {
+      "group": "Other adapters",
+      "capability": "Telegram long-poll adapter",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Other adapters",
+      "capability": "Slack Socket Mode adapter",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    },
+    {
+      "group": "Other adapters",
+      "capability": "Server blueprint CLI (--server-plan)",
+      "phase": "2",
+      "status": "Proposed",
+      "tests": [],
+      "note": "Not in the phase-1 list."
+    }
+  ]
+}

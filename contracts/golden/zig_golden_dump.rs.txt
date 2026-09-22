@@ -1,0 +1,229 @@
+//! SCRATCH-ONLY golden dumper for the abbey-bot-zig rewrite. Never part of
+//! the oracle checkout; added to a `git archive` extraction of 281ee3b.
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+
+fn out_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("ABBEY_GOLDEN_DIR").expect("ABBEY_GOLDEN_DIR"))
+}
+fn write(name: &str, value: &Value) {
+    let mut bytes = serde_json::to_vec_pretty(value).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(out_dir().join(name), bytes).unwrap();
+}
+fn persona_name(p: crate::persona::Persona) -> &'static str {
+    match p {
+        crate::persona::Persona::Abbey => "abbey",
+        crate::persona::Persona::Aviva => "aviva",
+        crate::persona::Persona::Abi => "abi",
+    }
+}
+const ALL: [crate::persona::Persona; 3] = [
+    crate::persona::Persona::Abbey,
+    crate::persona::Persona::Aviva,
+    crate::persona::Persona::Abi,
+];
+
+#[test]
+#[ignore = "golden dump"]
+fn dump_goldens() {
+    use crate::persona::{self, Reason};
+    use crate::routing_signals::{self, Adjustment, Shape};
+    let inputs: Vec<String> = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("ABBEY_GOLDEN_INPUTS").unwrap()).unwrap(),
+    )
+    .unwrap();
+
+    // Routing.
+    let mut routes = Vec::new();
+    for input in &inputs {
+        let w = persona::analyze(input);
+        let base = persona::route(input, None);
+        let composed = routing_signals::route(input, None);
+        let reason = match base.reason {
+            Reason::Explicit => "explicit",
+            Reason::Default => "default",
+            Reason::Weighted(_) => "weighted",
+        };
+        let s = composed.signals;
+        routes.push(json!({
+            "input": input,
+            "explicit_selector": persona::explicit_selector(input).map(persona_name),
+            "weights_bits": [w.abbey.to_bits(), w.aviva.to_bits(), w.abi.to_bits()],
+            "persona": persona_name(base.persona),
+            "reason": reason,
+            "describe": persona::describe(&base),
+            "normalized": crate::text::normalize(input),
+            "signals": {
+                "distress": s.distress, "confusion": s.confusion, "urgency": s.urgency,
+                "shape": match s.shape { Shape::Question => "question", Shape::Command => "command", Shape::Statement => "statement" },
+                "words": s.words, "emphasis": s.emphasis,
+            },
+            "adjustment": match composed.adjustment { Adjustment::None => "none", Adjustment::Distress => "distress", Adjustment::Confusion => "confusion", Adjustment::TerseUrgency => "terse_urgency" },
+            "composed_persona": persona_name(composed.persona),
+            "decisive": composed.is_decisive(),
+            "composed_describe": routing_signals::describe(&composed),
+        }));
+    }
+    // Explicit command choice.
+    let mut forced = Vec::new();
+    for p in ALL {
+        let r = routing_signals::route("anything at all", Some(p));
+        forced.push(json!({"forced": persona_name(p), "describe": routing_signals::describe(&r), "decisive": r.is_decisive()}));
+    }
+    write("routing.json", &json!({"routes": routes, "forced": forced}));
+
+    // Prompts and fixed copy.
+    let mut prompts = BTreeMap::new();
+    for p in ALL {
+        prompts.insert(persona_name(p).to_string(), json!({
+            "system_prompt": crate::ask::system_prompt(p),
+            "degraded_reply": crate::ask::degraded_reply(p),
+            "render_answer": crate::ask::render_answer(p, "configured endpoint", "the answer"),
+            "failure_backend": crate::ask::render_failure(p, "configured endpoint", &crate::llm::LlmError::backend("HTTP 500: detail".into())),
+            "failure_busy": crate::ask::render_failure(p, "configured endpoint", &crate::llm::LlmError::busy()),
+            "failure_budget": crate::ask::render_failure(p, "configured endpoint", &crate::llm::LlmError::response_budget("x")),
+            "summarize": crate::engine::summarize_prompt(p, "a: hi\nb: yo", 2),
+        }));
+    }
+    let roleplay = json!({
+        "allow": crate::roleplay_gate::RoleplayDecision::AllowAviva.message(),
+        "disabled": crate::roleplay_gate::RoleplayDecision::RefuseDisabled.message(),
+        "guild_sfw": crate::roleplay_gate::RoleplayDecision::RefuseGuildSfw.message(),
+    });
+    write("prompts.json", &json!({
+        "personas": prompts,
+        "roleplay": roleplay,
+        "busy_reason": crate::ask::BUSY_REASON,
+        "welcome_dana": crate::engine::welcome_prompt("Dana"),
+    }));
+
+    // tidy_reply.
+    let mut tidy_inputs: Vec<String> = inputs.clone();
+    tidy_inputs.extend([
+        "**Abbey**: ## Answer\n\n\n\nUse ChannelId.\n\n\n\nThen defer.".to_string(),
+        "Aviva — Yes.".into(), "Abi: hi there".into(), "**Abbey** — hi".into(), "**Abbey**hi".into(),
+        "# Title\n## Sub\n###NoSpace\n text".into(),
+        "This is a sentence of moderate length that ends here. ".repeat(60),
+        "word ".repeat(500),
+        "é".repeat(2500),
+        format!("{}{}", "x".repeat(1850), " tail words that go past the limit ".repeat(10)),
+        format!("Q? {}", "y".repeat(1900)),
+        "  \n\n  padded  \n\n\n\n end  ".into(),
+    ]);
+    let mut tidy = Vec::new();
+    for input in &tidy_inputs {
+        for p in ALL {
+            tidy.push(json!({"persona": persona_name(p), "input": input, "output": crate::ask::tidy_reply(p, input)}));
+        }
+    }
+    write("tidy.json", &Value::Array(tidy));
+
+    // Unicode property ranges over every scalar value, from Rust core::char.
+    fn ranges(pred: impl Fn(char) -> bool) -> Vec<[u32; 2]> {
+        let mut out: Vec<[u32; 2]> = Vec::new();
+        for cp in 0..=0x10FFFFu32 {
+            let Some(c) = char::from_u32(cp) else { continue };
+            if pred(c) {
+                if let Some(last) = out.last_mut() {
+                    if last[1] + 1 == cp || (last[1] + 1 == 0xD800 && cp == 0xE000) {
+                        last[1] = cp;
+                        continue;
+                    }
+                }
+                out.push([cp, cp]);
+            }
+        }
+        out
+    }
+    let mut lower = Vec::new();
+    let mut lower_multi = Vec::new();
+    for cp in 0..=0x10FFFFu32 {
+        let Some(c) = char::from_u32(cp) else { continue };
+        let l: Vec<u32> = c.to_lowercase().map(|x| x as u32).collect();
+        if l.len() == 1 && l[0] != cp {
+            lower.push([cp, l[0]]);
+        } else if l.len() > 1 {
+            lower_multi.push(json!({"cp": cp, "lower": l}));
+        }
+    }
+    write("unicode.json", &json!({
+        "unicode_version": format!("{:?}", char::UNICODE_VERSION),
+        "alphanumeric": ranges(|c| c.is_alphanumeric()),
+        "alphabetic": ranges(|c| c.is_alphabetic()),
+        "uppercase": ranges(|c| c.is_uppercase()),
+        "whitespace": ranges(|c| c.is_whitespace()),
+        "lowercase_map": lower,
+        "lowercase_multi": lower_multi,
+    }));
+
+    // Help and README render.
+    use crate::command_catalog::*;
+    let mut help = Vec::new();
+    let mut guild_all = EligibilityInput::new(InteractionContext::Guild);
+    guild_all.permissions = vec![
+        DiscordPermission::ManageMessages, DiscordPermission::ModerateMembers, DiscordPermission::ManageWebhooks,
+        DiscordPermission::ManageServer, DiscordPermission::ManageChannels, DiscordPermission::ManageRoles,
+        DiscordPermission::MoveMembers, DiscordPermission::Administrator,
+    ];
+    guild_all.application_owner = true;
+    guild_all.caller_present_in_voice = Some(true);
+    guild_all.self_subject = Some(true);
+    for cap in [Capability::Generation, Capability::ToolGeneration, Capability::Vision, Capability::Ocr] {
+        guild_all.readiness.insert(cap, CapabilityReadiness::Ready);
+    }
+    let guild_none = EligibilityInput::new(InteractionContext::Guild);
+    let dm_none = EligibilityInput::new(InteractionContext::BotDm);
+    let mut dm_gen = EligibilityInput::new(InteractionContext::BotDm);
+    dm_gen.readiness.insert(Capability::Generation, CapabilityReadiness::Ready);
+    dm_gen.self_subject = Some(true);
+    let mut guild_blocked = EligibilityInput::new(InteractionContext::Guild);
+    guild_blocked.readiness.insert(Capability::Generation, CapabilityReadiness::Blocked(Blocker::Busy));
+    guild_blocked.vision_allowed = false;
+    for (label, input) in [("guild_all", &guild_all), ("guild_none", &guild_none), ("dm_none", &dm_none), ("dm_gen", &dm_gen), ("guild_blocked", &guild_blocked)] {
+        for section in HelpSection::ALL {
+            help.push(json!({"input": label, "section": section.slug(), "text": render_help(section, input)}));
+        }
+    }
+    let mut specs = Vec::new();
+    for spec in registered_commands() {
+        specs.push(json!({
+            "key": format!("{:?}", spec.key),
+            "kind": format!("{:?}", spec.kind),
+            "name": spec.name,
+            "contexts": spec.registration.contexts.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>(),
+            "default_member_permissions": spec.registration.default_member_permissions.map(|p| format!("{p:?}")),
+            "access": format!("{:?}", spec.eligibility.access),
+            "condition": format!("{:?}", spec.eligibility.condition),
+            "section": spec.section.slug(),
+            "description": spec.description,
+            "private": spec.private,
+        }));
+    }
+    let mut planned = Vec::new();
+    for spec in planned_commands() { planned.push(format!("{:?}", spec.key)); }
+    write("catalog.json", &json!({"specs": specs, "planned": planned, "help": help, "readme": render_readme()}));
+
+    // Persona context render and fact validation.
+    let facts: Vec<String> = vec![
+        "likes rust".into(), "works on the deploy pipeline".into(), "prefers short answers".into(),
+        "has a cat named Rust".into(), "lives in Oslo".into(), "uses a Mac".into(), "plays go".into(),
+        "writes Zig at night".into(), "the build is slow".into(), "deploys on Fridays".into(),
+    ];
+    let mut contexts = Vec::new();
+    for (summary, n, rep) in [("", 0usize, 0.5f64), ("deploy talk", 1, 0.25), ("", 10, 1.5), ("summary", 3, f64::NAN), ("s", 10, 0.123456)] {
+        let ctx = crate::memory::PersonaContext { channel_summary: summary.into(), user_facts: facts[..n].to_vec(), reputation: rep };
+        for query in ["", "rust", "how is the deploy", "a rust question", "Zig? GO!"] {
+            contexts.push(json!({"summary": summary, "facts": n, "reputation_bits": rep.to_bits(), "query": query,
+                "render": ctx.render(query), "grounding_sources": ctx.grounding_sources(query)}));
+        }
+    }
+    let long: Vec<String> = (0..12).map(|i| format!("fact {i} {}", "z".repeat(290))).collect();
+    let ctx = crate::memory::PersonaContext { channel_summary: String::new(), user_facts: long.clone(), reputation: 0.5 };
+    contexts.push(json!({"summary": "", "facts": "long12", "reputation_bits": 0.5f64.to_bits(), "query": "fact 3", "render": ctx.render("fact 3"), "grounding_sources": ctx.grounding_sources("fact 3")}));
+    let mut validated = Vec::new();
+    for f in ["", "   ", " a\t b \n c ", &"x".repeat(300), &"x".repeat(301), &"é".repeat(300), &"é".repeat(301), "\u{a0}nb\u{2003}sp\u{3000}"] {
+        validated.push(json!({"input": f, "result": match crate::memory::validated_fact(f) { Ok(v) => json!({"ok": v}), Err(e) => json!({"err": e}) }}));
+    }
+    write("memory.json", &json!({"contexts": contexts, "validated": validated, "long_facts": long, "facts": facts}));
+}

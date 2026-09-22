@@ -1,0 +1,19 @@
+name: gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  gate:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Zig master
+        run: |
+          set -eu
+          version=$(sed -n 's/.*\.minimum_zig_version = "\(.*\)",/\1/p' build.zig.zon)
+          curl -fsSL "https://ziglang.org/builds/zig-aarch64-macos-${version}.tar.xz" -o zig.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-aarch64-macos-${version}" >> "$GITHUB_PATH"
+      - name: Gate
+        run: ./tools/check.sh
