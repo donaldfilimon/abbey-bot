@@ -11,12 +11,13 @@ const usage =
     \\
     \\COMMANDS:
     \\  catalog-json   Print the frozen slash-command registration payload
+    \\  gateway-probe  Token-free live check: HTTPS /gateway, WSS Hello, close
     \\  version        Print the version
     \\  help           Show this help
     \\
 ;
 
-const Command = enum { @"catalog-json", version, help };
+const Command = enum { @"catalog-json", @"gateway-probe", version, help };
 
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
@@ -37,6 +38,15 @@ pub fn main(init: std.process.Init) !u8 {
         .help => try out.writeAll(usage),
         .version => try out.print("abbey-bot-zig {s}\n", .{abbey.version}),
         .@"catalog-json" => try abbey.catalog_serialize.writePayload(out, abbey.catalog_serialize.frozen()),
+        .@"gateway-probe" => {
+            var client = abbey.http.Client.init(init.gpa, io);
+            defer client.deinit();
+            const report = abbey.gateway_probe.run(init.gpa, &client) catch |err| {
+                try out.print("gateway-probe: FAILED ({s})\n", .{@errorName(err)});
+                return 1;
+            };
+            try out.print("gateway-probe: ok (gateway url wss: {}, hello heartbeat_interval {d} ms)\n", .{ report.gateway_url_ok, report.heartbeat_interval_ms });
+        },
     }
     return 0;
 }

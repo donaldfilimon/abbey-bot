@@ -11,16 +11,16 @@ deliberately not part of this rewrite.
 
 Oracle: `abbey-bot 281ee3b4fe0abb436a890d91c8a6d9701c495231`. Phase in scope for this run: 1.
 
-Totals: Current 11, Partial 0, Proposed 52, Out-of-scope 2.
+Totals: Current 13, Partial 1, Proposed 49, Out-of-scope 2.
 
 ## Transport
 
 | Capability | Phase | Status | Tests | Note |
 |---|---|---|---|---|
-| RFC 6455 WebSocket client framing (src/gateway/ws.zig) | 1 | Proposed | none |  |
-| Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect | 1 | Proposed | none |  |
+| RFC 6455 WebSocket client framing (src/gateway/ws.zig) | 1 | Current | `RFC 6455 1.3: the sample key yields the sample accept value`<br>`RFC 6455 5.7: single-frame masked and unmasked text encode to the sample bytes`<br>`RFC 6455 5.7: 256-byte and 64 KiB binary frames use 16- and 64-bit lengths`<br>`RFC 6455 5.7: a fragmented unmasked text message reassembles to Hello`<br>`a ping between fragments is answered with a masked pong carrying the same payload`<br>`server close frames surface their code and are echoed once`<br>`protocol violations are rejected`<br>`messages over the configured maximum are refused before allocation`<br>`handshake sends the upgrade request and validates the 101 response` | Also observed live against gateway.discord.gg (docs/evidence/2026-09-22-gateway-probe.md). |
+| Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect | 1 | Partial | `identify after Hello, heartbeat after interval times jitter, then every interval`<br>`a missed heartbeat ACK reconnects, resuming when a session exists`<br>`close codes follow the oracle transport's table`<br>`resume after reconnect sends Resume on Hello; invalid session decides the path`<br>`payloads are the documented JSON shapes`<br>`gateway URLs parse to host and port` | Pure state machine and payloads tested against serenity 0.12.5's shard.rs table; WSS Hello observed live without a token. Gap: the Identify/Ready/Resume round trip needs a test-guild bot token (pending, Donald). |
 | zlib-stream transport compression | - | Out-of-scope | none | Deliberately OFF per the rewrite scope; the gateway URL requests no compression. |
-| TLS 1.2/1.3 client for Discord and HTTPS providers (std.crypto.tls) | 1 | Proposed | none |  |
+| TLS 1.2/1.3 client for Discord and HTTPS providers (std.crypto.tls) | 1 | Current | `tls loopback: TLS 1.3 with an ECDSA P-256 certificate verifies and carries HTTP`<br>`tls loopback: TLS 1.2 with an RSA-2048 certificate verifies and carries HTTP`<br>`tls loopback: a certificate for another host is refused` | std.crypto.tls.Client through std.http.Client; the loopback server is openssl s_server (std has no TLS server). Live HTTPS and WSS to Discord observed 2026-09-22 with the system CA bundle (docs/evidence/2026-09-22-gateway-probe.md). |
 | REST client with per-route rate-limit buckets from response headers | 1 | Proposed | none |  |
 | Global + optional home-guild slash command registration (bulk overwrite) | 1 | Proposed | none |  |
 | Allowed-mentions policy: generated text never pings | 1 | Proposed | none |  |

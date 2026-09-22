@@ -6,17 +6,34 @@
       "group": "Transport",
       "capability": "RFC 6455 WebSocket client framing (src/gateway/ws.zig)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "RFC 6455 1.3: the sample key yields the sample accept value",
+        "RFC 6455 5.7: single-frame masked and unmasked text encode to the sample bytes",
+        "RFC 6455 5.7: 256-byte and 64 KiB binary frames use 16- and 64-bit lengths",
+        "RFC 6455 5.7: a fragmented unmasked text message reassembles to Hello",
+        "a ping between fragments is answered with a masked pong carrying the same payload",
+        "server close frames surface their code and are echoed once",
+        "protocol violations are rejected",
+        "messages over the configured maximum are refused before allocation",
+        "handshake sends the upgrade request and validates the 101 response"
+      ],
+      "note": "Also observed live against gateway.discord.gg (docs/evidence/2026-09-22-gateway-probe.md)."
     },
     {
       "group": "Transport",
       "capability": "Discord gateway session: Identify to Ready, heartbeat with jitter, Resume on resumable close codes, reconnect",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Partial",
+      "tests": [
+        "identify after Hello, heartbeat after interval times jitter, then every interval",
+        "a missed heartbeat ACK reconnects, resuming when a session exists",
+        "close codes follow the oracle transport's table",
+        "resume after reconnect sends Resume on Hello; invalid session decides the path",
+        "payloads are the documented JSON shapes",
+        "gateway URLs parse to host and port"
+      ],
+      "note": "Pure state machine and payloads tested against serenity 0.12.5's shard.rs table; WSS Hello observed live without a token. Gap: the Identify/Ready/Resume round trip needs a test-guild bot token (pending, Donald)."
     },
     {
       "group": "Transport",
@@ -30,9 +47,13 @@
       "group": "Transport",
       "capability": "TLS 1.2/1.3 client for Discord and HTTPS providers (std.crypto.tls)",
       "phase": "1",
-      "status": "Proposed",
-      "tests": [],
-      "note": ""
+      "status": "Current",
+      "tests": [
+        "tls loopback: TLS 1.3 with an ECDSA P-256 certificate verifies and carries HTTP",
+        "tls loopback: TLS 1.2 with an RSA-2048 certificate verifies and carries HTTP",
+        "tls loopback: a certificate for another host is refused"
+      ],
+      "note": "std.crypto.tls.Client through std.http.Client; the loopback server is openssl s_server (std has no TLS server). Live HTTPS and WSS to Discord observed 2026-09-22 with the system CA bundle (docs/evidence/2026-09-22-gateway-probe.md)."
     },
     {
       "group": "Transport",

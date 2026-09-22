@@ -19,6 +19,12 @@ pub const engine = @import("engine/engine.zig");
 pub const catalog = @import("catalog/catalog.zig");
 pub const catalog_serialize = @import("catalog/serialize.zig");
 pub const catalog_golden_test = @import("catalog/golden_test.zig");
+pub const ws = @import("gateway/ws.zig");
+pub const gateway_session = @import("gateway/session.zig");
+pub const http = @import("net/http.zig");
+pub const gateway_conn = @import("gateway/conn.zig");
+pub const gateway_probe = @import("gateway/probe.zig");
+pub const tls_test = @import("net/tls_test.zig");
 
 pub const version = "0.1.0";
 
