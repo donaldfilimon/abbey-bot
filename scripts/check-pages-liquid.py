@@ -63,7 +63,6 @@ CONTRACT_FILES = frozenset(
         pathlib.PurePosixPath(".nojekyll"),
     }
 )
-SUPPORTED_FRONT_MATTER_PATH = pathlib.PurePosixPath("docs/spec/SKILL.md")
 
 
 class PagesSelectionError(RuntimeError):
@@ -152,25 +151,6 @@ def front_matter_body(path: pathlib.Path) -> list[str] | None:
     raise PagesSelectionError(f"front matter never closes: {path.name}")
 
 
-def supported_front_matter(
-    relative: pathlib.PurePosixPath, body: list[str]
-) -> bool:
-    """Accept only the repository's fixed skill metadata shape."""
-    if relative != SUPPORTED_FRONT_MATTER_PATH or len(body) < 2:
-        return False
-    if body[0] != "name: discord-abbey":
-        return False
-    if re.fullmatch(r"description:[ \t]+[>|][+-]?", body[1]) is None:
-        return False
-    if any(
-        separator in line
-        for line in body
-        for separator in ("\r", "\x85", "\u2028", "\u2029")
-    ):
-        return False
-    return all(not line or line.startswith("  ") for line in body[2:])
-
-
 def survives_default_entry_filter(path: pathlib.PurePosixPath) -> bool:
     """Mirror Jekyll 3.10's config-free ordinary-entry filtering."""
     if any(
@@ -229,7 +209,7 @@ def markdown_files(root: pathlib.Path) -> list[pathlib.Path]:
                 f"tracked symlink needs an explicit safe-mode model: {relative}"
             )
         body = front_matter_body(concrete)
-        if body is not None and not supported_front_matter(relative, body):
+        if body is not None:
             raise PagesSelectionError(
                 f"tracked front matter needs an explicit rendering model: {relative}"
             )
