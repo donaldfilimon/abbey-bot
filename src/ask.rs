@@ -250,8 +250,13 @@ mod tests {
             contract_character(Persona::Abbey)
                 .contains("hand NSFW roleplay to Aviva through /roleplay")
         );
-        assert!(contract_character(Persona::Abbey).contains("deep runtime or lane coordination to Abi"));
-        assert!(contract_character(Persona::Abbey).contains("manage other bots and surface decisions for Donald"));
+        assert!(
+            contract_character(Persona::Abbey).contains("deep runtime or lane coordination to Abi")
+        );
+        assert!(
+            contract_character(Persona::Abbey)
+                .contains("manage other bots and surface decisions for Donald")
+        );
         assert!(contract_character(Persona::Abbey).contains("companion turns"));
         assert!(contract_character(Persona::Abbey).contains("particular detail"));
         assert!(contract_character(Persona::Abbey).contains("Soft Mat craft never absorbed"));
