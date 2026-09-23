@@ -106,12 +106,68 @@ def test_mlx_with_matching_companion_passes() -> None:
 
 def test_companion_name_normalization_is_pep503() -> None:
     # PEP 503: names compare case-insensitively with '-', '_', '.' runs folded.
+    # This case alone is non-discriminating: canonical "mlx"/"mlx-metal" both
+    # normalize to themselves, so it would pass even with an identity
+    # normalize_name(). The two tests below are the ones that actually fail
+    # without real normalization; see their docstrings.
     with tempfile.TemporaryDirectory() as directory:
         body = stanza("MLX", "0.32.2") + stanza("mlx_metal", "0.32.2")
         lock = write_lock(pathlib.Path(directory), "normalized.txt", body)
         requirements, hashes = mod.verify(lock)
         assert requirements == 2
         assert hashes == 4
+
+
+def test_non_canonical_key_without_companion_fails_via_normalization() -> None:
+    """A non-canonically spelled key ("Mlx") with no companion at all must
+    still fail, naming the canonical mlx-metal==X companion. This is
+    discriminating: DARWIN_COMPANIONS is keyed on the already-normalized
+    "mlx", so with normalize_name() reduced to identity, "Mlx" would never
+    match that key, the companion loop would skip this package entirely, and
+    verify() would wrongly return success instead of raising SystemExit.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        lock = write_lock(
+            pathlib.Path(directory),
+            "non-canonical-key-missing-companion.txt",
+            stanza("Mlx", "0.32.2"),
+        )
+        try:
+            mod.verify(lock)
+        except SystemExit as error:
+            message = str(error)
+        else:
+            raise AssertionError(
+                "expected SystemExit for a non-canonically spelled mlx key "
+                "with no companion pinned"
+            )
+        assert "Mlx==0.32.2" in message, message
+        assert "mlx-metal==0.32.2" in message, message
+
+
+def test_differently_styled_mismatch_fails_via_normalization() -> None:
+    """A mismatch where both packages are spelled non-canonically
+    ("MLX" / "mlx.metal") must still fail, naming both pins. Discriminating
+    for the same reason as the test above: without real normalization,
+    "mlx" (the DARWIN_COMPANIONS key) never matches "MLX" in `pinned`, so the
+    companion loop skips this package and verify() wrongly succeeds.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        body = stanza("MLX", "0.32.2") + stanza("mlx.metal", "0.32.1")
+        lock = write_lock(
+            pathlib.Path(directory), "differently-styled-mismatch.txt", body
+        )
+        try:
+            mod.verify(lock)
+        except SystemExit as error:
+            message = str(error)
+        else:
+            raise AssertionError(
+                "expected SystemExit for a differently-styled Darwin "
+                "companion version mismatch"
+            )
+        assert "MLX==0.32.2" in message, message
+        assert "mlx.metal==0.32.1" in message, message
 
 
 def test_stanza_without_hash_still_fails() -> None:
@@ -133,5 +189,7 @@ if __name__ == "__main__":
     test_mlx_metal_version_mismatch_fails_naming_both_versions()
     test_mlx_with_matching_companion_passes()
     test_companion_name_normalization_is_pep503()
+    test_non_canonical_key_without_companion_fails_via_normalization()
+    test_differently_styled_mismatch_fails_via_normalization()
     test_stanza_without_hash_still_fails()
     print("check-python-locks tests passed")
