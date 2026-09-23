@@ -165,16 +165,24 @@ independently of whether MLX-VLM is ever published.
   still broken. Moot today because no manifest exists — worth hardening before
   one does.
 
-2026-09-23: both gaps closed on branch `codex/mlx-vlm-gate-hardening`. The
-smoke fixture gap closed in commit `006eb01`: `deploy/smoke-mlx-vlm.py`'s
+2026-09-23: both gaps closed on branch `codex/mlx-vlm-gate-hardening` (a
+squash merge orphans individual commit hashes, so this note names the branch,
+not the commits). The smoke fixture gap closed there: `deploy/smoke-mlx-vlm.py`'s
 tool-result continuation rung now sends a prose fixture in the style of
-`src/tools.rs`, not JSON. The cutover gate gap closed across commits
-`006eb01` and `8bc47eb`: `deploy/configure-mlx-primary.py` and
-`deploy/publish-provider-qualification.py` now require a manifest's `tools`
-capability to carry a distinct `tool_result_marker` equal to
-`ABBEY_PROVIDER_CONTINUATION_V1`, not just `status: pass`, and
-`src/provider_self_test.rs` now records that marker only when the
-continuation turn actually returned it.
+`src/tools.rs`, not JSON. The cutover gate gap also closed on that branch:
+`deploy/configure-mlx-primary.py` and `deploy/publish-provider-qualification.py`
+now require a manifest's `tools` capability to carry a distinct
+`tool_result_marker` equal to `ABBEY_PROVIDER_CONTINUATION_V1`, not just
+`status: pass`, and `src/provider_self_test.rs` now records that marker only
+when the continuation turn actually returned it.
+
+Provider self-test probes compare continuation text after branch
+`codex/strip-channel-markers` strips Gemma's leaked `<|channel>...<channel|>`
+blocks (the production reply path), while `deploy/smoke-mlx-vlm.py` compares
+raw content and remains the zero-leak gate; the stripper can only turn a
+self-test fail into a pass when the correct marker arrives wrapped in closed
+channel blocks, never fabricate one, so merge `codex/strip-channel-markers`
+before any live qualification run intended to publish.
 
 ## What would close `tasks/todo.md`'s continuation item
 
