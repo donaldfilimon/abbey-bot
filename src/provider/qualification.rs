@@ -48,10 +48,11 @@ pub struct CapabilityEvidence {
     pub status: ProbeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
-    /// Set only on a passing `tools` capability, to the exact marker the
-    /// model returned after a synthetic tool RESULT (never after the tool
-    /// CALL alone). `tools: pass` on its own only proves a tool call
-    /// streamed correctly; a manifest consumer that requires this field too
+    /// Set only on a passing `tools` capability, to the marker the
+    /// continuation turn was required to return exactly, after a synthetic
+    /// tool RESULT (never after the tool CALL alone). `tools: pass` on its
+    /// own only proves a tool call streamed correctly; a manifest consumer
+    /// that requires this field too
     /// (`deploy/configure-mlx-primary.py`, `deploy/publish-provider-qualification.py`)
     /// cannot be satisfied by a tool-call-only probe. `#[serde(default)]` so
     /// a manifest written before this field existed still deserializes,

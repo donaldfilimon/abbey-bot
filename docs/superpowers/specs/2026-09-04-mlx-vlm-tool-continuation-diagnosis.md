@@ -165,6 +165,17 @@ independently of whether MLX-VLM is ever published.
   still broken. Moot today because no manifest exists — worth hardening before
   one does.
 
+2026-09-23: both gaps closed on branch `codex/mlx-vlm-gate-hardening`. The
+smoke fixture gap closed in commit `006eb01`: `deploy/smoke-mlx-vlm.py`'s
+tool-result continuation rung now sends a prose fixture in the style of
+`src/tools.rs`, not JSON. The cutover gate gap closed across commits
+`006eb01` and `8bc47eb`: `deploy/configure-mlx-primary.py` and
+`deploy/publish-provider-qualification.py` now require a manifest's `tools`
+capability to carry a distinct `tool_result_marker` equal to
+`ABBEY_PROVIDER_CONTINUATION_V1`, not just `status: pass`, and
+`src/provider_self_test.rs` now records that marker only when the
+continuation turn actually returned it.
+
 ## What would close `tasks/todo.md`'s continuation item
 
 Only a live `deploy/smoke-mlx-vlm.py` run passing the exact

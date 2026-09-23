@@ -57,7 +57,7 @@ def test_tool_result_fixture_is_prose_not_json():
     assert isinstance(content, str)
     assert not content.startswith("{")
     assert not content.startswith("[")
-    assert "ready" in content
+    assert content == "Status probe recorded: marker ready."
 
 
 if __name__ == "__main__":
