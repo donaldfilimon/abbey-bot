@@ -21,6 +21,7 @@ Invoke-Checked -Executable "cargo" -Arguments @("fmt", "--all", "--", "--check")
 
 Write-Host "== deploy and privacy validation =="
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-python-syntax.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-check-python-locks.py")
 Invoke-Checked -Executable "python" -Arguments @(
     "deploy/check-python-locks.py",
     "deploy/mlx-vlm-requirements.txt",
