@@ -487,16 +487,6 @@ status: in_progress
   - Telegram/Slack live tokens; unobserved `/forget`, `/ocr`, post-deploy `/see`;
     an actual `OverBudget` refusal.
 
-- **2026-09-23 ~15:35 EDT launchd measurement (controller-supplied, not re-measured here):**
-  `launchctl list | grep com.donaldfilimon.abbey` shows four loaded and running
-  (`abbey-bot`, `abbey-wdbx-gateway`, `abbey-audio-tap`, `abbey-oh-autolisten`);
-  `abbey-mlx-audio` has a plist in `~/Library/LaunchAgents` but is not loaded;
-  `abbey-mlx-vlm` has a plist only in `deploy/`, not installed. On 2026-09-22
-  02:19 EDT all five agents were booted out (plists backed up to
-  `~/Archive/2026-09-22-abbey-bot-launchd-removed-021928/`); four came back the
-  same second and `abbey-bot`'s plist was rewritten at 08:18:17 that day, actor
-  unrecorded. See `AGENTS.md` "Learned Workspace Facts" for the full note.
-
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
@@ -2172,3 +2162,14 @@ someone ran it; the gate's green covers none of the five. Uncommitted at the tim
 - **2026-09-19 continue (review-20260919 slice):** (1) ask.rs wording: the "transcription" test names overstated the abi-ai boundary — Aviva's first sentence + em dash are verbatim, the rest is paraphrase by design (Abbey follows Grok Bot Abbey per module doc); renamed to first-sentence/description/em-dash names, all pinned literals byte-identical. (2) Empty-`/roleplay` Aviva persistence: investigation shows `engine.prepare` already switches `session.persona` as a side effect (pinned by `persona_switch_keeps_the_transcript`), so the empty-prompt `prepare` in `commands.rs` DOES stick Aviva for follow-up freeform (`pipeline.rs` honors `session_persona` when routing is neutral); the review's "sticks nothing" phrasing overstated — only the transcript turn is (correctly) unrecorded. Hardened with `empty_roleplay_prepare_sticks_aviva_without_a_turn`; no admission-table change (Donald's decision), no local persona matching, unknown-channel stays fail-closed. (3) Module watch (800–999 band, all <1000, no split — no clean boundary in scope): `voice_local.rs:802`, `episode_gate.rs:804`, `offline_voice.rs:818`, `commands.rs:923`, `provider.rs:962`, `voice_session.rs:975`. (4) mlai review scratch (`review-notes.md`, `review-summary.md`, untracked) moved to `~/tmp/`; `metrics.ts` dirty left for the repo's own flow. (5) `.agents/skills/run-abbey-bot` path drift (doc cites `.Codex/skills/...`, real path `.agents/skills/...`) left Donald-gated: `.agents/` is untracked and the skill-sync rule forbids editing/adding synced copies without Donald. Gate green (see line tail); Hosted Gate = UNMEASURABLE (billing lock, not a failure).
 - **2026-09-19 follow-up (explicit empty-/roleplay stick on content/review-20260919):** replaced the incidental `Engine::prepare`-with-discarded-return in the empty-`/roleplay` arm (`src/commands.rs`) with an explicit `Engine::set_session_persona(scope, persona, now)` (`src/engine.rs`: same create-or-update defaults + timestamp handling as `prepare`, no transcript mutation, no `commit` change); retargeted `empty_roleplay_prepare_sticks_aviva_without_a_turn` to `empty_roleplay_stick_sets_aviva_without_a_turn` (explicit stick: Aviva set, zero turns; `persona_switch_keeps_the_transcript` still owns `prepare`'s mutation, so net test code flat). Unchanged: fail-closed unknown channels, `commit()` Abbey default, `roleplay_gate.rs` admission table, `persona.rs`, `ask.rs` pins byte-identical. Gate: `cargo fmt --all` clean; focused `engine` 14 / `roleplay` 5 / `ask` 33 pass; full `./check.sh` `CHECK_SH_EXIT: 0`, 1314 passed / 0 failed / 5 ignored + release build ok.
 - **2026-09-19 follow-up (touch_session canonical-reuse on content/review-20260919):** answered the 20260919 re-review conditioner (`~/tmp/abbey-verify2-20260919.md`): extracted private `Engine::touch_session(scope, persona, now)` (`src/engine.rs`) owning the create-or-update + persona + timestamp block, with `prepare` (prompt/context assembly and return unchanged) and `set_session_persona` both calling it; retargeted the twin discarded-`prepare` at `src/pipeline.rs:524` to `set_session_persona` (verified the `PreparedTurn` was `let _`-discarded and the next line's `commit` already records the turn, so no caller fed on the return). Unchanged: `persona.rs`, `roleplay_gate.rs`, `ask.rs` pins, `commit()` Abbey default, fail-closed paths, admission table; net test code flat (`empty_roleplay_stick_sets_aviva_without_a_turn` kept passing, no new coverage). Gate: `cargo fmt --all` clean; focused `engine` 14 / `roleplay` 5 / `ask` 33 / `pipeline` 27 pass; full `./check.sh` `CHECK_SH_EXIT: 0`, 1314 passed / 0 failed / 5 ignored + release build ok.
+
+- **2026-09-23 ~15:35 EDT launchd measurement (controller-supplied, not re-measured here):**
+  `launchctl list | grep com.donaldfilimon.abbey` shows four loaded and running
+  (`abbey-bot`, `abbey-wdbx-gateway`, `abbey-audio-tap`, `abbey-oh-autolisten`);
+  `abbey-mlx-audio` has a plist in `~/Library/LaunchAgents` but is not loaded;
+  `abbey-mlx-vlm` has a plist only in `deploy/`, not installed. On 2026-09-22
+  02:19 EDT all five agents were booted out (plists backed up to
+  `~/Archive/2026-09-22-abbey-bot-launchd-removed-021928/`); four plists in
+  `~/Library/LaunchAgents` carry birth time 02:19:28, the same second, and
+  `abbey-bot`'s plist was rewritten at 08:18:17 that day, actor unrecorded.
+  See `AGENTS.md` "Learned Workspace Facts" for the full note.

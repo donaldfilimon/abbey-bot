@@ -599,10 +599,16 @@ verdicts only. Counts: 42 open boxes (measured); 39 still open, 2 done, 1 obsole
     "staged MLX-Audio / MLX-VLM install qualification" as a remaining blocker, which L284 above
     already found stale as of 2026-09-21 (MLX-Audio was running, `launchctl` PID 8309). A fresh
     controller-supplied measurement at 2026-09-23 ~15:35 EDT (recorded in `AGENTS.md` "Learned
-    Workspace Facts" and appended to `tasks/goals.md`'s Breadth & ops section) now finds
+    Workspace Facts" and appended to the end of `tasks/goals.md`, in the "2026-09-06 full
+    modernization integration" section, per the append-only ledger convention) now finds
     `com.donaldfilimon.abbey-mlx-audio` installed but **not loaded**, so goals:1882's wording
     stays stale but the reason has changed: not "never verified" but "verified, then stopped."
     L111/L285/L286/L287 (MLX-VLM) are unaffected by this measurement.
+  - The follow-up goals:969 asked for on 2026-09-16 ("a guard that fails the gate when a
+    Darwin-only dependency is missing is a worthwhile follow-up") is answered by branch
+    `codex/lock-darwin-completeness`, which adds that guard to
+    `deploy/check-python-locks.py`. Named here by branch, not commit hash, since a squash
+    merge orphans hashes.
   - L203's "voice only through explicit OpenAI Realtime" clause and L410 were already marked
     obsolete inline in this block (lines above), but this file has no convention for marking an
     obsolete item's checkbox other than `[x]`/`[ ]` (grepped: no third marker exists anywhere in

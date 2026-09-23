@@ -333,7 +333,7 @@ section it ports. Read that header before the code.
   service.** The gateway must be up before the bot is restarted. They carry `KeepAlive`,
   so a plain `kill` respawns rather than stops them. Do not stop, unload, or reinstall
   any of them on your own initiative.
-  - **2026-09-23 ~15:35 EDT measurement:** four loaded and running:
+  - **2026-09-23 ~15:35 EDT measurement (controller-supplied):** four loaded and running:
     `com.donaldfilimon.abbey-bot` (since 2026-09-22 08:18), `abbey-wdbx-gateway`
     (since 2026-09-22 05:57), `abbey-audio-tap`, `abbey-oh-autolisten`.
     `abbey-mlx-audio`'s plist is present in `~/Library/LaunchAgents` but NOT loaded.
