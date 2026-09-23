@@ -445,6 +445,26 @@ mod tests {
     }
 
     #[test]
+    fn marker_only_content_before_tool_calls_yields_no_text_and_keeps_the_call() {
+        let mut accumulator = SseAccumulator::default();
+        let mut text = String::new();
+        for payload in [
+            json!({"choices":[{"delta":{"content":"<|channel>thought\n<channel|>"},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"recall","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {
+            text.extend(accumulator.feed(&event(&payload.to_string())).unwrap());
+        }
+        text.extend(accumulator.feed(b"data: [DONE]\n").unwrap());
+        assert_eq!(text, "");
+        let calls = accumulator.tool_calls().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "c1");
+        assert_eq!(calls[0].name, "recall");
+        assert_eq!(calls[0].arguments, json!({"q":"x"}));
+    }
+
+    #[test]
     fn invalid_utf8_and_post_terminal_events_are_rejected() {
         let mut invalid = SseAccumulator::default();
         assert!(invalid.feed(b"data: \xff\n").is_err());

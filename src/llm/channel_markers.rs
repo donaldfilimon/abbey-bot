@@ -112,7 +112,7 @@ impl Stripper {
 }
 
 /// Strip every channel block from complete text.
-pub(super) fn strip(text: &str) -> String {
+pub(crate) fn strip(text: &str) -> String {
     let mut stripper = Stripper::default();
     let mut out = stripper.push(text);
     out.push_str(&stripper.finish());

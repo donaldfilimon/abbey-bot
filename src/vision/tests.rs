@@ -276,6 +276,33 @@ fn extraction_reads_choices_zero_and_rejects_junk() {
 }
 
 #[test]
+fn extraction_strips_gemma_channel_markers() {
+    let raw = |content: &str, finish: &str| {
+        serde_json::json!({"choices":[{"message":{"content":content},"finish_reason":finish}]})
+            .to_string()
+    };
+    assert_eq!(
+        extract_vision_text(&raw("<|channel>thought\n<channel|>A cat.", "stop")).expect("parses"),
+        "A cat."
+    );
+    // Marker-only content is empty after stripping, so it takes the existing
+    // empty handling: a budget-exhausted error on `length`, empty otherwise.
+    let only = "<|channel>thought\n<channel|>".repeat(3);
+    assert_eq!(
+        extract_vision_text(&raw(&only, "length"))
+            .unwrap_err()
+            .to_string(),
+        extract_vision_text(&raw("", "length"))
+            .unwrap_err()
+            .to_string()
+    );
+    assert_eq!(
+        extract_vision_text(&raw(&only, "stop")).expect("parses"),
+        ""
+    );
+}
+
+#[test]
 fn config_precedence_explicit_then_llm_fallback_then_none() {
     assert_eq!(
         VisionConfig::from_values(None, None, None, None, None),
