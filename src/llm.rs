@@ -19,6 +19,7 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
+mod channel_markers;
 mod dialect;
 mod protocol;
 mod stream;
