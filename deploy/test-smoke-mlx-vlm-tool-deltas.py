@@ -47,8 +47,22 @@ def test_non_array_still_fails():
         raise AssertionError("expected SystemExit")
 
 
+def test_tool_result_fixture_is_prose_not_json():
+    # Abbey's real tool results are short plain sentences (src/tools.rs,
+    # src/runtime/tool_scope.rs), e.g. "Stored: {fact}". The chat template's
+    # thought-suppressor patch only fires on tool-result content starting
+    # `{` or `[`; a JSON fixture here would never exercise the `is string`
+    # path production tool results actually take.
+    content = mod.tool_result_prose("ready")
+    assert isinstance(content, str)
+    assert not content.startswith("{")
+    assert not content.startswith("[")
+    assert "ready" in content
+
+
 if __name__ == "__main__":
     test_null_is_skipped_like_omitted()
     test_array_is_merged()
     test_non_array_still_fails()
+    test_tool_result_fixture_is_prose_not_json()
     print("smoke tool-delta tests passed")

@@ -371,6 +371,18 @@ def message(response: Any) -> dict[str, Any]:
     return value
 
 
+def tool_result_prose(marker: str) -> str:
+    """Render a synthetic tool result the way Abbey's real tools do: a short
+    plain sentence (`src/tools.rs`, `src/runtime/tool_scope.rs`), for example
+    `Stored: {fact}` or `Switched to {persona}; continue the conversation as
+    {persona}.`, never JSON. The chat template's thought-suppressor patch
+    only fires on tool-result content starting `{` or `[`
+    (docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md);
+    a JSON-shaped fixture here would never exercise the `is string` path
+    production tool results actually take."""
+    return f"Status probe recorded: marker {marker}."
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", required=True)
@@ -480,7 +492,7 @@ def main() -> None:
     tool_result = {
         "role": "tool",
         "tool_call_id": call_id,
-        "content": '{"marker":"ready"}',
+        "content": tool_result_prose("ready"),
     }
     final_text, final_calls, final_finish_reason = client.streamed_turn(
         {
