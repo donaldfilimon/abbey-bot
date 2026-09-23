@@ -61,8 +61,9 @@ does not.
 
 ## Layout and local run
 
-`src/` is the entire product: one binary crate, roughly 250 `.rs` files (count
-with `find src -name '*.rs' | wc -l`), no library target and no workspace. Everything else is support — `deploy/` the launchd installers
+`src/` is the entire product: one binary crate (count `.rs` files with
+`find src -name '*.rs' | wc -l`; never trust a number written here), no library target
+and no workspace. Everything else is support — `deploy/` the launchd installers
 plus the Python tests that gate them (and a systemd unit, `abbey-bot.service`,
 which with the root `Dockerfile` is documented in README but never exercised
 on this host), `scripts/` the `check-*.py` gates and
@@ -324,16 +325,21 @@ section it ports. Read that header before the code.
   to `changes (0)`. A dry run that shows changes means the guild drifted, not that work is
   pending. `--apply` is additive-only and has no delete variant; role-permission and
   role-order decisions stay manual.
-- **Five** launchd agents are live (corrected 2026-09-16 03:1x; this line has now read
-  one, two and four — each correct when written and stale within a week, which is the
-  point of the enumeration below): `com.donaldfilimon.abbey-bot`,
-  `com.donaldfilimon.abbey-wdbx-gateway`,
-  `com.donaldfilimon.abbey-mlx-audio`, `com.donaldfilimon.abbey-audio-tap`, and
-  `com.donaldfilimon.abbey-oh-autolisten`. **A plist in `deploy/` is not a running
-  service:** `com.donaldfilimon.abbey-mlx-vlm` has both a plist and an installer there
-  and was NOT loaded at that reading, so enumerate the live set with
-  `launchctl list | grep com.donaldfilimon.abbey` and the installable set with
-  `ls deploy/*.plist` — they are different questions and the answers differ.
-  Never trust any count written here. The gateway must be up before the bot is restarted.
-  They carry `KeepAlive`, so a plain `kill` respawns rather than stops them. Do not stop,
-  unload, or reinstall any of them on your own initiative.
+- **The launchd agent count is not stable; do not write a number here as current
+  truth** (this line has read one, two, four and five: each correct when written and
+  stale within a week). Enumerate the live set with `launchctl list | grep
+  com.donaldfilimon.abbey` and the installable set with `ls deploy/*.plist` — they are
+  different questions and the answers differ. **A plist in `deploy/` is not a running
+  service.** The gateway must be up before the bot is restarted. They carry `KeepAlive`,
+  so a plain `kill` respawns rather than stops them. Do not stop, unload, or reinstall
+  any of them on your own initiative.
+  - **2026-09-23 ~15:35 EDT measurement:** four loaded and running:
+    `com.donaldfilimon.abbey-bot` (since 2026-09-22 08:18), `abbey-wdbx-gateway`
+    (since 2026-09-22 05:57), `abbey-audio-tap`, `abbey-oh-autolisten`.
+    `abbey-mlx-audio`'s plist is present in `~/Library/LaunchAgents` but NOT loaded.
+    `abbey-mlx-vlm`'s plist exists only in `deploy/`, not installed. On 2026-09-22
+    02:19 EDT all five agents were booted out and their plists backed up to
+    `~/Archive/2026-09-22-abbey-bot-launchd-removed-021928/` (a manual step; no
+    `deploy/*.sh` installer writes that path); four plists in `~/Library/LaunchAgents`
+    carry birth time 2026-09-22 02:19:28, the same second, and `abbey-bot`'s plist was
+    rewritten 2026-09-22 08:18:17. Who put them back and how is unrecorded.

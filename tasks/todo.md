@@ -594,3 +594,25 @@ verdicts only. Counts: 42 open boxes (measured); 39 still open, 2 done, 1 obsole
 - L472 still open: no typed-outcome settle recorded (prose, goals:275 is the untyped 2026-08-19 reward).
 - L483 still open: audio tap installed (measured, `launchctl` PID 1391; prose, goals:1782); human Play acceptance open (prose, goals:1796-1798).
 - 2026-09-22: RUSTSEC-2026-0293 accepted by Donald and bound to its own songbird 0.6.0 -> ringbuf 0.4.8 path in `security/rustsec-accepted-debt.json` (schema 3); L392's four rustls-webpki records stay open on the Serenity upstream, now carrying their 2026-09-19 CVE aliases.
+- 2026-09-23 follow-up to this block (measured/prose as marked; append-only, no line above re-ticked):
+  - L284's stale-wording finding is itself now dated: goals:1882 (2026-09-16 pass) still lists
+    "staged MLX-Audio / MLX-VLM install qualification" as a remaining blocker, which L284 above
+    already found stale as of 2026-09-21 (MLX-Audio was running, `launchctl` PID 8309). A fresh
+    controller-supplied measurement at 2026-09-23 ~15:35 EDT (recorded in `AGENTS.md` "Learned
+    Workspace Facts" and appended to `tasks/goals.md`'s Breadth & ops section) now finds
+    `com.donaldfilimon.abbey-mlx-audio` installed but **not loaded**, so goals:1882's wording
+    stays stale but the reason has changed: not "never verified" but "verified, then stopped."
+    L111/L285/L286/L287 (MLX-VLM) are unaffected by this measurement.
+  - L203's "voice only through explicit OpenAI Realtime" clause and L410 were already marked
+    obsolete inline in this block (lines above), but this file has no convention for marking an
+    obsolete item's checkbox other than `[x]`/`[ ]` (grepped: no third marker exists anywhere in
+    this file), and ticking either box would misreport L203 (still open on the untouched systemd-unit
+    clause) and L410 (already counted as the tally's "1 obsolete" at line 552, not "done"). Both
+    boxes stay `[ ]` deliberately; this note is the record, not a box flip.
+  - L392's "now fails `scripts/check-rustsec-debt.py`" wording is superseded by `a6d0c98`
+    (2026-09-22, "security(rustsec): accept RUSTSEC-2026-0293 on its own locked path"): the
+    advisory is accepted under schema 3 as its own songbird -> ringbuf path (see the 2026-09-22
+    line above). Re-run confirms the checker passes: `python3 scripts/check-rustsec-debt.py`
+    exits 0 ("accepted temporary debt matches: 5 vulnerabilities remain; audit is NOT clean" is
+    the expected accepted-debt state, not a failure). L392 itself stays open: the four
+    rustls-webpki records are still accepted debt on the untouched Serenity upstream.

@@ -487,6 +487,16 @@ status: in_progress
   - Telegram/Slack live tokens; unobserved `/forget`, `/ocr`, post-deploy `/see`;
     an actual `OverBudget` refusal.
 
+- **2026-09-23 ~15:35 EDT launchd measurement (controller-supplied, not re-measured here):**
+  `launchctl list | grep com.donaldfilimon.abbey` shows four loaded and running
+  (`abbey-bot`, `abbey-wdbx-gateway`, `abbey-audio-tap`, `abbey-oh-autolisten`);
+  `abbey-mlx-audio` has a plist in `~/Library/LaunchAgents` but is not loaded;
+  `abbey-mlx-vlm` has a plist only in `deploy/`, not installed. On 2026-09-22
+  02:19 EDT all five agents were booted out (plists backed up to
+  `~/Archive/2026-09-22-abbey-bot-launchd-removed-021928/`); four came back the
+  same second and `abbey-bot`'s plist was rewritten at 08:18:17 that day, actor
+  unrecorded. See `AGENTS.md` "Learned Workspace Facts" for the full note.
+
 
 ## Self-learning hardening (continuation of "improve all")
 status: done
