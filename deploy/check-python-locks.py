@@ -70,6 +70,11 @@ def verify(path: pathlib.Path) -> tuple[int, int]:
             match = REQUIREMENT_NAME_VERSION.match(current)
             if match is not None:
                 name, version = match.group(1), match.group(2)
+                # Last-write-wins if the same normalized name is pinned more
+                # than once in one lock (real uv-generated locks never do
+                # this: each package appears in exactly one stanza). Not
+                # rejected here because doing so is outside this rule's
+                # scope and would be untested behavior.
                 pinned[normalize_name(name)] = (name, version)
         elif valid_hashes:
             if current is None:
@@ -94,7 +99,7 @@ def verify(path: pathlib.Path) -> tuple[int, int]:
             fail(
                 f"{path}: {key_name}=={key_version} requires a pinned, hashed "
                 f"{companion}=={key_version} requirement on Darwin "
-                f"(mlx-metal completeness rule, 2026-09-16 incident: "
+                f"({companion} completeness rule, 2026-09-16 incident: "
                 f"{companion} was dropped from a regenerated lock and the "
                 f"Mac install broke while hash validation alone stayed green)"
             )
