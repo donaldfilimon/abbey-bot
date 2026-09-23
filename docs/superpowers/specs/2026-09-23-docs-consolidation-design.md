@@ -28,9 +28,9 @@ applied", so Phase B never edits AGENTS.md. Any edit inside `## Boundaries` requ
 `.cursor`/`.codex` reviewer files (planned: none). The design is also committed as
 `docs/superpowers/specs/2026-09-23-docs-consolidation-design.md`.
 
-Record the pre-consolidation commit (current branch HEAD) as `LEDGER_BASE`; every old
-`goals:NNNN` / `todo:NNNN` / `MLAI:NNN` citation resolves via `git show
-LEDGER_BASE:<path>`.
+`LEDGER_BASE = ceee9b4` (the `origin/main` commit the consolidation started from, so it
+survives any merge strategy); every old `goals:NNNN` / `todo:NNNN` / `MLAI:NNN`
+citation resolves via `git show ceee9b4:<path>`.
 
 Target tree (each file opens with a 3-line "owns / does not own / last verified"
 header; no counts that can rot):
