@@ -220,3 +220,211 @@ fn unrelated_feedback_never_unlocks_timing_and_correction_clears_it() {
         None
     );
 }
+
+#[test]
+fn rolling_window_retains_durable_replay_protection_across_correction_and_reset() {
+    let mut store = fixture();
+    let template = store.deliveries[&10].clone();
+    for id in 10..111 {
+        store.deliveries.insert(
+            id,
+            WorkDeliveryReceipt {
+                id,
+                message_id: Some(id),
+                ..template.clone()
+            },
+        );
+        store
+            .feedback(access(1), id, Some(WorkFeedback::Useful), false, 101)
+            .unwrap();
+    }
+    let profile = store.preference_profile(access(1)).unwrap();
+    assert_eq!(profile.evidence.len(), 100);
+    assert_eq!(profile.evidence[0].delivery_id, 11);
+    assert_eq!(profile.evidence.last().unwrap().delivery_id, 110);
+    // The durable serialization round-trip preserves the evicted identity.
+    let mut store: WorkStore =
+        serde_json::from_str(&serde_json::to_string(&store).unwrap()).unwrap();
+    store
+        .feedback(access(1), 10, Some(WorkFeedback::Dismissed), false, 102)
+        .unwrap();
+    assert_eq!(store.preference_profile(access(1)).unwrap(), profile);
+    assert_eq!(
+        store.feedback(access(1), 10, Some(WorkFeedback::Dismissed), true, 102),
+        Err(WorkError::Missing)
+    );
+    store
+        .feedback(access(1), 11, Some(WorkFeedback::Dismissed), true, 102)
+        .unwrap();
+    assert_eq!(
+        store.preference_profile(access(1)).unwrap().evidence[0].feedback,
+        WorkFeedback::Dismissed
+    );
+    store.feedback(access(1), 11, None, true, 103).unwrap();
+    store
+        .feedback(access(1), 11, Some(WorkFeedback::Useful), false, 104)
+        .unwrap();
+    assert_eq!(
+        store.preference_profile(access(1)).unwrap().evidence.len(),
+        99
+    );
+    store
+        .control_preferences(access(1), None, Some(Some(7)), true)
+        .unwrap();
+    store
+        .feedback(access(1), 110, Some(WorkFeedback::Useful), false, 105)
+        .unwrap();
+    let profile = store.preference_profile(access(1)).unwrap();
+    assert!(profile.evidence.is_empty());
+    assert_eq!(profile.explicit_hour, Some(7));
+    assert_eq!(profile.briefing_rank, 0);
+    assert_eq!(profile.observed_deliveries.len(), 101);
+}
+
+#[test]
+fn legacy_full_window_does_not_block_new_evidence_or_lose_old_attributed_identity() {
+    let mut store = fixture();
+    let mut profile = WorkPreferenceProfile::default();
+    for id in 0..100 {
+        profile.evidence.push(PreferenceEvidence {
+            actor: None,
+            scope: None,
+            kind: None,
+            delivery_id: id,
+            feedback: WorkFeedback::Dismissed,
+            at: 100,
+        });
+    }
+    store.preferences.insert(access(1).scope().key(), profile);
+    store
+        .feedback(access(1), 10, Some(WorkFeedback::Useful), false, 101)
+        .unwrap();
+    let profile = store.preference_profile(access(1)).unwrap();
+    assert_eq!(profile.evidence.len(), 1);
+    assert_eq!(profile.briefing_rank, 0);
+    // Old serialized profiles had no observation identity set. Reset migrates it.
+    store
+        .preferences
+        .get_mut(&access(1).scope().key())
+        .unwrap()
+        .observed_deliveries
+        .clear();
+    store
+        .control_preferences(access(1), None, None, true)
+        .unwrap();
+    store
+        .feedback(access(1), 10, Some(WorkFeedback::Useful), false, 102)
+        .unwrap();
+    assert!(
+        store
+            .preference_profile(access(1))
+            .unwrap()
+            .evidence
+            .is_empty()
+    );
+}
+
+#[test]
+fn authorized_partial_updates_preserve_saved_policy_and_inspection_fallback() {
+    for guild in [None, Some(9)] {
+        let manager = WorkAccess {
+            guild,
+            can_manage: true,
+            ..access(1)
+        };
+        let mut store = WorkStore::default();
+        let project = store.create_project(manager, "Scope", "p").unwrap();
+        let initial = WorkAutomationUpdate {
+            enabled: true,
+            timezone: Some("Europe/London".into()),
+            briefing_hour: Some(15),
+            quiet_start: Some(21),
+            quiet_end: Some(6),
+            daily_limit: Some(1),
+        };
+        let saved = store.update_automation(manager, initial, None).unwrap();
+        let disabled = store
+            .update_automation(manager, WorkAutomationUpdate::default(), None)
+            .unwrap();
+        assert_eq!(
+            disabled,
+            WorkAutomationPolicy {
+                enabled: false,
+                ..saved.clone()
+            }
+        );
+        let updated = store
+            .update_automation(
+                manager,
+                WorkAutomationUpdate {
+                    enabled: true,
+                    briefing_hour: Some(16),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            updated,
+            WorkAutomationPolicy {
+                briefing_hour: 16,
+                ..saved.clone()
+            }
+        );
+        store
+            .update_automation(
+                manager,
+                WorkAutomationUpdate {
+                    enabled: true,
+                    briefing_hour: Some(15),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        store
+            .control_preferences(manager, None, Some(None), false)
+            .unwrap();
+        let snapshot = store.preference_snapshot(manager).unwrap();
+        assert_eq!(snapshot.effective_hour, 15);
+        assert_eq!(
+            snapshot.effective_hour,
+            snapshot
+                .profile
+                .effective_hour(store.scope_automation[&manager.scope().key()].briefing_hour)
+        );
+        assert_eq!(snapshot.timezone.as_deref(), Some("Europe/London"));
+        let before = store.clone();
+        assert!(
+            store
+                .update_automation(
+                    manager,
+                    WorkAutomationUpdate {
+                        enabled: true,
+                        daily_limit: Some(5),
+                        ..Default::default()
+                    },
+                    None
+                )
+                .is_err()
+        );
+        assert_eq!(store, before);
+        if guild.is_some() {
+            store.set_member(project, manager, 2, true).unwrap();
+            let before = store.clone();
+            assert_eq!(
+                store.update_automation(
+                    WorkAccess {
+                        actor: 2,
+                        can_manage: false,
+                        ..manager
+                    },
+                    WorkAutomationUpdate::default(),
+                    None
+                ),
+                Err(WorkError::Denied)
+            );
+            assert_eq!(store, before);
+        }
+    }
+}

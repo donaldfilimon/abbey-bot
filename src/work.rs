@@ -173,6 +173,12 @@ pub struct WorkPreferenceProfile {
     pub explicit_hour: Option<u8>,
     pub learned_hour: Option<u8>,
     pub evidence: Vec<PreferenceEvidence>,
+    /// Durable replay protection, independent of the rolling learning window.
+    /// One identity per accepted receipt/actor pair; retained through resets.
+    /// Receipts are capped at 10,000 and currently never pruned. These identities
+    /// may only be pruned when their receipts can no longer accept feedback.
+    #[serde(default)]
+    pub observed_deliveries: BTreeSet<(u64, u64)>,
     #[serde(default)]
     pub reduce_followups: bool,
     #[serde(default)]
@@ -186,6 +192,7 @@ impl Default for WorkPreferenceProfile {
             explicit_hour: None,
             learned_hour: None,
             evidence: Vec::new(),
+            observed_deliveries: BTreeSet::new(),
             reduce_followups: false,
             briefing_rank: 0,
         }
@@ -303,7 +310,7 @@ impl std::error::Error for WorkError {}
 
 mod github;
 mod policy;
-pub use policy::initial_timezone;
+pub use policy::{WorkAutomationUpdate, WorkPreferenceSnapshot};
 mod registry;
 mod schedule;
 

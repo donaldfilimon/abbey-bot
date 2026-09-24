@@ -1,38 +1,70 @@
 //! Private command controls; every mutation reauthorizes canonical work state
 //! inside the retained durable commit before acknowledging success.
 use super::{access, reply};
-use crate::work::{WorkAutomationPolicy, WorkError, WorkFeedback};
+use crate::work::{
+    WorkAutomationPolicy, WorkAutomationUpdate, WorkError, WorkFeedback, WorkPreferenceSnapshot,
+};
 use crate::{Context, Error};
 
 #[poise::command(slash_command, ephemeral)]
 pub async fn preferences(ctx: Context<'_>) -> Result<(), Error> {
     let access = access(ctx).await?;
-    let profile = crate::runtime::AppState::lock(&ctx.data().state.stores)
+    let snapshot = crate::runtime::AppState::lock(&ctx.data().state.stores)
         .work
-        .preference_profile(access)?;
+        .preference_snapshot(access)?;
+    reply(ctx, preference_reply(&snapshot, access.actor)).await
+}
+
+fn hour_text(hour: Option<u8>) -> String {
+    hour.map_or_else(|| "not set".into(), |hour| format!("{hour}:00"))
+}
+
+fn preference_reply(snapshot: &WorkPreferenceSnapshot, actor: u64) -> String {
+    let profile = &snapshot.profile;
+    let zone = snapshot
+        .timezone
+        .as_deref()
+        .unwrap_or("timezone not configured");
     let mut text = format!(
-        "Learning: {}. Explicit hour: {:?}. Suggested hour: {:?}. Effective hour: {}. Reduced optional follow-ups: {}. Briefing ranking adjustment: {}.\n",
-        profile.learning_enabled,
-        profile.explicit_hour,
-        profile.learned_hour,
-        profile.effective_hour(9),
-        profile.reduce_followups,
-        profile.briefing_rank
+        "Learning: {}. Explicit hour: {}. Suggested hour: {}. Effective hour: {}:00 ({zone}). Reduced optional follow-ups: {}. Briefing ranking adjustment: {}.\n",
+        if profile.learning_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        hour_text(profile.explicit_hour),
+        hour_text(profile.learned_hour),
+        snapshot.effective_hour,
+        if profile.reduce_followups {
+            "yes"
+        } else {
+            "no"
+        },
+        match profile.briefing_rank {
+            1.. => "favor useful briefings",
+            ..=-1 => "deprioritize dismissed briefings",
+            0 => "none",
+        }
     );
     for e in profile
         .evidence
         .iter()
-        .filter(|e| e.actor == Some(access.actor))
+        .filter(|e| e.actor == Some(actor))
         .rev()
         .take(15)
     {
+        let feedback = match e.feedback {
+            WorkFeedback::Useful => "useful".into(),
+            WorkFeedback::Dismissed => "dismissed".into(),
+            WorkFeedback::Snoozed { hour } => format!("snoozed to {hour}:00 ({zone})"),
+        };
         text.push_str(&format!(
-            "Delivery #{} · {:?} · <t:{}:f>\n",
-            e.delivery_id, e.feedback, e.at
+            "Delivery #{} · {feedback} · <t:{}:f>\n",
+            e.delivery_id, e.at
         ));
     }
-    text.push_str("Showing your own feedback only. Use /work feedback with correction to replace or remove it; /work reset_preferences clears shared learned evidence (manager required in teams).");
-    reply(ctx, text).await
+    text.push_str("Showing your own feedback only. Use /work feedback with correction to replace or remove active evidence; /work reset_preferences clears shared learned evidence (manager required in teams). Previously observed deliveries cannot count again after removal or reset.");
+    text
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -64,11 +96,27 @@ pub async fn timing(
     #[description = "Local hour 0–23; omit to clear explicit preference"] hour: Option<u8>,
 ) -> Result<(), Error> {
     let access = access(ctx).await?;
-    ctx.data()
+    let snapshot = ctx
+        .data()
         .state
-        .commit_work(move |store| store.control_preferences(access, None, Some(hour), false))
+        .commit_work(move |store| {
+            store.control_preferences(access, None, Some(hour), false)?;
+            store.preference_snapshot(access)
+        })
         .await?;
-    reply(ctx, format!("Explicit optional delivery hour: {hour:?}. Quiet hours, deadlines and the daily ceiling still apply.")).await
+    reply(ctx, timing_reply(&snapshot)).await
+}
+
+fn timing_reply(snapshot: &WorkPreferenceSnapshot) -> String {
+    format!(
+        "Explicit optional delivery hour: {}. Effective hour: {}:00 ({}). Quiet hours, deadlines and the daily ceiling still apply.",
+        hour_text(snapshot.profile.explicit_hour),
+        snapshot.effective_hour,
+        snapshot
+            .timezone
+            .as_deref()
+            .unwrap_or("timezone not configured")
+    )
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -111,27 +159,22 @@ pub async fn automation(
 ) -> Result<(), Error> {
     let access = access(ctx).await?;
     let configured_owner = std::env::var("ABBEY_WORK_DEFAULT_TIMEZONE_USER_ID").ok();
-    let timezone = crate::work::initial_timezone(access, timezone, configured_owner.as_deref())?;
-    let policy = WorkAutomationPolicy {
+    let update = WorkAutomationUpdate {
         enabled,
-        destination: Some(access.channel),
         timezone,
-        briefing_hour: briefing_hour.unwrap_or(9),
-        quiet_start: quiet_start.unwrap_or(22),
-        quiet_end: quiet_end.unwrap_or(8),
-        daily_limit: daily_limit.unwrap_or(4),
+        briefing_hour,
+        quiet_start,
+        quiet_end,
+        daily_limit,
     };
-    let text = automation_reply(&policy);
-    ctx.data()
+    let policy = ctx
+        .data()
         .state
         .commit_work(move |store| {
-            store.configure_automation(&access.scope(), access, policy)?;
-            if let Some(hour) = briefing_hour {
-                store.control_preferences(access, None, Some(Some(hour)), false)?;
-            }
-            Ok(())
+            store.update_automation(access, update, configured_owner.as_deref())
         })
         .await?;
+    let text = automation_reply(&policy);
     reply(ctx, text).await
 }
 
@@ -182,6 +225,33 @@ pub async fn reminder(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn render_preferences_and_cleared_timing_in_local_language() {
+        let snapshot = crate::work::WorkPreferenceSnapshot {
+            timezone: Some("Europe/London".into()),
+            effective_hour: 15,
+            profile: crate::work::WorkPreferenceProfile {
+                evidence: vec![crate::work::PreferenceEvidence {
+                    actor: Some(1),
+                    scope: Some(crate::work::WorkScope::Personal { owner: 1 }),
+                    kind: Some(crate::work::WorkDeliveryKind::Briefing),
+                    delivery_id: 42,
+                    feedback: crate::work::WorkFeedback::Snoozed { hour: 11 },
+                    at: 100,
+                }],
+                ..Default::default()
+            },
+        };
+        let preferences = super::preference_reply(&snapshot, 1);
+        let timing = super::timing_reply(&snapshot);
+        println!("{preferences}\n{timing}");
+        assert!(preferences.contains("Explicit hour: not set"));
+        assert!(preferences.contains("snoozed to 11:00 (Europe/London)"));
+        assert!(timing.contains("Effective hour: 15:00 (Europe/London)"));
+        assert!(!super::preference_reply(&snapshot, 2).contains("Delivery #42"));
+        assert_eq!(super::hour_text(Some(7)), "7:00");
+    }
+
     #[test]
     fn render_configuration_discloses_scope_and_ceiling() {
         let policy = crate::work::WorkAutomationPolicy {

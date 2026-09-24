@@ -78,28 +78,119 @@ impl WorkPreferenceProfile {
         if matches!(evidence.feedback, WorkFeedback::Snoozed { hour: 24.. }) {
             return Err(WorkError::Invalid);
         }
-        if self
-            .evidence
-            .iter()
-            .any(|e| e.delivery_id == evidence.delivery_id && e.actor == evidence.actor)
+        self.remember_observations();
+        let Some(actor) = evidence.actor.filter(|a| *a != 0) else {
+            return Ok(());
+        };
+        if evidence.scope.is_none() || evidence.kind.is_none() {
+            return Ok(());
+        }
+        if !self
+            .observed_deliveries
+            .insert((evidence.delivery_id, actor))
         {
             return Ok(());
         }
+        // Legacy unattributed rows are inert and never consume window capacity.
+        self.evidence.retain(attributed);
         if self.evidence.len() >= 100 {
-            return Err(WorkError::Full);
+            self.evidence.drain(..self.evidence.len() - 99);
         }
         self.evidence.push(evidence);
         self.recompute();
         Ok(())
     }
 
+    fn remember_observations(&mut self) {
+        self.observed_deliveries.extend(
+            self.evidence
+                .iter()
+                .filter(|e| attributed(e))
+                .filter_map(|e| e.actor.map(|actor| (e.delivery_id, actor))),
+        );
+    }
+
     pub fn reset(&mut self) {
+        self.remember_observations();
         self.evidence.clear();
         self.recompute();
     }
 }
 
+fn attributed(e: &PreferenceEvidence) -> bool {
+    e.actor.is_some_and(|a| a != 0) && e.scope.is_some() && e.kind.is_some()
+}
+
+#[derive(Debug, Default)]
+pub struct WorkAutomationUpdate {
+    pub enabled: bool,
+    pub timezone: Option<String>,
+    pub briefing_hour: Option<u8>,
+    pub quiet_start: Option<u8>,
+    pub quiet_end: Option<u8>,
+    pub daily_limit: Option<u8>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct WorkPreferenceSnapshot {
+    pub profile: WorkPreferenceProfile,
+    pub timezone: Option<String>,
+    pub effective_hour: u8,
+}
+
 impl WorkStore {
+    pub fn preference_snapshot(
+        &self,
+        access: WorkAccess,
+    ) -> Result<WorkPreferenceSnapshot, WorkError> {
+        let profile = self.preference_profile(access)?;
+        let policy = self.scope_automation.get(&access.scope().key());
+        Ok(WorkPreferenceSnapshot {
+            effective_hour: profile.effective_hour(policy.map_or(9, |p| p.briefing_hour)),
+            timezone: policy.map(|p| p.timezone.clone()),
+            profile,
+        })
+    }
+
+    pub fn update_automation(
+        &mut self,
+        access: WorkAccess,
+        update: WorkAutomationUpdate,
+        configured_owner: Option<&str>,
+    ) -> Result<WorkAutomationPolicy, WorkError> {
+        let scope = access.scope();
+        self.scope_projects(&scope, access, true)?;
+        let mut policy = match self.scope_automation.get(&scope.key()) {
+            Some(policy) => policy.clone(),
+            None => WorkAutomationPolicy {
+                timezone: initial_timezone(access, update.timezone.clone(), configured_owner)?,
+                ..Default::default()
+            },
+        };
+        policy.enabled = update.enabled;
+        policy.destination = Some(access.channel);
+        if let Some(timezone) = update.timezone {
+            policy.timezone = timezone;
+        }
+        if let Some(hour) = update.briefing_hour {
+            policy.briefing_hour = hour;
+        }
+        if let Some(hour) = update.quiet_start {
+            policy.quiet_start = hour;
+        }
+        if let Some(hour) = update.quiet_end {
+            policy.quiet_end = hour;
+        }
+        if let Some(limit) = update.daily_limit {
+            policy.daily_limit = limit;
+        }
+        self.configure_automation(&scope, access, policy.clone())?;
+        if let Some(hour) = update.briefing_hour {
+            self.control_preferences(access, None, Some(Some(hour)), false)?;
+        }
+        Ok(policy)
+    }
+
     /// All scope projects must authorize access: private evidence cannot leak
     /// through a second project in the same channel. Shared controls need every
     /// project's manager grant, not merely Discord MANAGE_GUILD.
@@ -176,16 +267,23 @@ impl WorkStore {
         let kind = receipt.kind;
         let profile = self.preferences.entry(scope.key()).or_default();
         if correction {
-            if !profile
+            let index = profile
                 .evidence
                 .iter()
-                .any(|e| e.delivery_id == delivery_id && e.actor == Some(access.actor))
-            {
-                return Err(WorkError::Missing);
+                .position(|e| {
+                    attributed(e) && e.delivery_id == delivery_id && e.actor == Some(access.actor)
+                })
+                .ok_or(WorkError::Missing)?;
+            profile.remember_observations();
+            if let Some(feedback) = feedback {
+                // Correct in place: an old observation does not become fresh evidence.
+                profile.evidence[index].feedback = feedback;
+                profile.evidence[index].at = now;
+            } else {
+                profile.evidence.remove(index);
             }
-            profile
-                .evidence
-                .retain(|e| e.delivery_id != delivery_id || e.actor != Some(access.actor));
+            profile.recompute();
+            return Ok(());
         } else if feedback.is_none() {
             return Err(WorkError::Invalid);
         }
@@ -205,7 +303,7 @@ impl WorkStore {
 }
 
 /// A provisioned identity supplies only a timezone convenience, never access.
-pub fn initial_timezone(
+fn initial_timezone(
     access: WorkAccess,
     explicit: Option<String>,
     configured_owner: Option<&str>,
