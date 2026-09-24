@@ -91,12 +91,13 @@ pub async fn project(
 ) -> Result<(), Error> {
     let access = access(ctx).await?;
     let request = ctx.id().to_string();
+    let saved_text = name.clone();
     let id = ctx
         .data()
         .state
-        .commit_work(|store| store.create_project(access, &name, &request))
+        .commit_work(move |store| store.create_project(access, &name, &request))
         .await?;
-    reply(ctx, format!("Saved project #{id}: {name}")).await
+    reply(ctx, format!("Saved project #{id}: {saved_text}")).await
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -106,12 +107,14 @@ pub async fn goal(
     #[description = "Goal title"] title: String,
 ) -> Result<(), Error> {
     let access = access(ctx).await?;
+    let request = ctx.id().to_string();
+    let saved_text = title.clone();
     let id = ctx
         .data()
         .state
-        .commit_work(|store| store.add_goal(project_id, access, &title))
+        .commit_work(move |store| store.add_goal(project_id, access, &title, &request))
         .await?;
-    reply(ctx, format!("Saved goal #{id}: {title}")).await
+    reply(ctx, format!("Saved goal #{id}: {saved_text}")).await
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -146,7 +149,7 @@ pub async fn task(
     let id = ctx
         .data()
         .state
-        .commit_work(|store| store.add_task(access, draft, &request))
+        .commit_work(move |store| store.add_task(access, draft, &request))
         .await?;
     reply(ctx, format!("Saved task #{id}: {title}")).await
 }
@@ -159,12 +162,14 @@ pub async fn decision(
 ) -> Result<(), Error> {
     let access = access(ctx).await?;
     let at = crate::runtime::now();
+    let request = ctx.id().to_string();
+    let saved_text = text.clone();
     let id = ctx
         .data()
         .state
-        .commit_work(|store| store.record_decision(project_id, access, &text, at))
+        .commit_work(move |store| store.record_decision(project_id, access, &text, at, &request))
         .await?;
-    reply(ctx, format!("Saved decision #{id}: {text}")).await
+    reply(ctx, format!("Saved decision #{id}: {saved_text}")).await
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -183,21 +188,28 @@ pub async fn briefing(
 pub async fn complete(
     ctx: Context<'_>,
     #[description = "Task number"] task_id: u64,
-    #[description = "Revision from the current briefing"] revision: u64,
+    #[description = "Revision from the briefing or last update"] revision: u64,
 ) -> Result<(), Error> {
     let access = access(ctx).await?;
-    ctx.data()
+    let resulting_revision = ctx
+        .data()
         .state
-        .commit_work(|store| store.update_task(access, task_id, revision, WorkStatus::Done, None))
+        .commit_work(move |store| {
+            store.update_task(access, task_id, revision, WorkStatus::Done, None)
+        })
         .await?;
-    reply(ctx, format!("Task #{task_id} is done.")).await
+    reply(
+        ctx,
+        task_update_reply(task_id, "is done", resulting_revision),
+    )
+    .await
 }
 
 #[poise::command(slash_command, ephemeral)]
 pub async fn status(
     ctx: Context<'_>,
     #[description = "Task number"] task_id: u64,
-    #[description = "Revision from the current briefing"] revision: u64,
+    #[description = "Revision from the briefing or last update"] revision: u64,
     #[description = "open, in_progress, blocked, done, or cancelled"] state: String,
 ) -> Result<(), Error> {
     let status = match state.as_str() {
@@ -209,18 +221,27 @@ pub async fn status(
         _ => return Err(crate::work::WorkError::Invalid.into()),
     };
     let access = access(ctx).await?;
-    ctx.data()
+    let resulting_revision = ctx
+        .data()
         .state
-        .commit_work(|store| store.update_task(access, task_id, revision, status, None))
+        .commit_work(move |store| store.update_task(access, task_id, revision, status, None))
         .await?;
-    reply(ctx, format!("Task #{task_id} is {}.", status.label())).await
+    reply(
+        ctx,
+        task_update_reply(
+            task_id,
+            &format!("is {}", status.label()),
+            resulting_revision,
+        ),
+    )
+    .await
 }
 
 #[poise::command(slash_command, ephemeral)]
 pub async fn snooze(
     ctx: Context<'_>,
     #[description = "Task number"] task_id: u64,
-    #[description = "Revision from the current briefing"] revision: u64,
+    #[description = "Revision from the briefing or last update"] revision: u64,
     #[description = "Resume after this Unix timestamp"] until: u64,
 ) -> Result<(), Error> {
     let now = crate::runtime::now();
@@ -228,9 +249,10 @@ pub async fn snooze(
         return Err(crate::work::WorkError::Invalid.into());
     }
     let access = access(ctx).await?;
-    ctx.data()
+    let resulting_revision = ctx
+        .data()
         .state
-        .commit_work(|store| {
+        .commit_work(move |store| {
             let task = store
                 .tasks
                 .get(&task_id)
@@ -238,7 +260,15 @@ pub async fn snooze(
             store.update_task(access, task_id, revision, task.status, Some(until))
         })
         .await?;
-    reply(ctx, format!("Task #{task_id} snoozed until <t:{until}:f>.")).await
+    reply(
+        ctx,
+        task_update_reply(
+            task_id,
+            &format!("snoozed until <t:{until}:f>"),
+            resulting_revision,
+        ),
+    )
+    .await
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -271,7 +301,7 @@ pub async fn reset_preferences(ctx: Context<'_>) -> Result<(), Error> {
     let key = access(ctx).await?.preference_key();
     ctx.data()
         .state
-        .commit_work(|store| {
+        .commit_work(move |store| {
             store.preferences.entry(key).or_default().reset();
             Ok(())
         })
@@ -293,8 +323,24 @@ pub async fn member(
     let access = access(ctx).await?;
     ctx.data()
         .state
-        .commit_work(|store| store.set_member(project_id, access, user.get(), present))
+        .commit_work(move |store| store.set_member(project_id, access, user.get(), present))
         .await?;
     let result = if present { "added to" } else { "removed from" };
     reply(ctx, format!("Member {result} project #{project_id}.")).await
+}
+
+fn task_update_reply(task_id: u64, action: &str, revision: u64) -> String {
+    format!("Task #{task_id} {action}. Revision {revision}.")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn task_acknowledgments_include_revision_for_the_next_update() {
+        for action in ["is done", "is open", "snoozed until <t:2000000000:f>"] {
+            let text = super::task_update_reply(42, action, 7);
+            println!("{text}");
+            assert!(text.ends_with("Revision 7."));
+        }
+    }
 }

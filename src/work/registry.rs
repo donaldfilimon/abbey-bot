@@ -143,9 +143,17 @@ impl WorkStore {
         project_id: u64,
         access: WorkAccess,
         title: &str,
+        request_id: &str,
     ) -> Result<u64, WorkError> {
         self.project(project_id, access)?;
         valid_text(title, 300)?;
+        if request_id.is_empty() || request_id.len() > 100 {
+            return Err(WorkError::Invalid);
+        }
+        let key = format!("{}:{project_id}:goal:{request_id}", access.actor);
+        if let Some(id) = self.request_ids.get(&key) {
+            return Ok(*id);
+        }
         let id = self.next_id()?;
         self.goals.insert(
             id,
@@ -157,6 +165,7 @@ impl WorkStore {
                 complete: false,
             },
         );
+        self.request_ids.insert(key, id);
         Ok(id)
     }
 
@@ -213,7 +222,7 @@ impl WorkStore {
         revision: u64,
         status: WorkStatus,
         snoozed_until: Option<u64>,
-    ) -> Result<(), WorkError> {
+    ) -> Result<u64, WorkError> {
         let task = self.tasks.get(&id).ok_or(WorkError::Missing)?;
         self.project(task.project_id, access)?;
         if task.revision != revision {
@@ -223,7 +232,7 @@ impl WorkStore {
         task.status = status;
         task.snoozed_until = snoozed_until;
         task.revision = task.revision.checked_add(1).ok_or(WorkError::Full)?;
-        Ok(())
+        Ok(task.revision)
     }
 
     pub fn record_decision(
@@ -232,9 +241,17 @@ impl WorkStore {
         access: WorkAccess,
         text: &str,
         at: u64,
+        request_id: &str,
     ) -> Result<u64, WorkError> {
         self.project(project_id, access)?;
         valid_text(text, 1_000)?;
+        if request_id.is_empty() || request_id.len() > 100 {
+            return Err(WorkError::Invalid);
+        }
+        let key = format!("{}:{project_id}:decision:{request_id}", access.actor);
+        if let Some(id) = self.request_ids.get(&key) {
+            return Ok(*id);
+        }
         let id = self.next_id()?;
         self.decisions.insert(
             id,
@@ -246,6 +263,7 @@ impl WorkStore {
                 at,
             },
         );
+        self.request_ids.insert(key, id);
         Ok(id)
     }
 

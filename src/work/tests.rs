@@ -576,3 +576,63 @@ fn quiet_hours_and_ambiguous_attempts_consume_the_ceiling() {
     assert_eq!(store.deliveries[&id].state, DeliveryState::Attempting);
     assert_eq!(store.next_batch(&scope, access, at + 3600), Ok(None));
 }
+
+#[test]
+fn goal_and_decision_requests_survive_reload_and_reauthorize() {
+    let mut store = WorkStore::default();
+    let lead = team(1, 99, true, true);
+    let member = team(2, 99, true, false);
+    let project = store.create_project(lead, "Shared", "project").unwrap();
+    store.set_member(project, lead, 2, true).unwrap();
+    let goal = store
+        .add_goal(project, member, "Deliver", "request")
+        .unwrap();
+    let decision = store
+        .record_decision(project, member, "Approved", 10, "request")
+        .unwrap();
+    assert_ne!(goal, decision);
+    let mut store: WorkStore =
+        serde_json::from_str(&serde_json::to_string(&store).unwrap()).unwrap();
+    assert_eq!(
+        store
+            .add_goal(project, member, "Deliver", "request")
+            .unwrap(),
+        goal
+    );
+    assert_eq!(
+        store
+            .record_decision(project, member, "Approved", 11, "request")
+            .unwrap(),
+        decision
+    );
+    assert_ne!(
+        store.add_goal(project, member, "Deliver", "new").unwrap(),
+        goal
+    );
+    assert_ne!(
+        store
+            .record_decision(project, member, "Approved", 10, "new")
+            .unwrap(),
+        decision
+    );
+    assert_ne!(
+        store.add_goal(project, lead, "Deliver", "request").unwrap(),
+        goal
+    );
+    let other = store
+        .create_project(lead, "Other", "other-project")
+        .unwrap();
+    assert_ne!(
+        store.add_goal(other, lead, "Deliver", "request").unwrap(),
+        goal
+    );
+    store.set_member(project, lead, 2, false).unwrap();
+    assert_eq!(
+        store.add_goal(project, member, "Deliver", "request"),
+        Err(WorkError::Denied)
+    );
+    assert_eq!(
+        store.record_decision(project, member, "Approved", 10, "request"),
+        Err(WorkError::Denied)
+    );
+}
