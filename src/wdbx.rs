@@ -664,5 +664,7 @@ impl Recall {
     }
 }
 
+pub mod work_recall;
+
 #[cfg(test)]
 mod tests;

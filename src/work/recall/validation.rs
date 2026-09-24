@@ -2,7 +2,7 @@
 use super::*;
 
 impl WorkRecallState {
-    pub(in crate::work) fn validate(&self) -> Result<(), WorkError> {
+    pub(crate) fn validate(&self) -> Result<(), WorkError> {
         if self.schema_version != 1 {
             return Err(WorkError::Invalid);
         }
