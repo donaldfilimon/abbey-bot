@@ -197,6 +197,7 @@ impl WorkStore {
         task.remind_at = remind_at;
         task.reminder_revision = reminder_next;
         task.revision = next;
+        self.recall.task_changed(task.project_id, id, next);
         Ok(())
     }
 

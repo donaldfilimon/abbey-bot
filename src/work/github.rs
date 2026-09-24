@@ -228,6 +228,8 @@ impl WorkStore {
         reference.repository = reference.repository.canonical();
         task.github = Some(reference);
         task.revision = next_revision;
+        self.recall
+            .task_changed(task.project_id, task_id, next_revision);
         Ok(())
     }
 

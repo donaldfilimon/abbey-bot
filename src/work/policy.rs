@@ -243,12 +243,16 @@ impl WorkStore {
         }
         let profile = self.preferences.entry(scope.key()).or_default();
         if let Some(enabled) = enabled {
+            if profile.learning_enabled != enabled {
+                self.recall.learning_changed(&scope);
+            }
             profile.learning_enabled = enabled;
         }
         if let Some(hour) = explicit_hour {
             profile.explicit_hour = hour;
         }
         if reset {
+            self.recall.preferences_reset(&scope);
             profile.reset();
         }
         profile.recompute();
@@ -303,14 +307,17 @@ impl WorkStore {
                 profile.evidence.remove(index);
             }
             profile.recompute();
+            self.recall
+                .preference_changed(&scope, delivery_id, access.actor);
             return Ok(());
         } else if feedback.is_none() {
             return Err(WorkError::Invalid);
         }
+        let previous = profile.evidence.clone();
         if let Some(feedback) = feedback {
             profile.observe(PreferenceEvidence {
                 actor: Some(access.actor),
-                scope: Some(scope),
+                scope: Some(scope.clone()),
                 kind,
                 delivery_id,
                 feedback,
@@ -318,6 +325,14 @@ impl WorkStore {
             })?;
         }
         profile.recompute();
+        for old in previous {
+            if !profile.evidence.contains(&old)
+                && let Some(actor) = old.actor
+            {
+                self.recall
+                    .preference_changed(&scope, old.delivery_id, actor);
+            }
+        }
         Ok(())
     }
 }

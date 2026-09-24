@@ -229,10 +229,12 @@ impl WorkStore {
             return Err(WorkError::Stale);
         }
         let task = self.tasks.get_mut(&id).ok_or(WorkError::Missing)?;
+        let next = task.revision.checked_add(1).ok_or(WorkError::Full)?;
         task.status = status;
         task.snoozed_until = snoozed_until;
-        task.revision = task.revision.checked_add(1).ok_or(WorkError::Full)?;
-        Ok(task.revision)
+        task.revision = next;
+        self.recall.task_changed(task.project_id, id, next);
+        Ok(next)
     }
 
     pub fn record_decision(

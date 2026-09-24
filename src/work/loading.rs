@@ -4,6 +4,7 @@ use super::*;
 #[derive(Default, Deserialize)]
 #[serde(remote = "WorkStore", default)]
 struct LoadedWorkStore {
+    recall: recall::WorkRecallState,
     sequence: u64,
     projects: BTreeMap<u64, WorkProject>,
     goals: BTreeMap<u64, WorkGoal>,
@@ -24,6 +25,11 @@ struct LoadedWorkStore {
 impl<'de> Deserialize<'de> for WorkStore {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut store = LoadedWorkStore::deserialize(deserializer)?;
+        store.recall.validate().map_err(serde::de::Error::custom)?;
+        store
+            .validate_recall_joins()
+            .map_err(serde::de::Error::custom)?;
+        store.recall.recover_prepared();
         store
             .validate_delivery_state()
             .map_err(serde::de::Error::custom)?;
@@ -55,7 +61,7 @@ impl<'de> Deserialize<'de> for WorkStore {
 }
 
 impl WorkStore {
-    fn validate_delivery_state(&self) -> Result<(), WorkError> {
+    pub(super) fn validate_delivery_state(&self) -> Result<(), WorkError> {
         for (key, policy) in &self.scope_automation {
             policy.validate()?;
             let scope = &self
