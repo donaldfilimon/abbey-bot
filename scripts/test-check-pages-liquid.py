@@ -212,7 +212,11 @@ class MarkdownFilesTests(unittest.TestCase):
                 with self.assertRaisesRegex(PagesSelectionError, "tracked front matter"):
                     markdown_files(root)
 
-    def test_known_skill_front_matter_shape_is_supported(self) -> None:
+    def test_skill_shaped_front_matter_is_no_longer_supported(self) -> None:
+        # Front matter used to be accepted only at the one path that carried
+        # it, docs/spec/SKILL.md (a stale account-skill copy, removed
+        # 2026-09-23). No path is exempted now: front matter fails closed
+        # everywhere, including this exact previously-accepted shape.
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             self.initialize_repository(root)
@@ -223,39 +227,8 @@ class MarkdownFilesTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.add(root, "docs/spec/SKILL.md")
-            self.assertEqual(
-                [path.relative_to(root) for path in markdown_files(root)],
-                [pathlib.Path("docs/spec/SKILL.md")],
-            )
-
-    def test_known_skill_front_matter_rejects_yaml_line_break_bypasses(self) -> None:
-        fixtures = {
-            "next line": "name: discord-abbey\x85published: false",
-            "line separator": "name: discord-abbey\u2028published: false",
-            "paragraph separator": "name: discord-abbey\u2029published: false",
-            "scalar continuation": "name: discord-abbey",
-            "tab indentation": "name: discord-abbey",
-        }
-        for label, name_line in fixtures.items():
-            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
-                root = pathlib.Path(directory)
-                self.initialize_repository(root)
-                skill = root / "docs" / "spec" / "SKILL.md"
-                skill.parent.mkdir(parents=True)
-                continuation = (
-                    "  harmless\u2028permalink: /escaped/"
-                    if label == "scalar continuation"
-                    else "\tinvalid YAML indentation"
-                    if label == "tab indentation"
-                    else "  harmless"
-                )
-                skill.write_text(
-                    f"---\n{name_line}\ndescription: >\n{continuation}\n---\n# Skill\n",
-                    encoding="utf-8",
-                )
-                self.add(root, "docs/spec/SKILL.md")
-                with self.assertRaisesRegex(PagesSelectionError, "tracked front matter"):
-                    markdown_files(root)
+            with self.assertRaisesRegex(PagesSelectionError, "tracked front matter"):
+                markdown_files(root)
 
     def test_tracked_pages_configuration_fails_closed(self) -> None:
         for name in ("_config.yml", "_config.yaml", ".nojekyll"):
@@ -407,7 +380,6 @@ class MarkdownFilesTests(unittest.TestCase):
             "activity/server/README.md",
             "contracts/abbey/corpus/README.md",
             "contracts/abbey/corpus/compatibility.md",
-            "docs/2026-08-10-abbey-ai-backend-proposal.md",
             "docs/MLAI-LIVE-ACCEPTANCE.md",
             "docs/README.md",
             "docs/activities.md",
@@ -418,7 +390,6 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/ops/monetization-portal-checklist.md",
             "docs/ops/slash-command-catalog.md",
             "docs/research/2026-08-19-voice-dave-entrypoint-tools.md",
-            "docs/spec/SKILL.md",
             "docs/spec/adaptivelearning.md",
             "docs/spec/appleintelligence.md",
             "docs/spec/botarchitecture.md",
@@ -444,6 +415,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/plans/2026-09-08-voice-classic-ux.md",
             "docs/superpowers/plans/2026-09-08-monetization-guild-pro-quesar.md",
             "docs/superpowers/plans/2026-09-16-abbey-system-prompt-skills.md",
+            "docs/superpowers/specs/2026-08-10-abbey-ai-backend-proposal.md",
             "docs/superpowers/specs/2026-08-19-guild-learning-loop-design.md",
             "docs/superpowers/specs/2026-08-19-reply-quality-speed-design.md",
             "docs/superpowers/specs/2026-08-19-tools-design.md",
@@ -461,6 +433,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/specs/2026-09-08-voice-classic-ux-design.md",
             "docs/superpowers/specs/2026-09-08-monetization-guild-pro-quesar-design.md",
             "docs/superpowers/specs/2026-09-16-do-all-signing-key-mlx-primary-design.md",
+            "docs/superpowers/specs/2026-09-23-docs-consolidation-design.md",
             "patches/openmls_rust_crypto-0.5.1/CHANGELOG.md",
             "patches/openmls_rust_crypto-0.5.1/PATCH.md",
             "patches/openmls_rust_crypto-0.5.1/README.md",

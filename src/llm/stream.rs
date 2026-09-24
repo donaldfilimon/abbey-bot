@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::{
     Backend, ChatTurn, HttpTransport, LlmError, LlmRequest, MAX_ERROR_RESPONSE_BYTES,
     MAX_RESPONSE_BYTES, MAX_TOOL_CALLS_PER_TURN, ModelTurn,
+    channel_markers::Stripper,
     dialect::{bounded_calls, validate_terminal},
 };
 
@@ -56,6 +57,9 @@ pub struct SseAccumulator {
     done: bool,
     finish_reason: Option<String>,
     calls: Vec<StreamedCall>,
+    /// Removes Gemma channel markers from content deltas before they are
+    /// returned, so neither the live Discord edits nor the final turn see them.
+    markers: Stripper,
 }
 
 impl SseAccumulator {
@@ -107,6 +111,12 @@ impl SseAccumulator {
         let payload = payload.trim();
         if payload == "[DONE]" {
             self.validate_terminal()?;
+            // Flush text held back as a possible marker prefix; an unclosed
+            // channel block is dropped.
+            let tail = self.markers.finish();
+            if !tail.is_empty() {
+                deltas.push(tail);
+            }
             self.done = true;
             return Ok(());
         }
@@ -133,7 +143,10 @@ impl SseAccumulator {
                     "the backend combined a terminal finish reason with more text".into(),
                 ));
             }
-            deltas.push(text.to_string());
+            let visible = self.markers.push(text);
+            if !visible.is_empty() {
+                deltas.push(visible);
+            }
         }
 
         if delta
@@ -392,6 +405,63 @@ mod tests {
             + 1;
         assert!(accumulator.feed(&line[..split]).unwrap().is_empty());
         assert_eq!(accumulator.feed(&line[split..]).unwrap(), ["café"]);
+    }
+
+    fn streamed(events: &[&str]) -> String {
+        let mut accumulator = SseAccumulator::default();
+        let mut text = String::new();
+        for content in events {
+            let payload = json!({"choices":[{"delta":{"content":content},"finish_reason":null}]});
+            text.extend(accumulator.feed(&event(&payload.to_string())).unwrap());
+        }
+        text.extend(
+            accumulator
+                .feed(&event(
+                    r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+                ))
+                .unwrap(),
+        );
+        text.extend(accumulator.feed(b"data: [DONE]\n").unwrap());
+        accumulator.finish().unwrap();
+        text
+    }
+
+    #[test]
+    fn gemma_channel_markers_are_stripped_across_event_boundaries() {
+        assert_eq!(
+            streamed(&[
+                "<|chan",
+                "nel>thought\n<chan",
+                "nel|>Hello",
+                " <|channel>x<channel|>there."
+            ]),
+            "Hello there."
+        );
+        // Held-back text that never became a marker is flushed at [DONE].
+        assert_eq!(streamed(&["a < b, ends <|chan"]), "a < b, ends <|chan");
+        // Marker-only content streams nothing, so `post_stream` takes its
+        // "the stream carried no answer text" path instead of posting.
+        assert_eq!(streamed(&["<|channel>thought\n<channel|>"; 4]), "");
+    }
+
+    #[test]
+    fn marker_only_content_before_tool_calls_yields_no_text_and_keeps_the_call() {
+        let mut accumulator = SseAccumulator::default();
+        let mut text = String::new();
+        for payload in [
+            json!({"choices":[{"delta":{"content":"<|channel>thought\n<channel|>"},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"recall","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {
+            text.extend(accumulator.feed(&event(&payload.to_string())).unwrap());
+        }
+        text.extend(accumulator.feed(b"data: [DONE]\n").unwrap());
+        assert_eq!(text, "");
+        let calls = accumulator.tool_calls().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "c1");
+        assert_eq!(calls[0].name, "recall");
+        assert_eq!(calls[0].arguments, json!({"q":"x"}));
     }
 
     #[test]

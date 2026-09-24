@@ -31,6 +31,7 @@ done
 [ "$shell_checked" -gt 0 ]
 echo "shell syntax: ${shell_checked} script(s)"
 python3 scripts/check-python-syntax.py
+python3 deploy/test-check-python-locks.py
 python3 deploy/check-python-locks.py \
   deploy/mlx-vlm-requirements.txt \
   deploy/mlx-audio-requirements.txt \

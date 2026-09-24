@@ -1,3 +1,4 @@
+use super::channel_markers::strip;
 use super::dialect::{Dialect, bounded_calls, validate_terminal};
 use super::{Backend, ChatTurn, LlmError, LlmRequest, ModelTurn};
 use serde_json::Value;
@@ -68,7 +69,10 @@ pub fn extract_turn(backend: &Backend, raw: &str) -> Result<ModelTurn, LlmError>
                 .filter_map(|b| b.get("text").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join("");
-            ModelTurn { text, calls }
+            ModelTurn {
+                text: strip(&text),
+                calls,
+            }
         }
         Dialect::OpenAi => {
             let msg = v.pointer("/choices/0/message").ok_or_else(|| {
@@ -78,11 +82,11 @@ pub fn extract_turn(backend: &Backend, raw: &str) -> Result<ModelTurn, LlmError>
             let calls = bounded_calls(&raw_calls, super::MAX_TOOL_CALLS_PER_TURN)?;
             validate_terminal(openai_finish(&v)?, calls.len())?;
             ModelTurn {
-                text: msg
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
+                text: strip(
+                    msg.get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                ),
                 calls,
             }
         }
@@ -139,8 +143,10 @@ pub fn extract_text(backend: &Backend, raw: &str) -> Result<String, LlmError> {
             msg.get("content").and_then(Value::as_str)
         }
     };
-    match text {
-        Some(t) if !t.trim().is_empty() => Ok(t.to_string()),
+    // Strip before the emptiness check so marker-only content takes the
+    // honest no-answer error below instead of returning an empty reply.
+    match text.map(strip) {
+        Some(t) if !t.trim().is_empty() => Ok(t),
         _ => {
             let reasoned = v
                 .pointer("/choices/0/message/reasoning")
@@ -202,6 +208,33 @@ mod tests {
         ] {
             let raw=json!({"choices":[{"message":{"content":"","tool_calls":[call]},"finish_reason":"tool_calls"}]}).to_string();
             assert!(extract_turn(&local(), &raw).is_err(), "accepted {raw}");
+        }
+    }
+    #[test]
+    fn gemma_channel_markers_never_reach_completed_text() {
+        let leak = "<|channel>thought\n<channel|>";
+        let openai = |content: &str| {
+            json!({"choices":[{"message":{"content":content},"finish_reason":"stop"}]}).to_string()
+        };
+        let raw = openai(&format!("{leak}{leak}Hello.{leak}"));
+        assert_eq!(extract_turn(&local(), &raw).unwrap().text, "Hello.");
+        assert_eq!(extract_text(&local(), &raw).unwrap(), "Hello.");
+
+        let anthropic = Backend::Anthropic {
+            api_key: "test".into(),
+        };
+        let raw = json!({"content":[{"type":"text","text":format!("Hi{leak} there")}],"stop_reason":"end_turn"}).to_string();
+        assert_eq!(extract_turn(&anthropic, &raw).unwrap().text, "Hi there");
+        assert_eq!(extract_text(&anthropic, &raw).unwrap(), "Hi there");
+
+        // Marker-only content takes the honest no-answer error, never an
+        // empty message.
+        let only = openai(&leak.repeat(5));
+        for err in [
+            extract_turn(&local(), &only).unwrap_err(),
+            extract_text(&local(), &only).unwrap_err(),
+        ] {
+            assert_eq!(err.detail(), "the response carried no answer text");
         }
     }
     #[test]

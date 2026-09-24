@@ -22,6 +22,7 @@ def fake_binary(
     optional_image_failure: bool = False,
     omit_vision_identity: bool = False,
     mismatch_vision_identity: bool = False,
+    omit_tool_continuation: bool = False,
 ) -> None:
     source = f'''#!/usr/bin/env python3
 import hashlib, json, pathlib, sys
@@ -29,6 +30,8 @@ binary = pathlib.Path(sys.argv[0])
 digest = hashlib.sha256(binary.read_bytes()).hexdigest()
 capabilities = {{name: {{"status": "pass"}} for name in (
     "text", "streaming", "structured_output", "tools", "vision", "ocr")}}
+if not {omit_tool_continuation!r}:
+    capabilities["tools"]["tool_result_marker"] = "ABBEY_PROVIDER_CONTINUATION_V1"
 if {optional_image_failure!r}:
     capabilities["vision"] = {{"status": "fail", "category": "semantic_vision"}}
     capabilities["ocr"] = {{"status": "fail", "category": "semantic_ocr"}}
@@ -99,6 +102,14 @@ def main() -> int:
         fake_binary(binary, passing=True, mismatch_vision_identity=True)
         mismatched_image_identity = invoke(binary, output)
         assert mismatched_image_identity.returncode == 1
+        assert output.read_bytes() == original
+
+        # A tool-CALL-only probe (tools: pass with no distinct tool-result
+        # continuation marker) must never publish as fully qualified.
+        fake_binary(binary, passing=True, omit_tool_continuation=True)
+        tool_call_only = invoke(binary, output)
+        assert tool_call_only.returncode == 1
+        assert "tool-result continuation" in tool_call_only.stderr
         assert output.read_bytes() == original
 
         # FM text/schema/tool qualification remains publishable when remote

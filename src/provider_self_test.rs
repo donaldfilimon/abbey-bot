@@ -308,7 +308,7 @@ async fn probe_primary() -> ProviderEvidence {
                 fail("structured_output")
             },
             tools: if tools_pass {
-                pass()
+                CapabilityEvidence::tools_pass(CONTINUATION_MARKER)
             } else {
                 fail("tool_protocol")
             },
@@ -459,7 +459,7 @@ async fn probe_fm_cli(config: &FmConfig, identity: Option<ProviderIdentity>) -> 
                 fail("structured_output")
             },
             tools: if tools && continuation {
-                pass()
+                CapabilityEvidence::tools_pass(CONTINUATION_MARKER)
             } else {
                 fail("tool_protocol")
             },
@@ -664,6 +664,53 @@ mod tests {
         let json = serde_json::to_string(&evidence).unwrap();
         assert!(json.contains("not_configured"));
         assert!(!json.contains("DISCORD_TOKEN"));
+    }
+
+    #[test]
+    fn tools_evidence_records_the_continuation_marker_only_on_pass() {
+        // Both probe_primary and probe_fm_cli build their `tools` evidence
+        // this way: a passing continuation carries the exact marker a
+        // manifest consumer (deploy/configure-mlx-primary.py,
+        // deploy/publish-provider-qualification.py) can require distinct
+        // from a bare `tools: pass`; a failure never does, even though it
+        // still uses the shared `fail("tool_protocol")` category.
+        let passing = CapabilityEvidence::tools_pass(CONTINUATION_MARKER);
+        assert!(passing.passed());
+        assert_eq!(
+            passing.tool_result_marker.as_deref(),
+            Some(CONTINUATION_MARKER)
+        );
+        let encoded = serde_json::to_value(&passing).unwrap();
+        assert_eq!(encoded["status"], "pass");
+        assert_eq!(encoded["tool_result_marker"], CONTINUATION_MARKER);
+
+        let failing = fail("tool_protocol");
+        assert!(!failing.passed());
+        assert_eq!(failing.tool_result_marker, None);
+        let encoded = serde_json::to_value(&failing).unwrap();
+        assert!(
+            encoded.get("tool_result_marker").is_none(),
+            "a failing probe must never carry a continuation marker: {encoded}"
+        );
+
+        let skipped_or_unsupported = [CapabilityEvidence::skipped(), unsupported()];
+        for evidence in skipped_or_unsupported {
+            assert_eq!(evidence.tool_result_marker, None);
+        }
+    }
+
+    #[test]
+    fn a_manifest_written_before_the_marker_field_existed_still_deserializes() {
+        // tests/fixtures/provider-legacy-v1.json predates this field; every
+        // capability there omits `tool_result_marker` entirely.
+        let report: QualificationReport =
+            serde_json::from_str(include_str!("../tests/fixtures/provider-legacy-v1.json"))
+                .expect("a manifest written before tool_result_marker existed must still parse");
+        assert_eq!(report.primary.capabilities.tools.tool_result_marker, None);
+        assert_eq!(
+            report.primary.capabilities.text.tool_result_marker, None,
+            "the field is tools-specific, but every capability must default safely"
+        );
     }
 
     #[test]
