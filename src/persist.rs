@@ -547,7 +547,10 @@ impl Stores {
                 });
             }
         };
-        serde_json::from_str(&text).map_err(|source| PersistError::Decode { path, source })
+        let mut stores: Self =
+            serde_json::from_str(&text).map_err(|source| PersistError::Decode { path, source })?;
+        stores.work.actions.mark_interrupted();
+        Ok(stores)
     }
 
     /// Write the document atomically into `dir`, creating the directory.

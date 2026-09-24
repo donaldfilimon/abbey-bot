@@ -51,6 +51,7 @@
 //! over REST instead, which is why [`profile::summarize`] states that
 //! presence is unavailable rather than guessing at it.
 
+mod action_approval;
 mod admin_dashboard;
 mod ask;
 mod audio_tap;

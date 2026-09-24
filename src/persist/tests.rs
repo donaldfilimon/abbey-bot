@@ -288,6 +288,44 @@ fn old_canonical_state_loads_without_work_records() {
 }
 
 #[test]
+fn interrupted_external_action_loads_for_review_without_replay() {
+    use crate::action_approval::{
+        ActionOperation, ActionPermission, ActionSpec, ActionState, ActionTarget,
+    };
+    let dir = temp_dir("interrupted-action");
+    let mut stores = Stores::default();
+    let id = stores
+        .work
+        .actions
+        .propose(
+            ActionSpec {
+                target: ActionTarget::GitHubRepository {
+                    installation: 1,
+                    owner: "team".into(),
+                    repo: "repo".into(),
+                },
+                operation: ActionOperation::GitHubCreateIssue {
+                    title: "Issue".into(),
+                    body: String::new(),
+                },
+                required: std::collections::BTreeSet::from([ActionPermission::GitHubIssuesWrite]),
+            },
+            2,
+            100,
+            "etag-1",
+        )
+        .unwrap();
+    stores.work.actions.proposals.get_mut(&id).unwrap().state = ActionState::Executing;
+    stores.save(&dir).unwrap();
+    let restored = Stores::load(&dir).unwrap();
+    assert_eq!(
+        restored.work.actions.proposals[&id].state,
+        ActionState::ReviewRequired
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn save_then_load_round_trips_every_section() {
     let dir = temp_dir("roundtrip");
     let mut stores = Stores::default();

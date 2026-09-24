@@ -164,6 +164,7 @@ pub struct WorkStore {
     pub preferences: BTreeMap<String, WorkPreferenceProfile>,
     pub deliveries: BTreeMap<u64, WorkDeliveryReceipt>,
     pub request_ids: BTreeMap<String, u64>,
+    pub actions: crate::action_approval::ActionStore,
 }
 
 /// Fresh permission facts from Discord REST. Cached or model-inferred facts
