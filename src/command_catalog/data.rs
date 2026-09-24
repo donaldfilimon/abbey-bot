@@ -40,6 +40,83 @@ macro_rules! spec {
 }
 pub(super) const REGISTERED: &[CommandSpec] = &[
     spec!(
+        WorkProject,
+        Slash,
+        "work project",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Create a personal or channel project."
+    ),
+    spec!(
+        WorkGoal,
+        Slash,
+        "work goal",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Record a project goal."
+    ),
+    spec!(
+        WorkTask,
+        Slash,
+        "work task",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Create an assigned task."
+    ),
+    spec!(
+        WorkDecision,
+        Slash,
+        "work decision",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Record a project decision."
+    ),
+    spec!(
+        WorkBriefing,
+        Slash,
+        "work briefing",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Review current work privately."
+    ),
+    spec!(
+        WorkComplete,
+        Slash,
+        "work complete",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Complete a current task."
+    ),
+    spec!(
+        WorkMember,
+        Slash,
+        "work member",
+        GUILD,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Manage a shared project's members."
+    ),
+    spec!(
         Help,
         Slash,
         "help",

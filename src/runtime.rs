@@ -683,6 +683,41 @@ impl AppState {
         result.await.map_err(|_| RequestError::WriterUnavailable)?
     }
 
+    /// Apply a work transition to an owned snapshot. Publish it in memory only
+    /// after the canonical JSON write has completed. The preparation mutex also
+    /// orders this write against scheduled snapshots, preventing an older
+    /// scheduler snapshot from overwriting a just-acknowledged work change.
+    pub async fn commit_work<R>(
+        &self,
+        change: impl FnOnce(&mut crate::work::WorkStore) -> Result<R, crate::work::WorkError>,
+    ) -> Result<R, crate::work::WorkError> {
+        use crate::persist::PersistComponentOutcome;
+        use crate::work::WorkError;
+
+        if self.data_dir.is_none() || self.service.get().is_none() {
+            return Err(WorkError::Persistence);
+        }
+        let _serial = self.persistence_preparation.lock().await;
+        let (mut stores, recall) = self.prepare_gated_snapshot().await;
+        let value = change(&mut stores.work)?;
+        let requests = self
+            .persistence_requests
+            .get()
+            .ok_or(WorkError::Persistence)?;
+        let report = requests
+            .submit(crate::service::persistence::Snapshot {
+                stores: stores.clone(),
+                recall,
+            })
+            .await
+            .map_err(|_| WorkError::Persistence)?;
+        if report.canonical_state != PersistComponentOutcome::Committed {
+            return Err(WorkError::Persistence);
+        }
+        Self::lock(&self.stores).work = stores.work;
+        Ok(value)
+    }
+
     pub async fn persist_all_gated(&self) -> PersistReport {
         let snapshots = self.prepare_gated_snapshot().await;
         self.persist_snapshot(snapshots)

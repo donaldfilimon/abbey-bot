@@ -270,10 +270,21 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
             "memory_receipts",
             "pending_rewards",
             "reputations",
+            // Chief-of-staff records are canonical; older state files load an
+            // empty work store through the field default.
+            "work",
         ]
         .into_iter()
         .collect()
     );
+}
+
+#[test]
+fn old_canonical_state_loads_without_work_records() {
+    let mut encoded = serde_json::to_value(Stores::default()).unwrap();
+    encoded.as_object_mut().unwrap().remove("work");
+    let restored: Stores = serde_json::from_value(encoded).unwrap();
+    assert_eq!(restored.work, crate::work::WorkStore::default());
 }
 
 #[test]

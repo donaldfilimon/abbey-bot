@@ -68,6 +68,7 @@ mod commands_help;
 mod commands_memory_browser;
 mod commands_server;
 mod commands_voice;
+mod commands_work;
 #[cfg(test)]
 mod contracts;
 mod embedding;
@@ -132,6 +133,7 @@ mod voice_ux_store;
 mod voice_views;
 mod wdbx;
 mod webhook;
+mod work;
 mod wyhash;
 
 use serenity::all::{GatewayIntents, GuildId};
@@ -608,6 +610,7 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_server::server(),
         commands::webhook(),
         commands_forum::forum(),
+        commands_work::work(),
         commands_brain::remember(),
         commands_brain::forget(),
         commands_brain::pending(),

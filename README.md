@@ -112,6 +112,13 @@ Active voice guidance includes a wake-name example and the stop command.
 <!-- BEGIN GENERATED COMMAND CATALOG -->
 | Command | Context | Response | What it does |
 |---|---|---|---|
+| `/work project` | guild, bot DM | private | Create a personal or channel project. |
+| `/work goal` | guild, bot DM | private | Record a project goal. |
+| `/work task` | guild, bot DM | private | Create an assigned task. |
+| `/work decision` | guild, bot DM | private | Record a project decision. |
+| `/work briefing` | guild, bot DM | private | Review current work privately. |
+| `/work complete` | guild, bot DM | private | Complete a current task. |
+| `/work member` | guild | private | Manage a shared project's members. |
 | `/help` | guild, bot DM | private | Browse commands available to you privately. |
 | `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
 | `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
