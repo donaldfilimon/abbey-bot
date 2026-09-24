@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -254,15 +255,30 @@ esac
             if directory == self.root: break
             directory.chmod(0o700)
         path.write_bytes(raw); path.chmod(mode)
-    def run(self, *args):
-        child = subprocess.Popen(['/bin/sh', str(self.repo / 'deploy/install-launchd.sh'), *args],
-                                 cwd='/', env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        value = self.state(); value['shell_pid'] = child.pid; self.statefile.write_text(json.dumps(value))
-        try:
-            stdout, stderr = child.communicate(timeout=20)
-        except BaseException:
-            child.kill(); child.wait(); raise
-        return subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+    def run(self, *args, timeout=120):
+        with subprocess.Popen(['/bin/sh', str(self.repo / 'deploy/install-launchd.sh'), *args],
+                              cwd='/', env=self.env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, start_new_session=True) as child:
+            value = self.state(); value['shell_pid'] = child.pid; self.statefile.write_text(json.dumps(value))
+            try:
+                stdout, stderr = child.communicate(timeout=timeout)
+            except BaseException as error:
+                # The session contains only this relocated fixture and its helpers.
+                # Close inherited pipes even when a phase helper outlives the shell.
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait()
+                child.stdout.close()
+                child.stderr.close()
+                if isinstance(error, subprocess.TimeoutExpired):
+                    state = self.state()
+                    diagnostics = {key: state.get(key) for key in
+                                   ('starts', 'active', 'loaded', 'signal_sent', 'helper_blocked')}
+                    raise AssertionError(f'fixture transaction watchdog expired: {diagnostics}') from None
+                raise
+            return subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
     def state(self):
         return json.loads(self.statefile.read_text())
     def binary(self):
@@ -270,6 +286,22 @@ esac
 
 
 class Tests(unittest.TestCase):
+    def test_watchdog_reaps_fixture_and_closes_pipes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            h = Harness(temp)
+            children = []
+            popen = subprocess.Popen
+            def capture(*args, **kwargs):
+                child = popen(*args, **kwargs)
+                children.append(child)
+                return child
+            with patch.object(subprocess, 'Popen', side_effect=capture):
+                with self.assertRaisesRegex(AssertionError, 'fixture transaction watchdog expired'):
+                    h.run(timeout=0.001)
+            self.assertIsNotNone(children[0].poll())
+            self.assertTrue(children[0].stdout.closed)
+            self.assertTrue(children[0].stderr.closed)
+
     def check_private(self, result, harness):
         output = result.stdout + result.stderr
         for canary in (CANARY, 'a'*64, 'b'*64, 'd'*64, str(harness.home), 'private-build-canary'):
