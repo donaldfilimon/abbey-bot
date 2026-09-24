@@ -35,6 +35,13 @@ fn valid_text(text: &str, max: usize) -> Result<(), WorkError> {
 }
 
 impl WorkStore {
+    pub fn visible_projects(&self, access: WorkAccess) -> Vec<&WorkProject> {
+        self.projects
+            .values()
+            .filter(|project| project.authorize(access, false).is_ok())
+            .collect()
+    }
+
     pub(super) fn next_id(&mut self) -> Result<u64, WorkError> {
         if self.projects.len() + self.goals.len() + self.tasks.len() + self.decisions.len()
             >= MAX_RECORDS

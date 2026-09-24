@@ -61,6 +61,24 @@ fn personal_and_team_records_require_current_access_and_membership() {
         Err(WorkError::Denied)
     );
     assert!(store.tasks.is_empty());
+    assert_eq!(store.visible_projects(team(2, 99, true, false)).len(), 0);
+    assert_eq!(store.visible_projects(personal(1)).len(), 1);
+}
+
+#[test]
+fn preference_keys_isolate_users_guild_channels_and_personal_space() {
+    let mut store = WorkStore::default();
+    let personal_key = personal(1).preference_key();
+    let team_key = team(1, 99, true, false).preference_key();
+    store
+        .preferences
+        .entry(team_key.clone())
+        .or_default()
+        .learned_hour = Some(10);
+    assert_ne!(personal_key, team_key);
+    assert_ne!(team_key, team(1, 100, true, false).preference_key());
+    assert_ne!(team_key, team(2, 99, true, false).preference_key());
+    assert!(!store.preferences.contains_key(&personal_key));
 }
 
 #[test]

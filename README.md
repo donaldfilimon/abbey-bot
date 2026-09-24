@@ -113,12 +113,17 @@ Active voice guidance includes a wake-name example and the stop command.
 | Command | Context | Response | What it does |
 |---|---|---|---|
 | `/work project` | guild, bot DM | private | Create a personal or channel project. |
+| `/work projects` | guild, bot DM | private | List projects available here. |
 | `/work goal` | guild, bot DM | private | Record a project goal. |
 | `/work task` | guild, bot DM | private | Create an assigned task. |
 | `/work decision` | guild, bot DM | private | Record a project decision. |
 | `/work briefing` | guild, bot DM | private | Review current work privately. |
 | `/work complete` | guild, bot DM | private | Complete a current task. |
+| `/work status` | guild, bot DM | private | Change a task's status. |
+| `/work snooze` | guild, bot DM | private | Snooze a task until a chosen time. |
 | `/work member` | guild | private | Manage a shared project's members. |
+| `/work preferences` | guild, bot DM | private | Inspect your learning settings and evidence. |
+| `/work reset_preferences` | guild, bot DM | private | Clear your learned preferences and evidence. |
 | `/help` | guild, bot DM | private | Browse commands available to you privately. |
 | `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
 | `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
@@ -190,6 +195,24 @@ Active voice guidance includes a wake-name example and the stop command.
 
 The member voice status, typed voice-mode choices, manager diagnostics, and classic administration dashboard are registered surfaces.
 <!-- END GENERATED COMMAND CATALOG -->
+
+### Work records
+
+`/work project` creates a personal project in a bot DM or a project attached to
+the current guild channel. `/work projects` lists only projects available in that
+context. For a shared project, a server manager creates it and manages its
+membership with `/work member`; members must also retain current access to the
+channel. Project IDs and task revisions appear in private briefings. Supply the
+current revision when changing a task, so an old command cannot overwrite a
+newer change. Tasks can be open, in progress, blocked, done, or cancelled.
+
+Work records are saved in the canonical state file under `ABBEY_DATA_DIR` before
+a mutation is acknowledged. This release records due dates and snoozes but does
+not yet send scheduled reminders or proactive briefings. Automation starts
+disabled. `/work preferences` shows learning evidence for the current personal
+or guild-channel context; `/work reset_preferences` clears learned evidence in
+that context. Briefings are private responses and use project-authorized task
+and decision records.
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned
 notice and choose **Agree** for the displayed processing mode. Each member

@@ -161,7 +161,7 @@ pub struct WorkStore {
     pub tasks: BTreeMap<u64, WorkTask>,
     pub decisions: BTreeMap<u64, WorkDecision>,
     pub automation: BTreeMap<u64, WorkAutomationPolicy>,
-    pub preferences: BTreeMap<u64, WorkPreferenceProfile>,
+    pub preferences: BTreeMap<String, WorkPreferenceProfile>,
     pub deliveries: BTreeMap<u64, WorkDeliveryReceipt>,
     pub request_ids: BTreeMap<String, u64>,
 }
@@ -175,6 +175,15 @@ pub struct WorkAccess {
     pub channel: u64,
     pub can_view: bool,
     pub can_manage: bool,
+}
+
+impl WorkAccess {
+    pub fn preference_key(self) -> String {
+        match self.guild {
+            Some(guild) => format!("team:{guild}:{}:{}", self.channel, self.actor),
+            None => format!("personal:{}", self.actor),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

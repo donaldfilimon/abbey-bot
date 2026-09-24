@@ -8,7 +8,18 @@ use serenity::all::{Permissions, UserId};
 #[poise::command(
     slash_command,
     subcommands(
-        "project", "goal", "task", "decision", "briefing", "complete", "member"
+        "project",
+        "projects",
+        "goal",
+        "task",
+        "decision",
+        "briefing",
+        "complete",
+        "status",
+        "snooze",
+        "member",
+        "preferences",
+        "reset_preferences"
     )
 )]
 pub async fn work(_ctx: Context<'_>) -> Result<(), Error> {
@@ -52,6 +63,25 @@ async fn reply(ctx: Context<'_>, text: impl Into<String>) -> Result<(), Error> {
     )
     .await?;
     Ok(())
+}
+
+#[poise::command(slash_command, ephemeral)]
+pub async fn projects(ctx: Context<'_>) -> Result<(), Error> {
+    let access = access(ctx).await?;
+    let text = {
+        let stores = crate::runtime::AppState::lock(&ctx.data().state.stores);
+        let visible = stores.work.visible_projects(access);
+        if visible.is_empty() {
+            "No projects here yet. Create one with `/work project`.".to_string()
+        } else {
+            let mut text = String::from("Projects available in this channel:\n");
+            for project in visible.iter().take(20) {
+                text.push_str(&format!("#{} · {}\n", project.id, project.name));
+            }
+            text
+        }
+    };
+    reply(ctx, text).await
 }
 
 #[poise::command(slash_command, ephemeral)]
@@ -158,6 +188,96 @@ pub async fn complete(
         .commit_work(|store| store.update_task(access, task_id, revision, WorkStatus::Done, None))
         .await?;
     reply(ctx, format!("Task #{task_id} is done.")).await
+}
+
+#[poise::command(slash_command, ephemeral)]
+pub async fn status(
+    ctx: Context<'_>,
+    #[description = "Task number"] task_id: u64,
+    #[description = "Revision from the current briefing"] revision: u64,
+    #[description = "open, in_progress, blocked, done, or cancelled"] state: String,
+) -> Result<(), Error> {
+    let status = match state.as_str() {
+        "open" => WorkStatus::Open,
+        "in_progress" => WorkStatus::InProgress,
+        "blocked" => WorkStatus::Blocked,
+        "done" => WorkStatus::Done,
+        "cancelled" => WorkStatus::Cancelled,
+        _ => return Err(crate::work::WorkError::Invalid.into()),
+    };
+    let access = access(ctx).await?;
+    ctx.data()
+        .state
+        .commit_work(|store| store.update_task(access, task_id, revision, status, None))
+        .await?;
+    reply(ctx, format!("Task #{task_id} is {}.", status.label())).await
+}
+
+#[poise::command(slash_command, ephemeral)]
+pub async fn snooze(
+    ctx: Context<'_>,
+    #[description = "Task number"] task_id: u64,
+    #[description = "Revision from the current briefing"] revision: u64,
+    #[description = "Resume after this Unix timestamp"] until: u64,
+) -> Result<(), Error> {
+    let now = crate::runtime::now();
+    if until <= now || until > now.saturating_add(366 * 24 * 60 * 60) {
+        return Err(crate::work::WorkError::Invalid.into());
+    }
+    let access = access(ctx).await?;
+    ctx.data()
+        .state
+        .commit_work(|store| {
+            let task = store
+                .tasks
+                .get(&task_id)
+                .ok_or(crate::work::WorkError::Missing)?;
+            store.update_task(access, task_id, revision, task.status, Some(until))
+        })
+        .await?;
+    reply(ctx, format!("Task #{task_id} snoozed until <t:{until}:f>.")).await
+}
+
+#[poise::command(slash_command, ephemeral)]
+pub async fn preferences(ctx: Context<'_>) -> Result<(), Error> {
+    let key = access(ctx).await?.preference_key();
+    let profile = {
+        let stores = crate::runtime::AppState::lock(&ctx.data().state.stores);
+        stores
+            .work
+            .preferences
+            .get(&key)
+            .cloned()
+            .unwrap_or_default()
+    };
+    reply(
+        ctx,
+        format!(
+            "Learning: {}. Explicit hour: {}. Learned hour: {}. Attributable observations: {}. Use `/work reset_preferences` to clear the evidence and learned hour.",
+            if profile.learning_enabled { "on" } else { "off" },
+            profile.explicit_hour.map_or("none".to_string(), |hour| hour.to_string()),
+            profile.learned_hour.map_or("none".to_string(), |hour| hour.to_string()),
+            profile.evidence.len(),
+        ),
+    )
+    .await
+}
+
+#[poise::command(slash_command, ephemeral)]
+pub async fn reset_preferences(ctx: Context<'_>) -> Result<(), Error> {
+    let key = access(ctx).await?.preference_key();
+    ctx.data()
+        .state
+        .commit_work(|store| {
+            store.preferences.entry(key).or_default().reset();
+            Ok(())
+        })
+        .await?;
+    reply(
+        ctx,
+        "Your learned delivery hour and feedback evidence were cleared.",
+    )
+    .await
 }
 
 #[poise::command(slash_command, ephemeral)]

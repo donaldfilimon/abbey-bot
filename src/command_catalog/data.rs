@@ -51,6 +51,17 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Create a personal or channel project."
     ),
     spec!(
+        WorkProjects,
+        Slash,
+        "work projects",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "List projects available here."
+    ),
+    spec!(
         WorkGoal,
         Slash,
         "work goal",
@@ -106,6 +117,28 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Complete a current task."
     ),
     spec!(
+        WorkStatus,
+        Slash,
+        "work status",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Change a task's status."
+    ),
+    spec!(
+        WorkSnooze,
+        Slash,
+        "work snooze",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Snooze a task until a chosen time."
+    ),
+    spec!(
         WorkMember,
         Slash,
         "work member",
@@ -115,6 +148,28 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         Memory,
         true,
         "Manage a shared project's members."
+    ),
+    spec!(
+        WorkPreferences,
+        Slash,
+        "work preferences",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Inspect your learning settings and evidence."
+    ),
+    spec!(
+        WorkResetPreferences,
+        Slash,
+        "work reset_preferences",
+        BOTH,
+        A0,
+        C0,
+        Memory,
+        true,
+        "Clear your learned preferences and evidence."
     ),
     spec!(
         Help,
