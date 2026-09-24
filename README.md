@@ -1000,6 +1000,9 @@ skip in a standalone checkout; it becomes required when
 `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` and `ABBEY_WDBX_REPO` identifies the canonical
 sibling. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also
 runs where `plutil` exists.
+The macOS lane runs on a self-hosted macOS arm64 runner for same-repository
+events and on GitHub-hosted `macos-15` for fork pull requests; see
+[`docs/ops/self-hosted-runner.md`](docs/ops/self-hosted-runner.md).
 
 The delivered pre-stabilization baseline is
 `9716f00f4b9dfe4c8ddfa1e126e74ba2cf9fdde1`. GitHub Actions run
