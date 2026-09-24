@@ -496,3 +496,51 @@ fn deliveries_never_consume_another_scopes_quota_or_reminder_coverage() {
     store.reserve_batch(second_access, &other, now).unwrap();
     assert_eq!(store.deliveries.len(), 2);
 }
+
+#[test]
+fn explicit_snooze_rearms_only_existing_reminders_and_preserves_deadline() {
+    let (mut store, scope, access, id) = fixture();
+    let first = timestamp("2026-09-24T13:00:00Z");
+    let later = first + 3600;
+    store.set_reminder(access, id, 0, Some(first)).unwrap();
+    let batch = store.next_batch(&scope, access, first).unwrap().unwrap();
+    store.reserve_batch(access, &batch, first).unwrap();
+    store.snooze_task(access, id, 1, later).unwrap();
+    assert!(
+        store
+            .next_batch(&scope, access, first + 1)
+            .unwrap()
+            .is_none()
+    );
+    let next = store.next_batch(&scope, access, later).unwrap().unwrap();
+    assert_eq!(next.kind, WorkDeliveryKind::Reminder);
+    store.reserve_batch(access, &next, later).unwrap();
+    assert!(
+        store
+            .next_batch(&scope, access, later + 1)
+            .unwrap()
+            .is_none()
+    );
+    let project = store.tasks[&id].project_id;
+    let fresh = store
+        .add_task(access, task(project), "no reminder")
+        .unwrap();
+    let deadline = store.tasks[&fresh].due_at;
+    store.snooze_task(access, fresh, 0, later + 100).unwrap();
+    assert_eq!(store.tasks[&fresh].remind_at, None);
+    assert_eq!(store.tasks[&fresh].due_at, deadline);
+}
+
+#[test]
+fn missing_legacy_automation_authorizer_never_sends() {
+    let (mut store, scope, access, _) = fixture();
+    assert_eq!(
+        store.scope_automation_actors.get(&scope.key()),
+        Some(&access.actor)
+    );
+    store.scope_automation_actors.clear();
+    assert_eq!(
+        store.next_batch(&scope, access, timestamp("2026-09-24T13:00:00Z")),
+        Ok(None)
+    );
+}

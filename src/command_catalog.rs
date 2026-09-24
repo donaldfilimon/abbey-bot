@@ -45,6 +45,11 @@ pub enum CommandKey {
     WorkMember,
     WorkPreferences,
     WorkResetPreferences,
+    WorkLearning,
+    WorkTiming,
+    WorkFeedback,
+    WorkAutomation,
+    WorkReminder,
     Remember,
     Forget,
     PendingList,
@@ -240,6 +245,7 @@ pub enum HelpSection {
     Start,
     Conversation,
     Memory,
+    Work,
     Images,
     Moderation,
     Server,
@@ -247,10 +253,11 @@ pub enum HelpSection {
     Administration,
 }
 impl HelpSection {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Start,
         Self::Conversation,
         Self::Memory,
+        Self::Work,
         Self::Images,
         Self::Moderation,
         Self::Server,
@@ -262,6 +269,7 @@ impl HelpSection {
             Self::Start => "start",
             Self::Conversation => "conversation",
             Self::Memory => "memory",
+            Self::Work => "work",
             Self::Images => "images",
             Self::Moderation => "moderation",
             Self::Server => "server",
@@ -274,6 +282,7 @@ impl HelpSection {
             Self::Start => "Start",
             Self::Conversation => "Conversation",
             Self::Memory => "Memory",
+            Self::Work => "Work",
             Self::Images => "Images",
             Self::Moderation => "Moderation",
             Self::Server => "Server",

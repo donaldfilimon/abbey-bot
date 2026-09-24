@@ -124,6 +124,11 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/work member` | guild | private | Manage a shared project's members. |
 | `/work preferences` | guild, bot DM | private | Inspect your learning settings and evidence. |
 | `/work reset_preferences` | guild, bot DM | private | Clear your learned preferences and evidence. |
+| `/work learning` | guild, bot DM | private | Enable or disable scope preference learning. |
+| `/work timing` | guild, bot DM | private | Set an explicit optional delivery hour. |
+| `/work feedback` | guild, bot DM | private | Record or correct your attributable delivery feedback. |
+| `/work automation` | guild, bot DM | private | Configure scope automation opt-in and delivery limits. |
+| `/work reminder` | guild, bot DM | private | Set or cancel an explicit task reminder. |
 | `/help` | guild, bot DM | private | Browse commands available to you privately. |
 | `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
 | `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
@@ -210,8 +215,28 @@ Work records are saved in the canonical state file under `ABBEY_DATA_DIR` before
 a mutation is acknowledged. This release records due dates and snoozes but does
 not yet send scheduled reminders or proactive briefings. Automation starts
 disabled. `/work preferences` shows learning evidence for the current personal
-or guild-channel context; `/work reset_preferences` clears learned evidence in
-that context. Briefings are private responses and use project-authorized task
+or guild-channel context, showing only the caller's evidence. `/work feedback`
+accepts useful/dismissed/snoozed responses for completed, attributed deliveries;
+`correction:true` replaces your response (or `response:remove` removes it).
+Duplicates never increase evidence. At least five attributable observations are
+required; silence and legacy unattributed rows are inert. Repeated snoozes suggest
+a local hour, dismissals reduce optional follow-ups, and usefulness adjusts
+briefing ranking. `/work timing` overrides learned timing. `/work learning`
+disables all learned adjustments. `/work reset_preferences` clears evidence and
+all derived adjustments, retaining explicit timing. Team controls require manager
+access to every project in the scope; feedback rechecks membership in every project.
+Personal and team evidence never mix.
+
+`/work automation` explicitly chooses an IANA timezone and the current personal DM
+or bound team channel. Quiet hours default to 22–08 and the shared ceiling is four
+deliveries per local day (configurable downward), including reminders and briefings
+across every project in that scope. All team scopes and unconfigured personal
+owners must choose a timezone. Optional `ABBEY_WORK_DEFAULT_TIMEZONE_USER_ID` names
+one positive Discord user ID whose personal default is `America/New_York`; it
+provides no access or manager privileges and explicit timezone choices win.
+No display name implies this identity. `/work reminder` discloses the ceiling;
+`/work snooze` re-arms an existing reminder but never invents one from a deadline.
+Learning never changes access, quiet hours, ceilings or deadlines. Briefings are private responses and use project-authorized task
 and decision records.
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned

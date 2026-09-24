@@ -117,6 +117,9 @@ fn preference_requires_observations_and_stays_per_user() {
         profile
             .observe(PreferenceEvidence {
                 delivery_id: id,
+                actor: Some(1),
+                scope: Some(WorkScope::Personal { owner: 1 }),
+                kind: Some(WorkDeliveryKind::Briefing),
                 feedback: WorkFeedback::Snoozed { hour: 10 },
                 at: id,
             })
@@ -126,7 +129,10 @@ fn preference_requires_observations_and_stays_per_user() {
     profile
         .observe(PreferenceEvidence {
             delivery_id: 5,
-            feedback: WorkFeedback::Useful,
+            actor: Some(1),
+            scope: Some(WorkScope::Personal { owner: 1 }),
+            kind: Some(WorkDeliveryKind::Briefing),
+            feedback: WorkFeedback::Snoozed { hour: 10 },
             at: 5,
         })
         .unwrap();

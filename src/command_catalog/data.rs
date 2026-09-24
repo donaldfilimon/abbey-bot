@@ -46,7 +46,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Create a personal or channel project."
     ),
@@ -57,7 +57,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "List projects available here."
     ),
@@ -68,7 +68,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Record a project goal."
     ),
@@ -79,7 +79,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Create an assigned task."
     ),
@@ -90,7 +90,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Record a project decision."
     ),
@@ -101,7 +101,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Review current work privately."
     ),
@@ -112,7 +112,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Complete a current task."
     ),
@@ -123,7 +123,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Change a task's status."
     ),
@@ -134,7 +134,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Snooze a task until a chosen time."
     ),
@@ -145,7 +145,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         GUILD,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Manage a shared project's members."
     ),
@@ -156,7 +156,7 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Inspect your learning settings and evidence."
     ),
@@ -167,9 +167,64 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         BOTH,
         A0,
         C0,
-        Memory,
+        Work,
         true,
         "Clear your learned preferences and evidence."
+    ),
+    spec!(
+        WorkLearning,
+        Slash,
+        "work learning",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Enable or disable scope preference learning."
+    ),
+    spec!(
+        WorkTiming,
+        Slash,
+        "work timing",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Set an explicit optional delivery hour."
+    ),
+    spec!(
+        WorkFeedback,
+        Slash,
+        "work feedback",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Record or correct your attributable delivery feedback."
+    ),
+    spec!(
+        WorkAutomation,
+        Slash,
+        "work automation",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Configure scope automation opt-in and delivery limits."
+    ),
+    spec!(
+        WorkReminder,
+        Slash,
+        "work reminder",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Set or cancel an explicit task reminder."
     ),
     spec!(
         Help,

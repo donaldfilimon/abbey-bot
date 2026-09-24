@@ -2,7 +2,9 @@
 //! must use commit_work to durably reserve before sending, and freshly verify
 //! destination identity/access. A plan alone never authorizes network delivery.
 use super::*;
-use chrono::{DateTime, Duration, LocalResult, NaiveDate, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, Utc};
+#[cfg(test)]
+use chrono::{LocalResult, NaiveDate, TimeZone, Timelike};
 use chrono_tz::Tz;
 
 impl WorkScope {
@@ -30,6 +32,7 @@ impl WorkAutomationPolicy {
         Ok(())
     }
 
+    #[cfg(test)]
     fn quiet(&self, hour: u32) -> bool {
         let start = u32::from(self.quiet_start);
         let end = u32::from(self.quiet_end);
@@ -43,6 +46,7 @@ impl WorkAutomationPolicy {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkBatch {
     pub scope: WorkScope,
@@ -72,6 +76,7 @@ fn utc(seconds: u64) -> Result<DateTime<Utc>, WorkError> {
 
 /// Calendar recurrence: choose the first occurrence in a fall-back overlap;
 /// advance through a spring-forward gap to the first valid local minute.
+#[cfg(test)]
 fn local_hour(tz: Tz, day: NaiveDate, hour: u8) -> Result<DateTime<Utc>, WorkError> {
     let mut local = day
         .and_hms_opt(u32::from(hour), 0, 0)
@@ -91,7 +96,7 @@ fn local_hour(tz: Tz, day: NaiveDate, hour: u8) -> Result<DateTime<Utc>, WorkErr
 }
 
 impl WorkStore {
-    fn scope_projects(
+    pub(super) fn scope_projects(
         &self,
         scope: &WorkScope,
         access: WorkAccess,
@@ -129,6 +134,12 @@ impl WorkStore {
         {
             return Err(WorkError::Denied);
         }
+        if policy.enabled {
+            self.scope_automation_actors
+                .insert(scope.key(), access.actor);
+        } else {
+            self.scope_automation_actors.remove(&scope.key());
+        }
         self.scope_automation.insert(scope.key(), policy);
         Ok(())
     }
@@ -165,9 +176,43 @@ impl WorkStore {
         Ok(())
     }
 
+    /// Explicit snooze postpones an existing reminder, never creates one from
+    /// a deadline. The owned transaction persists both revisions together.
+    pub fn snooze_task(
+        &mut self,
+        access: WorkAccess,
+        id: u64,
+        revision: u64,
+        until: u64,
+    ) -> Result<u64, WorkError> {
+        utc(until)?;
+        let task = self.tasks.get(&id).ok_or(WorkError::Missing)?;
+        self.project(task.project_id, access)?;
+        if task.revision != revision {
+            return Err(WorkError::Stale);
+        }
+        let status = task.status;
+        let reminder = task.remind_at.is_some();
+        // Preflight overflow before either mutation.
+        revision
+            .checked_add(if reminder { 2 } else { 1 })
+            .ok_or(WorkError::Full)?;
+        if reminder {
+            task.reminder_revision
+                .checked_add(1)
+                .ok_or(WorkError::Full)?;
+        }
+        let revision = self.update_task(access, id, revision, status, Some(until))?;
+        if reminder {
+            self.set_reminder(access, id, revision, Some(until))?;
+        }
+        Ok(self.tasks.get(&id).ok_or(WorkError::Missing)?.revision)
+    }
+
     /// At most one batch per call. Missed days collapse into one latest briefing;
     /// overdue reminders collapse into that briefing, or one reminder batch.
     /// Quiet hours defer without consuming coverage or quota.
+    #[cfg(test)]
     pub fn next_batch(
         &self,
         scope: &WorkScope,
@@ -179,9 +224,11 @@ impl WorkStore {
             return Ok(None);
         };
         policy.validate()?;
-        if !policy.enabled {
+        if !policy.enabled || self.scope_automation_actors.get(&scope.key()) != Some(&access.actor)
+        {
             return Ok(None);
         }
+        self.scope_projects(scope, access, true)?;
         let destination = policy.destination.ok_or(WorkError::Invalid)?;
         if match scope {
             WorkScope::Team { channel, .. } => destination != *channel,
@@ -234,19 +281,22 @@ impl WorkStore {
         if tasks.is_empty() {
             return Ok(None);
         }
+        let briefing_hour = self
+            .preference_profile(access)?
+            .effective_hour(policy.briefing_hour);
         let mut occurrence_day = local.date_naive();
-        let today_at = local_hour(tz, occurrence_day, policy.briefing_hour)?;
+        let today_at = local_hour(tz, occurrence_day, briefing_hour)?;
         // An evening occurrence inside overnight quiet hours becomes eligible
         // the following morning. Keep its original date as its identity; the
         // receipt's local_day and UTC at still charge the actual delivery day.
         if now_utc < today_at
             && policy.quiet_start > policy.quiet_end
-            && policy.briefing_hour >= policy.quiet_start
+            && briefing_hour >= policy.quiet_start
         {
             occurrence_day = occurrence_day.pred_opt().ok_or(WorkError::Invalid)?;
         }
         let briefing_key = format!("{}:{occurrence_day}:briefing:scope", scope.key());
-        let briefing = now_utc >= local_hour(tz, occurrence_day, policy.briefing_hour)?
+        let briefing = now_utc >= local_hour(tz, occurrence_day, briefing_hour)?
             && !receipts.iter().any(|r| {
                 r.dedupe_keys.contains(&briefing_key)
                     || (r.kind == Some(WorkDeliveryKind::Briefing)
@@ -315,6 +365,7 @@ impl WorkStore {
     /// Invoke inside commit_work with freshly obtained access facts, then wait
     /// for its durable result before sending. Attempts consume quota forever;
     /// recovery must mark unfinished attempts ReviewRequired without resending.
+    #[cfg(test)]
     pub fn reserve_batch(
         &mut self,
         access: WorkAccess,

@@ -19,7 +19,12 @@ use serenity::all::{Permissions, UserId};
         "snooze",
         "member",
         "preferences",
-        "reset_preferences"
+        "reset_preferences",
+        "learning",
+        "timing",
+        "feedback",
+        "automation",
+        "reminder"
     )
 )]
 pub async fn work(_ctx: Context<'_>) -> Result<(), Error> {
@@ -252,13 +257,7 @@ pub async fn snooze(
     let resulting_revision = ctx
         .data()
         .state
-        .commit_work(move |store| {
-            let task = store
-                .tasks
-                .get(&task_id)
-                .ok_or(crate::work::WorkError::Missing)?;
-            store.update_task(access, task_id, revision, task.status, Some(until))
-        })
+        .commit_work(move |store| store.snooze_task(access, task_id, revision, until))
         .await?;
     reply(
         ctx,
@@ -267,48 +266,6 @@ pub async fn snooze(
             &format!("snoozed until <t:{until}:f>"),
             resulting_revision,
         ),
-    )
-    .await
-}
-
-#[poise::command(slash_command, ephemeral)]
-pub async fn preferences(ctx: Context<'_>) -> Result<(), Error> {
-    let key = access(ctx).await?.preference_key();
-    let profile = {
-        let stores = crate::runtime::AppState::lock(&ctx.data().state.stores);
-        stores
-            .work
-            .preferences
-            .get(&key)
-            .cloned()
-            .unwrap_or_default()
-    };
-    reply(
-        ctx,
-        format!(
-            "Learning: {}. Explicit hour: {}. Learned hour: {}. Attributable observations: {}. Use `/work reset_preferences` to clear the evidence and learned hour.",
-            if profile.learning_enabled { "on" } else { "off" },
-            profile.explicit_hour.map_or("none".to_string(), |hour| hour.to_string()),
-            profile.learned_hour.map_or("none".to_string(), |hour| hour.to_string()),
-            profile.evidence.len(),
-        ),
-    )
-    .await
-}
-
-#[poise::command(slash_command, ephemeral)]
-pub async fn reset_preferences(ctx: Context<'_>) -> Result<(), Error> {
-    let key = access(ctx).await?.preference_key();
-    ctx.data()
-        .state
-        .commit_work(move |store| {
-            store.preferences.entry(key).or_default().reset();
-            Ok(())
-        })
-        .await?;
-    reply(
-        ctx,
-        "Your learned delivery hour and feedback evidence were cleared.",
     )
     .await
 }
@@ -344,3 +301,6 @@ mod tests {
         }
     }
 }
+
+mod controls;
+use controls::{automation, feedback, learning, preferences, reminder, reset_preferences, timing};

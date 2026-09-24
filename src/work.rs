@@ -155,6 +155,13 @@ pub enum WorkFeedback {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreferenceEvidence {
+    /// Missing on legacy rows: these observations never train preferences.
+    #[serde(default)]
+    pub actor: Option<u64>,
+    #[serde(default)]
+    pub scope: Option<WorkScope>,
+    #[serde(default)]
+    pub kind: Option<WorkDeliveryKind>,
     pub delivery_id: u64,
     pub feedback: WorkFeedback,
     pub at: u64,
@@ -166,6 +173,10 @@ pub struct WorkPreferenceProfile {
     pub explicit_hour: Option<u8>,
     pub learned_hour: Option<u8>,
     pub evidence: Vec<PreferenceEvidence>,
+    #[serde(default)]
+    pub reduce_followups: bool,
+    #[serde(default)]
+    pub briefing_rank: i8,
 }
 
 impl Default for WorkPreferenceProfile {
@@ -175,6 +186,8 @@ impl Default for WorkPreferenceProfile {
             explicit_hour: None,
             learned_hour: None,
             evidence: Vec::new(),
+            reduce_followups: false,
+            briefing_rank: 0,
         }
     }
 }
@@ -233,6 +246,8 @@ pub struct WorkStore {
     pub automation: BTreeMap<u64, WorkAutomationPolicy>,
     /// Canonical WorkScope key -> explicitly configured policy.
     pub scope_automation: BTreeMap<String, WorkAutomationPolicy>,
+    /// Explicit configuring principal; missing legacy grants never authorize sends.
+    pub scope_automation_actors: BTreeMap<String, u64>,
     pub preferences: BTreeMap<String, WorkPreferenceProfile>,
     pub deliveries: BTreeMap<u64, WorkDeliveryReceipt>,
     pub request_ids: BTreeMap<String, u64>,
@@ -252,6 +267,7 @@ pub struct WorkAccess {
 }
 
 impl WorkAccess {
+    #[cfg(test)]
     pub fn preference_key(self) -> String {
         match self.guild {
             Some(guild) => format!("team:{guild}:{}:{}", self.channel, self.actor),
@@ -287,9 +303,8 @@ impl std::error::Error for WorkError {}
 
 mod github;
 mod policy;
+pub use policy::initial_timezone;
 mod registry;
-// Pure scheduling is exercised here before the owned runtime consumer lands.
-#[cfg(test)]
 mod schedule;
 
 #[cfg(test)]
