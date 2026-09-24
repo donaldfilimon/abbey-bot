@@ -171,9 +171,7 @@ impl WorkStore {
         if task.priority > 3
             || task.github.as_ref().is_some_and(|reference| {
                 reference.validate().is_err()
-                    || !project
-                        .allowed_github_repositories
-                        .contains(&reference.repository)
+                    || !project.allows_github_repository(&reference.repository)
             })
             || task
                 .assignee
@@ -197,6 +195,9 @@ impl WorkStore {
             return Ok(*id);
         }
         let id = self.next_id()?;
+        if let Some(reference) = &mut task.github {
+            reference.repository = reference.repository.canonical();
+        }
         task.id = id;
         task.owner = access.actor;
         task.revision = 0;
@@ -288,12 +289,10 @@ impl WorkStore {
                 task.revision
             ));
             if let Some(reference) = &task.github
-                && project
-                    .allowed_github_repositories
-                    .contains(&reference.repository)
+                && project.allows_github_repository(&reference.repository)
             {
                 let url = reference.url();
-                if let Some(snapshot) = self.github_snapshots.get(&reference.key()) {
+                if let Some(snapshot) = self.github_snapshot(reference) {
                     let title = github::inert_title(&snapshot.title);
                     let state = match snapshot.state {
                         GitHubState::Open => "open",

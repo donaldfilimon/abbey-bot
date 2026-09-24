@@ -1,5 +1,13 @@
 //! Pure repository allowlist and snapshot policy. Repository text is data;
 //! only the typed reference and manager-granted allowlist affect access.
+//! Repository identity folds ASCII case for GitHub owner and name while the
+//! installation ID remains exact. New links and cache keys use lowercase;
+//! persisted mixed-case links and snapshots remain readable and revocable.
+//! Legacy URL migration is explicit and manager-only, and accepts canonical
+//! issue/PR URLs only when one installed repository identity matches.
+//! A failed read marks the retained snapshot stale; a conditional 304 may
+//! advance its observation time. Network polling and issue writes are separate
+//! shell work and never derive authority from GitHub title/body text.
 use super::*;
 
 impl GitHubRepository {
@@ -8,6 +16,20 @@ impl GitHubRepository {
             return Err(WorkError::Invalid);
         }
         Ok(())
+    }
+
+    pub fn canonical(&self) -> Self {
+        Self {
+            installation: self.installation,
+            owner: self.owner.to_ascii_lowercase(),
+            name: self.name.to_ascii_lowercase(),
+        }
+    }
+
+    pub fn same_identity(&self, other: &Self) -> bool {
+        self.installation == other.installation
+            && self.owner.eq_ignore_ascii_case(&other.owner)
+            && self.name.eq_ignore_ascii_case(&other.name)
     }
 }
 
@@ -52,7 +74,11 @@ fn parse_legacy_source(
     ) else {
         return None;
     };
-    if !valid_part(owner) || !valid_part(name) || number.starts_with('0') {
+    if !valid_part(owner)
+        || !valid_part(name)
+        || number.starts_with('0')
+        || !number.bytes().all(|byte| byte.is_ascii_digit())
+    {
         return None;
     }
     let number = number.parse::<u64>().ok().filter(|number| *number > 0)?;
@@ -64,8 +90,8 @@ fn parse_legacy_source(
     let mut matches = repositories.iter().filter(|repo| {
         repo.owner.eq_ignore_ascii_case(owner) && repo.name.eq_ignore_ascii_case(name)
     });
-    let repository = matches.next()?.clone();
-    if matches.next().is_some() {
+    let repository = matches.next()?.canonical();
+    if matches.any(|candidate| !candidate.same_identity(&repository)) {
         return None;
     }
     Some(GitHubReference {
@@ -76,6 +102,12 @@ fn parse_legacy_source(
 }
 
 impl GitHubReference {
+    fn same_identity(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.number == other.number
+            && self.repository.same_identity(&other.repository)
+    }
+
     pub fn validate(&self) -> Result<(), WorkError> {
         self.repository.validate()?;
         if self.number == 0 {
@@ -89,9 +121,10 @@ impl GitHubReference {
             GitHubItemKind::Issue => "issues",
             GitHubItemKind::PullRequest => "pull",
         };
+        let repository = self.repository.canonical();
         format!(
             "{}:{}/{}/{kind}/{}",
-            self.repository.installation, self.repository.owner, self.repository.name, self.number
+            repository.installation, repository.owner, repository.name, self.number
         )
     }
 
@@ -100,14 +133,24 @@ impl GitHubReference {
             GitHubItemKind::Issue => "issues",
             GitHubItemKind::PullRequest => "pull",
         };
+        let repository = self.repository.canonical();
         format!(
             "https://github.com/{}/{}/{kind}/{}",
-            self.repository.owner, self.repository.name, self.number
+            repository.owner, repository.name, self.number
         )
     }
 }
 
 impl WorkStore {
+    pub fn github_snapshot(&self, reference: &GitHubReference) -> Option<&GitHubSnapshot> {
+        let key = reference.key();
+        self.github_snapshots
+            .iter()
+            .filter(|(candidate, _)| candidate.eq_ignore_ascii_case(&key))
+            .map(|(_, snapshot)| snapshot)
+            .max_by_key(|snapshot| snapshot.refreshed_at)
+    }
+
     /// Explicit manager migration of old URL sources. Ambiguous installations
     /// and noncanonical URLs stay as inert legacy sources.
     pub fn migrate_github_sources(
@@ -147,16 +190,18 @@ impl WorkStore {
         allowed: bool,
     ) -> Result<(), WorkError> {
         repository.validate()?;
+        let repository = repository.canonical();
         let project = self
             .projects
             .get_mut(&project_id)
             .ok_or(WorkError::Missing)?;
         project.authorize(access, true)?;
         let next_revision = project.revision.checked_add(1).ok_or(WorkError::Full)?;
+        project
+            .allowed_github_repositories
+            .retain(|candidate| !candidate.same_identity(&repository));
         if allowed {
             project.allowed_github_repositories.insert(repository);
-        } else {
-            project.allowed_github_repositories.remove(&repository);
         }
         project.revision = next_revision;
         Ok(())
@@ -167,15 +212,12 @@ impl WorkStore {
         task_id: u64,
         revision: u64,
         access: WorkAccess,
-        reference: GitHubReference,
+        mut reference: GitHubReference,
     ) -> Result<(), WorkError> {
         reference.validate()?;
         let task = self.tasks.get(&task_id).ok_or(WorkError::Missing)?;
         let project = self.project(task.project_id, access)?;
-        if !project
-            .allowed_github_repositories
-            .contains(&reference.repository)
-        {
+        if !project.allows_github_repository(&reference.repository) {
             return Err(WorkError::Denied);
         }
         if task.revision != revision {
@@ -183,6 +225,7 @@ impl WorkStore {
         }
         let next_revision = task.revision.checked_add(1).ok_or(WorkError::Full)?;
         let task = self.tasks.get_mut(&task_id).ok_or(WorkError::Missing)?;
+        reference.repository = reference.repository.canonical();
         task.github = Some(reference);
         task.revision = next_revision;
         Ok(())
@@ -204,19 +247,19 @@ impl WorkStore {
             return Err(WorkError::Missing);
         }
         if self
-            .github_snapshots
-            .get(&reference.key())
+            .github_snapshot(reference)
             .is_some_and(|previous| snapshot.refreshed_at < previous.refreshed_at)
         {
             return Err(WorkError::Stale);
         }
-        if !self.github_snapshots.contains_key(&reference.key())
-            && self.github_snapshots.len() >= 10_000
-        {
+        if self.github_snapshot(reference).is_none() && self.github_snapshots.len() >= 10_000 {
             return Err(WorkError::Full);
         }
         snapshot.stale = false;
-        self.github_snapshots.insert(reference.key(), snapshot);
+        let key = reference.key();
+        self.github_snapshots
+            .retain(|candidate, _| !candidate.eq_ignore_ascii_case(&key));
+        self.github_snapshots.insert(key, snapshot);
         Ok(())
     }
 
@@ -231,32 +274,46 @@ impl WorkStore {
         if !self.active_github_link(reference) {
             return Err(WorkError::Missing);
         }
-        let snapshot = self
-            .github_snapshots
-            .get_mut(&reference.key())
-            .ok_or(WorkError::Missing)?;
+        let snapshot = self.github_snapshot(reference).ok_or(WorkError::Missing)?;
         if snapshot.etag.is_none() || refreshed_at < snapshot.refreshed_at {
             return Err(WorkError::Stale);
         }
+        let mut snapshot = snapshot.clone();
         snapshot.refreshed_at = refreshed_at;
         snapshot.stale = false;
+        let key = reference.key();
+        self.github_snapshots
+            .retain(|candidate, _| !candidate.eq_ignore_ascii_case(&key));
+        self.github_snapshots.insert(key, snapshot);
         Ok(())
     }
 
     pub fn mark_github_stale(&mut self, reference: &GitHubReference) {
-        if let Some(snapshot) = self.github_snapshots.get_mut(&reference.key()) {
-            snapshot.stale = true;
+        let key = reference.key();
+        for (candidate, snapshot) in &mut self.github_snapshots {
+            if candidate.eq_ignore_ascii_case(&key) {
+                snapshot.stale = true;
+            }
         }
     }
 
     pub fn active_github_link(&self, reference: &GitHubReference) -> bool {
         self.tasks.values().any(|task| {
-            task.github.as_ref() == Some(reference)
-                && self.projects.get(&task.project_id).is_some_and(|project| {
-                    project
-                        .allowed_github_repositories
-                        .contains(&reference.repository)
-                })
+            task.github
+                .as_ref()
+                .is_some_and(|linked| linked.same_identity(reference))
+                && self
+                    .projects
+                    .get(&task.project_id)
+                    .is_some_and(|project| project.allows_github_repository(&reference.repository))
         })
+    }
+}
+
+impl WorkProject {
+    pub fn allows_github_repository(&self, repository: &GitHubRepository) -> bool {
+        self.allowed_github_repositories
+            .iter()
+            .any(|candidate| candidate.same_identity(repository))
     }
 }

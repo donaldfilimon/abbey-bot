@@ -390,7 +390,10 @@ fn legacy_github_source_migration_is_explicit_scoped_and_unambiguous() {
         .allow_github_repository(project, lead, repo.clone(), true)
         .unwrap();
     assert_eq!(store.migrate_github_sources(project, lead).unwrap(), 1);
-    assert_eq!(store.tasks[&id].github.as_ref().unwrap().repository, repo);
+    assert_eq!(
+        store.tasks[&id].github.as_ref().unwrap().repository,
+        repo.canonical()
+    );
     assert_eq!(store.tasks[&id].revision, 1);
     assert!(store.tasks[&private_id].github.is_none());
     assert_eq!(store.migrate_github_sources(project, lead).unwrap(), 0);
@@ -398,6 +401,140 @@ fn legacy_github_source_migration_is_explicit_scoped_and_unambiguous() {
         store.migrate_github_sources(project, team(1, 99, false, true)),
         Err(WorkError::Denied)
     );
+}
+
+#[test]
+fn repository_identity_is_case_insensitive_for_persisted_links_and_revocation() {
+    let mut store = WorkStore::default();
+    let access = personal(1);
+    let project = store.create_project(access, "Private", "project").unwrap();
+    let mixed = GitHubRepository {
+        installation: 7,
+        owner: "Team".into(),
+        name: "Repo".into(),
+    };
+    let lower = mixed.canonical();
+    store
+        .allow_github_repository(project, access, mixed.clone(), true)
+        .unwrap();
+    let id = store.add_task(access, task(project), "task").unwrap();
+    let reference = GitHubReference {
+        repository: mixed.clone(),
+        kind: GitHubItemKind::Issue,
+        number: 42,
+    };
+    store.link_github(id, 0, access, reference.clone()).unwrap();
+    assert_eq!(store.tasks[&id].github.as_ref().unwrap().repository, lower);
+    // Simulate a persisted row and cache written before canonicalization.
+    store.tasks.get_mut(&id).unwrap().github = Some(reference.clone());
+    store
+        .projects
+        .get_mut(&project)
+        .unwrap()
+        .allowed_github_repositories = BTreeSet::from([mixed.clone()]);
+    store.github_snapshots.insert(
+        "7:Team/Repo/issues/42".to_string(),
+        GitHubSnapshot {
+            title: "Private issue".into(),
+            state: GitHubState::Open,
+            refreshed_at: 10,
+            stale: false,
+            etag: Some("v1".into()),
+        },
+    );
+    let lower_reference = GitHubReference {
+        repository: lower.clone(),
+        ..reference.clone()
+    };
+    assert!(store.active_github_link(&lower_reference));
+    assert!(
+        store
+            .briefing(project, access, 11)
+            .unwrap()
+            .contains("Private issue")
+    );
+    store
+        .allow_github_repository(project, access, lower.clone(), false)
+        .unwrap();
+    assert!(
+        store.projects[&project]
+            .allowed_github_repositories
+            .is_empty()
+    );
+    assert!(!store.active_github_link(&reference));
+    assert!(
+        !store
+            .briefing(project, access, 11)
+            .unwrap()
+            .contains("Private issue")
+    );
+    store
+        .allow_github_repository(project, access, lower, true)
+        .unwrap();
+    store
+        .confirm_github_not_modified(&lower_reference, 12)
+        .unwrap();
+    assert!(store.github_snapshots.contains_key(&lower_reference.key()));
+    assert!(!store.github_snapshots.contains_key("7:Team/Repo/issues/42"));
+}
+
+#[test]
+fn legacy_migration_requires_canonical_digits_and_unique_installation() {
+    let mut store = WorkStore::default();
+    let access = personal(1);
+    let project = store.create_project(access, "Private", "project").unwrap();
+    let repo = GitHubRepository {
+        installation: 7,
+        owner: "Team".into(),
+        name: "Repo".into(),
+    };
+    store
+        .allow_github_repository(project, access, repo.clone(), true)
+        .unwrap();
+    let invalid = [
+        "https://github.com/Team/Repo/issues/+42",
+        "https://github.com/Team/Repo/issues/042",
+        "https://github.com/Team/Repo/issues/42?x=1",
+        "https://github.com/Team/Repo/issues/42#comment",
+    ];
+    let mut invalid_ids = Vec::new();
+    for (index, source) in invalid.into_iter().enumerate() {
+        let mut draft = task(project);
+        draft.source = Some(source.into());
+        invalid_ids.push(
+            store
+                .add_task(access, draft, &format!("invalid-{index}"))
+                .unwrap(),
+        );
+    }
+    let mut draft = task(project);
+    draft.source = Some("https://github.com/Team/Repo/pull/42".into());
+    let ambiguous = store.add_task(access, draft, "ambiguous").unwrap();
+    store
+        .projects
+        .get_mut(&project)
+        .unwrap()
+        .allowed_github_repositories
+        .insert(GitHubRepository {
+            installation: 8,
+            ..repo.clone()
+        });
+    assert_eq!(store.migrate_github_sources(project, access).unwrap(), 0);
+    assert!(store.tasks[&ambiguous].github.is_none());
+    store
+        .projects
+        .get_mut(&project)
+        .unwrap()
+        .allowed_github_repositories
+        .retain(|candidate| candidate.installation == 7);
+    assert_eq!(store.migrate_github_sources(project, access).unwrap(), 1);
+    assert_eq!(
+        store.tasks[&ambiguous].github.as_ref().unwrap().kind,
+        GitHubItemKind::PullRequest
+    );
+    for id in invalid_ids {
+        assert!(store.tasks[&id].github.is_none());
+    }
 }
 
 #[test]
