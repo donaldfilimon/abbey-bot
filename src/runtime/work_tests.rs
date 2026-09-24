@@ -183,3 +183,96 @@ async fn dropped_waiter_keeps_serialization_through_publication() {
     let second_snapshot: Stores = serde_json::from_slice(&writes[2]).unwrap();
     assert_eq!(second_snapshot.work.projects.len(), 2);
 }
+
+#[tokio::test]
+async fn native_commit_preserves_admitted_memory_without_proposing_during_gate_outage() {
+    use crate::episode_gate::{EpisodeGate, EpisodeGateConfig};
+    use crate::persist::BrainRow;
+
+    for admitted_digest in [None, Some([0xab; 32])] {
+        let sink = Arc::new(HeldWorkSink {
+            writes: Mutex::new(Vec::new()),
+            entered: tokio::sync::Notify::new(),
+            release: (Mutex::new(true), Condvar::new()),
+        });
+        let mut state = AppState::in_memory_with_persistence(
+            Some(std::env::temp_dir().join("injected-work-gated")),
+            sink.clone(),
+        );
+        let config = serde_json::json!({
+            "abi_cli": std::env::temp_dir().join("abi-that-does-not-exist"),
+            "endpoint": "http://127.0.0.1:50051",
+            "token_file": std::env::temp_dir().join("abbey-episode-token"),
+            "policy_version": "policy_v1",
+            "contract_revision": 2,
+            "contract_digest": "01".repeat(32),
+            "timeout_secs": 5,
+        });
+        let gate = Arc::new(EpisodeGate::new(
+            EpisodeGateConfig::from_json(&config.to_string()).unwrap(),
+        ));
+        Arc::get_mut(&mut state).unwrap().episode_gate = Some(gate.clone());
+        let guild = "discord:123456789012345678";
+        let new_guild = "discord:123456789012345679";
+        let user = "discord:42";
+        let prior = BrainRow {
+            snapshot_json: "preexisting checkpoint".into(),
+            experience_count: 7,
+        };
+        AppState::lock(&state.checkpoints).insert(
+            guild.into(),
+            crate::checkpoint_gate::AdmittedCheckpoint {
+                commitment: crate::checkpoint_gate::commitment(&crate::checkpoint_gate::payload(
+                    &prior,
+                )),
+                episode_digest: admitted_digest,
+                row: prior.clone(),
+            },
+        );
+        {
+            let stores = AppState::lock(&state.stores);
+            let mut brains = AppState::lock(&state.brains);
+            brains.brain(guild, &*stores, now());
+            brains.brain(new_guild, &*stores, now());
+        }
+        state
+            .memory_service()
+            .remember(guild, user, "canonical fact", 1)
+            .unwrap();
+        crate::memory_gate::enqueue(&state, guild, user, "queued fact", None, 2, None).unwrap();
+        let mut supervisor = ServiceSupervisor::new();
+        supervisor.finish_startup();
+        let mut writer = state.attach_service(supervisor.operations());
+        state
+            .commit_work(|store| store.create_project(access(), "Native", "one"))
+            .await
+            .unwrap();
+        supervisor.next_completion().await;
+
+        let counters = gate.counters();
+        assert_eq!(
+            (counters.appended, counters.rejected, counters.unavailable),
+            (0, 0, 0)
+        );
+        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        let persisted: Stores = serde_json::from_slice(&sink.writes.lock().unwrap()[0]).unwrap();
+        assert_eq!(persisted.work.projects.len(), 1);
+        assert_eq!(persisted.brains[guild], prior);
+        assert!(!persisted.brains.contains_key(new_guild));
+        assert_eq!(persisted.memory.facts(guild, user), ["canonical fact"]);
+        assert_eq!(
+            state.memory_service().facts(guild, user),
+            ["canonical fact"]
+        );
+        assert_eq!(state.final_snapshot().stores.brains[guild], prior);
+
+        // The ordinary gated path still owns the queue and dirty checkpoints.
+        state.persist_all_gated().await;
+        assert!(AppState::lock(&state.memory_queue).is_empty());
+        assert_eq!(gate.counters().unavailable, 3);
+        assert_eq!(state.final_snapshot().stores.brains[guild], prior);
+        writer.close_admission();
+        writer.stop();
+        writer.joined().await.unwrap();
+    }
+}

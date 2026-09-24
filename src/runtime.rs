@@ -38,6 +38,7 @@ mod provider_setup;
 mod scheduler;
 mod tool_scope;
 mod vision_transport;
+mod work_commit;
 pub use memory_service::{MemoryService, RememberOutcome, SupersessionOutcome};
 
 /// Hidden-layer widths per `docs/spec/adaptivelearning.md`: `[18, 64, 32, 3]`.
@@ -483,6 +484,12 @@ impl AppState {
     }
 
     pub fn final_snapshot(&self) -> crate::service::persistence::Snapshot {
+        self.snapshot_without_proposals()
+    }
+
+    /// Snapshot canonical memory and only admitted or pre-gate covered brains,
+    /// leaving queued candidates for their normal drain owner.
+    fn snapshot_without_proposals(&self) -> crate::service::persistence::Snapshot {
         let (mut stores, recall) = self.take_snapshot(now());
         if let Some(gate) = &self.episode_gate {
             crate::checkpoint_gate::restrict_to_admitted(
@@ -681,56 +688,6 @@ impl AppState {
             )
             .map_err(|_| RequestError::Draining)?;
         result.await.map_err(|_| RequestError::WriterUnavailable)?
-    }
-
-    /// Retain preparation through publication even if the caller is cancelled.
-    /// Apply a work transition to an owned snapshot. Publish it in memory only
-    /// after the canonical JSON write has completed. The preparation mutex also
-    /// orders this write against scheduled snapshots, preventing an older
-    /// scheduler snapshot from overwriting a just-acknowledged work change.
-    pub async fn commit_work<R: Send + 'static>(
-        &self,
-        change: impl FnOnce(&mut crate::work::WorkStore) -> Result<R, crate::work::WorkError>
-        + Send
-        + 'static,
-    ) -> Result<R, crate::work::WorkError> {
-        use crate::persist::PersistComponentOutcome;
-        use crate::work::WorkError;
-
-        if self.data_dir.is_none() || self.service.get().is_none() {
-            return Err(WorkError::Persistence);
-        }
-        let state = self.owned_state().ok_or(WorkError::Persistence)?;
-        let result = self
-            .service
-            .get()
-            .ok_or(WorkError::Persistence)?
-            .spawn_result(
-                crate::service::OperationKind::PersistencePreparation,
-                async move {
-                    let _serial = state.persistence_preparation.lock().await;
-                    let (mut stores, recall) = state.prepare_gated_snapshot().await;
-                    let value = change(&mut stores.work)?;
-                    let requests = state
-                        .persistence_requests
-                        .get()
-                        .ok_or(WorkError::Persistence)?;
-                    let report = requests
-                        .submit(crate::service::persistence::Snapshot {
-                            stores: stores.clone(),
-                            recall,
-                        })
-                        .await
-                        .map_err(|_| WorkError::Persistence)?;
-                    if report.canonical_state != PersistComponentOutcome::Committed {
-                        return Err(WorkError::Persistence);
-                    }
-                    Self::lock(&state.stores).work = stores.work;
-                    Ok(value)
-                },
-            )
-            .map_err(|_| WorkError::Persistence)?;
-        result.await.map_err(|_| WorkError::Persistence)?
     }
 
     pub async fn persist_all_gated(&self) -> PersistReport {
