@@ -23,6 +23,13 @@ fn fixture() -> (WorkStore, WorkScope, WorkAccess, u64) {
         )
         .unwrap();
     let id = store.add_task(access, task(project), "task").unwrap();
+    // Calendar/reminder fixtures begin with existing work already seeded.
+    store
+        .change_coverage
+        .insert(scope.key(), store.content_refs(&scope));
+    store
+        .change_fingerprints
+        .insert(scope.key(), store.content_fingerprints(&scope));
     (store, scope, access, id)
 }
 
@@ -179,7 +186,12 @@ fn reminder_revision_coverage_survives_restart_and_next_day() {
     store
         .update_task(access, id, 1, WorkStatus::InProgress, None)
         .unwrap();
-    assert_eq!(store.next_batch(&scope, access, now + 86400), Ok(None));
+    let changed = store
+        .next_batch(&scope, access, now + 86400)
+        .unwrap()
+        .unwrap();
+    assert_eq!(changed.kind, WorkDeliveryKind::Changes);
+    assert!(changed.coverage.is_empty()); // Status changes never rearm explicit reminders.
     store
         .set_reminder(access, id, 2, Some(now + 86400))
         .unwrap();
@@ -356,7 +368,14 @@ fn invalid_time_snoozed_and_finished_tasks_are_not_scheduled() {
     store
         .update_task(access, id, 2, WorkStatus::Cancelled, None)
         .unwrap();
-    assert_eq!(store.next_batch(&scope, access, now + 60), Ok(None));
+    assert_eq!(
+        store
+            .next_batch(&scope, access, now + 60)
+            .unwrap()
+            .unwrap()
+            .kind,
+        WorkDeliveryKind::Changes
+    );
 }
 
 #[test]

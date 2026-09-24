@@ -19,6 +19,9 @@ fn fixture() -> WorkStore {
                 id,
                 project_id: project,
                 recipient: 55,
+                destination: None,
+                policy_revision: 0,
+                provenance: None,
                 local_day: "2026-09-24".into(),
                 at: 100,
                 state: DeliveryState::Sent,
@@ -336,6 +339,7 @@ fn authorized_partial_updates_preserve_saved_policy_and_inspection_fallback() {
         let project = store.create_project(manager, "Scope", "p").unwrap();
         let initial = WorkAutomationUpdate {
             enabled: true,
+            private_to_me: None,
             timezone: Some("Europe/London".into()),
             briefing_hour: Some(15),
             quiet_start: Some(21),
@@ -350,6 +354,7 @@ fn authorized_partial_updates_preserve_saved_policy_and_inspection_fallback() {
             disabled,
             WorkAutomationPolicy {
                 enabled: false,
+                revision: saved.revision + 1,
                 ..saved.clone()
             }
         );
@@ -368,6 +373,7 @@ fn authorized_partial_updates_preserve_saved_policy_and_inspection_fallback() {
             updated,
             WorkAutomationPolicy {
                 briefing_hour: 16,
+                revision: saved.revision + 2,
                 ..saved.clone()
             }
         );

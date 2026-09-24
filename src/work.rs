@@ -124,6 +124,10 @@ pub struct WorkDecision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkAutomationPolicy {
     pub enabled: bool,
+    #[serde(default)]
+    pub delivery_target: Option<WorkDestination>,
+    #[serde(default)]
+    pub revision: u64,
     pub destination: Option<u64>,
     pub timezone: String,
     pub quiet_start: u8,
@@ -136,6 +140,8 @@ impl Default for WorkAutomationPolicy {
     fn default() -> Self {
         Self {
             enabled: false,
+            delivery_target: None,
+            revision: 0,
             destination: None,
             timezone: String::new(),
             quiet_start: 22,
@@ -210,7 +216,14 @@ pub enum DeliveryState {
 pub struct WorkDeliveryReceipt {
     pub id: u64,
     pub project_id: u64,
+    /// Resolved transport channel, never the private recipient principal.
     pub recipient: u64,
+    #[serde(default)]
+    pub destination: Option<WorkDestination>,
+    #[serde(default)]
+    pub policy_revision: u64,
+    #[serde(default)]
+    pub provenance: Option<DeliveredProvenance>,
     pub local_day: String,
     pub at: u64,
     pub state: DeliveryState,
@@ -232,6 +245,7 @@ pub struct WorkDeliveryReceipt {
 pub enum WorkDeliveryKind {
     Briefing,
     Reminder,
+    Changes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,8 +255,7 @@ pub struct ReminderCoverage {
     pub remind_at: u64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct WorkStore {
     pub sequence: u64,
     pub projects: BTreeMap<u64, WorkProject>,
@@ -255,6 +268,9 @@ pub struct WorkStore {
     pub scope_automation: BTreeMap<String, WorkAutomationPolicy>,
     /// Explicit configuring principal; missing legacy grants never authorize sends.
     pub scope_automation_actors: BTreeMap<String, u64>,
+    /// Scope-wide latest revisions already seeded or reserved, independent of recipient.
+    pub change_coverage: BTreeMap<String, BTreeSet<WorkContentRef>>,
+    pub change_fingerprints: BTreeMap<String, BTreeMap<u64, String>>,
     pub preferences: BTreeMap<String, WorkPreferenceProfile>,
     pub deliveries: BTreeMap<u64, WorkDeliveryReceipt>,
     pub request_ids: BTreeMap<String, u64>,
@@ -308,7 +324,10 @@ impl std::fmt::Display for WorkError {
 
 impl std::error::Error for WorkError {}
 
+mod delivery;
+pub use delivery::{DeliveredProvenance, WorkContentRef, WorkDestination};
 mod github;
+mod loading;
 mod policy;
 pub use policy::{WorkAutomationUpdate, WorkPreferenceSnapshot};
 mod registry;

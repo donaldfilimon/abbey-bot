@@ -24,6 +24,15 @@ impl WorkAutomationPolicy {
             || self.daily_limit == 0
             || self.daily_limit > 4
             || (!self.timezone.is_empty() && self.timezone.parse::<Tz>().is_err())
+            || self.destination == Some(0)
+            || self
+                .delivery_target
+                .as_ref()
+                .is_some_and(|target| match target {
+                    WorkDestination::Personal { principal }
+                    | WorkDestination::TeamPrivate { principal } => *principal == 0,
+                    WorkDestination::TeamChannel { channel } => *channel == 0,
+                })
             || (self.enabled
                 && (self.destination.is_none_or(|id| id == 0) || self.timezone.is_empty()))
         {
@@ -51,6 +60,10 @@ impl WorkAutomationPolicy {
 pub struct WorkBatch {
     pub scope: WorkScope,
     pub destination: u64,
+    pub target: WorkDestination,
+    pub content_refs: BTreeSet<WorkContentRef>,
+    pub rendered_body: String,
+    pub provenance: DeliveredProvenance,
     pub local_day: String,
     pub kind: WorkDeliveryKind,
     pub task_ids: Vec<u64>,
@@ -122,17 +135,28 @@ impl WorkStore {
         &mut self,
         scope: &WorkScope,
         access: WorkAccess,
-        policy: WorkAutomationPolicy,
+        mut policy: WorkAutomationPolicy,
     ) -> Result<(), WorkError> {
         self.scope_projects(scope, access, true)?;
         policy.validate()?;
-        if policy.enabled
-            && match scope {
-                WorkScope::Team { channel, .. } => policy.destination != Some(*channel),
-                WorkScope::Personal { .. } => policy.destination != Some(access.channel),
-            }
-        {
-            return Err(WorkError::Denied);
+        self.target(scope, access, &policy)?;
+        let old = self.scope_automation.get(&scope.key());
+        policy.revision = old.map_or(0, |p| p.revision);
+        let changed = old != Some(&policy)
+            || (policy.enabled
+                && self.scope_automation_actors.get(&scope.key()) != Some(&access.actor));
+        if changed {
+            policy.revision = policy.revision.checked_add(1).ok_or(WorkError::Full)?;
+        }
+        // Missing coverage (including legacy state) seeds history once. Pausing,
+        // subscriber changes and policy edits never reset scope coverage.
+        if policy.enabled && !self.change_coverage.contains_key(&scope.key()) {
+            self.change_coverage
+                .insert(scope.key(), self.content_refs(scope));
+        }
+        if policy.enabled && !self.change_fingerprints.contains_key(&scope.key()) {
+            self.change_fingerprints
+                .insert(scope.key(), self.content_fingerprints(scope));
         }
         if policy.enabled {
             self.scope_automation_actors
@@ -230,12 +254,7 @@ impl WorkStore {
         }
         self.scope_projects(scope, access, true)?;
         let destination = policy.destination.ok_or(WorkError::Invalid)?;
-        if match scope {
-            WorkScope::Team { channel, .. } => destination != *channel,
-            WorkScope::Personal { .. } => destination != access.channel,
-        } {
-            return Err(WorkError::Denied);
-        }
+        let target = self.target(scope, access, policy)?;
         let tz = policy
             .timezone
             .parse::<Tz>()
@@ -278,9 +297,6 @@ impl WorkStore {
                     && t.snoozed_until.is_none_or(|until| until <= now)
             })
             .collect();
-        if tasks.is_empty() {
-            return Ok(None);
-        }
         let briefing_hour = self
             .preference_profile(access)?
             .effective_hour(policy.briefing_hour);
@@ -296,7 +312,8 @@ impl WorkStore {
             occurrence_day = occurrence_day.pred_opt().ok_or(WorkError::Invalid)?;
         }
         let briefing_key = format!("{}:{occurrence_day}:briefing:scope", scope.key());
-        let briefing = now_utc >= local_hour(tz, occurrence_day, briefing_hour)?
+        let briefing = !tasks.is_empty()
+            && now_utc >= local_hour(tz, occurrence_day, briefing_hour)?
             && !receipts.iter().any(|r| {
                 r.dedupe_keys.contains(&briefing_key)
                     || (r.kind == Some(WorkDeliveryKind::Briefing)
@@ -316,14 +333,76 @@ impl WorkStore {
                 (!receipts.iter().any(|r| r.coverage.contains(&covered))).then_some(covered)
             })
             .collect();
-        if !briefing && coverage.is_empty() {
+        let changes: BTreeSet<_> = self
+            .change_coverage
+            .get(&scope.key())
+            .map(|covered| {
+                self.content_refs(scope)
+                    .difference(covered)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default(); // Legacy missing baseline never announces history.
+        let current_fingerprints = self.content_fingerprints(scope);
+        let changes: BTreeSet<_> = changes
+            .into_iter()
+            .filter(|source| {
+                let id = source.id();
+                let eligible = match source {
+                    WorkContentRef::Task { .. } => self
+                        .tasks
+                        .get(&id)
+                        .is_some_and(|t| t.snoozed_until.is_none_or(|until| until <= now)),
+                    _ => true,
+                };
+                eligible
+                    && self
+                        .change_fingerprints
+                        .get(&scope.key())
+                        .and_then(|f| f.get(&id))
+                        != current_fingerprints.get(&id)
+            })
+            .collect();
+        let changes = if self.preference_profile(access)?.reduce_followups {
+            BTreeSet::new()
+        } else {
+            changes
+        };
+        if !briefing && coverage.is_empty() && changes.is_empty() {
             return Ok(None);
         }
-        let task_ids: Vec<_> = if briefing {
+        let mut task_ids: Vec<_> = if briefing {
             tasks.iter().map(|t| t.id).collect()
         } else {
             coverage.iter().map(|c| c.task_id).collect()
         };
+        let mut content_refs: BTreeSet<_> = tasks
+            .iter()
+            .filter(|t| task_ids.contains(&t.id))
+            .map(|t| WorkContentRef::Task {
+                project: t.project_id,
+                id: t.id,
+                revision: t.revision,
+            })
+            .collect();
+        // Explicit reminders and scheduled briefings take precedence over optional changes.
+        let selected_changes = !briefing && coverage.is_empty();
+        if selected_changes {
+            content_refs = changes;
+        }
+        content_refs = content_refs.into_iter().take(8).collect();
+        task_ids = content_refs
+            .iter()
+            .filter_map(|r| match r {
+                WorkContentRef::Task { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let coverage: Vec<_> = coverage
+            .into_iter()
+            .filter(|c| task_ids.contains(&c.task_id))
+            .collect();
+        let (rendered_body, provenance) = self.render_delivery(&content_refs)?;
         let mut dedupe_keys: BTreeSet<_> = coverage
             .iter()
             .map(|c| {
@@ -347,9 +426,15 @@ impl WorkStore {
         Ok(Some(WorkBatch {
             scope: scope.clone(),
             destination,
+            target,
+            content_refs,
+            rendered_body,
+            provenance,
             local_day,
             kind: if briefing {
                 WorkDeliveryKind::Briefing
+            } else if selected_changes {
+                WorkDeliveryKind::Changes
             } else {
                 WorkDeliveryKind::Reminder
             },
@@ -372,6 +457,40 @@ impl WorkStore {
         batch: &WorkBatch,
         now: u64,
     ) -> Result<u64, WorkError> {
+        if matches!(batch.target, WorkDestination::TeamPrivate { .. }) {
+            return Err(WorkError::Denied);
+        }
+        self.reserve_resolved_batch(access, batch, batch.destination, now)
+    }
+
+    /// A private target requires separately resolved transport; it never reuses
+    /// the origin team channel or falls back after failure. Fresh origin access
+    /// is required alongside the resolved DM channel supplied by the shell.
+    #[cfg(test)]
+    pub fn reserve_private_batch(
+        &mut self,
+        access: WorkAccess,
+        batch: &WorkBatch,
+        dm_channel: u64,
+        now: u64,
+    ) -> Result<u64, WorkError> {
+        if !matches!(batch.target, WorkDestination::TeamPrivate { principal } if principal == access.actor)
+            || dm_channel == 0
+            || dm_channel == access.channel
+        {
+            return Err(WorkError::Denied);
+        }
+        self.reserve_resolved_batch(access, batch, dm_channel, now)
+    }
+
+    #[cfg(test)]
+    fn reserve_resolved_batch(
+        &mut self,
+        access: WorkAccess,
+        batch: &WorkBatch,
+        transport_channel: u64,
+        now: u64,
+    ) -> Result<u64, WorkError> {
         if self.next_batch(&batch.scope, access, now)?.as_ref() != Some(batch) {
             return Err(WorkError::Stale);
         }
@@ -384,7 +503,10 @@ impl WorkStore {
             WorkDeliveryReceipt {
                 id,
                 project_id: batch.project_revisions.first().ok_or(WorkError::Missing)?.0,
-                recipient: batch.destination,
+                recipient: transport_channel,
+                destination: Some(batch.target.clone()),
+                policy_revision: batch.policy.revision,
+                provenance: Some(batch.provenance.clone()),
                 local_day: batch.local_day.clone(),
                 at: now,
                 state: DeliveryState::Attempting,
@@ -396,9 +518,38 @@ impl WorkStore {
                 dedupe_keys: batch.dedupe_keys.clone(),
             },
         );
+        let current_fingerprints = self.content_fingerprints(&batch.scope);
+        let fingerprints = self
+            .change_fingerprints
+            .entry(batch.scope.key())
+            .or_default();
+        for source in &batch.content_refs {
+            if let Some(fingerprint) = current_fingerprints.get(&source.id()) {
+                fingerprints.insert(source.id(), fingerprint.clone());
+            }
+        }
+        let covered = self.change_coverage.entry(batch.scope.key()).or_default();
+        for source in &batch.content_refs {
+            covered.retain(|old| !same_content(old, source));
+            covered.insert(source.clone());
+        }
         Ok(id)
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+fn same_content(a: &WorkContentRef, b: &WorkContentRef) -> bool {
+    match (a, b) {
+        (WorkContentRef::Task { id: a, .. }, WorkContentRef::Task { id: b, .. })
+        | (WorkContentRef::Decision { id: a, .. }, WorkContentRef::Decision { id: b, .. }) => {
+            a == b
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod delivery_tests;

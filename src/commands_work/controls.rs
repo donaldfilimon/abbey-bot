@@ -147,10 +147,14 @@ pub async fn feedback(
     reply(ctx, "Feedback saved for this scope. At least five attributable observations are required for a learned adjustment; silence never counts against a delivery.").await
 }
 
+// Poise maps each Discord option to a separate function argument.
+#[allow(clippy::too_many_arguments)]
 #[poise::command(slash_command, ephemeral)]
 pub async fn automation(
     ctx: Context<'_>,
     #[description = "Explicitly enable delivery for this scope"] enabled: bool,
+    #[description = "Team only: explicitly subscribe yourself privately; false chooses the scope channel"]
+    private_to_me: Option<bool>,
     #[description = "IANA timezone, such as America/New_York"] timezone: Option<String>,
     #[description = "Local briefing hour 0–23"] briefing_hour: Option<u8>,
     #[description = "Quiet hours start 0–23"] quiet_start: Option<u8>,
@@ -161,6 +165,7 @@ pub async fn automation(
     let configured_owner = std::env::var("ABBEY_WORK_DEFAULT_TIMEZONE_USER_ID").ok();
     let update = WorkAutomationUpdate {
         enabled,
+        private_to_me,
         timezone,
         briefing_hour,
         quiet_start,
@@ -179,9 +184,21 @@ pub async fn automation(
 }
 
 fn automation_reply(policy: &WorkAutomationPolicy) -> String {
+    let destination = match policy.delivery_target {
+        Some(crate::work::WorkDestination::TeamPrivate { .. }) => {
+            "Private delivery to you only; current membership and manager access to every scope project remain required."
+        }
+        _ => {
+            "Scope destination saved; shared channel delivery requires complete audience authorization before it can run."
+        }
+    };
     format!(
-        "Saved automation {} for this scope in {}. Briefing hour: {}; quiet hours: {}–{}; maximum {} deliveries per local day, shared by all projects, briefings and reminders. Delivery runtime is not active in this implementation stage.",
-        if policy.enabled { "opt-in" } else { "disabled" },
+        "{destination} Saved automation {} for this scope in {}. Briefing hour: {}; quiet hours: {}–{}; maximum {} deliveries per local day, shared by all projects, briefings and reminders. Delivery runtime is not active in this implementation stage.",
+        if policy.enabled {
+            "opt-in"
+        } else {
+            "disabled (paused)"
+        },
         policy.timezone,
         policy.briefing_hour,
         policy.quiet_start,
@@ -262,5 +279,27 @@ mod tests {
         println!("{text}");
         assert!(text.contains("maximum 4 deliveries per local day"));
         assert!(text.contains("shared by all projects"));
+    }
+    #[test]
+    fn render_private_opt_in_paused_denied_and_saved_examples() {
+        let mut policy = crate::work::WorkAutomationPolicy {
+            enabled: true,
+            delivery_target: Some(crate::work::WorkDestination::TeamPrivate { principal: 1 }),
+            timezone: "America/New_York".into(),
+            ..Default::default()
+        };
+        let opt_in = super::automation_reply(&policy);
+        println!("Private opt-in: {opt_in}");
+        assert!(opt_in.contains("Private delivery to you only"));
+        assert!(opt_in.contains("runtime is not active"));
+        policy.enabled = false;
+        let paused = super::automation_reply(&policy);
+        println!("Paused: {paused}");
+        assert!(paused.contains("disabled (paused)"));
+        println!("Denied: {}", crate::work::WorkError::Denied);
+        policy.delivery_target = Some(crate::work::WorkDestination::TeamChannel { channel: 99 });
+        let saved = super::automation_reply(&policy);
+        println!("Saved settings: {saved}");
+        assert!(saved.contains("complete audience authorization"));
     }
 }

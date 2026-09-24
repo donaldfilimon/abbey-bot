@@ -124,6 +124,8 @@ fn attributed(e: &PreferenceEvidence) -> bool {
 #[derive(Debug, Default)]
 pub struct WorkAutomationUpdate {
     pub enabled: bool,
+    /// None preserves the existing explicit choice; true is a self-only opt-in.
+    pub private_to_me: Option<bool>,
     pub timezone: Option<String>,
     pub briefing_hour: Option<u8>,
     pub quiet_start: Option<u8>,
@@ -169,6 +171,24 @@ impl WorkStore {
         };
         policy.enabled = update.enabled;
         policy.destination = Some(access.channel);
+        if let Some(private) = update.private_to_me {
+            policy.delivery_target = Some(if private {
+                if access.guild.is_none() {
+                    return Err(WorkError::Invalid);
+                }
+                WorkDestination::TeamPrivate {
+                    principal: access.actor,
+                }
+            } else if access.guild.is_some() {
+                WorkDestination::TeamChannel {
+                    channel: access.channel,
+                }
+            } else {
+                WorkDestination::Personal {
+                    principal: access.actor,
+                }
+            });
+        }
         if let Some(timezone) = update.timezone {
             policy.timezone = timezone;
         }
@@ -188,7 +208,7 @@ impl WorkStore {
         if let Some(hour) = update.briefing_hour {
             self.control_preferences(access, None, Some(Some(hour)), false)?;
         }
-        Ok(policy)
+        Ok(self.scope_automation[&scope.key()].clone())
     }
 
     /// All scope projects must authorize access: private evidence cannot leak
@@ -256,7 +276,7 @@ impl WorkStore {
             || receipt.scope.as_ref() != Some(&scope)
             || receipt.kind.is_none()
             || receipt.at > now
-            || receipt.recipient != access.channel
+            || !receipt.feedback_destination_matches(access)
         {
             return Err(WorkError::Denied);
         }
