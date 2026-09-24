@@ -136,6 +136,8 @@ pub async fn task(
         priority: priority.unwrap_or(1),
         status: WorkStatus::Open,
         due_at,
+        remind_at: None,
+        reminder_revision: 0,
         snoozed_until: None,
         source: None,
         github: None,

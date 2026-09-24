@@ -1,7 +1,6 @@
-use super::policy::{DeliveryDecision, LocalDeliveryTime};
 use super::*;
 
-fn personal(user: u64) -> WorkAccess {
+pub(super) fn personal(user: u64) -> WorkAccess {
     WorkAccess {
         actor: user,
         guild: None,
@@ -11,7 +10,7 @@ fn personal(user: u64) -> WorkAccess {
     }
 }
 
-fn team(user: u64, channel: u64, can_view: bool, can_manage: bool) -> WorkAccess {
+pub(super) fn team(user: u64, channel: u64, can_view: bool, can_manage: bool) -> WorkAccess {
     WorkAccess {
         actor: user,
         guild: Some(9),
@@ -21,7 +20,7 @@ fn team(user: u64, channel: u64, can_view: bool, can_manage: bool) -> WorkAccess
     }
 }
 
-fn task(project_id: u64) -> WorkTask {
+pub(super) fn task(project_id: u64) -> WorkTask {
     WorkTask {
         id: 0,
         project_id,
@@ -32,6 +31,8 @@ fn task(project_id: u64) -> WorkTask {
         priority: 2,
         status: WorkStatus::Open,
         due_at: None,
+        remind_at: None,
+        reminder_revision: 0,
         snoozed_until: None,
         source: None,
         github: None,
@@ -135,56 +136,6 @@ fn preference_requires_observations_and_stays_per_user() {
     profile.reset();
     assert_eq!(profile.learned_hour, None);
     assert_eq!(profiles.get(&2), None);
-}
-
-#[test]
-fn quiet_hours_and_ambiguous_attempts_consume_the_ceiling() {
-    let mut store = WorkStore::default();
-    let policy = WorkAutomationPolicy {
-        enabled: true,
-        destination: Some(123),
-        timezone: "America/New_York".into(),
-        daily_limit: 1,
-        ..Default::default()
-    };
-    policy.validate().unwrap();
-    store.automation.insert(4, policy);
-    assert_eq!(
-        store.reserve_delivery(
-            4,
-            1,
-            1,
-            LocalDeliveryTime {
-                day: "2026-09-24",
-                hour: 23
-            }
-        ),
-        Err(DeliveryDecision::Quiet)
-    );
-    let id = store
-        .reserve_delivery(
-            4,
-            1,
-            2,
-            LocalDeliveryTime {
-                day: "2026-09-24",
-                hour: 9,
-            },
-        )
-        .unwrap();
-    assert_eq!(store.deliveries[&id].state, DeliveryState::Attempting);
-    assert_eq!(
-        store.reserve_delivery(
-            4,
-            1,
-            3,
-            LocalDeliveryTime {
-                day: "2026-09-24",
-                hour: 10
-            }
-        ),
-        Err(DeliveryDecision::Limited)
-    );
 }
 
 #[test]
@@ -590,4 +541,38 @@ fn github_snapshot_is_hidden_from_other_projects_and_revoked_repositories() {
             .unwrap()
             .contains("Secret title")
     );
+}
+
+#[test]
+fn quiet_hours_and_ambiguous_attempts_consume_the_ceiling() {
+    let mut store = WorkStore::default();
+    let access = personal(1);
+    let project = store.create_project(access, "Policy", "policy").unwrap();
+    let scope = store.projects[&project].scope.clone();
+    store.add_task(access, task(project), "task").unwrap();
+    store
+        .configure_automation(
+            &scope,
+            access,
+            WorkAutomationPolicy {
+                enabled: true,
+                destination: Some(access.channel),
+                timezone: "America/New_York".into(),
+                daily_limit: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let now = |s: &str| {
+        u64::try_from(chrono::DateTime::parse_from_rfc3339(s).unwrap().timestamp()).unwrap()
+    };
+    assert_eq!(
+        store.next_batch(&scope, access, now("2026-09-24T03:00:00Z")),
+        Ok(None)
+    );
+    let at = now("2026-09-24T13:00:00Z");
+    let batch = store.next_batch(&scope, access, at).unwrap().unwrap();
+    let id = store.reserve_batch(access, &batch, at).unwrap();
+    assert_eq!(store.deliveries[&id].state, DeliveryState::Attempting);
+    assert_eq!(store.next_batch(&scope, access, at + 3600), Ok(None));
 }

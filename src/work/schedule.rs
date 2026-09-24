@@ -1,0 +1,338 @@
+//! Pure scope scheduler. Every timestamp is injected UTC seconds. The runtime
+//! must use commit_work to durably reserve before sending, and freshly verify
+//! destination identity/access. A plan alone never authorizes network delivery.
+use super::*;
+use chrono::{DateTime, Duration, LocalResult, NaiveDate, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
+
+impl WorkScope {
+    pub fn key(&self) -> String {
+        match self {
+            Self::Personal { owner } => format!("personal:{owner}"),
+            Self::Team { guild, channel } => format!("team:{guild}:{channel}"),
+        }
+    }
+}
+
+impl WorkAutomationPolicy {
+    pub fn validate(&self) -> Result<(), WorkError> {
+        if self.quiet_start >= 24
+            || self.quiet_end >= 24
+            || self.briefing_hour >= 24
+            || self.daily_limit == 0
+            || self.daily_limit > 4
+            || (!self.timezone.is_empty() && self.timezone.parse::<Tz>().is_err())
+            || (self.enabled
+                && (self.destination.is_none_or(|id| id == 0) || self.timezone.is_empty()))
+        {
+            return Err(WorkError::Invalid);
+        }
+        Ok(())
+    }
+
+    fn quiet(&self, hour: u32) -> bool {
+        let start = u32::from(self.quiet_start);
+        let end = u32::from(self.quiet_end);
+        if start < end {
+            hour >= start && hour < end
+        } else if start > end {
+            hour >= start || hour < end
+        } else {
+            false // Equal boundaries explicitly disable quiet hours.
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkBatch {
+    pub scope: WorkScope,
+    pub destination: u64,
+    pub local_day: String,
+    pub kind: WorkDeliveryKind,
+    pub task_ids: Vec<u64>,
+    pub coverage: Vec<ReminderCoverage>,
+    pub dedupe_keys: BTreeSet<String>,
+    // Replanning validates both configuration and records before reservation.
+    policy: WorkAutomationPolicy,
+    revisions: Vec<(u64, u64)>,
+    project_revisions: Vec<(u64, u64)>,
+}
+
+fn utc(seconds: u64) -> Result<DateTime<Utc>, WorkError> {
+    let at = DateTime::from_timestamp(i64::try_from(seconds).map_err(|_| WorkError::Invalid)?, 0)
+        .ok_or(WorkError::Invalid)?;
+    // Leave room for any IANA offset and a skipped calendar day. Chrono's
+    // local date accessors panic if a valid UTC instant overflows locally.
+    at.checked_add_signed(Duration::days(2))
+        .ok_or(WorkError::Invalid)?;
+    at.checked_sub_signed(Duration::days(2))
+        .ok_or(WorkError::Invalid)?;
+    Ok(at)
+}
+
+/// Calendar recurrence: choose the first occurrence in a fall-back overlap;
+/// advance through a spring-forward gap to the first valid local minute.
+fn local_hour(tz: Tz, day: NaiveDate, hour: u8) -> Result<DateTime<Utc>, WorkError> {
+    let mut local = day
+        .and_hms_opt(u32::from(hour), 0, 0)
+        .ok_or(WorkError::Invalid)?;
+    for _ in 0..=1_440 {
+        match tz.from_local_datetime(&local) {
+            LocalResult::Single(time) => return Ok(time.with_timezone(&Utc)),
+            LocalResult::Ambiguous(a, b) => return Ok(a.min(b).with_timezone(&Utc)),
+            LocalResult::None => {
+                local = local
+                    .checked_add_signed(Duration::minutes(1))
+                    .ok_or(WorkError::Invalid)?;
+            }
+        }
+    }
+    Err(WorkError::Invalid)
+}
+
+impl WorkStore {
+    fn scope_projects(
+        &self,
+        scope: &WorkScope,
+        access: WorkAccess,
+        manager: bool,
+    ) -> Result<Vec<&WorkProject>, WorkError> {
+        let projects: Vec<_> = self
+            .projects
+            .values()
+            .filter(|p| &p.scope == scope)
+            .collect();
+        if projects.is_empty() {
+            return Err(WorkError::Missing);
+        }
+        for project in &projects {
+            project.authorize(access, manager)?;
+        }
+        Ok(projects)
+    }
+
+    /// Explicit opt-in: caller chooses an IANA timezone (Donald's initial
+    /// personal choice is America/New_York). Never infer one for other users.
+    pub fn configure_automation(
+        &mut self,
+        scope: &WorkScope,
+        access: WorkAccess,
+        policy: WorkAutomationPolicy,
+    ) -> Result<(), WorkError> {
+        self.scope_projects(scope, access, true)?;
+        policy.validate()?;
+        if policy.enabled
+            && match scope {
+                WorkScope::Team { channel, .. } => policy.destination != Some(*channel),
+                WorkScope::Personal { .. } => policy.destination != Some(access.channel),
+            }
+        {
+            return Err(WorkError::Denied);
+        }
+        self.scope_automation.insert(scope.key(), policy);
+        Ok(())
+    }
+
+    /// Changing explicit timing re-arms only that reminder, without changing
+    /// its deadline. Status/title/priority revisions do not re-arm reminders.
+    pub fn set_reminder(
+        &mut self,
+        access: WorkAccess,
+        id: u64,
+        revision: u64,
+        remind_at: Option<u64>,
+    ) -> Result<(), WorkError> {
+        let task = self.tasks.get(&id).ok_or(WorkError::Missing)?;
+        self.project(task.project_id, access)?;
+        if task.revision != revision {
+            return Err(WorkError::Stale);
+        }
+        if let Some(at) = remind_at {
+            utc(at)?;
+        }
+        if task.remind_at == remind_at {
+            return Ok(());
+        }
+        let next = task.revision.checked_add(1).ok_or(WorkError::Full)?;
+        let reminder_next = task
+            .reminder_revision
+            .checked_add(1)
+            .ok_or(WorkError::Full)?;
+        let task = self.tasks.get_mut(&id).ok_or(WorkError::Missing)?;
+        task.remind_at = remind_at;
+        task.reminder_revision = reminder_next;
+        task.revision = next;
+        Ok(())
+    }
+
+    /// At most one batch per call. Missed days collapse into today's briefing;
+    /// overdue reminders collapse into that briefing, or one reminder batch.
+    /// Quiet hours defer without consuming coverage or quota.
+    pub fn next_batch(
+        &self,
+        scope: &WorkScope,
+        access: WorkAccess,
+        now: u64,
+    ) -> Result<Option<WorkBatch>, WorkError> {
+        let projects = self.scope_projects(scope, access, false)?;
+        let Some(policy) = self.scope_automation.get(&scope.key()) else {
+            return Ok(None);
+        };
+        policy.validate()?;
+        if !policy.enabled {
+            return Ok(None);
+        }
+        let destination = policy.destination.ok_or(WorkError::Invalid)?;
+        if match scope {
+            WorkScope::Team { channel, .. } => destination != *channel,
+            WorkScope::Personal { .. } => destination != access.channel,
+        } {
+            return Err(WorkError::Denied);
+        }
+        let tz = policy
+            .timezone
+            .parse::<Tz>()
+            .map_err(|_| WorkError::Invalid)?;
+        let now_utc = utc(now)?;
+        let local = now_utc.with_timezone(&tz);
+        let local_day = local.format("%Y-%m-%d").to_string();
+        let receipts: Vec<_> = self
+            .deliveries
+            .values()
+            .filter(|r| {
+                r.scope.as_ref().map_or_else(
+                    || {
+                        self.projects
+                            .get(&r.project_id)
+                            .is_some_and(|p| &p.scope == scope)
+                    },
+                    |receipt_scope| receipt_scope == scope,
+                )
+            })
+            .collect();
+        // Recalculate legacy/current receipt dates from UTC in the current
+        // timezone so a policy edit cannot reset today's already spent quota.
+        let attempts = receipts
+            .iter()
+            .filter(|r| {
+                utc(r.at).is_ok_and(|at| at.with_timezone(&tz).date_naive() == local.date_naive())
+            })
+            .count();
+        if policy.quiet(local.hour()) || attempts >= usize::from(policy.daily_limit) {
+            return Ok(None);
+        }
+        let project_ids: BTreeSet<_> = projects.iter().map(|p| p.id).collect();
+        let tasks: Vec<_> = self
+            .tasks
+            .values()
+            .filter(|t| {
+                project_ids.contains(&t.project_id)
+                    && !matches!(t.status, WorkStatus::Done | WorkStatus::Cancelled)
+                    && t.snoozed_until.is_none_or(|until| until <= now)
+            })
+            .collect();
+        if tasks.is_empty() {
+            return Ok(None);
+        }
+        let briefing_key = format!("{}:{local_day}:briefing:scope", scope.key());
+        let briefing = now_utc >= local_hour(tz, local.date_naive(), policy.briefing_hour)?
+            && !receipts
+                .iter()
+                .any(|r| r.dedupe_keys.contains(&briefing_key));
+        let coverage: Vec<_> = tasks
+            .iter()
+            .filter_map(|t| {
+                let at = t.remind_at.filter(|at| *at <= now)?;
+                let covered = ReminderCoverage {
+                    task_id: t.id,
+                    reminder_revision: t.reminder_revision,
+                    remind_at: at,
+                };
+                (!receipts.iter().any(|r| r.coverage.contains(&covered))).then_some(covered)
+            })
+            .collect();
+        if !briefing && coverage.is_empty() {
+            return Ok(None);
+        }
+        let task_ids: Vec<_> = if briefing {
+            tasks.iter().map(|t| t.id).collect()
+        } else {
+            coverage.iter().map(|c| c.task_id).collect()
+        };
+        let mut dedupe_keys: BTreeSet<_> = coverage
+            .iter()
+            .map(|c| {
+                format!(
+                    "{}:{local_day}:reminder:{}:{}:{}",
+                    scope.key(),
+                    c.task_id,
+                    c.reminder_revision,
+                    c.remind_at
+                )
+            })
+            .collect();
+        if briefing {
+            dedupe_keys.insert(briefing_key);
+        }
+        let revisions = tasks
+            .iter()
+            .filter(|t| task_ids.contains(&t.id))
+            .map(|t| (t.id, t.revision))
+            .collect();
+        Ok(Some(WorkBatch {
+            scope: scope.clone(),
+            destination,
+            local_day,
+            kind: if briefing {
+                WorkDeliveryKind::Briefing
+            } else {
+                WorkDeliveryKind::Reminder
+            },
+            task_ids,
+            coverage,
+            dedupe_keys,
+            policy: policy.clone(),
+            revisions,
+            project_revisions: projects.iter().map(|p| (p.id, p.revision)).collect(),
+        }))
+    }
+
+    /// Invoke inside commit_work with freshly obtained access facts, then wait
+    /// for its durable result before sending. Attempts consume quota forever;
+    /// recovery must mark unfinished attempts ReviewRequired without resending.
+    pub fn reserve_batch(
+        &mut self,
+        access: WorkAccess,
+        batch: &WorkBatch,
+        now: u64,
+    ) -> Result<u64, WorkError> {
+        if self.next_batch(&batch.scope, access, now)?.as_ref() != Some(batch) {
+            return Err(WorkError::Stale);
+        }
+        if self.deliveries.len() >= 10_000 {
+            return Err(WorkError::Full);
+        }
+        let id = self.next_id()?;
+        self.deliveries.insert(
+            id,
+            WorkDeliveryReceipt {
+                id,
+                project_id: batch.project_revisions.first().ok_or(WorkError::Missing)?.0,
+                recipient: batch.destination,
+                local_day: batch.local_day.clone(),
+                at: now,
+                state: DeliveryState::Attempting,
+                message_id: None,
+                scope: Some(batch.scope.clone()),
+                kind: Some(batch.kind),
+                coverage: batch.coverage.clone(),
+                task_ids: batch.task_ids.clone(),
+                dedupe_keys: batch.dedupe_keys.clone(),
+            },
+        );
+        Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -100,6 +100,11 @@ pub struct WorkTask {
     pub priority: u8,
     pub status: WorkStatus,
     pub due_at: Option<u64>,
+    /// Explicit UTC seconds. A deadline alone never requests a notification.
+    #[serde(default)]
+    pub remind_at: Option<u64>,
+    #[serde(default)]
+    pub reminder_revision: u64,
     pub snoozed_until: Option<u64>,
     pub source: Option<String>,
     #[serde(default)]
@@ -190,6 +195,30 @@ pub struct WorkDeliveryReceipt {
     pub at: u64,
     pub state: DeliveryState,
     pub message_id: Option<u64>,
+    /// None identifies a legacy project-scoped receipt.
+    #[serde(default)]
+    pub scope: Option<WorkScope>,
+    #[serde(default)]
+    pub kind: Option<WorkDeliveryKind>,
+    #[serde(default)]
+    pub coverage: Vec<ReminderCoverage>,
+    #[serde(default)]
+    pub task_ids: Vec<u64>,
+    #[serde(default)]
+    pub dedupe_keys: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkDeliveryKind {
+    Briefing,
+    Reminder,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReminderCoverage {
+    pub task_id: u64,
+    pub reminder_revision: u64,
+    pub remind_at: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,7 +229,10 @@ pub struct WorkStore {
     pub goals: BTreeMap<u64, WorkGoal>,
     pub tasks: BTreeMap<u64, WorkTask>,
     pub decisions: BTreeMap<u64, WorkDecision>,
+    /// Legacy project policies are retained for loading only; never opt a scope in.
     pub automation: BTreeMap<u64, WorkAutomationPolicy>,
+    /// Canonical WorkScope key -> explicitly configured policy.
+    pub scope_automation: BTreeMap<String, WorkAutomationPolicy>,
     pub preferences: BTreeMap<String, WorkPreferenceProfile>,
     pub deliveries: BTreeMap<u64, WorkDeliveryReceipt>,
     pub request_ids: BTreeMap<String, u64>,
@@ -256,6 +288,9 @@ impl std::error::Error for WorkError {}
 mod github;
 mod policy;
 mod registry;
+// Pure scheduling is exercised here before the owned runtime consumer lands.
+#[cfg(test)]
+mod schedule;
 
 #[cfg(test)]
 mod tests;
