@@ -287,7 +287,10 @@ async fn admit_fact_decision(
     let supersedes =
         match replaces.and_then(|old| service.resolve_fact(scoped_guild, scoped_user, old)) {
             Some(old) => match service.receipt(scoped_guild, scoped_user, &old) {
-                Some(hex) => crate::episode_gate::parse_digest(&hex),
+                Some(hex) => match crate::episode_gate::parse_digest(&hex) {
+                    Some(digest) => Some(digest),
+                    None => return Err(Decision::Unknown),
+                },
                 None => {
                     // The old fact predates the gate: its removal leaves no
                     // tombstone edge, so count it where `inspect_status` shows it.
@@ -330,12 +333,20 @@ pub async fn admit_forget(
         return Ok(());
     };
     let service = state.memory_service();
-    let Some(target) = service
-        .receipt(scoped_guild, scoped_user, fact)
-        .and_then(|hex| crate::episode_gate::parse_digest(&hex))
-    else {
-        gate.note_ungated_forget();
-        return Ok(());
+    let target = match service.receipt(scoped_guild, scoped_user, fact) {
+        None => {
+            gate.note_ungated_forget();
+            return Ok(());
+        }
+        Some(hex) => match crate::episode_gate::parse_digest(&hex) {
+            Some(digest) => digest,
+            None => {
+                return Err(
+                    "Not forgotten: the stored memory receipt is invalid; local deletion is blocked."
+                        .into(),
+                );
+            }
+        },
     };
     let request = MemoryCandidateRequest {
         scoped_guild: scoped_guild.to_owned(),
@@ -477,6 +488,27 @@ mod tests {
             turn.decisions().await,
             [Decision::Unknown, Decision::Unknown]
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_receipts_fail_closed_for_replacement_and_forget() {
+        let mut state = AppState::in_memory();
+        Arc::get_mut(&mut state).unwrap().episode_gate = Some(dead_gate());
+        let (g, u) = ("discord:123456789012345678", "discord:42");
+        state
+            .memory_service()
+            .remember(g, u, "old fact", 1)
+            .expect("seed fact");
+        state
+            .memory_service()
+            .record_receipt(g, u, "old fact", "not-a-digest");
+
+        assert_eq!(
+            admit_fact_decision(&state, g, u, "new fact", Some("old fact")).await,
+            Err(Decision::Unknown)
+        );
+        assert!(admit_forget(&state, g, u, "old fact").await.is_err());
+        assert_eq!(state.memory_service().facts(g, u), ["old fact"]);
     }
 
     #[tokio::test]

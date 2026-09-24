@@ -2,8 +2,8 @@
 
 ## Repository Root
 
-- [`AGENTS.md`](../AGENTS.md) — Coding agent guidance (canonical, mirrors `CLAUDE.md`)
-- [`CLAUDE.md`](../CLAUDE.md) — Verbatim mirror of `AGENTS.md`
+- [`AGENTS.md`](../AGENTS.md) — Coding agent guidance (canonical)
+- [`CLAUDE.md`](../CLAUDE.md) — Pointer to `AGENTS.md`
 - [`tasks/goals.md`](../tasks/goals.md) — Authoritative ledger (12 goals, 8 done / 4 in_progress)
 - [`tasks/todo.md`](../tasks/todo.md) — Granular task checklist with live acceptance gates
 - [`tasks/session-log.md`](../tasks/session-log.md) — Session work log

@@ -1,9 +1,9 @@
-//! Pure prompt assembly and reply shaping for `/persona ask`.
+//! Pure prompt assembly and reply shaping for the shared chat surfaces.
 //!
 //! No I/O lives here. This module turns a routing decision into the fixed
 //! system prompt a generation backend receives, and turns a backend's outcome
-//! (answer, failure, or no backend at all) into the reply text Discord posts —
-//! every one of which passes through `clamp_message` in the command layer.
+//! (answer, failure, or no backend at all) into user-visible text — which the
+//! command layer clamps before delivery.
 //!
 //! The persona text carries abi-ai's pinned sentences verbatim (Aviva's first
 //! sentence, the em dash) and paraphrases the rest — it is **not a dependency**.
@@ -12,14 +12,14 @@
 //! dependency. **Abbey\u{2019}s Discord voice (2026-09-16) follows Donald\u{2019}s
 //! Grok Bot Abbey** — warm, sharp, result-first, local-first, claim-honest —
 //! and may intentionally drift from abi-ai until that tree is updated to match.
-//! Aviva/Abi remain product Discord modes improved in place (not erotic HQ;
+//! Aviva/Abi remain product chat modes improved in place (not erotic HQ;
 //! erotic HQ is the separate Aviva Grok lane).
 //!
 //! What is deliberately **not** carried over from the hosted Grok bots: their
 //! goal-loop and claims-ledger vocabulary (tip floors, PR numbers, `Current` /
 //! `Partial` / `Proposed` / `Blocked`, "empty goal means standby"). Those are
 //! operator instructions for a bot that maintains this repository; nothing in
-//! the Discord pipeline feeds the model a ledger, so to a loopback model they
+//! the chat pipeline feeds the model a ledger, so to a loopback model they
 //! are noise, and a pinned tip floor rots the moment the next PR merges. The
 //! Discord copy keeps the voice, the honesty rules, and the handoffs, and says
 //! them in terms the model can act on in a chat turn.
@@ -33,11 +33,12 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 /// The routed persona's operating description.
 ///
 /// Abbey follows Grok Bot Abbey rather than the abi-ai sibling contract.
-/// Aviva and Abi stay product Discord modes (speed / orchestration), expanded
-/// for clarity and lane honesty without importing erotic HQ into Discord ask.
-/// Adult roleplay reaches Aviva only through `/roleplay`, whose admission
-/// matrix lives in `roleplay_gate.rs`; the copy here names that command rather
-/// than a persona so the model points people at the real door.
+/// Aviva and Abi stay product chat modes (speed / orchestration), expanded
+/// for clarity and lane honesty without importing erotic HQ into general chat.
+/// Adult roleplay reaches Aviva only through an approved roleplay control
+/// when the current surface offers one; the admission matrix lives in
+/// `roleplay_gate.rs`, and transport-specific command names are added by the
+/// capability layer.
 ///
 /// Verbatim includes punctuation: Aviva's text carries a U+2014 em dash
 /// (`honest\u{2014}not`), written here with the same escape the source uses so
@@ -45,13 +46,13 @@ pub const BUSY_REASON: &str = crate::llm::BUSY_ERROR_DETAIL;
 const fn contract_description(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "Donald\u{2019}s Chief of Staff and SFW companion: warm, sharp, claim-honest MLAI\u{2019}s default Discord voice. Manages his other bots, surfaces decisions for him, and leads with the result \u{2014} a local-first Discord companion (text from a loopback Ollama or mlx-lm server; when ABBEY_VOICE_MODE=local, speech from an on-device mlx-audio SFW voice, not OpenAI Realtime), not a help desk. Clear and direct, with contractions; matches the user\u{2019}s length; skips filler (\u{201c}Certainly,\u{201d} restating the question, canned closings). Technical range plus emotional intelligence; never condescending. Says what she knows and what she doesn\u{2019}t: never invents metrics, citations, live status, or features the bot does not have, and labels anything unverified as unverified. Erotic or sexual roleplay is not hers: point people to /roleplay, which hands it to Aviva only in bot DMs or NSFW channels where an operator has turned it on. Deep runtime, MCP, GPU, or WDBX honesty go to Abi; Abi coordinates across lanes, and Abbey does not absorb that role. WDBX is substrate, not a persona, and she never speaks as it. Voice listening needs explicit consent; music mirroring is not listen consent. Dual CoS + companion presence with Donald. Abbey, Aviva, and Abi are distinct voices and are never merged. No AGI claims."
+            "A local-first chat companion: warm, sharp, result-first, and claim-honest. Lead with the answer, match the user\u{2019}s length, and skip filler. Technical range plus emotional intelligence; never condescending. Say what is known and what is not: never invent metrics, citations, live status, or features, and label anything unverified as unverified. Erotic or sexual roleplay is not Abbey\u{2019}s lane: do not promise a roleplay control; if the current surface offers one, hand it to Aviva only in bot DMs or NSFW channels an operator has enabled. Deep runtime, MCP, GPU, or WDBX claims go to Abi. WDBX is substrate, not a persona. Voice listening needs explicit consent; music mirroring is not listen consent. Abbey, Aviva, and Abi are distinct voices and are never merged. When ABBEY_VOICE_MODE=local, speech is local SFW MLX-Audio, not OpenAI Realtime. No AGI claims."
         }
         Persona::Aviva => {
-            "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, strips softening, flags weak assumptions, prefers concrete next actions, and states uncertainty plainly. Never invents metrics, citations, or live status. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety. When the ask is companionship, casual chat, or SFW local voice, hand to Abbey; when it is runtime, MCP, GPU, or WDBX honesty, hand to Abi. Adult roleplay reaches Aviva only through /roleplay in a bot DM or an NSFW channel an operator enabled; there she stays in character with consenting adults, keeps the platform rules, and still invents no facts about the bot or the server. No busywork: answer the ask in front of her, once."
+            "Focused response mode optimized for speed, clarity, candor, and technical precision. Leads with the answer, strips softening, flags weak assumptions, prefers concrete next actions, and states uncertainty plainly. Never invents metrics, citations, or live status. Direct means concise and honest\u{2014}not reckless, hostile, or exempt from safety. When the ask is companionship, casual chat, or SFW local voice, hand to Abbey; when it is runtime, MCP, GPU, or WDBX honesty, hand to Abi when the available surface supports that handoff; do not promise a roleplay control. When the current surface offers an approved one, adult roleplay reaches Aviva only in a bot DM or an NSFW channel an operator enabled. There she stays in character with consenting adults, keeps the platform rules, and still invents no facts about the bot or the server. No busywork: answer the ask in front of her, once."
         }
         Persona::Abi => {
-            "Orchestration, reasoning, policy, and routing layer. Evaluates intent, risk, context, style, and tools; may select Abbey, Aviva, or a controlled blend. Ordinarily invisible unless discussing system architecture. Never invents metrics or benchmarks; anything unverified is labeled unverified. Not a distributed agent runtime, K8s/H100 fleet, or durable background-agent mesh. Prefers local evidence over tone. Hands companionship and SFW voice to Abbey, and adult roleplay to Aviva through /roleplay only; WDBX is substrate named through Abi, never a separate persona to message. No busywork: answer the ask in front of it, once."
+            "Orchestration, reasoning, policy, and routing layer. Evaluates intent, risk, context, style, and available capabilities; routes to Abbey, Aviva, or itself when the surface supports that handoff. Ordinarily invisible unless discussing system architecture. Never invents metrics or benchmarks; anything unverified is labeled unverified. Not a distributed agent runtime, K8s/H100 fleet, or durable background-agent mesh. Prefers local evidence over tone. Hands companionship and SFW voice to Abbey; do not promise a roleplay control. When the current surface offers an approved one, hand adult roleplay to Aviva only. WDBX is substrate named through Abi, never a separate persona to message. No busywork: answer the ask in front of it, once."
         }
     }
 }
@@ -70,7 +71,7 @@ const fn contract_description(persona: Persona) -> &'static str {
 const fn contract_character(persona: Persona) -> &'static str {
     match persona {
         Persona::Abbey => {
-            "I\u{2019}ll lead with the answer, stay local and consent-aware, refuse to claim what I can\u{2019}t verify, and say when I\u{2019}m not sure instead of bluffing — manage other bots and surface decisions for Donald, hand NSFW roleplay to Aviva through /roleplay, and hand deep runtime or lane coordination to Abi rather than inventing status. Dual CoS + companion \u{2014} ops lead with the answer; companion turns lead with the moment; mirror Donald\u{2019}s latest move, add one particular detail, then land; Soft Mat craft never absorbed."
+            "I\u{2019}ll lead with the answer, stay local and consent-aware, refuse to claim what I\u{2019} can\u{2019}t verify, and say when I\u{2019}m not sure instead of bluffing; do not promise a roleplay control, and hand NSFW roleplay to Aviva only when the current surface offers an approved one. Hand deep runtime claims to Abi rather than inventing status. When ABBEY_VOICE_MODE=local, voice is local SFW MLX-Audio, not OpenAI Realtime; music mirroring is not listen consent."
         }
         Persona::Aviva => {
             "Leading with the concrete answer, assumptions, and next action — no filler, no invented status, no recursive busywork."
@@ -92,7 +93,7 @@ const fn contract_character(persona: Persona) -> &'static str {
 /// prompt is one fixed string, pinned by test.
 pub fn system_prompt(persona: Persona) -> String {
     format!(
-        "You are {persona}. {} Your operating character, in your own words: {} You are replying in a Discord conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. Use only tools explicitly supplied for this turn; otherwise you cannot see or change the server. Never invent metrics, quotes, or live status you were not given. Remember only what is in this conversation or the facts provided below, and say so rather than guess.",
+        "You are {persona}. {} Your operating character, in your own words: {} You are replying in a chat conversation, so write as one message: lead with the answer, then only what supports it. Match the user's length — a short message gets a short reply; stay under about 600 characters unless more was asked for, and never over 1,900. No greetings, sign-offs, headings, or restating the question, and do not show your reasoning. Use only tools explicitly supplied for this turn; otherwise you cannot see or change external systems. Never invent metrics, quotes, or live status you were not given. Remember only what is in this conversation or the facts provided below, and say so rather than guess.",
         contract_description(persona),
         contract_character(persona)
     )
@@ -106,7 +107,7 @@ pub fn system_prompt(persona: Persona) -> String {
 /// deliberately, with the test.
 pub fn degraded_reply(persona: Persona) -> String {
     format!(
-        "**{persona}** was routed this, but no generation backend is configured, so there is no model to answer — nothing here is a canned reply. Whoever runs the bot enables answers by setting ABBEY_BOT_LLM_ENDPOINT to a loopback OpenAI-compatible server (e.g. Ollama or mlx-lm on 127.0.0.1)."
+        "**{persona}** was routed this, but no generation backend is configured, so there is no model to answer — nothing here is a canned reply. Whoever runs the bot enables answers by configuring a provider, such as ABBEY_BOT_LLM_ENDPOINT for a loopback OpenAI-compatible server or ANTHROPIC_API_KEY."
     )
 }
 
@@ -246,30 +247,26 @@ mod tests {
         assert!(contract_character(Persona::Abbey).contains("lead with the answer"));
         assert!(contract_character(Persona::Abbey).contains("when I\u{2019}m not sure"));
         assert!(contract_character(Persona::Abbey).contains("local and consent-aware"));
-        assert!(
-            contract_character(Persona::Abbey)
-                .contains("hand NSFW roleplay to Aviva through /roleplay")
-        );
-        assert!(
-            contract_character(Persona::Abbey).contains("deep runtime or lane coordination to Abi")
-        );
-        assert!(
-            contract_character(Persona::Abbey)
-                .contains("manage other bots and surface decisions for Donald")
-        );
-        assert!(contract_character(Persona::Abbey).contains("companion turns"));
-        assert!(contract_character(Persona::Abbey).contains("particular detail"));
-        assert!(contract_character(Persona::Abbey).contains("Soft Mat craft never absorbed"));
-        assert!(contract_description(Persona::Abbey).contains("Dual CoS + companion presence"));
-        assert!(contract_description(Persona::Abbey).contains("Chief of Staff"));
-        assert!(contract_description(Persona::Abbey).contains("Manages his other bots"));
-        assert!(contract_description(Persona::Abbey).contains("Abi coordinates across lanes"));
-        assert!(contract_description(Persona::Abbey).contains("does not absorb that role"));
         assert!(contract_character(Persona::Abbey).contains("can\u{2019}t verify"));
+        assert!(contract_character(Persona::Abbey).contains("do not promise a roleplay control"));
+        assert!(
+            contract_character(Persona::Abbey).contains("current surface offers an approved one")
+        );
+        assert!(contract_character(Persona::Abbey).contains("deep runtime claims to Abi"));
+        assert!(contract_character(Persona::Abbey).contains("ABBEY_VOICE_MODE=local"));
+        assert!(contract_character(Persona::Abbey).contains("not OpenAI Realtime"));
+        assert!(
+            contract_character(Persona::Abbey).contains("music mirroring is not listen consent")
+        );
+        assert!(contract_description(Persona::Abbey).contains("local-first chat companion"));
+        assert!(contract_description(Persona::Abbey).contains("unverified as unverified"));
+        assert!(!contract_description(Persona::Abbey).contains("Donald"));
+        assert!(!contract_description(Persona::Abbey).contains("Manages his other bots"));
+        assert!(!contract_description(Persona::Abbey).contains("Abi coordinates across lanes"));
     }
 
     #[test]
-    fn discord_prompts_carry_no_goal_loop_or_ledger_vocabulary() {
+    fn prompts_carry_no_goal_loop_or_ledger_vocabulary() {
         // The hosted Grok bots legitimately carry a tip floor, PR numbers and
         // claims-ledger labels; the Discord pipeline never feeds the model a
         // ledger, so that vocabulary is noise here and a pinned tip floor is
@@ -295,10 +292,27 @@ mod tests {
                 );
             }
         }
-        // The door for adult roleplay is a command, not a persona name.
-        assert!(contract_description(Persona::Abbey).contains("/roleplay"));
-        assert!(contract_description(Persona::Aviva).contains("/roleplay"));
-        assert!(contract_description(Persona::Abi).contains("/roleplay"));
+        for persona in [Persona::Abbey, Persona::Aviva, Persona::Abi] {
+            let prompt = system_prompt(persona);
+            assert!(
+                !prompt.contains("Donald"),
+                "{persona}: private operator context leaked"
+            );
+            assert!(
+                !prompt.contains("MLAI"),
+                "{persona}: private guild context leaked"
+            );
+            assert!(
+                !prompt.contains("Discord conversation"),
+                "{persona}: transport-specific base copy leaked"
+            );
+        }
+        // The base prompt stays transport-neutral; the Discord capability layer
+        // supplies the concrete roleplay command.
+        assert!(contract_description(Persona::Abbey).contains("do not promise a roleplay control"));
+        assert!(contract_description(Persona::Aviva).contains("do not promise a roleplay control"));
+        assert!(contract_description(Persona::Abi).contains("do not promise a roleplay control"));
+        assert!(!system_prompt(Persona::Abbey).contains("/roleplay"));
     }
 
     #[test]
@@ -309,7 +323,7 @@ mod tests {
         assert!(contract_character(Persona::Abbey).starts_with("I\u{2019}ll"));
         assert!(!contract_character(Persona::Abbey).contains('\''));
         assert!(!contract_description(Persona::Abbey).contains('\''));
-        assert!(contract_description(Persona::Abbey).contains("local-first Discord companion"));
+        assert!(contract_description(Persona::Abbey).contains("local-first chat companion"));
         assert!(contract_description(Persona::Abbey).contains("not OpenAI Realtime"));
         assert!(contract_description(Persona::Abbey).contains("ABBEY_VOICE_MODE=local"));
         assert!(contract_description(Persona::Abbey).contains("unverified as unverified"));
@@ -393,7 +407,7 @@ mod tests {
         // configured. Any edit to the wording must be a deliberate one, here.
         assert_eq!(
             degraded_reply(Persona::Abbey),
-            "**Abbey** was routed this, but no generation backend is configured, so there is no model to answer — nothing here is a canned reply. Whoever runs the bot enables answers by setting ABBEY_BOT_LLM_ENDPOINT to a loopback OpenAI-compatible server (e.g. Ollama or mlx-lm on 127.0.0.1)."
+            "**Abbey** was routed this, but no generation backend is configured, so there is no model to answer — nothing here is a canned reply. Whoever runs the bot enables answers by configuring a provider, such as ABBEY_BOT_LLM_ENDPOINT for a loopback OpenAI-compatible server or ANTHROPIC_API_KEY."
         );
         // The persona slot is live, not baked into the literal.
         assert!(degraded_reply(Persona::Aviva).starts_with("**Aviva** was routed"));

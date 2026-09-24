@@ -15,6 +15,7 @@ use serenity::model::id::GuildId;
 use super::apply::apply;
 use super::diff::{Report, Scope, Stage, diff};
 use super::discord::{DiscordWriter, permission_bits, snapshot};
+use super::observe::GuildSnapshot;
 use super::plan::Plan;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,21 @@ pub struct Options {
 }
 
 pub const USAGE: &str = "usage: abbey-bot --server-plan PLAN.toml --guild ID [--stage additive|reveal|overwrites] [--category NAME] [--apply]";
+
+/// Recompute the scoped report from the pre-apply snapshot and reject drift.
+pub(super) fn revalidate_before_apply(
+    plan: &Plan,
+    scope: &Scope,
+    initial: &Report,
+    fresh_snapshot: &GuildSnapshot,
+) -> Result<Report, Box<Report>> {
+    let fresh = diff(plan, fresh_snapshot, scope);
+    if initial.blockers == fresh.blockers && initial.changes == fresh.changes {
+        Ok(fresh)
+    } else {
+        Err(Box::new(fresh))
+    }
+}
 
 fn verify_applied(applied: usize, stage: Stage, remaining: &Report) -> Result<String, String> {
     if remaining.is_clear() && remaining.changes.is_empty() {
@@ -184,6 +200,24 @@ pub async fn run(options: &Options, http: &Http) -> i32 {
         return 0;
     }
 
+    let fresh = match snapshot(http, guild_id).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("pre-apply revalidation read failed: {error}");
+            return 1;
+        }
+    };
+    let fresh_report = match revalidate_before_apply(&plan, &scope, &report, &fresh) {
+        Ok(report) => report,
+        Err(report) => {
+            print!("{}", report.render(&heading("PRE-APPLY REVALIDATION")));
+            println!(
+                "Nothing was applied: pre-apply revalidation found that the blockers or change set differ from the initial report. Resolve the drift above and re-run the dry run."
+            );
+            return 1;
+        }
+    };
+
     let mut writer = DiscordWriter {
         http,
         guild_id,
@@ -193,8 +227,8 @@ pub async fn run(options: &Options, http: &Http) -> i32 {
             options.stage.label()
         ),
     };
-    println!("applying {} change(s)…", report.changes.len());
-    let outcome = apply(&report.changes, &before, &mut writer).await;
+    println!("applying {} change(s)…", fresh_report.changes.len());
+    let outcome = apply(&fresh_report.changes, &fresh, &mut writer).await;
     print!("{}", outcome.render());
     if outcome.failed.is_some() {
         return 1;

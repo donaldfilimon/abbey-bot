@@ -7,10 +7,11 @@ abbey-bot is a headless Discord bot whose only interactive surface is the
 Discord gateway, and on this machine the launchd service
 `com.donaldfilimon.abbey-bot` already owns that token. So "run the app" means
 driving the release binary through its **token-free modes** with
-`.claude/skills/run-abbey-bot/smoke.sh`, which scrubs every credential from
-the child environment and runs each mode in the foreground with a timeout.
-The artifacts that stand in for a screenshot are the provider JSON report and
-the Kokoro WAV it writes. Never start a second gateway here (see Gotchas).
+`.claude/skills/run-abbey-bot/smoke.sh`, which runs non-plan modes with an
+explicit nonsecret environment allowlist and a timeout. The only credentialed
+mode is the read-only `plan` REST diff, which refuses `--apply`. The artifacts
+that stand in for a screenshot are the provider JSON report and the Kokoro WAV
+it writes. Never start a second gateway here (see Gotchas).
 
 All paths are relative to the repo root.
 
@@ -20,7 +21,8 @@ Rust 1.98.0 stable comes from `rust-toolchain.toml` via rustup. The
 self-tests need the loopback services that are already live on this Mac:
 Ollama on `127.0.0.1:11434` serving `gemma4:12b` (reasoner + vision) and the
 MLX-Audio sidecar on `127.0.0.1:8181` (Whisper + Kokoro). Their endpoints are
-read from `~/.config/abbey-bot/env`, which the driver sources without printing.
+read from the owner-only `~/.config/abbey-bot/env` file as literal data; the
+driver never evaluates that file as shell code or prints its values.
 
 ```bash
 curl -s -m 5 http://127.0.0.1:11434/api/tags | python3 -c 'import sys,json; print([m["name"] for m in json.load(sys.stdin)["models"]])'
@@ -58,10 +60,11 @@ in 11 s with 100% round-trip word recall, live service reported `ready`.
 | `smoke.sh plan GUILD_ID [--stage S] [--category C]` | dry-run diff of `blueprints/mlai-community.toml` against a live guild over REST; refuses `--apply` | 0 |
 | `smoke.sh test FILTER` | `cargo test --locked FILTER`; **fails if the filter selects zero tests** | 0 / 1 |
 
-Every mode except `plan` runs the binary under
-`env -u DISCORD_TOKEN -u DISCORD_BOT_TOKEN -u ANTHROPIC_API_KEY -u OPENAI_API_KEY ABBEY_DATA_DIR= ABBEY_EPISODE_GATE_CONFIG=`,
-so no gateway opens, nothing persists, and no proposal reaches the WDBX
-ledger. Set `RUN_ABBEY_BOT_OUT=/some/dir` to choose the output directory.
+Every non-plan mode runs with an explicit nonsecret environment allowlist;
+persistence and episode-gate paths are blank, so no gateway opens, nothing
+persists, and no proposal reaches the WDBX ledger. The `plan` mode passes only
+the Discord token and bounded read-only configuration it needs. Set
+`RUN_ABBEY_BOT_OUT=/some/dir` to choose the output directory.
 
 Artifacts land in `$TMPDIR/run-abbey-bot-<timestamp>/`:
 `build.log`, `provider-<target>.json` (+ `.stderr`), `voice.stdout`,
@@ -125,11 +128,11 @@ and fail. A `.rs` edit already triggers it through the PostToolUse hook in
   `fail`, so `overall_pass` is false. Use `primary` for a green/red signal
   about the configured route; use `all` only when qualifying Apple
   Foundation Models.
-- **`sh -x smoke.sh …` would echo the token.** `load_env` sources
-  `~/.config/abbey-bot/env` under `set -a`; the driver switches `-x` off
-  around that source and restores it after, and runs it in a subshell per
-  mode. `~/.config/abbey-bot/load.sh` has no such guard, so never trace a
-  shell that sources it.
+- **`sh -x smoke.sh …` is safe for the owner env path.** The driver reads
+  `~/.config/abbey-bot/env` as literal data, keeps tracing disabled while
+  parsing it, and restores tracing only after the sanitized child environment
+  is built. The separate `~/.config/abbey-bot/load.sh` helper has no such
+  guard, so never trace a shell that sources it.
 - **`GET /v1/models` on 8181 returned `{"data":[]}` and the voice self-test
   still passed** (observed 2026-09-08). An empty model list from MLX-Audio is
   not a readiness failure for this mode.

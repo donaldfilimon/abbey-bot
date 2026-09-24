@@ -27,7 +27,7 @@ impl Decision {
             }
             Self::Rejected => "Memory: the gate rejected the proposal. Nothing was stored locally.",
             Self::Unknown => {
-                "Memory: admission is unknown because the gate did not return a valid receipt. Nothing was stored locally."
+                "Memory: admission is unknown because a stored receipt or gate result was invalid. Nothing was stored locally."
             }
             Self::Cancelled => {
                 "Memory: the request was cancelled before admission. Nothing was stored locally. Try `/remember` when Abbey is available."

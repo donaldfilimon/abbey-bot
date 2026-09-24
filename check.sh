@@ -30,7 +30,10 @@ done
 # but assert the count too: that covers the day someone narrows the pattern.
 [ "$shell_checked" -gt 0 ]
 echo "shell syntax: ${shell_checked} script(s)"
+sh -n .claude/skills/run-abbey-bot/smoke.sh
+echo "smoke driver: shell syntax passed"
 python3 scripts/check-python-syntax.py
+python3 deploy/test-check-python-locks.py
 python3 deploy/check-python-locks.py \
   deploy/mlx-vlm-requirements.txt \
   deploy/mlx-audio-requirements.txt \

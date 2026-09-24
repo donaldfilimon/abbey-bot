@@ -4,6 +4,7 @@ use crate::server::observe::{
     BotState, COMMUNITY_FEATURE, ChannelState, OverwriteState, OverwriteTarget, RoleState,
 };
 use crate::server::plan::{MLAI_COMMUNITY, Plan, VIEW_CHANNEL, denies_everyone_view};
+use crate::server::run::revalidate_before_apply;
 
 const GUILD: u64 = 1_000;
 const BOT_ROLE: u64 = 1_001;
@@ -57,6 +58,35 @@ async fn run_stage(plan: &Plan, guild: &mut FakeGuild, scope: Scope) -> Outcome 
         again.changes
     );
     outcome
+}
+
+#[test]
+fn pre_apply_revalidation_rejects_a_changed_change_set() {
+    let plan = mlai();
+    let scope = Scope {
+        stage: Stage::Additive,
+        category: None,
+    };
+    let mut guild = FakeGuild::new(empty_guild());
+    let initial = diff(&plan, &guild.snapshot, &scope);
+    assert!(initial.is_clear(), "{:?}", initial.blockers);
+    assert!(!initial.changes.is_empty());
+    assert!(initial.changes.iter().any(|change| matches!(
+        change,
+        Change::CreateRole { name, .. } if name == "Team"
+    )));
+
+    // Simulate another actor creating one of the planned roles after the report.
+    guild.snapshot.roles.push(role(2_000, "Team", 2, &[]));
+    let fresh_snapshot = guild.snapshot.clone();
+    let fresh = revalidate_before_apply(&plan, &scope, &initial, &fresh_snapshot)
+        .expect_err("a changed change set must fail closed");
+    assert!(fresh.is_clear(), "{:?}", fresh.blockers);
+    assert_ne!(fresh.changes, initial.changes);
+    assert!(!fresh.changes.iter().any(|change| matches!(
+        change,
+        Change::CreateRole { name, .. } if name == "Team"
+    )));
 }
 
 #[tokio::test]

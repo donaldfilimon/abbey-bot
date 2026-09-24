@@ -96,7 +96,7 @@ class InstructionSurfaceTests(unittest.TestCase):
             CHECKER.check(self.root)
         self.tearDown()
         self.setUp()
-        self.edit("AGENTS.md", "## Learned User Preferences", "## Boundaries\n\n## Learned User Preferences")
+        self.edit("AGENTS.md", "## Local operation", "## Boundaries\n\n## Local operation")
         with self.assertRaises(CHECKER.Drift):
             CHECKER.check(self.root)
 

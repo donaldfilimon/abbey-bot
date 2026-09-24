@@ -8,7 +8,9 @@
 //!
 //! ```text
 //! ABBEY_EPISODE_GATE_ACCEPTANCE_CONFIG="$HOME/.config/abbey-bot/episode-gate-acceptance.json" \
-//!   cargo test acceptance -- --ignored --nocapture
+//!   cargo test --locked \
+//!   episode_gate::acceptance::live_memory_path_round_trips_through_a_real_gateway \
+//!   -- --ignored --nocapture
 //! ```
 //!
 //! The config is an ordinary gate config whose `guilds` list covers exactly

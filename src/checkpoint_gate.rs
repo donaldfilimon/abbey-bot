@@ -120,11 +120,16 @@ pub fn settle(
     for (proposal, outcome) in outcomes {
         match outcome {
             GateOutcome::Appended { digest_hex, .. } => {
+                let Some(episode_digest) = parse_digest(&digest_hex) else {
+                    substitute(stores, admitted, &proposal.guild);
+                    settlement.refused.push(proposal.guild);
+                    continue;
+                };
                 admitted.insert(
                     proposal.guild.clone(),
                     AdmittedCheckpoint {
                         commitment: proposal.commitment,
-                        episode_digest: parse_digest(&digest_hex),
+                        episode_digest: Some(episode_digest),
                         row: proposal.row,
                     },
                 );
@@ -251,6 +256,27 @@ mod tests {
         let again = plan(&next.brains, &admitted, |_| true);
         assert_eq!(again.len(), 1);
         assert_eq!(again[0].supersedes, Some([0xab; 32]));
+    }
+
+    #[test]
+    fn an_appended_checkpoint_with_an_invalid_receipt_is_not_admitted() {
+        let loaded = stores_with(&[("g1", row("{\"a\":1}", 1))]);
+        let mut admitted = seed(&loaded.brains);
+        let mut next = loaded.clone();
+        next.brains.insert("g1".into(), row("{\"a\":2}", 2));
+        let proposal = plan(&next.brains, &admitted, |_| true)
+            .into_iter()
+            .next()
+            .expect("changed row is proposed");
+        let outcome = GateOutcome::Appended {
+            digest_hex: "not-a-digest".into(),
+            sequence: "1".into(),
+        };
+        let settlement = settle(&mut next, &mut admitted, vec![(proposal, outcome)]);
+        assert_eq!(settlement.admitted, Vec::<String>::new());
+        assert_eq!(settlement.refused, ["g1"]);
+        assert_eq!(next.brains["g1"], row("{\"a\":1}", 1));
+        assert_eq!(admitted["g1"].episode_digest, None);
     }
 
     #[test]

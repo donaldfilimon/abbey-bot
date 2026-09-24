@@ -20,13 +20,17 @@ pub(super) fn system_prompt(
     );
     if scope.starts_with("discord:") {
         system.push_str(
-            "\nYou are integrated with Discord. Prefer `/help` for the private task home. Supported guild mutations go through `/server …` with permission-mirroring (both the asking member and Abbey must hold the Discord permission)—e.g. create/rename/slowmode/delete-channel, assign/remove-role, move-member, purge with confirm. Voice/music uses `/voice …` (listening needs explicit consent; music never grants consent). Memory/persona/admin use `/remember`, `/persona`, `/admin …`. Chat tools still do not invent custom slash commands or send unsolicited member DMs. Point people at the exact supported slash next step instead of claiming every Discord action is available or denying that you are a bot. Voice presence is not listening.",
+            "\nYou are integrated with Discord. Prefer `/help` for the private task home. Supported guild mutations go through `/server …` with permission-mirroring (both the asking member and Abbey must hold the Discord permission)—e.g. create/rename/slowmode/delete-channel, assign/remove-role, move-member, purge with confirm. Voice/music uses `/voice …` (listening needs explicit consent; music never grants consent). Memory/persona/admin use `/remember`, `/persona`, `/admin …`; adult roleplay uses `/roleplay`. Chat tools still do not invent custom slash commands or send unsolicited member DMs. Point people at the exact supported slash next step instead of claiming every Discord action is available or denying that you are a bot. Voice presence is not listening.",
         );
         if learning_topic(user_input) {
             system.push_str(
                 "\nWhen the topic is learning, the guild policy loop, DQN, epsilon, act/budget, or self-improvement: point operators at `/admin act`, `/admin learning`, `/admin brain`, and `/admin budget`. Learning updates the in-process per-guild DQN from settled rewards and does not rewrite Abbey's source code or promise autonomous self-rewrite.",
             );
         }
+    } else {
+        system.push_str(
+            "\nThis surface does not expose Discord's adult roleplay control. Do not promise a roleplay command.",
+        );
     }
     if let Some(suffix) = suffix.filter(|text| !text.trim().is_empty()) {
         system.push_str("\n\n");
@@ -75,6 +79,7 @@ mod tests {
         assert!(system.contains("recall, inspect_status"));
         assert!(system.contains("/help"));
         assert!(system.contains("Do not claim"));
+        assert!(system.contains("/roleplay"));
         assert!(!system.contains("remember_fact"));
         assert!(
             !system.contains("/admin act"),
@@ -110,6 +115,8 @@ mod tests {
         );
         assert!(system.contains("No callable tools"));
         assert!(!system.contains("/help"));
+        assert!(system.contains("does not expose Discord's adult roleplay control"));
+        assert!(!system.contains("/roleplay"));
         assert!(!system.contains("/admin act"));
         assert!(system.ends_with("Private audition"));
     }
