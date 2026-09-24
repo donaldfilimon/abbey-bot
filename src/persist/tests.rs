@@ -290,7 +290,7 @@ fn old_canonical_state_loads_without_work_records() {
 #[test]
 fn interrupted_external_action_loads_for_review_without_replay() {
     use crate::action_approval::{
-        ActionOperation, ActionPermission, ActionSpec, ActionState, ActionTarget,
+        ActionFacts, ActionOperation, ActionPermission, ActionSpec, ActionState, ActionTarget,
     };
     let dir = temp_dir("interrupted-action");
     let mut stores = Stores::default();
@@ -315,11 +315,30 @@ fn interrupted_external_action_loads_for_review_without_replay() {
             "etag-1",
         )
         .unwrap();
-    stores.work.actions.proposals.get_mut(&id).unwrap().state = ActionState::Executing;
+    let digest = stores
+        .work
+        .actions
+        .proposal(id)
+        .unwrap()
+        .content_digest()
+        .to_owned();
+    let permissions = std::collections::BTreeSet::from([ActionPermission::GitHubIssuesWrite]);
+    let facts = ActionFacts {
+        human_principal: Some(2),
+        current_permissions: &permissions,
+        target_fingerprint: "etag-1",
+        now: 10,
+    };
+    stores
+        .work
+        .actions
+        .confirm(id, &digest, facts.clone())
+        .unwrap();
+    stores.work.actions.begin(id, facts).unwrap();
     stores.save(&dir).unwrap();
     let restored = Stores::load(&dir).unwrap();
     assert_eq!(
-        restored.work.actions.proposals[&id].state,
+        restored.work.actions.proposal(id).unwrap().state(),
         ActionState::ReviewRequired
     );
     let _ = fs::remove_dir_all(dir);

@@ -222,19 +222,20 @@ pub enum ActionState {
     Verified,
     ReviewRequired,
     Failed,
+    Invalidated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionProposal {
-    pub id: u64,
-    pub spec: ActionSpec,
-    pub requester: u64,
-    pub expires_at: u64,
-    pub target_fingerprint: String,
-    pub content_digest: String,
-    pub state: ActionState,
-    pub approver: Option<u64>,
-    pub result_reference: Option<String>,
+    id: u64,
+    spec: ActionSpec,
+    requester: u64,
+    expires_at: u64,
+    target_fingerprint: String,
+    content_digest: String,
+    state: ActionState,
+    approver: Option<u64>,
+    result_reference: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,8 +260,8 @@ pub struct ActionFacts<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ActionStore {
-    pub sequence: u64,
-    pub proposals: BTreeMap<u64, ActionProposal>,
+    sequence: u64,
+    proposals: BTreeMap<u64, ActionProposal>,
 }
 
 fn content_digest(spec: &ActionSpec, requester: u64, expires_at: u64, target: &str) -> String {
@@ -278,7 +279,65 @@ fn content_digest(spec: &ActionSpec, requester: u64, expires_at: u64, target: &s
     out
 }
 
+impl ActionProposal {
+    pub fn spec(&self) -> &ActionSpec {
+        &self.spec
+    }
+
+    pub fn requester(&self) -> u64 {
+        self.requester
+    }
+
+    pub fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
+
+    pub fn target_fingerprint(&self) -> &str {
+        &self.target_fingerprint
+    }
+
+    pub fn approver(&self) -> Option<u64> {
+        self.approver
+    }
+
+    pub fn result_reference(&self) -> Option<&str> {
+        self.result_reference.as_deref()
+    }
+
+    pub fn content_digest(&self) -> &str {
+        &self.content_digest
+    }
+
+    pub fn state(&self) -> ActionState {
+        self.state
+    }
+}
+
+/// Both outcomes are successful durable transitions. Commit this result through
+/// `AppState::commit_work` before inspecting it: only `Ready` permits a send.
+/// Converting `Invalidated` into the closure's error would discard revocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BeginOutcome {
+    Ready(ActionSpec),
+    Invalidated(ActionError),
+}
+
 impl ActionStore {
+    pub fn proposal(&self, id: u64) -> Option<&ActionProposal> {
+        self.proposals.get(&id)
+    }
+
+    /// Reclaim terminal records and abandoned, expired approvals. Uncertain or
+    /// in-flight attempts are retained regardless of age for human review.
+    /// Pass caller-injected current time, and persist this transition.
+    pub fn compact(&mut self, now: u64) {
+        self.proposals.retain(|_, proposal| match proposal.state {
+            ActionState::Verified | ActionState::Failed | ActionState::Invalidated => false,
+            ActionState::Proposed | ActionState::Approved => now < proposal.expires_at,
+            ActionState::Executing | ActionState::ReviewRequired => true,
+        });
+    }
+
     pub fn propose(
         &mut self,
         spec: ActionSpec,
@@ -291,11 +350,18 @@ impl ActionStore {
             || target_fingerprint.is_empty()
             || target_fingerprint.len() > 256
             || !spec.valid()
-            || self.proposals.len() >= 10_000
         {
             return Err(ActionError::Invalid);
         }
         let id = self.sequence.checked_add(1).ok_or(ActionError::Full)?;
+        if self.proposals.len() >= 10_000 {
+            // A caller can additionally compact expired proposals with its
+            // current time before proposing. Zero reclaims only terminal rows.
+            self.compact(0);
+            if self.proposals.len() >= 10_000 {
+                return Err(ActionError::Full);
+            }
+        }
         self.sequence = id;
         let digest = content_digest(&spec, requester, expires_at, target_fingerprint);
         self.proposals.insert(
@@ -331,19 +397,23 @@ impl ActionStore {
         Ok(())
     }
 
-    /// Persist this transition before the external network call. A crash after
-    /// this point leaves a review-required attempt, never an automatic replay.
-    pub fn begin(&mut self, id: u64, facts: ActionFacts<'_>) -> Result<ActionSpec, ActionError> {
+    /// Persist both Ready and Invalidated outcomes before interpreting them.
+    /// A crash after Ready leaves a review-required attempt, never a replay.
+    pub fn begin(&mut self, id: u64, facts: ActionFacts<'_>) -> Result<BeginOutcome, ActionError> {
         let proposal = self.proposals.get_mut(&id).ok_or(ActionError::Missing)?;
         if proposal.state != ActionState::Approved {
             return Err(ActionError::AlreadyHandled);
         }
-        validate(proposal, &proposal.content_digest, &facts)?;
         if proposal.approver != facts.human_principal {
             return Err(ActionError::Denied);
         }
+        if let Err(reason) = validate(proposal, &proposal.content_digest, &facts) {
+            proposal.state = ActionState::Invalidated;
+            proposal.approver = None;
+            return Ok(BeginOutcome::Invalidated(reason));
+        }
         proposal.state = ActionState::Executing;
-        Ok(proposal.spec.clone())
+        Ok(BeginOutcome::Ready(proposal.spec.clone()))
     }
 
     pub fn finish(
