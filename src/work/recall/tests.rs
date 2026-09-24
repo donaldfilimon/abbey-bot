@@ -588,3 +588,111 @@ fn maximum_width_scope_entry_remains_loadable_after_exhausted_reset() {
     s.control_preferences(a, None, None, true).unwrap();
     assert!(reload(&s).recall.scope_controls[&a.scope()].recall_disabled_exhausted);
 }
+
+#[test]
+fn temporary_learning_disable_cannot_authorize_forget_or_resurrection() {
+    let a = personal(1);
+    let (mut s, p, _) = setup(a);
+    let key = feedback_source(&mut s, a, &[p], 500);
+    let row = add(&mut s, &key, a);
+    s.control_preferences(a, Some(false), None, false).unwrap();
+    assert_eq!(
+        s.prepare_recall_forget(row, a, 12, 1, "a".repeat(64)),
+        Err(WorkError::Denied)
+    );
+    assert!(s.recall.attempts.is_empty());
+    s.disable_recall_source(&key, a).unwrap();
+    let attempt = s
+        .prepare_recall_forget(row, a, 12, 1, "a".repeat(64))
+        .unwrap();
+    s.control_preferences(a, Some(true), None, false).unwrap();
+    assert!(eligible(&s, a, p).is_empty());
+    assert!(s.prepare_recall(&key, a, 13, 2, "a".repeat(64)).is_err());
+    s.recall
+        .settle_forget(
+            attempt,
+            WorkAdmission::Appended {
+                digest_hex: "b".repeat(64),
+                scoped_guild: "discord:dm:1".into(),
+            },
+            14,
+        )
+        .unwrap();
+    s.compact_recall(Some(s.recall.projection_revision), &BTreeSet::new());
+    let mut s = reload(&s);
+    s.control_preferences(a, Some(false), None, false).unwrap();
+    s.control_preferences(a, Some(true), None, false).unwrap();
+    assert!(!s.recall.source_versions[&key].recall_enabled);
+    assert!(s.prepare_recall(&key, a, 15, 3, "a".repeat(64)).is_err());
+    assert_eq!(s.preferences[&a.scope().key()].evidence.len(), 1);
+    assert!(s.recall.records.is_empty());
+}
+
+#[test]
+fn native_obsolescence_allows_cleanup_but_candidate_errors_do_not() {
+    let a = personal(1);
+    let (mut s, p, task_key) = setup(a);
+    let key = feedback_source(&mut s, a, &[p], 500);
+    let row = add(&mut s, &key, a);
+    s.deliveries.get_mut(&500).unwrap().provenance = None;
+    assert_eq!(
+        s.prepare_recall_forget(row, a, 12, 1, "a".repeat(64)),
+        Err(WorkError::Invalid)
+    );
+    s.feedback(a, 500, None, true, 3).unwrap();
+    assert!(
+        s.prepare_recall_forget(row, a, 12, 1, "a".repeat(64))
+            .is_ok()
+    );
+    let task_row = add(&mut s, &task_key, a);
+    let WorkSourceKey::Task { id, .. } = task_key else {
+        panic!()
+    };
+    s.update_task(a, id, 0, WorkStatus::Done, None).unwrap();
+    assert!(
+        s.prepare_recall_forget(task_row, a, 12, 2, "a".repeat(64))
+            .is_ok()
+    );
+}
+
+#[test]
+fn scope_exhaustion_blocks_all_sources_but_normal_reset_only_preferences() {
+    let a = personal(1);
+    let (mut s, p, task_key) = setup(a);
+    let task_row = add(&mut s, &task_key, a);
+    let decision = s
+        .record_decision(p, a, "Keep native authority", 1, "d")
+        .unwrap();
+    let decision_key = WorkSourceKey::Decision {
+        project: p,
+        id: decision,
+    };
+    let decision_row = add(&mut s, &decision_key, a);
+    let pref_key = feedback_source(&mut s, a, &[p], 500);
+    add(&mut s, &pref_key, a);
+    s.control_preferences(a, None, None, true).unwrap();
+    assert_eq!(eligible(&s, a, p), BTreeSet::from([task_row, decision_row]));
+    let fresh_pref = feedback_source(&mut s, a, &[p], 501);
+    add(&mut s, &fresh_pref, a);
+    s.recall
+        .scope_controls
+        .get_mut(&a.scope())
+        .unwrap()
+        .generation = u64::MAX;
+    s.control_preferences(a, None, None, true).unwrap();
+    s.control_preferences(a, Some(false), None, false).unwrap();
+    s.control_preferences(a, Some(true), None, false).unwrap();
+    s.compact_recall(Some(s.recall.projection_revision), &BTreeSet::new());
+    let mut s = reload(&s);
+    assert!(eligible(&s, a, p).is_empty());
+    for key in [task_key, decision_key, fresh_pref] {
+        assert_eq!(s.recall_candidate(&key, a), Err(WorkError::Full));
+        assert_eq!(
+            s.prepare_recall(&key, a, 12, 1, "a".repeat(64)),
+            Err(WorkError::Full)
+        );
+    }
+    s.control_preferences(a, None, None, true).unwrap();
+    s.control_preferences(a, Some(false), None, false).unwrap();
+    assert!(reload(&s).recall.scope_controls[&a.scope()].recall_disabled_exhausted);
+}

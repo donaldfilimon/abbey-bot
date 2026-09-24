@@ -2,6 +2,72 @@
 //! positively observed gate result. This module never calls or retries a gate.
 use super::*;
 impl WorkStore {
+    /// Inspect canonical native state independently of learning/query controls.
+    /// Missing/corrupt provenance is an error, never evidence of retirement.
+    #[cfg(test)]
+    fn recall_native_obsolete(&self, payload: &WorkEvidencePayload) -> Result<bool, WorkError> {
+        let version = self
+            .recall
+            .source_versions
+            .get(&payload.source)
+            .ok_or(WorkError::Invalid)?;
+        let native = match &payload.source {
+            WorkSourceKey::Task { project, id } => {
+                let Some(task) = self.tasks.get(id) else {
+                    return Ok(true);
+                };
+                if task.project_id != *project {
+                    return Err(WorkError::Invalid);
+                }
+                if task.revision != payload.revision {
+                    return Ok(true);
+                }
+                bytes(task)?
+            }
+            WorkSourceKey::Decision { project, id } => {
+                let Some(decision) = self.decisions.get(id) else {
+                    return Ok(true);
+                };
+                if decision.project_id != *project || payload.revision != 1 {
+                    return Err(WorkError::Invalid);
+                }
+                bytes(decision)?
+            }
+            WorkSourceKey::Preference {
+                scope,
+                delivery,
+                actor,
+            } => {
+                let control = self
+                    .recall
+                    .scope_controls
+                    .get(scope)
+                    .ok_or(WorkError::Invalid)?;
+                if control.generation != payload.generation || version.revision != payload.revision
+                {
+                    return Ok(true);
+                }
+                let observation = self.preferences.get(&scope.key()).and_then(|p| {
+                    p.evidence.iter().find(|e| {
+                        e.scope.as_ref() == Some(scope)
+                            && e.delivery_id == *delivery
+                            && e.actor == Some(*actor)
+                    })
+                });
+                let Some(observation) = observation else {
+                    return Ok(true);
+                };
+                self.validate_delivery_state()?;
+                let receipt = self.deliveries.get(delivery).ok_or(WorkError::Invalid)?;
+                let provenance = receipt.provenance.as_ref().ok_or(WorkError::Invalid)?;
+                if receipt.scope.as_ref() != Some(scope) || receipt.kind != observation.kind {
+                    return Err(WorkError::Invalid);
+                }
+                bytes(&(observation, provenance))?
+            }
+        };
+        Ok(digest(&native) != payload.native_digest)
+    }
     #[cfg(test)]
     pub fn prepare_recall_forget(
         &mut self,
@@ -13,11 +79,14 @@ impl WorkStore {
     ) -> Result<u64, WorkError> {
         let record = self.recall.records.get(&row).ok_or(WorkError::Missing)?;
         self.scope_projects(&record.payload.scope, access, true)?;
-        // Explicit forget must first disable a still-current native source.
-        if self
-            .recall_candidate(&record.payload.source, access)
-            .is_ok_and(|p| p == record.payload)
-        {
+        // Query suppression (especially learning disable) is reversible. Only
+        // durable native change or explicit source disable permits deletion.
+        let version = self
+            .recall
+            .source_versions
+            .get(&record.payload.source)
+            .ok_or(WorkError::Invalid)?;
+        if version.recall_enabled && !self.recall_native_obsolete(&record.payload)? {
             return Err(WorkError::Denied);
         }
         let mut next = self.recall.clone();

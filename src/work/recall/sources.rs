@@ -19,6 +19,9 @@ impl WorkStore {
             .get(&scope)
             .cloned()
             .unwrap_or_default();
+        if control.recall_disabled_exhausted {
+            return Err(WorkError::Full);
+        }
         let version = self.recall.source_versions.get(key);
         if version.is_some_and(|v| !v.recall_enabled || v.recall_disabled_exhausted) {
             return Err(WorkError::Denied);
@@ -62,9 +65,6 @@ impl WorkStore {
                 delivery, actor, ..
             } => {
                 self.scope_projects(&scope, access, false)?;
-                if control.recall_disabled_exhausted {
-                    return Err(WorkError::Full);
-                }
                 let profile = self
                     .preferences
                     .get(&scope.key())
