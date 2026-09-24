@@ -91,6 +91,29 @@ impl WorkStore {
         for receipt in self.deliveries.values() {
             if let Some(provenance) = &receipt.provenance {
                 provenance.validate()?;
+                // Project association and native kind are immutable. Delivered
+                // revisions may be older than current state, never from its future.
+                for source in &provenance.source_refs {
+                    let valid = match source {
+                        WorkContentRef::Task {
+                            project,
+                            id,
+                            revision,
+                        } => self.tasks.get(id).is_some_and(|task| {
+                            task.project_id == *project && *revision <= task.revision
+                        }),
+                        WorkContentRef::Decision {
+                            project,
+                            id,
+                            revision,
+                        } => self.decisions.get(id).is_some_and(|decision| {
+                            decision.project_id == *project && *revision == 1
+                        }),
+                    };
+                    if !valid {
+                        return Err(WorkError::Invalid);
+                    }
+                }
                 let tasks: BTreeSet<_> = provenance
                     .source_refs
                     .iter()

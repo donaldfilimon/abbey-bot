@@ -196,7 +196,8 @@ impl WorkStore {
     /// exact source/body pairing, or construct and validate a new frozen draft.
     pub(super) fn render_delivery(
         &self,
-        refs: &BTreeSet<WorkContentRef>,
+        refs: &[WorkContentRef],
+        omitted: usize,
     ) -> Result<(String, DeliveredProvenance), WorkError> {
         use sha2::{Digest, Sha256};
         let mut lines = Vec::new();
@@ -213,7 +214,7 @@ impl WorkStore {
                     }
                     format!(
                         "Task #{id} r{revision}: {} — {} (priority {}; deadline {}).",
-                        task.title.chars().take(80).collect::<String>(),
+                        shortened(&task.title, 80),
                         task.status.label(),
                         task.priority,
                         task.due_at.map_or("none".into(), |v| v.to_string())
@@ -228,12 +229,12 @@ impl WorkStore {
                     if decision.project_id != *project || *revision != 1 {
                         return Err(WorkError::Stale);
                     }
-                    format!(
-                        "Decision #{id}: {}",
-                        decision.text.chars().take(100).collect::<String>()
-                    )
+                    format!("Decision #{id}: {}", shortened(&decision.text, 100))
                 }
             });
+        }
+        if omitted > 0 {
+            lines.push(format!("Partial update: {omitted} additional work item(s) omitted; inspect the workspace for the full list."));
         }
         let body = lines.join("\n");
         if body.chars().count() > 1900 {
@@ -241,7 +242,7 @@ impl WorkStore {
         }
         let provenance = DeliveredProvenance {
             version: 1,
-            source_refs: refs.clone(),
+            source_refs: refs.iter().cloned().collect(),
             contributing_projects: refs.iter().map(WorkContentRef::project).collect(),
             rendered_digest: Sha256::digest(body.as_bytes())
                 .iter()
@@ -286,4 +287,14 @@ impl WorkStore {
         }
         values
     }
+}
+
+#[cfg(test)]
+fn shortened(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let mut shown: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        shown.push_str("… [shortened]");
+    }
+    shown
 }

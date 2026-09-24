@@ -390,8 +390,23 @@ impl WorkStore {
         if selected_changes {
             content_refs = changes;
         }
-        content_refs = content_refs.into_iter().take(8).collect();
-        task_ids = content_refs
+        let mut ordered: Vec<_> = content_refs.into_iter().collect();
+        ordered.sort_by_key(|source| match source {
+            WorkContentRef::Task { id, .. } => {
+                let task = &self.tasks[id];
+                (
+                    0,
+                    std::cmp::Reverse(task.priority),
+                    task.due_at.unwrap_or(u64::MAX),
+                    *id,
+                )
+            }
+            WorkContentRef::Decision { id, .. } => (1, std::cmp::Reverse(0), u64::MAX, *id),
+        });
+        let omitted = ordered.len().saturating_sub(8);
+        ordered.truncate(8);
+        content_refs = ordered.iter().cloned().collect();
+        task_ids = ordered
             .iter()
             .filter_map(|r| match r {
                 WorkContentRef::Task { id, .. } => Some(*id),
@@ -402,7 +417,7 @@ impl WorkStore {
             .into_iter()
             .filter(|c| task_ids.contains(&c.task_id))
             .collect();
-        let (rendered_body, provenance) = self.render_delivery(&content_refs)?;
+        let (rendered_body, provenance) = self.render_delivery(&ordered, omitted)?;
         let mut dedupe_keys: BTreeSet<_> = coverage
             .iter()
             .map(|c| {
