@@ -18,6 +18,44 @@ pub struct WorkProject {
     pub managers: BTreeSet<u64>,
     pub members: BTreeSet<u64>,
     pub revision: u64,
+    #[serde(default)]
+    pub allowed_github_repositories: BTreeSet<GitHubRepository>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GitHubRepository {
+    pub installation: u64,
+    pub owner: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GitHubItemKind {
+    Issue,
+    PullRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubReference {
+    pub repository: GitHubRepository,
+    pub kind: GitHubItemKind,
+    pub number: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubSnapshot {
+    pub title: String,
+    pub state: GitHubState,
+    pub refreshed_at: u64,
+    pub stale: bool,
+    pub etag: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GitHubState {
+    Open,
+    Closed,
+    Merged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +102,8 @@ pub struct WorkTask {
     pub due_at: Option<u64>,
     pub snoozed_until: Option<u64>,
     pub source: Option<String>,
+    #[serde(default)]
+    pub github: Option<GitHubReference>,
     pub revision: u64,
 }
 
@@ -165,6 +205,7 @@ pub struct WorkStore {
     pub deliveries: BTreeMap<u64, WorkDeliveryReceipt>,
     pub request_ids: BTreeMap<String, u64>,
     pub actions: crate::action_approval::ActionStore,
+    pub github_snapshots: BTreeMap<String, GitHubSnapshot>,
 }
 
 /// Fresh permission facts from Discord REST. Cached or model-inferred facts
@@ -212,6 +253,7 @@ impl std::fmt::Display for WorkError {
 
 impl std::error::Error for WorkError {}
 
+mod github;
 mod policy;
 mod registry;
 

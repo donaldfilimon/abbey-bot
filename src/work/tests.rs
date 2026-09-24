@@ -34,6 +34,7 @@ fn task(project_id: u64) -> WorkTask {
         due_at: None,
         snoozed_until: None,
         source: None,
+        github: None,
         revision: 0,
     }
 }
@@ -190,4 +191,266 @@ fn quiet_hours_and_ambiguous_attempts_consume_the_ceiling() {
 fn legacy_state_defaults_to_empty_work_store() {
     let state: WorkStore = serde_json::from_str("{}").unwrap();
     assert_eq!(state, WorkStore::default());
+}
+
+#[test]
+fn older_project_and_task_rows_default_new_github_fields() {
+    let mut store = WorkStore::default();
+    let access = personal(1);
+    let project = store.create_project(access, "Personal", "project").unwrap();
+    let task_id = store.add_task(access, task(project), "task").unwrap();
+    let mut old = serde_json::to_value(&store).unwrap();
+    old["projects"][project.to_string()]
+        .as_object_mut()
+        .unwrap()
+        .remove("allowed_github_repositories");
+    old["tasks"][task_id.to_string()]
+        .as_object_mut()
+        .unwrap()
+        .remove("github");
+    old.as_object_mut().unwrap().remove("github_snapshots");
+    let restored: WorkStore = serde_json::from_value(old).unwrap();
+    assert!(
+        restored.projects[&project]
+            .allowed_github_repositories
+            .is_empty()
+    );
+    assert_eq!(restored.tasks[&task_id].github, None);
+    assert!(restored.github_snapshots.is_empty());
+}
+
+#[test]
+fn github_link_requires_manager_allowlist_and_current_channel_access() {
+    let mut store = WorkStore::default();
+    let lead = team(1, 99, true, true);
+    let project = store.create_project(lead, "Release", "project").unwrap();
+    store.set_member(project, lead, 2, true).unwrap();
+    let member = team(2, 99, true, false);
+    let task_id = store.add_task(member, task(project), "task").unwrap();
+    let repository = GitHubRepository {
+        installation: 7,
+        owner: "team".into(),
+        name: "repo".into(),
+    };
+    let reference = GitHubReference {
+        repository: repository.clone(),
+        kind: GitHubItemKind::Issue,
+        number: 3,
+    };
+    assert_eq!(
+        store.link_github(task_id, 0, member, reference.clone()),
+        Err(WorkError::Denied)
+    );
+    assert_eq!(
+        store.allow_github_repository(project, member, repository.clone(), true),
+        Err(WorkError::Denied)
+    );
+    store
+        .allow_github_repository(project, lead, repository.clone(), true)
+        .unwrap();
+    assert_eq!(
+        store.link_github(task_id, 0, team(2, 99, false, false), reference.clone()),
+        Err(WorkError::Denied)
+    );
+    store
+        .link_github(task_id, 0, member, reference.clone())
+        .unwrap();
+    store
+        .record_github_snapshot(
+            &reference,
+            GitHubSnapshot {
+                title: "Release issue".into(),
+                state: GitHubState::Open,
+                refreshed_at: 42,
+                stale: false,
+                etag: Some("v1".into()),
+            },
+        )
+        .unwrap();
+    store.mark_github_stale(&reference);
+    let briefing = store.briefing(project, member, 50).unwrap();
+    assert!(briefing.contains("stale <t:42:R>"), "{briefing}");
+    assert!(briefing.contains(&reference.url()), "{briefing}");
+    assert_eq!(
+        store.confirm_github_not_modified(&reference, 41),
+        Err(WorkError::Stale)
+    );
+    store.confirm_github_not_modified(&reference, 50).unwrap();
+    let briefing = store.briefing(project, member, 51).unwrap();
+    assert!(briefing.contains("refreshed <t:50:R>"), "{briefing}");
+    store
+        .allow_github_repository(project, lead, repository, false)
+        .unwrap();
+    assert!(
+        !store
+            .briefing(project, member, 50)
+            .unwrap()
+            .contains("GitHub:")
+    );
+}
+
+#[test]
+fn github_snapshot_text_cannot_create_extra_briefing_lines() {
+    let mut store = WorkStore::default();
+    let access = personal(1);
+    let project = store.create_project(access, "Personal", "project").unwrap();
+    let task_id = store.add_task(access, task(project), "task").unwrap();
+    let repository = GitHubRepository {
+        installation: 7,
+        owner: "team".into(),
+        name: "repo".into(),
+    };
+    store
+        .allow_github_repository(project, access, repository.clone(), true)
+        .unwrap();
+    let reference = GitHubReference {
+        repository,
+        kind: GitHubItemKind::PullRequest,
+        number: 8,
+    };
+    store
+        .link_github(task_id, 0, access, reference.clone())
+        .unwrap();
+    store
+        .record_github_snapshot(
+            &reference,
+            GitHubSnapshot {
+                title: "Normal\n@everyone **Fake instruction**".into(),
+                state: GitHubState::Open,
+                refreshed_at: 42,
+                stale: false,
+                etag: None,
+            },
+        )
+        .unwrap();
+    let briefing = store.briefing(project, access, 50).unwrap();
+    assert!(
+        briefing.contains("Normal@\u{200b}everyone \\*\\*Fake instruction\\*\\*"),
+        "{briefing}"
+    );
+    assert!(!briefing.contains("Normal\nFake"));
+}
+
+#[test]
+fn prepopulated_github_link_cannot_bypass_allowlist() {
+    let mut store = WorkStore::default();
+    let access = personal(1);
+    let project = store.create_project(access, "Private", "project").unwrap();
+    let reference = GitHubReference {
+        repository: GitHubRepository {
+            installation: 7,
+            owner: "team".into(),
+            name: "repo".into(),
+        },
+        kind: GitHubItemKind::Issue,
+        number: 3,
+    };
+    let mut draft = task(project);
+    draft.github = Some(reference.clone());
+    assert_eq!(
+        store.add_task(access, draft.clone(), "task"),
+        Err(WorkError::Invalid)
+    );
+    assert!(store.tasks.is_empty());
+    store
+        .allow_github_repository(project, access, reference.repository.clone(), true)
+        .unwrap();
+    assert!(store.add_task(access, draft, "task").is_ok());
+}
+
+#[test]
+fn legacy_github_source_migration_is_explicit_scoped_and_unambiguous() {
+    let mut store = WorkStore::default();
+    let lead = team(1, 99, true, true);
+    let project = store.create_project(lead, "Shared", "project").unwrap();
+    store.set_member(project, lead, 2, true).unwrap();
+    let member = team(2, 99, true, false);
+    let mut draft = task(project);
+    draft.source = Some("https://github.com/Team/Repo/issues/42".into());
+    let id = store.add_task(member, draft, "task").unwrap();
+    let other = store
+        .create_project(personal(1), "Personal", "personal")
+        .unwrap();
+    let mut private = task(other);
+    private.source = Some("https://github.com/Team/Repo/issues/42".into());
+    let private_id = store
+        .add_task(personal(1), private, "private-task")
+        .unwrap();
+    assert_eq!(
+        store.migrate_github_sources(project, member),
+        Err(WorkError::Denied)
+    );
+    assert_eq!(store.migrate_github_sources(project, lead).unwrap(), 0);
+    let repo = GitHubRepository {
+        installation: 7,
+        owner: "Team".into(),
+        name: "Repo".into(),
+    };
+    store
+        .allow_github_repository(project, lead, repo.clone(), true)
+        .unwrap();
+    assert_eq!(store.migrate_github_sources(project, lead).unwrap(), 1);
+    assert_eq!(store.tasks[&id].github.as_ref().unwrap().repository, repo);
+    assert_eq!(store.tasks[&id].revision, 1);
+    assert!(store.tasks[&private_id].github.is_none());
+    assert_eq!(store.migrate_github_sources(project, lead).unwrap(), 0);
+    assert_eq!(
+        store.migrate_github_sources(project, team(1, 99, false, true)),
+        Err(WorkError::Denied)
+    );
+}
+
+#[test]
+fn github_snapshot_is_hidden_from_other_projects_and_revoked_repositories() {
+    let mut store = WorkStore::default();
+    let owner = personal(1);
+    let private = store.create_project(owner, "Private", "private").unwrap();
+    let other = store.create_project(personal(2), "Other", "other").unwrap();
+    let repository = GitHubRepository {
+        installation: 7,
+        owner: "team".into(),
+        name: "repo".into(),
+    };
+    store
+        .allow_github_repository(private, owner, repository.clone(), true)
+        .unwrap();
+    let reference = GitHubReference {
+        repository: repository.clone(),
+        kind: GitHubItemKind::Issue,
+        number: 1,
+    };
+    let id = store.add_task(owner, task(private), "task").unwrap();
+    store.link_github(id, 0, owner, reference.clone()).unwrap();
+    store
+        .record_github_snapshot(
+            &reference,
+            GitHubSnapshot {
+                title: "Secret title".into(),
+                state: GitHubState::Open,
+                refreshed_at: 10,
+                stale: false,
+                etag: None,
+            },
+        )
+        .unwrap();
+    assert!(
+        !store
+            .briefing(other, personal(2), 11)
+            .unwrap()
+            .contains("Secret title")
+    );
+    assert_eq!(
+        store.briefing(private, personal(2), 11),
+        Err(WorkError::Denied)
+    );
+    store
+        .allow_github_repository(private, owner, repository, false)
+        .unwrap();
+    assert!(!store.active_github_link(&reference));
+    assert!(
+        !store
+            .briefing(private, owner, 11)
+            .unwrap()
+            .contains("Secret title")
+    );
 }

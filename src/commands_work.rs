@@ -138,6 +138,7 @@ pub async fn task(
         due_at,
         snoozed_until: None,
         source: None,
+        github: None,
         revision: 0,
     };
     let id = ctx

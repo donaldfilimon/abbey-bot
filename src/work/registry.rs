@@ -104,6 +104,7 @@ impl WorkStore {
                 managers: BTreeSet::from([access.actor]),
                 members: BTreeSet::from([access.actor]),
                 revision: 0,
+                allowed_github_repositories: BTreeSet::new(),
             },
         );
         self.request_ids.insert(key, id);
@@ -168,6 +169,12 @@ impl WorkStore {
         let project = self.project(task.project_id, access)?;
         valid_text(&task.title, 300)?;
         if task.priority > 3
+            || task.github.as_ref().is_some_and(|reference| {
+                reference.validate().is_err()
+                    || !project
+                        .allowed_github_repositories
+                        .contains(&reference.repository)
+            })
             || task
                 .assignee
                 .is_some_and(|id| !project.members.contains(&id))
@@ -280,6 +287,28 @@ impl WorkStore {
                     .map_or(String::new(), |due| format!(" · due <t:{due}:R>")),
                 task.revision
             ));
+            if let Some(reference) = &task.github
+                && project
+                    .allowed_github_repositories
+                    .contains(&reference.repository)
+            {
+                let url = reference.url();
+                if let Some(snapshot) = self.github_snapshots.get(&reference.key()) {
+                    let title = github::inert_title(&snapshot.title);
+                    let state = match snapshot.state {
+                        GitHubState::Open => "open",
+                        GitHubState::Closed => "closed",
+                        GitHubState::Merged => "merged",
+                    };
+                    let freshness = if snapshot.stale { "stale" } else { "refreshed" };
+                    out.push_str(&format!(
+                        "\n  GitHub: {title} ({state}, {freshness} <t:{}:R>) · {url}",
+                        snapshot.refreshed_at
+                    ));
+                } else {
+                    out.push_str(&format!("\n  GitHub: awaiting first refresh · {url}"));
+                }
+            }
         }
         for decision in self
             .decisions
