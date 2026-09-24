@@ -39,6 +39,7 @@ mod scheduler;
 mod tool_scope;
 mod vision_transport;
 mod work_commit;
+mod work_recall;
 pub use memory_service::{MemoryService, RememberOutcome, SupersessionOutcome};
 
 /// Hidden-layer widths per `docs/spec/adaptivelearning.md`: `[18, 64, 32, 3]`.
@@ -144,6 +145,8 @@ pub struct AppState {
     pub budget: Mutex<Budget>,
     pub providers: ProviderRuntime,
     pub recall: Mutex<Recall>,
+    /// Actual disk revision, never inferred from an in-memory repair.
+    work_recall_disk: Mutex<Option<u64>>,
     pub engine: Mutex<Engine>,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
@@ -263,6 +266,8 @@ impl AppState {
             }
             None => (Stores::default(), Recall::new()),
         };
+        let mut recall = recall;
+        let work_recall_disk = Self::restore_work_projection(&stores, &mut recall);
         let (stores, recall) =
             memory_service::reconcile_loaded(stores, recall).map_err(StartupError)?;
         let backend = Backend::from_env();
@@ -354,6 +359,7 @@ impl AppState {
             budget: Mutex::new(Budget::default()),
             providers,
             recall: Mutex::new(recall),
+            work_recall_disk: Mutex::new(work_recall_disk),
             engine: Mutex::new(Engine::new()),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             attachments: attachment_client(),
@@ -400,6 +406,7 @@ impl AppState {
             budget: Mutex::new(Budget::default()),
             providers: ProviderRuntime::empty(),
             recall: Mutex::new(Recall::new()),
+            work_recall_disk: Mutex::new(None),
             engine: Mutex::new(Engine::new()),
             quiet: false,
             attachments: attachment_client(),
@@ -661,6 +668,7 @@ impl AppState {
                 async move {
                     let _serial = state.persistence_preparation.lock().await;
                     let (stores, recall) = state.prepare_gated_snapshot().await;
+                    let work_revision = stores.work.recall.projection_revision;
                     state
                         .persistence_requests
                         .get()
@@ -668,6 +676,7 @@ impl AppState {
                         .submit(crate::service::persistence::Snapshot { stores, recall })
                         .await
                         .inspect(|report| {
+                            state.observe_work_projection(work_revision, *report);
                             if let Some(status) = state.managed_status() {
                                 status.persisted(*report);
                             }
@@ -748,14 +757,17 @@ impl AppState {
     }
 
     fn persist_snapshot(&self, snapshots: (Stores, Recall)) -> PersistReport {
-        crate::service::persistence::write_snapshot(
+        let revision = snapshots.0.work.recall.projection_revision;
+        let report = crate::service::persistence::write_snapshot(
             self.data_dir.as_deref(),
             &*self.persistence_sink,
             crate::service::persistence::Snapshot {
                 stores: snapshots.0,
                 recall: snapshots.1,
             },
-        )
+        );
+        self.observe_work_projection(revision, report);
+        report
     }
 }
 

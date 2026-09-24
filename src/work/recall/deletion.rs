@@ -106,6 +106,7 @@ impl WorkStore {
                 nonce,
                 config_digest,
                 state: AttemptState::Prepared,
+                observed_admission: None,
             },
         );
         next.validate()?;

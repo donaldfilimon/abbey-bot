@@ -105,6 +105,9 @@ pub struct ProjectionAttempt {
     pub nonce: u64,
     pub config_digest: String,
     pub state: AttemptState,
+    /// Content-free proof observed remotely when local settlement could not commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_admission: Option<WorkAdmission>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminalOutcome {

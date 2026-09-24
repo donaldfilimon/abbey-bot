@@ -1,37 +1,29 @@
 //! Derived work projection, isolated from generic memory. Canonical admitted
 //! rows (including retired rows) own storage; a current canonical allowlist owns
 //! retrieval. No admission, filesystem commit or native authorization occurs here.
-#[cfg(test)]
 use super::WdbxStore;
-#[cfg(test)]
 use crate::{
     embedding::text_embedding,
     work::recall::{AdmittedWorkEvidence, WorkRecallState},
 };
-#[cfg(test)]
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use sha2::{Digest, Sha256};
-#[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(test)]
 const PREFIX: &str = "workrecall:v1:";
-#[cfg(test)]
 const MANIFEST: &str = "workrecall:v1:manifest";
 
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectionError {
     InvalidAuthority,
     AllocationUnavailable,
     Encoding,
+    #[cfg(test)]
     QueryTooLarge,
 }
 
 /// This describes an in-memory projection. Only an observed successful disk
 /// write (or loading and checking the actual disk file) establishes durability.
-#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectionManifest {
@@ -39,7 +31,6 @@ pub struct ProjectionManifest {
     pub revision: u64,
     pub records_digest: String,
 }
-#[cfg(test)]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
@@ -57,11 +48,9 @@ pub struct WorkHit {
     pub score: f32,
 }
 
-#[cfg(test)]
 fn encode<T: Serialize>(value: &T) -> Result<String, ProjectionError> {
     serde_json::to_string(value).map_err(|_| ProjectionError::Encoding)
 }
-#[cfg(test)]
 fn manifest(state: &WorkRecallState) -> Result<ProjectionManifest, ProjectionError> {
     state
         .validate()
@@ -76,11 +65,9 @@ fn manifest(state: &WorkRecallState) -> Result<ProjectionManifest, ProjectionErr
             .collect(),
     })
 }
-#[cfg(test)]
 fn key(id: u64) -> String {
     format!("{PREFIX}{id}")
 }
-#[cfg(test)]
 fn entry(key: &str, value: &str) -> Option<Entry> {
     let row: Entry = serde_json::from_str(value).ok()?;
     (row.version == 1 && row.vector_id != 0 && key == self::key(row.row.id)).then_some(row)
@@ -88,7 +75,6 @@ fn entry(key: &str, value: &str) -> Option<Entry> {
 
 /// Opaque records are preserved. A numeric token may be an unknown schema's
 /// vector reference, so ambiguity denies reuse/removal rather than erasing data.
-#[cfg(test)]
 fn mentions(value: &str, id: u64) -> bool {
     fn tokens(value: &str, id: u64) -> bool {
         value
@@ -107,7 +93,6 @@ fn mentions(value: &str, id: u64) -> bool {
     tokens(value, id) || serde_json::from_str(value).is_ok_and(|v| decoded(&v, id))
 }
 
-#[cfg(test)]
 fn exclusive(store: &WdbxStore, owner_key: &str, id: u64) -> bool {
     if store
         .unknown
@@ -140,7 +125,6 @@ fn exclusive(store: &WdbxStore, owner_key: &str, id: u64) -> bool {
     }
     true
 }
-#[cfg(test)]
 fn intact(store: &WdbxStore, key: &str, row: &Entry) -> bool {
     exclusive(store, key, row.vector_id)
         && store
@@ -155,7 +139,6 @@ fn intact(store: &WdbxStore, key: &str, row: &Entry) -> bool {
 impl super::Recall {
     /// Transactionally reconcile an owned candidate before publishing. Allocation
     /// is checked for the complete batch; no KV/vector/allocator partial mutation.
-    #[cfg(test)]
     pub fn reconcile_work_evidence(
         &mut self,
         state: &WorkRecallState,
@@ -232,7 +215,6 @@ impl super::Recall {
 
     /// Compare this instance with canonical authority. Call on the *loaded disk
     /// store* to detect durable debt; calling on live memory proves no disk write.
-    #[cfg(test)]
     pub fn work_projection_current(
         &self,
         state: &WorkRecallState,
@@ -285,13 +267,40 @@ impl super::Recall {
         if query.chars().count() > 512 {
             return Err(ProjectionError::QueryTooLarge);
         }
+        // Decode ownership once per query. Re-parsing every work envelope for
+        // every candidate makes an authorized thousand-row query quadratic.
+        let entries: BTreeMap<_, _> = self
+            .store
+            .kv_with_prefix(PREFIX)
+            .filter_map(|(k, v)| entry(k, v).map(|e| (k.to_string(), e)))
+            .collect();
+        let mut owners = BTreeMap::<u64, usize>::new();
+        for e in entries.values() {
+            *owners.entry(e.vector_id).or_default() += 1;
+        }
+        let mut vector_counts = BTreeMap::<u64, usize>::new();
+        for (id, _) in &self.store.vectors {
+            *vector_counts.entry(*id).or_default() += 1;
+        }
+        // Preserve the conservative opaque-reference checks unchanged. Known
+        // work envelopes are covered by owners, with malformed entries left in.
+        let mut opaque = self.store.clone();
+        for k in entries.keys() {
+            opaque.remove_kv(k);
+        }
         let vectors: BTreeMap<_, _> = allowed
             .iter()
             .filter_map(|id| {
                 let row = state.records.get(id)?;
                 let k = key(*id);
-                let e = entry(&k, self.store.get_kv(&k)?)?;
-                (e.row == *row && intact(&self.store, &k, &e)).then_some((e.vector_id, *id))
+                let e = entries.get(&k)?;
+                (e.row == *row
+                    && owners.get(&e.vector_id) == Some(&1)
+                    && vector_counts.get(&e.vector_id) == Some(&1)
+                    && exclusive(&opaque, &k, e.vector_id)
+                    && self.store.vector(e.vector_id)
+                        == Some(text_embedding(&row.payload.text).as_slice()))
+                .then_some((e.vector_id, *id))
             })
             .collect();
         Ok(self

@@ -64,6 +64,16 @@ impl WorkRecallState {
             {
                 return Err(WorkError::Invalid);
             }
+            if let Some(admission) = &attempt.observed_admission {
+                if attempt.state != AttemptState::Unknown {
+                    return Err(WorkError::Invalid);
+                }
+                if let WorkAdmission::Appended { digest_hex, .. } = admission
+                    && !valid_digest(digest_hex)
+                {
+                    return Err(WorkError::Invalid);
+                }
+            }
             match attempt.operation {
                 ProjectionOperation::Add { row } => {
                     if row == 0
@@ -195,14 +205,22 @@ impl WorkStore {
             }
         }
         for attempt in self.recall.attempts.values() {
-            self.recall_source_scope(&attempt.source)?;
+            let scope = self
+                .recall_source_scope(&attempt.source)?
+                .recall_gate_scope()
+                .0;
+            if let Some(
+                WorkAdmission::Appended { scoped_guild, .. }
+                | WorkAdmission::Uncovered { scoped_guild },
+            ) = &attempt.observed_admission
+                && *scoped_guild != scope
+            {
+                return Err(WorkError::Invalid);
+            }
         }
         Ok(())
     }
-    pub(in crate::work) fn recall_source_scope(
-        &self,
-        key: &WorkSourceKey,
-    ) -> Result<WorkScope, WorkError> {
+    pub(crate) fn recall_source_scope(&self, key: &WorkSourceKey) -> Result<WorkScope, WorkError> {
         match key {
             WorkSourceKey::Task { project, id } => {
                 if self.tasks.get(id).is_none_or(|t| t.project_id != *project) {

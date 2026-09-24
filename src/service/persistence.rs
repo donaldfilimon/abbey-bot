@@ -241,7 +241,7 @@ pub fn write_snapshot(
 fn write_snapshot_observed(
     dir: Option<&std::path::Path>,
     sink: &dyn PersistenceSink,
-    snapshot: Snapshot,
+    mut snapshot: Snapshot,
     mut observed: impl FnMut(ComponentProgress),
 ) -> PersistReport {
     let Some(dir) = dir else {
@@ -265,7 +265,11 @@ fn write_snapshot_observed(
         canonical_state: Some(PersistComponentOutcome::Committed),
         wdbx_projection: None,
     });
-    let projection = persist_projection(sink, dir, &snapshot.recall)
+    let projection = snapshot
+        .recall
+        .reconcile_work_evidence(&snapshot.stores.work.recall)
+        .map_err(|_| crate::persist::PersistErrorCategory::ProjectionEncode)
+        .and_then(|_| persist_projection(sink, dir, &snapshot.recall))
         .map_or_else(PersistComponentOutcome::Failed, |()| {
             PersistComponentOutcome::Committed
         });

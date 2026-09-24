@@ -135,6 +135,7 @@ mod voice_views;
 mod wdbx;
 mod webhook;
 mod work;
+mod work_recall_gate;
 mod wyhash;
 
 use serenity::all::{GatewayIntents, GuildId};

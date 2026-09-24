@@ -696,3 +696,88 @@ fn scope_exhaustion_blocks_all_sources_but_normal_reset_only_preferences() {
     s.control_preferences(a, Some(false), None, false).unwrap();
     assert!(reload(&s).recall.scope_controls[&a.scope()].recall_disabled_exhausted);
 }
+
+#[test]
+fn unresolved_observed_receipt_is_bounded_validated_and_backward_compatible() {
+    let a = personal(1);
+    let (mut s, _, key) = setup(a);
+    let (id, _) = s.prepare_recall(&key, a, 10, 1, "a".repeat(64)).unwrap();
+    let legacy = serde_json::to_vec(&s).unwrap();
+    let legacy: WorkStore = serde_json::from_slice(&legacy).unwrap();
+    assert_eq!(legacy.recall.attempts[&id].observed_admission, None);
+    let attempt = s.recall.attempts.get_mut(&id).unwrap();
+    attempt.state = AttemptState::Unknown;
+    attempt.observed_admission = Some(WorkAdmission::Appended {
+        digest_hex: "b".repeat(64),
+        scoped_guild: "discord:dm:1".into(),
+    });
+    assert_eq!(reload(&s).recall.attempts[&id], s.recall.attempts[&id]);
+    let mut worst = s.recall.attempts[&id].clone();
+    worst.id = u64::MAX;
+    worst.source = WorkSourceKey::Preference {
+        scope: WorkScope::Team {
+            guild: u64::MAX,
+            channel: u64::MAX,
+        },
+        delivery: u64::MAX,
+        actor: u64::MAX,
+    };
+    worst.operation = ProjectionOperation::Forget { row: u64::MAX };
+    worst.revision = u64::MAX;
+    worst.generation = u64::MAX;
+    worst.at = u64::MAX;
+    worst.nonce = u64::MAX;
+    worst.payload_bytes = MAX_PAYLOAD_BYTES;
+    worst.observed_admission = Some(WorkAdmission::Appended {
+        digest_hex: "b".repeat(64),
+        scoped_guild: format!("discord:dm:{}", u64::MAX),
+    });
+    assert!(bytes(&worst).unwrap().len() <= 1024);
+    // The full 1024-byte reservation already includes any observed receipt.
+    for n in 1..MAX_SOURCES as u64 {
+        s.recall.source_versions.insert(
+            WorkSourceKey::Task {
+                project: 1,
+                id: 100_000 + n,
+            },
+            SourceVersion {
+                revision: 0,
+                generation: 0,
+                recall_enabled: true,
+                recall_disabled_exhausted: false,
+            },
+        );
+    }
+    let template = s.recall.attempts[&id].clone();
+    for n in 1..MAX_ATTEMPTS as u64 {
+        let mut pending = template.clone();
+        pending.id = n * 2 + 2;
+        pending.source = WorkSourceKey::Task {
+            project: 1,
+            id: 100_000 + n,
+        };
+        pending.operation = ProjectionOperation::Add {
+            row: pending.id - 1,
+        };
+        s.recall.attempts.insert(pending.id, pending);
+    }
+    s.recall.sequence = MAX_ATTEMPTS as u64 * 2;
+    assert!(s.recall.validate().is_ok());
+    for owner in 2..2002 {
+        s.recall
+            .scope_controls
+            .insert(WorkScope::Personal { owner }, Default::default());
+    }
+    assert_eq!(s.recall.validate(), Err(WorkError::Full));
+    let mut bad = reload(&legacy);
+    bad.recall.attempts.get_mut(&id).unwrap().observed_admission = Some(WorkAdmission::Appended {
+        digest_hex: "bad".into(),
+        scoped_guild: "discord:dm:1".into(),
+    });
+    assert!(serde_json::from_slice::<WorkStore>(&serde_json::to_vec(&bad).unwrap()).is_err());
+    bad.recall.attempts.get_mut(&id).unwrap().observed_admission = Some(WorkAdmission::Appended {
+        digest_hex: "b".repeat(64),
+        scoped_guild: "discord:2".into(),
+    });
+    assert!(serde_json::from_slice::<WorkStore>(&serde_json::to_vec(&bad).unwrap()).is_err());
+}

@@ -321,3 +321,46 @@ fn checked_batch_allocation_exhaustion_collision_and_no_partial_mutation() {
     recall.reconcile_work_evidence(&work.recall).unwrap();
     assert_eq!(recall, before);
 }
+
+#[test]
+fn indexed_query_matches_conservative_ownership_for_opaque_references() {
+    let mut work = WorkStore::default();
+    let (project, row, _) = add(&mut work, 1, "alpha");
+    let mut baseline = Recall::new();
+    baseline.reconcile_work_evidence(&work.recall).unwrap();
+    let e = read_entry(&baseline, row);
+    let id = e.vector_id;
+    let escaped = id
+        .to_string()
+        .chars()
+        .map(|c| format!("\\u{:04x}", c as u32))
+        .collect::<String>();
+    for (k, value, unknown) in [
+        (
+            "foreign".to_string(),
+            format!("{{\"reference\":\"{escaped}\"}}"),
+            false,
+        ),
+        (
+            "foreign".to_string(),
+            format!("{{\"reference\":{id}e0}}"),
+            false,
+        ),
+        (format!("mem:g:u:{id}"), "generic".into(), false),
+        ("workrecall:v1:broken".into(), format!("future {id}"), false),
+        ("unused".into(), format!("{{\"future\":{id}}}"), true),
+        ("foreign".into(), "unrelated".into(), false),
+    ] {
+        let mut recall = baseline.clone();
+        if unknown {
+            recall.store.unknown.push(value);
+        } else {
+            recall.store.put_kv(k, value);
+        }
+        let expected = intact(&recall.store, &key(row), &e);
+        let hits = recall
+            .search_work_evidence(&work.recall, &allowed(&work, 1, project), "alpha", 8)
+            .unwrap();
+        assert_eq!(!hits.is_empty(), expected);
+    }
+}

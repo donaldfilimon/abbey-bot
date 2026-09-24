@@ -109,7 +109,7 @@ fn local_hour(tz: Tz, day: NaiveDate, hour: u8) -> Result<DateTime<Utc>, WorkErr
 }
 
 impl WorkStore {
-    pub(super) fn scope_projects(
+    pub(crate) fn scope_projects(
         &self,
         scope: &WorkScope,
         access: WorkAccess,
