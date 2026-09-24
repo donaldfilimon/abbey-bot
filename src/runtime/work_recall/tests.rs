@@ -519,47 +519,73 @@ async fn generic_writer_and_loaded_disk_debt_use_actual_projection_component() {
     stop(supervisor, writer).await;
 }
 
-#[test]
-fn bounded_thousand_row_query_measurement() {
-    let state = AppState::in_memory();
-    let mut stores = AppState::lock(&state.stores);
-    let project = stores
-        .work
-        .create_project(access(), "Measure", "project")
-        .unwrap();
-    for n in 0..1000 {
-        let id = stores
+#[tokio::test]
+async fn bounded_thousand_row_query_measurement() {
+    let state = AppState::in_memory_with_persistence(
+        Some(std::env::temp_dir().join("measure-recall-injected")),
+        Arc::new(Sink::default()),
+    );
+    let mut supervisor = ServiceSupervisor::new();
+    supervisor.finish_startup();
+    let writer = state.attach_service(supervisor.operations());
+    let project = {
+        let mut stores = AppState::lock(&state.stores);
+        let project = stores
             .work
-            .record_decision(
-                project,
-                access(),
-                "Use rust for reliable memory services",
-                1,
-                &format!("d{n}"),
-            )
+            .create_project(access(), "Measure", "project")
             .unwrap();
-        let key = WorkSourceKey::Decision { project, id };
-        let (attempt, payload) = stores
-            .work
-            .prepare_recall(&key, access(), 2, n, "a".repeat(64))
+        for n in 0..1000 {
+            let id = stores
+                .work
+                .record_decision(
+                    project,
+                    access(),
+                    "Use rust for reliable memory services",
+                    1,
+                    &format!("d{n}"),
+                )
+                .unwrap();
+            let key = WorkSourceKey::Decision { project, id };
+            let (attempt, payload) = stores
+                .work
+                .prepare_recall(&key, access(), 2, n, "a".repeat(64))
+                .unwrap();
+            stores
+                .work
+                .recall
+                .settle_add(
+                    attempt,
+                    payload,
+                    WorkAdmission::Uncovered {
+                        scoped_guild: "discord:dm:1".into(),
+                    },
+                    2,
+                )
+                .unwrap();
+        }
+        AppState::lock(&state.recall)
+            .reconcile_work_evidence(&stores.work.recall)
             .unwrap();
-        stores
-            .work
-            .recall
-            .settle_add(
-                attempt,
-                payload,
-                WorkAdmission::Uncovered {
-                    scoped_guild: "discord:dm:1".into(),
-                },
-                2,
-            )
+        let start = std::time::Instant::now();
+        AppState::lock(&state.recall)
+            .reconcile_work_evidence(&stores.work.recall)
             .unwrap();
-    }
-    AppState::lock(&state.recall)
-        .reconcile_work_evidence(&stores.work.recall)
-        .unwrap();
-    drop(stores);
+        println!(
+            "1000 populated unchanged reconciliation debug: {:?}",
+            start.elapsed()
+        );
+        let start = std::time::Instant::now();
+        assert!(
+            AppState::lock(&state.recall)
+                .work_projection_current(&stores.work.recall)
+                .unwrap()
+        );
+        println!(
+            "1000 populated startup currency debug: {:?}",
+            start.elapsed()
+        );
+        project
+    };
     let start = std::time::Instant::now();
     let result = state
         .recall_project(access(), project, 1, "reliable rust")
@@ -596,6 +622,13 @@ fn bounded_thousand_row_query_measurement() {
             .sum::<usize>()
             <= 4000
     );
+    let start = std::time::Instant::now();
+    state.commit_work(|_| Ok(())).await.unwrap();
+    println!(
+        "1000 populated unchanged native commit debug (injected sink, includes actor plus live reconciliation): {:?}",
+        start.elapsed()
+    );
+    stop(supervisor, writer).await;
 }
 
 #[tokio::test]
@@ -672,3 +705,6 @@ async fn native_filesystem_commit_and_restart_preserve_prepared_without_repropos
     stop(supervisor, writer).await;
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(unix)]
+mod selected_gate;

@@ -317,8 +317,9 @@ impl AppState {
         access: WorkAccess,
     ) -> Result<RecallStatus, WorkError> {
         let stores = Self::lock(&self.stores);
-        let scope = stores.work.recall_source_scope(source)?;
-        stores.work.scope_projects(&scope, access, true)?;
+        stores
+            .work
+            .authorize_recall_source_management(source, access)?;
         Ok(RecallStatus {
             retained_rows: stores
                 .work

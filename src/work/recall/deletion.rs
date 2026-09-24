@@ -78,7 +78,7 @@ impl WorkStore {
         config_digest: String,
     ) -> Result<u64, WorkError> {
         let record = self.recall.records.get(&row).ok_or(WorkError::Missing)?;
-        self.scope_projects(&record.payload.scope, access, true)?;
+        self.authorize_recall_source_management(&record.payload.source, access)?;
         // Query suppression (especially learning disable) is reversible. Only
         // durable native change or explicit source disable permits deletion.
         let version = self

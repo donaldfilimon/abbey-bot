@@ -125,6 +125,7 @@ fn exclusive(store: &WdbxStore, owner_key: &str, id: u64) -> bool {
     }
     true
 }
+#[cfg(test)]
 fn intact(store: &WdbxStore, key: &str, row: &Entry) -> bool {
     exclusive(store, key, row.vector_id)
         && store
@@ -136,6 +137,51 @@ fn intact(store: &WdbxStore, key: &str, row: &Entry) -> bool {
         && store.vector(row.vector_id) == Some(text_embedding(&row.row.payload.text).as_slice())
 }
 
+/// Parse known ownership once, retaining the original conservative checker for
+/// opaque records. Vector lookup and duplicate detection are indexed as well.
+struct Ownership<'a> {
+    entries: BTreeMap<String, Entry>,
+    owners: BTreeMap<u64, usize>,
+    vectors: BTreeMap<u64, Option<&'a [f32]>>,
+    opaque: WdbxStore,
+}
+impl<'a> Ownership<'a> {
+    fn new(store: &'a WdbxStore) -> Self {
+        let entries: BTreeMap<_, _> = store
+            .kv_with_prefix(PREFIX)
+            .filter_map(|(k, v)| entry(k, v).map(|e| (k.to_string(), e)))
+            .collect();
+        let mut owners = BTreeMap::new();
+        let mut opaque = store.clone();
+        for (k, e) in &entries {
+            *owners.entry(e.vector_id).or_default() += 1;
+            opaque.remove_kv(k);
+        }
+        let mut vectors = BTreeMap::new();
+        for (id, values) in &store.vectors {
+            vectors
+                .entry(*id)
+                .and_modify(|v| *v = None)
+                .or_insert(Some(values.as_slice()));
+        }
+        Self {
+            entries,
+            owners,
+            vectors,
+            opaque,
+        }
+    }
+    fn intact(&self, k: &str, row: &Entry) -> bool {
+        self.owners.get(&row.vector_id) == Some(&1)
+            && exclusive(&self.opaque, k, row.vector_id)
+            && self.vectors.get(&row.vector_id).copied().flatten()
+                == Some(text_embedding(&row.row.payload.text).as_slice())
+    }
+    fn unreferenced(&self, id: u64) -> bool {
+        !self.owners.contains_key(&id) && exclusive(&self.opaque, "", id)
+    }
+}
+
 impl super::Recall {
     /// Transactionally reconcile an owned candidate before publishing. Allocation
     /// is checked for the complete batch; no KV/vector/allocator partial mutation.
@@ -144,15 +190,12 @@ impl super::Recall {
         state: &WorkRecallState,
     ) -> Result<ProjectionManifest, ProjectionError> {
         let wanted_manifest = manifest(state)?;
-        let current: BTreeMap<String, Entry> = self
-            .store
-            .kv_with_prefix(PREFIX)
-            .filter_map(|(k, v)| entry(k, v).map(|row| (k.to_string(), row)))
-            .collect();
+        let ownership = Ownership::new(&self.store);
+        let current = &ownership.entries;
         let stable: BTreeSet<u64> = current
             .iter()
             .filter_map(|(k, row)| {
-                (state.records.get(&row.row.id) == Some(&row.row) && intact(&self.store, k, row))
+                (state.records.get(&row.row.id) == Some(&row.row) && ownership.intact(k, row))
                     .then_some(row.row.id)
             })
             .collect();
@@ -179,7 +222,7 @@ impl super::Recall {
                 if stable.contains(&row.row.id) {
                     continue;
                 }
-                if intact(&self.store, &k, row) {
+                if ownership.intact(&k, row) {
                     next.remove_vector(row.vector_id);
                 }
             }
@@ -187,9 +230,11 @@ impl super::Recall {
         }
         // Removed cache keys have no surviving references. Check the candidate,
         // preserving references in every retained foreign/unknown row.
-        if (start..end).any(|id| !exclusive(&next, "", id)) {
+        let candidate_ownership = Ownership::new(&next);
+        if (start..end).any(|id| !candidate_ownership.unreferenced(id)) {
             return Err(ProjectionError::AllocationUnavailable);
         }
+        drop(candidate_ownership);
         let mut vector_id = start;
         for (id, row) in &state.records {
             if stable.contains(id) {
@@ -240,13 +285,14 @@ impl super::Recall {
             .kv_with_prefix(PREFIX)
             .map(|(k, _)| k.to_string())
             .collect();
+        let ownership = Ownership::new(&self.store);
         Ok(expected_keys == actual_keys
             && state.records.iter().all(|(id, row)| {
                 let k = key(*id);
-                self.store
-                    .get_kv(&k)
-                    .and_then(|v| entry(&k, v))
-                    .is_some_and(|e| e.row == *row && intact(&self.store, &k, &e))
+                ownership
+                    .entries
+                    .get(&k)
+                    .is_some_and(|e| e.row == *row && ownership.intact(&k, e))
             }))
     }
 
@@ -267,40 +313,14 @@ impl super::Recall {
         if query.chars().count() > 512 {
             return Err(ProjectionError::QueryTooLarge);
         }
-        // Decode ownership once per query. Re-parsing every work envelope for
-        // every candidate makes an authorized thousand-row query quadratic.
-        let entries: BTreeMap<_, _> = self
-            .store
-            .kv_with_prefix(PREFIX)
-            .filter_map(|(k, v)| entry(k, v).map(|e| (k.to_string(), e)))
-            .collect();
-        let mut owners = BTreeMap::<u64, usize>::new();
-        for e in entries.values() {
-            *owners.entry(e.vector_id).or_default() += 1;
-        }
-        let mut vector_counts = BTreeMap::<u64, usize>::new();
-        for (id, _) in &self.store.vectors {
-            *vector_counts.entry(*id).or_default() += 1;
-        }
-        // Preserve the conservative opaque-reference checks unchanged. Known
-        // work envelopes are covered by owners, with malformed entries left in.
-        let mut opaque = self.store.clone();
-        for k in entries.keys() {
-            opaque.remove_kv(k);
-        }
+        let ownership = Ownership::new(&self.store);
         let vectors: BTreeMap<_, _> = allowed
             .iter()
             .filter_map(|id| {
                 let row = state.records.get(id)?;
                 let k = key(*id);
-                let e = entries.get(&k)?;
-                (e.row == *row
-                    && owners.get(&e.vector_id) == Some(&1)
-                    && vector_counts.get(&e.vector_id) == Some(&1)
-                    && exclusive(&opaque, &k, e.vector_id)
-                    && self.store.vector(e.vector_id)
-                        == Some(text_embedding(&row.payload.text).as_slice()))
-                .then_some((e.vector_id, *id))
+                let e = ownership.entries.get(&k)?;
+                (e.row == *row && ownership.intact(&k, e)).then_some((e.vector_id, *id))
             })
             .collect();
         Ok(self

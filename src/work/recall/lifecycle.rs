@@ -123,6 +123,26 @@ impl WorkRecallState {
     }
 }
 impl WorkStore {
+    /// Project-owned sources authorize only their project. Preference evidence
+    /// owns a scope and retains the stronger all-project management boundary.
+    #[cfg(test)]
+    pub fn authorize_recall_source_management(
+        &self,
+        key: &WorkSourceKey,
+        access: WorkAccess,
+    ) -> Result<WorkScope, WorkError> {
+        let scope = self.recall_source_scope(key)?;
+        match key {
+            WorkSourceKey::Task { project, .. } | WorkSourceKey::Decision { project, .. } => {
+                self.project(*project, access)?.authorize(access, true)?
+            }
+            WorkSourceKey::Preference { .. } => {
+                self.scope_projects(&scope, access, true)?;
+            }
+        }
+        Ok(scope)
+    }
+
     /// Explicit projection preparation only; loading and native hooks never call it.
     #[cfg(test)]
     pub fn prepare_recall(
@@ -177,16 +197,7 @@ impl WorkStore {
         key: &WorkSourceKey,
         access: WorkAccess,
     ) -> Result<(), WorkError> {
-        // Re-authorize even when already disabled. Existing native state remains.
-        let scope = self.recall_source_scope(key)?;
-        match key {
-            WorkSourceKey::Task { project, .. } | WorkSourceKey::Decision { project, .. } => {
-                self.project(*project, access)?.authorize(access, true)?;
-            }
-            WorkSourceKey::Preference { .. } => {
-                self.scope_projects(&scope, access, true)?;
-            }
-        }
+        let scope = self.authorize_recall_source_management(key, access)?;
         let mut next = self.recall.clone();
         if !next.source_versions.contains_key(key) {
             let payload = self.recall_candidate(key, access)?;

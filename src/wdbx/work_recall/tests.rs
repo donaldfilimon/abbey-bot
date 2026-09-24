@@ -358,6 +358,20 @@ fn indexed_query_matches_conservative_ownership_for_opaque_references() {
             recall.store.put_kv(k, value);
         }
         let expected = intact(&recall.store, &key(row), &e);
+        assert_eq!(
+            Ownership::new(&recall.store).intact(&key(row), &e),
+            expected
+        );
+        assert_eq!(
+            recall.work_projection_current(&work.recall).unwrap(),
+            expected
+        );
+        let mut repaired = recall.clone();
+        repaired.reconcile_work_evidence(&work.recall).unwrap();
+        assert!(repaired.work_projection_current(&work.recall).unwrap());
+        if !expected {
+            assert!(repaired.store.vector(id).is_some());
+        }
         let hits = recall
             .search_work_evidence(&work.recall, &allowed(&work, 1, project), "alpha", 8)
             .unwrap();
