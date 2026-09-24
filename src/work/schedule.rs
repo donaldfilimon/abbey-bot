@@ -165,7 +165,7 @@ impl WorkStore {
         Ok(())
     }
 
-    /// At most one batch per call. Missed days collapse into today's briefing;
+    /// At most one batch per call. Missed days collapse into one latest briefing;
     /// overdue reminders collapse into that briefing, or one reminder batch.
     /// Quiet hours defer without consuming coverage or quota.
     pub fn next_batch(
@@ -234,11 +234,26 @@ impl WorkStore {
         if tasks.is_empty() {
             return Ok(None);
         }
-        let briefing_key = format!("{}:{local_day}:briefing:scope", scope.key());
-        let briefing = now_utc >= local_hour(tz, local.date_naive(), policy.briefing_hour)?
-            && !receipts
-                .iter()
-                .any(|r| r.dedupe_keys.contains(&briefing_key));
+        let mut occurrence_day = local.date_naive();
+        let today_at = local_hour(tz, occurrence_day, policy.briefing_hour)?;
+        // An evening occurrence inside overnight quiet hours becomes eligible
+        // the following morning. Keep its original date as its identity; the
+        // receipt's local_day and UTC at still charge the actual delivery day.
+        if now_utc < today_at
+            && policy.quiet_start > policy.quiet_end
+            && policy.briefing_hour >= policy.quiet_start
+        {
+            occurrence_day = occurrence_day.pred_opt().ok_or(WorkError::Invalid)?;
+        }
+        let briefing_key = format!("{}:{occurrence_day}:briefing:scope", scope.key());
+        let briefing = now_utc >= local_hour(tz, occurrence_day, policy.briefing_hour)?
+            && !receipts.iter().any(|r| {
+                r.dedupe_keys.contains(&briefing_key)
+                    || (r.kind == Some(WorkDeliveryKind::Briefing)
+                        && utc(r.at).is_ok_and(|at| {
+                            at.with_timezone(&tz).date_naive() == local.date_naive()
+                        }))
+            });
         let coverage: Vec<_> = tasks
             .iter()
             .filter_map(|t| {

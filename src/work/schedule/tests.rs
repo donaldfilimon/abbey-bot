@@ -358,3 +358,141 @@ fn invalid_time_snoozed_and_finished_tasks_are_not_scheduled() {
         .unwrap();
     assert_eq!(store.next_batch(&scope, access, now + 60), Ok(None));
 }
+
+#[test]
+fn evening_briefing_delays_across_midnight_and_dst_with_stable_occurrence() {
+    for (evening, morning, occurrence) in [
+        ("2026-09-25T03:00:00Z", "2026-09-25T12:00:00Z", "2026-09-24"),
+        ("2026-03-08T04:00:00Z", "2026-03-08T12:00:00Z", "2026-03-07"),
+        ("2026-11-01T03:00:00Z", "2026-11-01T13:00:00Z", "2026-10-31"),
+    ] {
+        let (mut store, scope, access, id) = fixture();
+        let policy = store.scope_automation.get_mut(&scope.key()).unwrap();
+        policy.briefing_hour = 23;
+        policy.daily_limit = 1;
+        let at = timestamp(morning);
+        assert_eq!(
+            store.next_batch(&scope, access, timestamp(evening)),
+            Ok(None)
+        );
+        assert_eq!(store.next_batch(&scope, access, at - 1), Ok(None));
+        let batch = store.next_batch(&scope, access, at).unwrap().unwrap();
+        assert_eq!(batch.kind, WorkDeliveryKind::Briefing);
+        assert!(
+            batch
+                .dedupe_keys
+                .contains(&format!("{}:{occurrence}:briefing:scope", scope.key()))
+        );
+        assert_ne!(batch.local_day, occurrence);
+        let receipt = store.reserve_batch(access, &batch, at).unwrap();
+        assert_eq!(store.deliveries[&receipt].at, at);
+        assert_eq!(store.deliveries[&receipt].local_day, batch.local_day);
+        let mut loaded: WorkStore =
+            serde_json::from_str(&serde_json::to_string(&store).unwrap()).unwrap();
+        assert_eq!(loaded.next_batch(&scope, access, at), Ok(None));
+        // Quota is charged to this morning, not the previous occurrence date.
+        loaded.set_reminder(access, id, 0, Some(at + 1)).unwrap();
+        assert_eq!(loaded.next_batch(&scope, access, at + 1), Ok(None));
+        // A policy edit cannot create a second briefing on this delivery day.
+        let policy = loaded.scope_automation.get_mut(&scope.key()).unwrap();
+        policy.daily_limit = 4;
+        policy.briefing_hour = 9;
+        loaded.set_reminder(access, id, 1, None).unwrap();
+        assert_eq!(loaded.next_batch(&scope, access, at + 3600), Ok(None));
+    }
+}
+
+#[test]
+fn normal_briefing_does_not_repeat_yesterday_before_today_is_due() {
+    let (mut store, scope, access, _) = fixture();
+    let yesterday = timestamp("2026-09-24T13:00:00Z");
+    let batch = store
+        .next_batch(&scope, access, yesterday)
+        .unwrap()
+        .unwrap();
+    store.reserve_batch(access, &batch, yesterday).unwrap();
+    let loaded: WorkStore = serde_json::from_str(&serde_json::to_string(&store).unwrap()).unwrap();
+    assert_eq!(
+        loaded.next_batch(&scope, access, timestamp("2026-09-25T12:00:00Z")),
+        Ok(None)
+    );
+    let next = loaded
+        .next_batch(&scope, access, yesterday + 86400)
+        .unwrap()
+        .unwrap();
+    assert!(
+        next.dedupe_keys
+            .contains("personal:1:2026-09-25:briefing:scope")
+    );
+}
+
+#[test]
+fn delayed_briefing_skips_backlog_and_repeated_tick_after_reload() {
+    let (mut store, scope, access, _) = fixture();
+    store
+        .scope_automation
+        .get_mut(&scope.key())
+        .unwrap()
+        .briefing_hour = 23;
+    let now = timestamp("2026-09-25T12:00:00Z");
+    let batch = store.next_batch(&scope, access, now).unwrap().unwrap();
+    store.reserve_batch(access, &batch, now).unwrap();
+    // Days of missed runs yield just the latest overnight occurrence.
+    let later = now + 86400 * 5;
+    let next = store.next_batch(&scope, access, later).unwrap().unwrap();
+    assert!(
+        next.dedupe_keys
+            .contains("personal:1:2026-09-29:briefing:scope")
+    );
+    store.reserve_batch(access, &next, later).unwrap();
+    let loaded: WorkStore = serde_json::from_str(&serde_json::to_string(&store).unwrap()).unwrap();
+    assert_eq!(loaded.next_batch(&scope, access, later + 60), Ok(None));
+    assert_eq!(loaded.deliveries.len(), 2);
+}
+
+#[test]
+fn deliveries_never_consume_another_scopes_quota_or_reminder_coverage() {
+    let (mut store, first_scope, first_access, first_id) = fixture();
+    let second_access = personal(2);
+    let project = store
+        .create_project(second_access, "Other owner", "other")
+        .unwrap();
+    let second_scope = store.projects[&project].scope.clone();
+    let second_id = store
+        .add_task(second_access, task(project), "other task")
+        .unwrap();
+    let mut policy = store.scope_automation[&first_scope.key()].clone();
+    policy.daily_limit = 1;
+    policy.destination = Some(second_access.channel);
+    store
+        .configure_automation(&second_scope, second_access, policy)
+        .unwrap();
+    store
+        .scope_automation
+        .get_mut(&first_scope.key())
+        .unwrap()
+        .daily_limit = 1;
+    let now = timestamp("2026-09-24T12:00:00Z");
+    store
+        .set_reminder(first_access, first_id, 0, Some(now))
+        .unwrap();
+    store
+        .set_reminder(second_access, second_id, 0, Some(now))
+        .unwrap();
+    let first = store
+        .next_batch(&first_scope, first_access, now)
+        .unwrap()
+        .unwrap();
+    store.reserve_batch(first_access, &first, now).unwrap();
+    assert_eq!(store.next_batch(&first_scope, first_access, now), Ok(None));
+    let other = store
+        .next_batch(&second_scope, second_access, now)
+        .unwrap()
+        .unwrap();
+    assert_eq!(other.kind, WorkDeliveryKind::Reminder);
+    assert_eq!(other.task_ids, vec![second_id]);
+    assert_eq!(other.coverage.len(), 1);
+    assert_eq!(other.coverage[0].task_id, second_id);
+    store.reserve_batch(second_access, &other, now).unwrap();
+    assert_eq!(store.deliveries.len(), 2);
+}
