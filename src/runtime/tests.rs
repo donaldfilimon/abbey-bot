@@ -536,3 +536,6 @@ fn settled_rewards_reach_the_guild_stats() {
     drop(brains);
     assert!(AppState::lock(&state.budget).try_take("discord:g", 6, 0));
 }
+
+#[path = "work_tests.rs"]
+mod work_tests;

@@ -42,3 +42,18 @@ fn closed_event_has_only_bounded_operational_fields() {
     );
     assert!(serde_json::from_str::<EventCode>("\"PRIVATE_CANARY\"").is_err());
 }
+
+#[test]
+fn work_recall_outcomes_remain_closed_content_free_events() {
+    for code in [EventCode::WorkRecallAdmission, EventCode::WorkRecallUnknown] {
+        let event =
+            OperationalEvent::new(1, EventComponent::WorkRecall, code, EventOutcome::Degraded)
+                .unwrap();
+        let encoded = serde_json::to_string(&event).unwrap();
+        assert!(encoded.contains("work_recall"));
+        for forbidden in ["payload", "digest", "principal", "source", "guild", "token"] {
+            assert!(!encoded.contains(forbidden));
+        }
+        assert!(encoded.len() < 512);
+    }
+}

@@ -112,6 +112,25 @@ Active voice guidance includes a wake-name example and the stop command.
 <!-- BEGIN GENERATED COMMAND CATALOG -->
 | Command | Context | Response | What it does |
 |---|---|---|---|
+| `/work project` | guild, bot DM | private | Create a personal or channel project. |
+| `/work projects` | guild, bot DM | private | List projects available here. |
+| `/work goal` | guild, bot DM | private | Record a project goal. |
+| `/work task` | guild, bot DM | private | Create an assigned task. |
+| `/work decision` | guild, bot DM | private | Record a project decision. |
+| `/work recall configure` | guild, bot DM | private | Configure scope recall opt-in. |
+| `/work recall show` | guild, bot DM | private | Inspect scope recall availability and revision. |
+| `/work briefing` | guild, bot DM | private | Review current work privately. |
+| `/work complete` | guild, bot DM | private | Complete a current task. |
+| `/work status` | guild, bot DM | private | Change a task's status. |
+| `/work snooze` | guild, bot DM | private | Snooze a task until a chosen time. |
+| `/work member` | guild | private | Manage a shared project's members. |
+| `/work preferences` | guild, bot DM | private | Inspect your learning settings and evidence. |
+| `/work reset_preferences` | guild, bot DM | private | Clear your learned preferences and evidence. |
+| `/work learning` | guild, bot DM | private | Enable or disable scope preference learning. |
+| `/work timing` | guild, bot DM | private | Set an explicit optional delivery hour. |
+| `/work feedback` | guild, bot DM | private | Record or correct your attributable delivery feedback. |
+| `/work automation` | guild, bot DM | private | Configure scope automation opt-in and delivery limits. |
+| `/work reminder` | guild, bot DM | private | Set or cancel an explicit task reminder. |
 | `/help` | guild, bot DM | private | Browse commands available to you privately. |
 | `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |
 | `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |
@@ -183,6 +202,66 @@ Active voice guidance includes a wake-name example and the stop command.
 
 The member voice status, typed voice-mode choices, manager diagnostics, and classic administration dashboard are registered surfaces.
 <!-- END GENERATED COMMAND CATALOG -->
+
+### Work records
+
+`/work project` creates a personal project in a bot DM or a project attached to
+the current guild channel. `/work projects` lists only projects available in that
+context. For a shared project, a server manager creates it and manages its
+membership with `/work member`; members must also retain current access to the
+channel. Project IDs and task revisions appear in private briefings. Supply the
+current revision when changing a task, so an old command cannot overwrite a
+newer change. Tasks can be open, in progress, blocked, done, or cancelled.
+
+Work records are saved in the canonical state file under `ABBEY_DATA_DIR` before
+a mutation is acknowledged. This release records due dates and snoozes but does
+not yet send scheduled reminders or proactive briefings. Automation starts
+disabled. `/work preferences` shows learning evidence for the current personal
+or guild-channel context, showing only the caller's evidence. `/work feedback`
+accepts useful/dismissed/snoozed responses for completed, attributed deliveries;
+`correction:true` replaces your response (or `response:remove` removes it).
+Duplicates never increase evidence. At least five attributable observations are
+required; silence and legacy unattributed rows are inert. Repeated snoozes suggest
+a local hour, dismissals reduce optional follow-ups, and usefulness adjusts
+briefing ranking. `/work timing` overrides learned timing. `/work learning`
+disables all learned adjustments. `/work reset_preferences` clears evidence and
+all derived adjustments, retaining explicit timing. Team controls require manager
+access to every project in the scope; feedback rechecks membership in every project.
+Personal and team evidence never mix.
+
+`/work automation` explicitly chooses an IANA timezone and the current personal DM
+or bound team channel. Quiet hours default to 22–08 and the shared ceiling is four
+deliveries per local day (configurable downward), including reminders and briefings
+across every project in that scope. All team scopes and unconfigured personal
+owners must choose a timezone. Optional `ABBEY_WORK_DEFAULT_TIMEZONE_USER_ID` names
+one positive Discord user ID whose personal default is `America/New_York`; it
+provides no access or manager privileges and explicit timezone choices win.
+No display name implies this identity. `/work reminder` discloses the ceiling;
+`/work snooze` re-arms an existing reminder but never invents one from a deadline.
+Learning never changes access, quiet hours, ceilings or deadlines. Briefings are private responses and use project-authorized task
+and decision records.
+
+`/work recall show` displays the current scope's durable opt-in, revision and
+operator availability. `/work recall configure enabled:true revision:0` creates
+the first policy; subsequent changes require the displayed revision. Personal
+owners and managers of **every** project in the team scope may configure it.
+Current membership and channel visibility are checked on every command. Operator
+`ABBEY_WORK_RECALL_SCOPES` is an optional strict JSON array, default empty, using
+`[{"Personal":{"owner":123}},{"Team":{"guild":456,"channel":789}}]`. IDs must be
+positive, scopes unique, and input limited to 1,000 scopes and 64 KiB. Unknown
+fields, blank values and malformed JSON fail startup; use `[]` to remove all
+operator availability. The allowlist grants no membership or manager authority.
+Enabling requires both operator availability and a successful durable policy
+commit. Disabling and inspection remain available after operator removal.
+
+Recall policy records are separate from compact source controls, capped at
+10,000 entries and 2 MiB including reserved in-place growth. Existing policies
+can be disabled at capacity. Configuration never indexes history or removes
+admitted records, receipts or unresolved attempts. **Only policy configuration
+and inspection are exposed at this stage:** reindex, forget, finish-deletion,
+native admission and semantic briefing consumers remain pending. Current
+briefings continue to use canonical native records. Deployment and live recall
+acceptance have not been established by these source changes.
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned
 notice and choose **Agree** for the displayed processing mode. Each member

@@ -270,10 +270,78 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
             "memory_receipts",
             "pending_rewards",
             "reputations",
+            // Chief-of-staff records are canonical; older state files load an
+            // empty work store through the field default.
+            "work",
         ]
         .into_iter()
         .collect()
     );
+}
+
+#[test]
+fn old_canonical_state_loads_without_work_records() {
+    let mut encoded = serde_json::to_value(Stores::default()).unwrap();
+    encoded.as_object_mut().unwrap().remove("work");
+    let restored: Stores = serde_json::from_value(encoded).unwrap();
+    assert_eq!(restored.work, crate::work::WorkStore::default());
+}
+
+#[test]
+fn interrupted_external_action_loads_for_review_without_replay() {
+    use crate::action_approval::{
+        ActionFacts, ActionOperation, ActionPermission, ActionSpec, ActionState, ActionTarget,
+    };
+    let dir = temp_dir("interrupted-action");
+    let mut stores = Stores::default();
+    let id = stores
+        .work
+        .actions
+        .propose(
+            ActionSpec {
+                target: ActionTarget::GitHubRepository {
+                    installation: 1,
+                    owner: "team".into(),
+                    repo: "repo".into(),
+                },
+                operation: ActionOperation::GitHubCreateIssue {
+                    title: "Issue".into(),
+                    body: String::new(),
+                },
+                required: std::collections::BTreeSet::from([ActionPermission::GitHubIssuesWrite]),
+            },
+            2,
+            100,
+            "etag-1",
+        )
+        .unwrap();
+    let digest = stores
+        .work
+        .actions
+        .proposal(id)
+        .unwrap()
+        .content_digest()
+        .to_owned();
+    let permissions = std::collections::BTreeSet::from([ActionPermission::GitHubIssuesWrite]);
+    let facts = ActionFacts {
+        human_principal: Some(2),
+        current_permissions: &permissions,
+        target_fingerprint: "etag-1",
+        now: 10,
+    };
+    stores
+        .work
+        .actions
+        .confirm(id, &digest, facts.clone())
+        .unwrap();
+    stores.work.actions.begin(id, facts).unwrap();
+    stores.save(&dir).unwrap();
+    let restored = Stores::load(&dir).unwrap();
+    assert_eq!(
+        restored.work.actions.proposal(id).unwrap().state(),
+        ActionState::ReviewRequired
+    );
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]

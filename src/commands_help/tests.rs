@@ -31,7 +31,7 @@ fn guided_button_payloads_follow_eligibility_and_keep_the_original_expiry() {
                 );
                 let menu = &rows[0]["components"][0];
                 assert_eq!(menu["type"], 3);
-                assert_eq!(menu["options"].as_array().unwrap().len(), 8);
+                assert_eq!(menu["options"].as_array().unwrap().len(), 9);
                 if let Some(buttons) = rows[1]["components"].as_array() {
                     let expected = if context == InteractionContext::Guild {
                         vec!["ask", "memory", "images", "voice"]
@@ -186,7 +186,7 @@ fn discord_payload_contexts_parent_permissions_and_limits() {
         );
         let menu = &json[0]["components"][0];
         assert!(menu["custom_id"].as_str().unwrap().len() <= 100);
-        assert_eq!(menu["options"].as_array().unwrap().len(), 8);
+        assert_eq!(menu["options"].as_array().unwrap().len(), 9);
         for option in menu["options"].as_array().unwrap() {
             assert!(option["label"].as_str().unwrap().len() <= 100);
         }

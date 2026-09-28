@@ -452,6 +452,9 @@ pub struct ReputationRow {
 /// still loads — a missing section means "empty", never "refuse to start".
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Stores {
+    /// Canonical chief-of-staff work state. A pre-feature document loads empty.
+    #[serde(default)]
+    pub work: crate::work::WorkStore,
     #[serde(default)]
     pub guilds: BTreeMap<String, GuildSettings>,
     #[serde(default)]
@@ -544,7 +547,10 @@ impl Stores {
                 });
             }
         };
-        serde_json::from_str(&text).map_err(|source| PersistError::Decode { path, source })
+        let mut stores: Self =
+            serde_json::from_str(&text).map_err(|source| PersistError::Decode { path, source })?;
+        stores.work.actions.mark_interrupted();
+        Ok(stores)
     }
 
     /// Write the document atomically into `dir`, creating the directory.

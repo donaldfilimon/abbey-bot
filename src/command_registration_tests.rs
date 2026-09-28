@@ -90,6 +90,75 @@ fn guild_registration_payload_never_invents_an_entry_point() {
     }));
 }
 
+#[test]
+fn recall_policy_commands_fit_actual_recursive_registration_limits() {
+    fn check(node: &Value, depth: usize) -> usize {
+        let mut count = 0;
+        for key in ["name", "description", "value"] {
+            if let Some(text) = node.get(key).and_then(Value::as_str) {
+                count += text.chars().count();
+                if key == "name" {
+                    assert!(text.chars().count() <= 32);
+                }
+                if key == "description" {
+                    assert!(text.chars().count() <= 100);
+                }
+            }
+        }
+        for key in ["options", "choices"] {
+            if let Some(children) = node.get(key).and_then(Value::as_array) {
+                assert!(children.len() <= 25);
+                assert!(depth <= 3);
+                for child in children {
+                    count += check(child, depth + 1);
+                }
+            }
+        }
+        count
+    }
+    let payload = poise::builtins::create_application_commands(&application_commands());
+    let encoded = serde_json::to_value(payload).unwrap();
+    let work = encoded
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "work")
+        .unwrap();
+    let length = check(work, 0);
+    println!("Actual /work registration: {length} name/description/value characters");
+    assert!(length <= 8000);
+    let recall = work["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "recall")
+        .unwrap();
+    assert_eq!(recall["type"], 2);
+    let names: Vec<_> = recall["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["configure", "show"]);
+    let configure = &recall["options"][0];
+    assert_eq!(configure["type"], 1);
+    let fields: Vec<_> = configure["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(fields, ["enabled", "revision"]);
+    assert!(
+        configure["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o["required"] == true)
+    );
+}
+
 /// Export the exact source registration request for an operator's read-only
 /// comparison with Discord. This starts no client and needs no bot credential.
 /// Unix only: creation relies on owner-only mode bits, not inherited ACLs.
