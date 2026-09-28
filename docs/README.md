@@ -15,7 +15,7 @@
 
 ## Specifications
 
-- [`docs/spec/`](spec/) — Reference specifications (10 files):
+- [`docs/spec/`](spec/) — Reference specifications (9 files):
   - `appleintelligence.md` — ABIEngine, LanguageModel protocol, Dynamic Profiles, Tool conformances
   - `brain.md` — NeuralNetwork, DQNAgent, ReplayBuffer, StateEncoder, RewardCollector, SocialBrain
   - `adaptivelearning.md` — 18-dim state encoder, deterministic sentiment, delayed rewards, AbbeyScheduler
@@ -25,7 +25,6 @@
   - `multiguild.md` — GuildConfig, GuildRegistry, per-guild personas, reply cooldown, /admin surface
   - `vision.md` — ImageUnderstanding seam, Apple Vision + remote VLM, /see and /ocr
   - `platforms.md` — SocialAdapter, SocialRouter, Discord/Telegram/Slack adapters, scoped-ID namespacing
-  - `SKILL.md` — discord-abbey skill orchestration layer with reference map
 
 ## Superpowers (Internal Working Docs)
 
