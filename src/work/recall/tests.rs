@@ -149,7 +149,6 @@ fn provenance_second_project_and_whole_multi_project_identity() {
     let mut wrong_guild = a;
     wrong_guild.guild = Some(10);
     assert!(s.recall_candidate(&key2, wrong_guild).is_err());
-    println!("{}", s.recall.records[&row2].payload.text);
 }
 #[test]
 fn learning_disable_reenable_reset_and_corrections_preserve_native_replay() {

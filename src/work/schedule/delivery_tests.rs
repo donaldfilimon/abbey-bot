@@ -64,7 +64,6 @@ fn exact_sources_exclude_authorized_empty_a_and_include_both_when_rendered() {
         BTreeSet::from([a, b])
     );
     assert_eq!(batch.provenance.source_refs.len(), 2);
-    println!("Private frozen body:\n{}", batch.rendered_body);
 }
 
 #[test]
@@ -523,7 +522,6 @@ fn bounded_briefing_selects_urgent_later_project_and_discloses_omissions() {
     let omitted = earlier[7];
     assert!(!batch.task_ids.contains(&omitted));
     assert!(!batch.coverage.iter().any(|c| c.task_id == omitted));
-    println!("Nine-task bounded briefing:\n{}", batch.rendered_body);
     reserve(&mut store, access, &batch, NOW);
     let remainder = store.next_batch(&scope, access, NOW).unwrap().unwrap();
     assert_eq!(remainder.kind, WorkDeliveryKind::Reminder);
@@ -601,17 +599,12 @@ fn shortened_decision_warns_about_omitted_qualifier_and_digest_includes_warning(
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     assert_eq!(digest, batch.provenance.rendered_digest);
-    println!(
-        "Decision with a later essential qualifier (preview visibly incomplete):\n{}",
-        batch.rendered_body
-    );
     let title = "Long task title ".repeat(10);
     store
         .add_task(access, WorkTask { title, ..task(a) }, "longtask")
         .unwrap();
     let batch = store.next_batch(&scope, access, NOW).unwrap().unwrap();
     assert!(batch.rendered_body.contains("… [shortened] —"));
-    println!("Shortened task title:\n{}", batch.rendered_body);
 }
 
 #[test]
