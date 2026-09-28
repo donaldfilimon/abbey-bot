@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum WorkScope {
     Personal { owner: u64 },
     Team { guild: u64, channel: u64 },
@@ -258,6 +259,7 @@ pub struct ReminderCoverage {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct WorkStore {
     pub recall: recall::WorkRecallState,
+    pub recall_policies: recall_policy::RecallPolicies,
     pub sequence: u64,
     pub projects: BTreeMap<u64, WorkProject>,
     pub goals: BTreeMap<u64, WorkGoal>,
@@ -332,6 +334,7 @@ mod loading;
 mod policy;
 pub use policy::{WorkAutomationUpdate, WorkPreferenceSnapshot};
 pub mod recall;
+pub mod recall_policy;
 mod registry;
 mod schedule;
 

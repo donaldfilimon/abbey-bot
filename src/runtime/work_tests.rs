@@ -276,3 +276,43 @@ async fn native_commit_preserves_admitted_memory_without_proposing_during_gate_o
         writer.joined().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn recall_policy_dropped_waiter_keeps_durable_enablement_and_no_proposals() {
+    let sink = Arc::new(HeldWorkSink {
+        writes: Mutex::new(Vec::new()),
+        entered: tokio::sync::Notify::new(),
+        release: (Mutex::new(false), Condvar::new()),
+    });
+    let release = Release(sink.clone());
+    let mut state = AppState::in_memory_with_persistence(
+        Some(std::env::temp_dir().join("injected-recall-policy")),
+        sink.clone(),
+    );
+    Arc::get_mut(&mut state).unwrap().work_recall_rollout =
+        crate::work::recall_policy::RecallRollout::parse(Some(r#"[{"Personal":{"owner":1}}]"#))
+            .unwrap();
+    AppState::lock(&state.stores)
+        .work
+        .create_project(access(), "Private", "p")
+        .unwrap();
+    let mut supervisor = ServiceSupervisor::new();
+    supervisor.finish_startup();
+    let mut writer = state.attach_service(supervisor.operations());
+    let owned = state.clone();
+    let waiter = tokio::spawn(async move { owned.configure_work_recall(access(), true, 0).await });
+    sink.entered.notified().await;
+    waiter.abort();
+    assert!(waiter.await.is_err());
+    assert!(!state.work_recall_policy(access()).unwrap().policy.enabled);
+    drop(release);
+    supervisor.next_completion().await;
+    assert!(state.work_recall_policy(access()).unwrap().policy.enabled);
+    let persisted: Stores = serde_json::from_slice(&sink.writes.lock().unwrap()[0]).unwrap();
+    assert!(persisted.work.recall_policy(access()).unwrap().enabled);
+    assert!(persisted.work.recall.records.is_empty());
+    assert!(persisted.work.recall.attempts.is_empty());
+    writer.close_admission();
+    writer.stop();
+    writer.joined().await.unwrap();
+}

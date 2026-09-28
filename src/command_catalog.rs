@@ -50,6 +50,8 @@ pub enum CommandKey {
     WorkFeedback,
     WorkAutomation,
     WorkReminder,
+    WorkRecallConfigure,
+    WorkRecallShow,
     Remember,
     Forget,
     PendingList,

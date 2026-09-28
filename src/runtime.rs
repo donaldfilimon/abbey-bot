@@ -40,7 +40,9 @@ mod tool_scope;
 mod vision_transport;
 mod work_commit;
 mod work_recall;
+mod work_recall_policy;
 pub use memory_service::{MemoryService, RememberOutcome, SupersessionOutcome};
+pub use work_recall_policy::RecallPolicyStatus;
 
 /// Hidden-layer widths per `docs/spec/adaptivelearning.md`: `[18, 64, 32, 3]`.
 pub const TOPOLOGY: [usize; 4] = [STATE_DIMENSIONS, 64, 32, BotAction::ALL.len()];
@@ -147,6 +149,7 @@ pub struct AppState {
     pub recall: Mutex<Recall>,
     /// Actual disk revision, never inferred from an in-memory repair.
     work_recall_disk: Mutex<Option<u64>>,
+    work_recall_rollout: crate::work::recall_policy::RecallRollout,
     pub engine: Mutex<Engine>,
     /// `ABBEY_QUIET=1`: never speak unsolicited, anywhere. Mentions, DMs, and
     /// commands still answer. The guard for running a many-guild token while
@@ -252,6 +255,7 @@ impl AppState {
     /// their own variables. A corrupt state file is a startup error, not a
     /// silent fresh start — see [`Stores::load`].
     pub fn from_env() -> Result<Arc<Self>, StartupError> {
+        let work_recall_rollout = work_recall_policy::rollout_from_env()?;
         let data_dir = std::env::var("ABBEY_DATA_DIR")
             .ok()
             .map(|s| s.trim().to_string())
@@ -360,6 +364,7 @@ impl AppState {
             providers,
             recall: Mutex::new(recall),
             work_recall_disk: Mutex::new(work_recall_disk),
+            work_recall_rollout,
             engine: Mutex::new(Engine::new()),
             quiet: std::env::var("ABBEY_QUIET").is_ok_and(|v| v.trim() == "1"),
             attachments: attachment_client(),
@@ -407,6 +412,7 @@ impl AppState {
             providers: ProviderRuntime::empty(),
             recall: Mutex::new(Recall::new()),
             work_recall_disk: Mutex::new(None),
+            work_recall_rollout: Default::default(),
             engine: Mutex::new(Engine::new()),
             quiet: false,
             attachments: attachment_client(),

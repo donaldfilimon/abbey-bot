@@ -24,7 +24,8 @@ use serenity::all::{Permissions, UserId};
         "timing",
         "feedback",
         "automation",
-        "reminder"
+        "reminder",
+        "recall"
     )
 )]
 pub async fn work(_ctx: Context<'_>) -> Result<(), Error> {
@@ -304,3 +305,6 @@ mod tests {
 
 mod controls;
 use controls::{automation, feedback, learning, preferences, reminder, reset_preferences, timing};
+
+mod recall;
+use recall::recall;

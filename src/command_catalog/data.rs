@@ -95,6 +95,28 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         "Record a project decision."
     ),
     spec!(
+        WorkRecallConfigure,
+        Slash,
+        "work recall configure",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Configure scope recall opt-in."
+    ),
+    spec!(
+        WorkRecallShow,
+        Slash,
+        "work recall show",
+        BOTH,
+        A0,
+        C0,
+        Work,
+        true,
+        "Inspect scope recall availability and revision."
+    ),
+    spec!(
         WorkBriefing,
         Slash,
         "work briefing",

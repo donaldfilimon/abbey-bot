@@ -264,7 +264,7 @@ impl AdmittedWorkEvidence {
 
 // Typed maps encode as ordered entries and reject duplicates rather than letting
 // serde's map collection silently overwrite authority on load.
-mod entries {
+pub(super) mod entries {
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
     #[derive(Serialize, Deserialize)]

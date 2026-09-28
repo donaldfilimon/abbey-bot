@@ -117,6 +117,8 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/work goal` | guild, bot DM | private | Record a project goal. |
 | `/work task` | guild, bot DM | private | Create an assigned task. |
 | `/work decision` | guild, bot DM | private | Record a project decision. |
+| `/work recall configure` | guild, bot DM | private | Configure scope recall opt-in. |
+| `/work recall show` | guild, bot DM | private | Inspect scope recall availability and revision. |
 | `/work briefing` | guild, bot DM | private | Review current work privately. |
 | `/work complete` | guild, bot DM | private | Complete a current task. |
 | `/work status` | guild, bot DM | private | Change a task's status. |
@@ -238,6 +240,28 @@ No display name implies this identity. `/work reminder` discloses the ceiling;
 `/work snooze` re-arms an existing reminder but never invents one from a deadline.
 Learning never changes access, quiet hours, ceilings or deadlines. Briefings are private responses and use project-authorized task
 and decision records.
+
+`/work recall show` displays the current scope's durable opt-in, revision and
+operator availability. `/work recall configure enabled:true revision:0` creates
+the first policy; subsequent changes require the displayed revision. Personal
+owners and managers of **every** project in the team scope may configure it.
+Current membership and channel visibility are checked on every command. Operator
+`ABBEY_WORK_RECALL_SCOPES` is an optional strict JSON array, default empty, using
+`[{"Personal":{"owner":123}},{"Team":{"guild":456,"channel":789}}]`. IDs must be
+positive, scopes unique, and input limited to 1,000 scopes and 64 KiB. Unknown
+fields, blank values and malformed JSON fail startup; use `[]` to remove all
+operator availability. The allowlist grants no membership or manager authority.
+Enabling requires both operator availability and a successful durable policy
+commit. Disabling and inspection remain available after operator removal.
+
+Recall policy records are separate from compact source controls, capped at
+10,000 entries and 2 MiB including reserved in-place growth. Existing policies
+can be disabled at capacity. Configuration never indexes history or removes
+admitted records, receipts or unresolved attempts. **Only policy configuration
+and inspection are exposed at this stage:** reindex, forget, finish-deletion,
+native admission and semantic briefing consumers remain pending. Current
+briefings continue to use canonical native records. Deployment and live recall
+acceptance have not been established by these source changes.
 
 **To talk with Abbey:** open `/voice consent` or the voice channel's pinned
 notice and choose **Agree** for the displayed processing mode. Each member

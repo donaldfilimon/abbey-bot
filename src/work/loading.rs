@@ -5,6 +5,7 @@ use super::*;
 #[serde(remote = "WorkStore", default)]
 struct LoadedWorkStore {
     recall: recall::WorkRecallState,
+    recall_policies: recall_policy::RecallPolicies,
     sequence: u64,
     projects: BTreeMap<u64, WorkProject>,
     goals: BTreeMap<u64, WorkGoal>,
@@ -25,6 +26,10 @@ struct LoadedWorkStore {
 impl<'de> Deserialize<'de> for WorkStore {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut store = LoadedWorkStore::deserialize(deserializer)?;
+        store
+            .recall_policies
+            .validate()
+            .map_err(serde::de::Error::custom)?;
         store.recall.validate().map_err(serde::de::Error::custom)?;
         store
             .validate_recall_joins()
