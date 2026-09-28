@@ -111,7 +111,9 @@ pub fn extract_vision_text(raw: &str) -> Result<String, VisionError> {
     let content = value
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
-        .map(|s| s.trim().to_string())
+        // Same Gemma server as chat: strip channel markers before the empty
+        // check so marker-only content takes the empty/length handling below.
+        .map(|s| crate::llm::strip_channel_markers(s).trim().to_string())
         .ok_or_else(|| VisionError::internal("the vision response carried no message content"))?;
     if content.is_empty()
         && value

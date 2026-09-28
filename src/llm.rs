@@ -19,11 +19,13 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
+mod channel_markers;
 mod dialect;
 mod protocol;
 mod stream;
 mod transport;
 
+pub(crate) use channel_markers::strip as strip_channel_markers;
 #[allow(unused_imports)]
 pub use dialect::Dialect;
 pub use dialect::build_chat_request_with_tools;
