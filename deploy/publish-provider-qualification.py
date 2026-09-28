@@ -25,6 +25,15 @@ CAPABILITIES = (
     "vision",
     "ocr",
 )
+# Mirrors the constant of the same name in src/provider_self_test.rs. The
+# self-test streams a tool CALL, then a second turn with a synthetic tool
+# result, and only records `tools: pass` once the model answers that second
+# turn with exactly this marker. `tools: pass` alone does not prove the
+# second turn ran; require the marker so a future tool-call-only probe
+# cannot publish a manifest that reads as fully qualified
+# (docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md,
+# "Two related gaps found while diagnosing").
+CONTINUATION_MARKER = "ABBEY_PROVIDER_CONTINUATION_V1"
 
 
 class PublicationError(Exception):
@@ -113,6 +122,14 @@ def validate_report(report: object, target: str, binary_hash: str) -> dict[str, 
                 raise PublicationError(
                     f"provider self-test lacks required {name}.{capability} evidence"
                 )
+        # `tools: pass` alone only proves a tool CALL streamed correctly.
+        # Require the distinct tool-RESULT continuation marker too, so a
+        # tool-call-only probe can never publish as fully qualified.
+        if capabilities["tools"].get("tool_result_marker") != CONTINUATION_MARKER:
+            raise PublicationError(
+                f"provider self-test recorded {name}.tools: pass but not the "
+                "distinct tool-result continuation marker"
+            )
         image_passed = any(
             capabilities[capability]["status"] == "pass"
             for capability in ("vision", "ocr")

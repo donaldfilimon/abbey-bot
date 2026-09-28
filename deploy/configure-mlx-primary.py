@@ -22,6 +22,15 @@ MODEL_REPOSITORY_DIR = "models--mlx-community--gemma-4-12B-it-4bit"
 FM_CLI = Path("/usr/bin/fm")
 QUALIFICATION_VERSION = 1
 FIXTURE_VERSION = "abbey-provider-fixtures-v1"
+# Mirrors the constant of the same name in src/provider_self_test.rs. A
+# manifest's `tools: pass` alone only proves a tool CALL was streamed
+# correctly; the self-test also drives one more turn with a synthetic tool
+# result and requires the model to answer with exactly this marker before it
+# records `tools: pass`. Requiring the marker here, not just the status,
+# keeps a tool-call-only probe from authorizing cutover
+# (docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md,
+# "Two related gaps found while diagnosing").
+CONTINUATION_MARKER = "ABBEY_PROVIDER_CONTINUATION_V1"
 MAX_MANIFEST_BYTES = 256 * 1024
 MANAGED_HEADER = "# Qualified local providers; managed by deploy/configure-mlx-primary.py."
 MANAGED_KEYS = (
@@ -287,6 +296,19 @@ def capability_passed(entry: object, name: str) -> bool:
     return isinstance(evidence, dict) and evidence.get("status") == "pass"
 
 
+def tool_continuation_passed(entry: object) -> bool:
+    """A `tools: pass` capability alone only proves the model streamed one
+    correct tool CALL. Require the distinct tool-RESULT continuation
+    evidence too: the self-test's synthetic tool result must have been
+    answered with exactly `CONTINUATION_MARKER`, never a partial or
+    approximate match."""
+    if not capability_passed(entry, "tools"):
+        return False
+    capabilities = entry["capabilities"]  # capability_passed proved this shape
+    evidence = capabilities["tools"]
+    return evidence.get("tool_result_marker") == CONTINUATION_MARKER
+
+
 def identity_matches(
     identity: object,
     *,
@@ -381,6 +403,12 @@ def validate_manifest(manifest: Path, binary: Path, model_dir: Path) -> None:
         )
     ):
         fail("FM capability manifest lacks a required primary capability pass")
+    if not tool_continuation_passed(primary):
+        fail(
+            "FM capability manifest records primary tools: pass but not the "
+            "distinct tool-result continuation marker; a tool-call-only "
+            "probe must not authorize cutover"
+        )
 
     if not isinstance(fm_server, dict) or fm_server.get("configured") is not False:
         fail("FM capability manifest must not configure an FM server endpoint")
@@ -402,6 +430,12 @@ def validate_manifest(manifest: Path, binary: Path, model_dir: Path) -> None:
         for capability in ("text", "structured_output", "tools")
     ):
         fail("FM capability manifest lacks a required FM CLI capability pass")
+    if not tool_continuation_passed(fm_cli):
+        fail(
+            "FM capability manifest records FM CLI tools: pass but not the "
+            "distinct tool-result continuation marker; a tool-call-only "
+            "probe must not authorize cutover"
+        )
     if any(
         capability_passed(fm_cli, capability) for capability in ("vision", "ocr")
     ) and not identity_matches(fm_cli.get("vision_identity"), **expected_fm_identity):

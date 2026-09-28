@@ -48,6 +48,17 @@ pub struct CapabilityEvidence {
     pub status: ProbeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// Set only on a passing `tools` capability, to the marker the
+    /// continuation turn was required to return exactly, after a synthetic
+    /// tool RESULT (never after the tool CALL alone). `tools: pass` on its
+    /// own only proves a tool call streamed correctly; a manifest consumer
+    /// that requires this field too
+    /// (`deploy/configure-mlx-primary.py`, `deploy/publish-provider-qualification.py`)
+    /// cannot be satisfied by a tool-call-only probe. `#[serde(default)]` so
+    /// a manifest written before this field existed still deserializes,
+    /// with the field read back as `None` (docs/superpowers/specs/2026-09-04-mlx-vlm-tool-continuation-diagnosis.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result_marker: Option<String>,
 }
 
 impl CapabilityEvidence {
@@ -55,6 +66,17 @@ impl CapabilityEvidence {
         Self {
             status: ProbeStatus::Pass,
             category: None,
+            tool_result_marker: None,
+        }
+    }
+
+    /// A passing `tools` capability, additionally recording the exact
+    /// marker the model returned for the tool-result continuation turn.
+    pub fn tools_pass(marker: impl Into<String>) -> Self {
+        Self {
+            status: ProbeStatus::Pass,
+            category: None,
+            tool_result_marker: Some(marker.into()),
         }
     }
 
@@ -62,6 +84,7 @@ impl CapabilityEvidence {
         Self {
             status: ProbeStatus::Fail,
             category: Some(category.to_string()),
+            tool_result_marker: None,
         }
     }
 
@@ -69,6 +92,7 @@ impl CapabilityEvidence {
         Self {
             status: ProbeStatus::Unsupported,
             category: None,
+            tool_result_marker: None,
         }
     }
 
@@ -76,6 +100,7 @@ impl CapabilityEvidence {
         Self {
             status: ProbeStatus::Skipped,
             category: None,
+            tool_result_marker: None,
         }
     }
 
@@ -612,6 +637,35 @@ mod tests {
                 ocr: true,
             }
         );
+    }
+
+    #[test]
+    fn tools_pass_records_marker_other_constructors_do_not() {
+        let evidence = CapabilityEvidence::tools_pass("ABBEY_PROVIDER_CONTINUATION_V1");
+        assert!(evidence.passed());
+        assert_eq!(
+            evidence.tool_result_marker.as_deref(),
+            Some("ABBEY_PROVIDER_CONTINUATION_V1")
+        );
+        let round_tripped: CapabilityEvidence =
+            serde_json::from_value(serde_json::to_value(&evidence).unwrap()).unwrap();
+        assert_eq!(round_tripped, evidence);
+
+        for evidence in [
+            CapabilityEvidence::pass(),
+            CapabilityEvidence::fail("tool_protocol"),
+            CapabilityEvidence::unsupported(),
+            CapabilityEvidence::skipped(),
+        ] {
+            assert_eq!(evidence.tool_result_marker, None);
+        }
+    }
+
+    #[test]
+    fn tool_result_marker_defaults_to_none_when_absent_from_the_wire() {
+        let decoded: CapabilityEvidence = serde_json::from_str(r#"{"status":"pass"}"#).unwrap();
+        assert_eq!(decoded.tool_result_marker, None);
+        assert!(decoded.passed());
     }
 
     #[test]

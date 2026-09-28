@@ -22,6 +22,9 @@ REVISION = "73bcf09092aa277861d5a191b989b666f7f32e8f"
 FIXTURE = "abbey-provider-fixtures-v1"
 FM_CLI = Path("/usr/bin/fm")
 TEST_OS_BUILD = "synthetic-ci-os-build"
+# Mirrors CONTINUATION_MARKER in configure-mlx-primary.py and
+# src/provider_self_test.rs.
+CONTINUATION_MARKER = "ABBEY_PROVIDER_CONTINUATION_V1"
 IMPORTED_TEST_RUNNER = """
 import importlib.util
 import pathlib
@@ -57,11 +60,17 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def passed_capabilities() -> dict[str, dict[str, str]]:
-    return {
+def passed_capabilities() -> dict[str, dict[str, object]]:
+    capabilities: dict[str, dict[str, object]] = {
         name: {"status": "pass"}
         for name in ("text", "streaming", "structured_output", "tools", "vision", "ocr")
     }
+    # A real qualifying self-test only ever records `tools: pass` once it has
+    # also driven a tool-result continuation turn and gotten back exactly
+    # CONTINUATION_MARKER; carry that distinct evidence here too so this
+    # fixture keeps representing a fully qualified manifest.
+    capabilities["tools"]["tool_result_marker"] = CONTINUATION_MARKER
+    return capabilities
 
 
 def skipped_entry() -> dict[str, object]:
@@ -881,6 +890,24 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
                     "primary tool capability",
                     lambda report: report["primary"]["capabilities"]["tools"].__setitem__(
                         "status", "fail"
+                    ),
+                ),
+                (
+                    "primary tool-call-only (no continuation marker)",
+                    lambda report: report["primary"]["capabilities"]["tools"].pop(
+                        "tool_result_marker"
+                    ),
+                ),
+                (
+                    "primary tool-call-only (wrong continuation marker)",
+                    lambda report: report["primary"]["capabilities"]["tools"].__setitem__(
+                        "tool_result_marker", "wrong-marker"
+                    ),
+                ),
+                (
+                    "FM CLI tool-call-only (no continuation marker)",
+                    lambda report: report["fm_cli"]["capabilities"]["tools"].pop(
+                        "tool_result_marker"
                     ),
                 ),
             ]
