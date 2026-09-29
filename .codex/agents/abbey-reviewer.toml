@@ -122,6 +122,14 @@ last three. Reviewing against cargo alone silently skips the Python gates.
   listening consent. Autojoin/output-only reconnect uses Pass/self-deafen.
   Destroy Decode before publishing teardown, use `play_input`, and pass player
   arguments as argv rather than script source.
+- The 2026-09-29 WDBX completion design in abi
+  (`../abi/docs/superpowers/specs/2026-09-29-wdbx-completion-design.md`) is not
+  implemented here. This bot does not encrypt member facts into WDBX, does not
+  erase by destroying a member key, and does not clear summaries as that design
+  describes. Those behaviors are not Current. This boundary does not promote
+  C3–C7, COSE envelopes, or evidence-weighted retrieval. Canonical local facts
+  stay in `abbey-state.json`; `wdbx.seg.0.jsonl` stays a projection. Do not add
+  a path or git dependency on abi or wdbx crates.
 - The episode gate is default-off and guild-scoped; uncovered scopes behave as
   if no gate is configured. Covered memory writes
   persist only after `appended`; refused queued writes are dropped, not retried;
