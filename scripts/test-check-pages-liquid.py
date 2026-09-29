@@ -388,6 +388,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/discord-application-api-roadmap.md",
             "docs/live-test-protocol.md",
             "docs/ops/monetization-portal-checklist.md",
+            "docs/ops/self-hosted-runner.md",
             "docs/ops/slash-command-catalog.md",
             "docs/research/2026-08-19-voice-dave-entrypoint-tools.md",
             "docs/review-fa48c8f-ask-revert.md",
