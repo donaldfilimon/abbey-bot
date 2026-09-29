@@ -1067,18 +1067,20 @@ need them.
 ./check.ps1
 ```
 
-CI (`.github/workflows/rust.yml`) runs Ubuntu and macOS through `check.sh` and
-Windows through `check.ps1`, all with the exact Rust 1.98.0 toolchain. Every
-lane proves formatting, Python syntax and hash locks, the static privacy gate,
+CI (`.github/workflows/rust.yml`) runs `check.sh` on macOS with the exact Rust
+1.98.0 toolchain; the Ubuntu (`check.sh`) and Windows (`check.ps1`) lanes were
+removed on 2026-09-28 because hosted Actions are billing-locked and no Linux or
+Windows runner is registered, so run those gates by hand on those hosts. The
+gate proves formatting, Python syntax and hash locks, the static privacy gate,
 the vendored Abbey corpus guard plus its Rust verifier, the Linux Rustls/WebPKI
 dependency-tree invariant, Clippy with warnings denied, the offline test suite,
-and the locked release build. The WDBX parity script runs in every lane but reports an explicit external
+and the locked release build. The WDBX parity script runs in the gate but reports an explicit external
 skip in a standalone checkout; it becomes required when
 `ABBEY_REQUIRE_WDBX_CONFORMANCE=1` and `ABBEY_WDBX_REPO` identifies the canonical
 sibling. POSIX deployment-shell syntax runs on Ubuntu/macOS; plist lint also
 runs where `plutil` exists.
 The macOS lane runs on a self-hosted macOS arm64 runner for same-repository
-events and on GitHub-hosted `macos-15` for fork pull requests; see
+events only; fork pull requests get no job. See
 [`docs/ops/self-hosted-runner.md`](docs/ops/self-hosted-runner.md).
 
 The delivered pre-stabilization baseline is

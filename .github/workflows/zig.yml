@@ -3,8 +3,12 @@ name: Zig
 # Gate for zig/, the stdlib-only Zig rewrite folded into this repository on
 # 2026-09-28 (formerly the separate abbey-bot-zig repository, whose own
 # .github/workflows/ci.yml GitHub never reads from a subdirectory). It runs
-# only when zig/ or this file changes. Kept on GitHub-hosted macos-15, as it
-# was before the fold: the self-hosted runner is reserved for the Rust gate.
+# only when zig/ or this file changes. It runs on the macOS arm64 self-hosted
+# runner labelled abbey-bot, for trusted same-repo events only (push to main
+# and same-repo pull requests); fork pull requests get no job. It moved there
+# from GitHub-hosted macos-15 on 2026-09-28 because hosted Actions are
+# billing-locked. The pinned Zig is downloaded into RUNNER_TEMP per run and
+# never installed on the host. See docs/ops/self-hosted-runner.md.
 on:
   push:
     branches: ["main"]
@@ -27,7 +31,12 @@ concurrency:
 jobs:
   gate:
     name: Gate (zig)
-    runs-on: macos-15
+    if: >
+      github.repository == 'donaldfilimon/abbey-bot' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: [self-hosted, macOS, ARM64, abbey-bot]
     timeout-minutes: 30
     defaults:
       run:

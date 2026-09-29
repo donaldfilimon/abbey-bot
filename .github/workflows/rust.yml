@@ -2,10 +2,11 @@ name: Rust
 
 # Trusted same-repo events (push to main, same-repo pull requests) run the
 # macOS gate on the macOS arm64 self-hosted runner registered to this
-# repository with the label abbey-bot. Fork pull requests run the macOS gate on
-# GitHub-hosted macos-15 only: never schedule untrusted code on the
-# self-hosted machine. The Ubuntu and Windows gates stay GitHub-hosted because
-# they prove Linux (dash) and Windows behaviour. See docs/ops/self-hosted-runner.md.
+# repository with the label abbey-bot. Fork pull requests get no job: never
+# schedule untrusted code on the self-hosted machine. The GitHub-hosted jobs
+# (the Ubuntu and Windows gate lanes and the macos-15 fork-PR fallback) were
+# removed on 2026-09-28: hosted Actions are billing-locked and no Linux or
+# Windows runner is registered. See docs/ops/self-hosted-runner.md.
 on:
   push:
     branches: ["main"]
@@ -23,31 +24,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  gate:
-    name: Gate (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Ubuntu
-            os: ubuntu-24.04
-            command: ./check.sh
-          # The macOS lane is the gate-macos job below (self-hosted for
-          # trusted events, gate-macos-hosted for fork pull requests).
-          - name: Windows
-            os: windows-2025
-            command: ./check.ps1
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The runner's rustup honours the exact stable release and components in
-      # rust-toolchain.toml on the first Cargo invocation.
-      - name: Install pinned cargo-audit report tool
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: Gate — fmt, privacy, locks, clippy, tests, release build
-        run: ${{ matrix.command }}
-
   gate-macos:
     # Same check name as the former macos-15 matrix leg, so branch protection
     # that requires "Gate (macOS)" keeps matching.
@@ -78,22 +54,6 @@ jobs:
       # rustup honours the exact stable release and components in
       # rust-toolchain.toml on the first Cargo invocation. On a persistent host
       # cargo install is a no-op once 0.22.2 is already in ~/.cargo/bin.
-      - name: Install pinned cargo-audit report tool
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: Gate — fmt, privacy, locks, clippy, tests, release build
-        run: ./check.sh
-
-  gate-macos-hosted:
-    name: Gate (macOS) (GitHub-hosted, fork PRs)
-    if: >
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The runner's rustup honours the exact stable release and components in
-      # rust-toolchain.toml on the first Cargo invocation.
       - name: Install pinned cargo-audit report tool
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Gate — fmt, privacy, locks, clippy, tests, release build

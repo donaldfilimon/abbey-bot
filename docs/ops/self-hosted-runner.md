@@ -1,6 +1,6 @@
 # Self-hosted macOS runner
 
-The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) runs on a macOS arm64 runner registered to this repository. GitHub-hosted jobs cannot start while the account's Actions billing is locked (they fail in about two seconds with zero steps), but self-hosted jobs still run.
+The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) and the `Gate (zig)` check (job `gate` in `.github/workflows/zig.yml`, only when `zig/` changes) run on a macOS arm64 runner registered to this repository. GitHub-hosted jobs cannot start while the account's Actions billing is locked (they fail in about two seconds with zero steps), so the workflows have none; self-hosted jobs still run.
 
 ## Registration
 
@@ -11,7 +11,7 @@ The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) runs
 
 A runner is registered to one repository. If the same Mac already runs a runner for another repository (for example `abi`), install a second runner in its own directory, such as `~/actions-runner-abbey-bot`: run `./config.sh` with this repository's URL and token, add the custom label `abbey-bot` when asked, then `./svc.sh install && ./svc.sh start`.
 
-Until a runner with these labels is online, same-repository `Gate (macOS)` jobs wait in the queue.
+Until a runner with these labels is online, same-repository `Gate (macOS)` and `Gate (zig)` jobs wait in the queue.
 
 ## Host requirements
 
@@ -24,15 +24,18 @@ Until a runner with these labels is online, same-repository `Gate (macOS)` jobs 
 
 The first step of the job checks these tools and fails with a clear message if one is missing. No step uses `sudo`.
 
+`Gate (zig)` additionally needs `curl`, `tar` and `sed` (all ship with macOS). It downloads the Zig master pinned in `zig/build.zig.zon` into the job's `RUNNER_TEMP` on every run, so nothing is installed on the host.
+
 ## Security
 
-This repository is public, so the self-hosted job runs only for `push` to `main` and for pull requests whose head branch is in this repository (`github.event.pull_request.head.repo.full_name == github.repository`), and only in `donaldfilimon/abbey-bot` itself. Fork pull requests run the unchanged GitHub-hosted copy, `Gate (macOS) (GitHub-hosted, fork PRs)` on `macos-15`. The workflow has no `pull_request_target`, `issue_comment` or `workflow_run` trigger. The checkout uses `persist-credentials: false`, and the workflow token stays `contents: read`.
+This repository is public, so the self-hosted jobs run only for `push` to `main` and for pull requests whose head branch is in this repository (`github.event.pull_request.head.repo.full_name == github.repository`), and only in `donaldfilimon/abbey-bot` itself. Fork pull requests get no job; run `./check.sh` locally on a fork's branch before merging it. The workflow has no `pull_request_target`, `issue_comment` or `workflow_run` trigger. The checkout uses `persist-credentials: false`, and the workflow token stays `contents: read`.
 
 Where you can, run the runner as a dedicated macOS user rather than your daily account, and keep no production secrets (Discord tokens, `.env` files) readable by that user.
 
 ## Not covered
 
-- `Gate (Ubuntu)` (`ubuntu-24.04`) stays GitHub-hosted. It proves Linux behaviour, such as `/bin/sh` being dash and the Linux Rustls/WebPKI dependency tree; running it on macOS would report a Linux result it never measured.
-- `Gate (Windows)` (`windows-2025`, `check.ps1`) needs a Windows host.
+The GitHub-hosted jobs were removed from `.github/workflows/rust.yml` on 2026-09-28. Restore them from history if the billing lock is cleared or matching self-hosted runners exist:
 
-Both stay blocked until the billing lock is cleared or matching self-hosted runners exist.
+- `Gate (Ubuntu)` (`ubuntu-24.04`) proved Linux behaviour, such as `/bin/sh` being dash and the Linux Rustls/WebPKI dependency tree; running it on macOS would report a Linux result it never measured.
+- `Gate (Windows)` (`windows-2025`, `check.ps1`) needs a Windows host.
+- `Gate (macOS) (GitHub-hosted, fork PRs)` (`macos-15`) built fork pull requests.
