@@ -22,7 +22,7 @@ def digest(data: bytes) -> str:
 
 def main() -> int:
     configured = os.environ.get("ABBEY_WDBX_REPO", "").strip()
-    wdbx_root = Path(configured).expanduser() if configured else ROOT.parent / "wdbx"
+    wdbx_root = Path(configured).expanduser() if configured else ROOT.parent.parent / "wdbx"
     wdbx_fixture = wdbx_root / WDBX_RELATIVE_FIXTURE
     required = os.environ.get("ABBEY_REQUIRE_WDBX_CONFORMANCE", "").strip() == "1"
 

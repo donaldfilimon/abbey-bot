@@ -529,13 +529,13 @@
     },
     {
       "group": "Memory",
-      "capability": "WDBX v1 projection fixture parity with ../wdbx (scripts/check-wdbx-conformance.py)",
+      "capability": "WDBX v1 projection fixture parity with the sibling wdbx checkout (scripts/check-wdbx-conformance.py)",
       "phase": "1",
       "status": "Current",
       "tests": [
         "the conformance fixture parses and re-renders byte-identically"
       ],
-      "note": "The gate also runs the oracle's own scripts/check-wdbx-conformance.py against ../wdbx's golden copy; that compares fixtures, and the Zig test adds parse/render identity for the same bytes."
+      "note": "The gate also runs the oracle's own scripts/check-wdbx-conformance.py against the sibling wdbx checkout's golden copy (../../wdbx from zig/, or ABBEY_WDBX_REPO); that compares fixtures, and the Zig test adds parse/render identity for the same bytes."
     },
     {
       "group": "Generation backends",

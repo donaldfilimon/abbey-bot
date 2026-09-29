@@ -1,0 +1,50 @@
+name: Zig
+
+# Gate for zig/, the stdlib-only Zig rewrite folded into this repository on
+# 2026-09-28 (formerly the separate abbey-bot-zig repository, whose own
+# .github/workflows/ci.yml GitHub never reads from a subdirectory). It runs
+# only when zig/ or this file changes. Kept on GitHub-hosted macos-15, as it
+# was before the fold: the self-hosted runner is reserved for the Rust gate.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "zig/**"
+      - ".github/workflows/zig.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "zig/**"
+      - ".github/workflows/zig.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zig-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate (zig)
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: zig
+    steps:
+      # Full history so the gate's oracle provenance stage can read the pinned
+      # oracle commit; a shallow clone makes that stage print SKIP.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Zig master
+        run: |
+          set -eu
+          version=$(sed -n 's/.*\.minimum_zig_version = "\(.*\)",/\1/p' build.zig.zon)
+          curl -fsSL "https://ziglang.org/builds/zig-aarch64-macos-${version}.tar.xz" -o "$RUNNER_TEMP/zig.tar.xz"
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-aarch64-macos-${version}" >> "$GITHUB_PATH"
+      - name: Gate
+        run: ./tools/check.sh

@@ -10,6 +10,21 @@ went through `git -C ~/dev/active/abbey-bot archive 281ee3b` into a private
 scratch extraction; that extraction (not the oracle) was built with Rust
 1.98.0 into a scratch `CARGO_TARGET_DIR`.
 
+## Since the fold (2026-09-28)
+
+This tree is now the `zig/` subdirectory of the abbey-bot repository itself
+(folded with `git subtree add`, history kept; the pre-fold repository is
+bundled at `~/at-risk-bundles/2026-09-28-consolidation/abbey-bot-zig.bundle`).
+The oracle is still commit `281ee3b`, which is now in this repository's own
+history, **not** the Rust working tree around `zig/`: that tree moves on and
+is not a contract. Read the oracle with `git show 281ee3b:<path>` or
+`git archive 281ee3b <path>` from the repository root. The gate's
+`oracle provenance` stage does exactly that and fails unless `abbey/`,
+`fixtures/` and `../deploy/service-protocol-v1.json` are still byte-identical
+to their sources at the pinned commit; it prints `SKIP:` (unmeasured) when the
+commit is absent, for example in a shallow clone. Moving the pin is a decision
+(new goldens, new catalog export), never a side effect of editing the Rust bot.
+
 | Path here | Source at 281ee3b | How |
 |---|---|---|
 | `abbey/` (corpus + lock) | `contracts/abbey/` | `cp -R`; `diff -r` reported no difference |
@@ -17,7 +32,7 @@ scratch extraction; that extraction (not the oracle) was built with Rust
 | `catalog/command-payload.json` | output of the oracle's own ignored test `command_registration_tests::export_command_registration_payload` (`poise::builtins::create_application_commands`) | run in the scratch extraction with `ABBEY_COMMAND_PAYLOAD_OUTPUT`; mode changed to 0644, bytes unchanged |
 | `golden/*.json` | output of `golden/zig_golden_dump.rs.txt`, a test module added to the **scratch extraction only** | see below |
 | `../scripts/check-abbey-contracts.py`, `test-check-abbey-contracts.py` | `scripts/` | copied unchanged |
-| `../scripts/check-wdbx-conformance.py`, `test-check-wdbx-conformance.py` | `scripts/` | one edit each: fixture path `tests/fixtures/` became `contracts/fixtures/` |
+| `../scripts/check-wdbx-conformance.py`, `test-check-wdbx-conformance.py` | `scripts/` | one edit each: fixture path `tests/fixtures/` became `contracts/fixtures/`; since the fold `check-wdbx-conformance.py` also defaults the WDBX checkout to `ROOT.parent.parent / "wdbx"` (the sibling of abbey-bot, not of `zig/`) |
 | `../.gitattributes` | `.gitattributes` | rewritten for this layout |
 
 ## Goldens

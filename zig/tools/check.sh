@@ -55,6 +55,25 @@ else
   echo "SKIP: no abi binary at $abi_cli (set ABBEY_ABI_CLI); the vector bridge stays claim-Partial"
 fi
 
+stage "oracle provenance"
+# The oracle is the Rust bot at a pinned commit, never the live tree around
+# zig/. Since the fold into abbey-bot that commit is in this repository's own
+# history, so the vendored copies are compared with it byte for byte. Without
+# the commit (a shallow clone, an exported tarball) this is unmeasured.
+oracle=281ee3b4fe0abb436a890d91c8a6d9701c495231
+if top=$(git rev-parse --show-toplevel 2>/dev/null) && git -C "$top" cat-file -e "$oracle^{commit}" 2>/dev/null; then
+  oracle_dir=$(mktemp -d "$LOG_DIR/oracle.XXXXXX")
+  git -C "$top" archive -o "$oracle_dir/oracle.tar" "$oracle" contracts/abbey tests/fixtures deploy/service-protocol-v1.json
+  run_logged oracle-extract tar -x -f "$oracle_dir/oracle.tar" -C "$oracle_dir"
+  run_logged oracle-abbey diff -r "$oracle_dir/contracts/abbey" contracts/abbey
+  run_logged oracle-fixtures diff -r "$oracle_dir/tests/fixtures" contracts/fixtures
+  run_logged oracle-protocol cmp "$oracle_dir/deploy/service-protocol-v1.json" deploy/service-protocol-v1.json
+  rm -r "$oracle_dir"
+  echo "contracts/abbey, contracts/fixtures and deploy/service-protocol-v1.json are byte-identical to oracle ${oracle}"
+else
+  echo "SKIP: oracle commit ${oracle} is not in this checkout; vendored contracts not re-verified"
+fi
+
 stage "contract corpus"
 run_logged contracts python3 scripts/check-abbey-contracts.py
 cat "$LOG_DIR/contracts.log"
@@ -62,7 +81,8 @@ run_logged contracts-selftest python3 scripts/test-check-abbey-contracts.py
 echo "check-abbey-contracts self-test: ok"
 
 stage "wdbx fixture parity"
-if [ -z "${ABBEY_WDBX_REPO:-}" ] && [ -d ../wdbx ]; then ABBEY_WDBX_REPO=../wdbx; export ABBEY_WDBX_REPO; fi
+# This tree is zig/ inside abbey-bot, so the sibling WDBX checkout is ../../wdbx.
+if [ -z "${ABBEY_WDBX_REPO:-}" ] && [ -d ../../wdbx ]; then ABBEY_WDBX_REPO=../../wdbx; export ABBEY_WDBX_REPO; fi
 # With a sibling WDBX checkout present the comparison is required, not skippable.
 if [ -n "${ABBEY_WDBX_REPO:-}" ]; then ABBEY_REQUIRE_WDBX_CONFORMANCE=1; export ABBEY_REQUIRE_WDBX_CONFORMANCE; fi
 run_logged wdbx python3 scripts/check-wdbx-conformance.py
