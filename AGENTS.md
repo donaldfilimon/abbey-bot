@@ -105,10 +105,14 @@ hand-edit the generated TOML. `check.sh` and `check.ps1` fail on drift.
   use `mode: disabled` in voice fixtures on non-macOS. Byte-for-byte tracked
   fixtures need LF via `.gitattributes`; cfg-only `mut` bindings need the
   narrow platform lint allowance.
-- CI evidence belongs to the exact `headSha`. A short hosted Gate job with zero
-  steps is an unmeasured account/billing lock, not a product failure; do not
-  change code to satisfy it. Do not stack merges while the exact tip Gate is
-  still in progress. Use local gate evidence while the lock persists.
+- CI is `Gate (macOS)` in `.github/workflows/rust.yml` (plus `zig.yml`), on
+  the self-hosted macOS arm64 runner labelled `abbey-bot`, for trusted
+  same-repo events only. The GitHub-hosted `Gate (Ubuntu)` and
+  `Gate (Windows)` jobs were removed on 2026-09-28 (hosted Actions are
+  billing-locked and no Linux or Windows runner exists), so Linux and Windows
+  have no CI: prove portability changes locally (`./check.ps1` on Windows).
+  CI evidence belongs to the exact `headSha`; do not stack merges while the
+  exact tip Gate is still in progress.
 - Serenity 0.12.5 keeps Components V2 crate-blocked; use classic Action Rows,
   buttons, selects, and modals. Bumping poise does not clear the blocker.
 - Never treat a source gate as proof of installed artifact identity, provider
