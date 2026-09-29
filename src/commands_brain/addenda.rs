@@ -334,6 +334,25 @@ mod tests {
     }
 
     #[test]
+    fn static_suppression_wording_matches_the_policy_ttl() {
+        // Catalog rows and poise doc comments must be literals; pin them here.
+        let days = suppression_days();
+        assert_eq!(days, "14 days");
+        let group = admin_addenda();
+        for leaf in group.subcommands.iter().filter(|c| c.name != "list") {
+            let text = leaf.description.as_deref().unwrap_or_default();
+            assert!(text.contains(&days), "{}: {text}", leaf.name);
+        }
+        for key in [
+            crate::command_catalog::CommandKey::AdminAddendaRevert,
+            crate::command_catalog::CommandKey::AdminAddendaClear,
+        ] {
+            let spec = crate::command_catalog::command(key);
+            assert!(spec.description.contains(&days), "{}", spec.name);
+        }
+    }
+
+    #[test]
     fn print_rendered_replies() {
         for text in [
             render_list(&listed(), 5),

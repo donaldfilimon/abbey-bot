@@ -39,7 +39,10 @@ pub(super) fn guidance(
     system
 }
 
-/// True when the user is asking about adaptive learning / guild policy controls.
+/// True when the user is asking about adaptive learning / guild policy
+/// controls, about how Abbey writes or adapts, or gives closed-vocabulary
+/// style feedback ([`crate::brain::style_signal`]); all of these get the
+/// honest addenda sentence.
 fn learning_topic(user_input: &str) -> bool {
     let t = user_input.to_ascii_lowercase();
     const KEYS: &[&str] = &[
@@ -56,12 +59,17 @@ fn learning_topic(user_input: &str) -> bool {
         "/admin learning",
         "/admin brain",
         "/admin budget",
-        "/admin addenda",
-        "addenda",
+        "addend",
         "guild policy",
         "policy loop",
+        "how you write",
+        "your tone",
+        "your style",
+        "change how you",
+        "adapt your",
+        "adapt to",
     ];
-    KEYS.iter().any(|k| t.contains(k))
+    KEYS.iter().any(|k| t.contains(k)) || crate::brain::style_signal::classify(user_input).is_some()
 }
 
 #[cfg(test)]
@@ -105,6 +113,27 @@ mod tests {
         ));
         assert!(!system.contains("autonomous self-rewrite of code that already happened"));
         assert!(learning_topic("what are the /admin addenda?"));
+    }
+
+    #[test]
+    fn style_and_adaptation_questions_get_the_addenda_sentence() {
+        const ADDENDA: &str = "In servers that enabled learning, Abbey may adjust tone and length within fixed limits; admins can review or revert with /admin addenda. Abbey does not rewrite her own code.";
+        for question in [
+            "can you change how you write?",
+            "Adapt your tone for this server",
+            "stop using emoji",
+        ] {
+            let system = guidance("discord:42", &["recall"], None, question);
+            assert!(system.contains(ADDENDA), "{question}");
+        }
+        for ordinary in [
+            "can you write a poem about the ocean?",
+            "the adapter config is broken",
+            "what's your favourite song?",
+        ] {
+            let system = guidance("discord:42", &["recall"], None, ordinary);
+            assert!(!system.contains("/admin addenda"), "{ordinary}");
+        }
     }
 
     #[test]
