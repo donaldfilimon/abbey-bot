@@ -1,0 +1,29 @@
+[
+  {
+    "version": 2,
+    "fixture_version": "abbey-provider-fixtures-v1",
+    "provider_id": "fixture-local",
+    "provider_class": "local_server",
+    "identity": {
+      "abbey_binary_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "tool_schema_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "declared_capabilities": {
+      "text": true,
+      "streaming": false,
+      "structured_output": false,
+      "tools": false,
+      "vision": false,
+      "ocr": false
+    },
+    "isolation_capabilities": {
+      "environment_cleared": false,
+      "absolute_no_shell_execution": false,
+      "process_tree_contained": false,
+      "private_runtime_state": false,
+      "loopback_only": true,
+      "sandbox_attested": false
+    },
+    "qualification_status": "qualified"
+  }
+]

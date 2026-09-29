@@ -1,0 +1,1180 @@
+{
+  "help": [
+    {
+      "input": "guild_all",
+      "section": "start",
+      "text": "**Abbey · Start**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/help` (slash command; private) · Browse commands available to you privately.\n`/stats` (slash command; private) · Read this conversation’s learning and reply budget.\n\nTask buttons open private workflows. Use the section menu for the command reference.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "conversation",
+      "text": "**Abbey · Conversation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/persona route` (slash command; channel-visible) · Choose a persona and explain the routing.\n`/persona ask` (slash command; channel-visible) · Ask a question through the configured generation backend.\n`/roleplay` (slash command; channel-visible) · Roleplay as Aviva in a DM or NSFW channel when the nsfw gate is on.\n`Ask Abbey` (message menu; private) · Ask about a selected message privately.\n`/summarize` (slash command; channel-visible) · Summarize the recent conversation through the backend.\n`/nsfw` (slash command; private) · Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw).\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "memory",
+      "text": "**Abbey · Memory**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/remember` (slash command; private) · Store a fact about yourself; moderators may choose a member.\n`/forget` (slash command; private) · Remove a stored fact about yourself or an authorized member.\n`/pending list` (slash command; private) · Review proposed fact replacements.\n`/pending confirm` (slash command; private) · Apply an explicitly chosen fact replacement.\n`/pending dismiss` (slash command; private) · Dismiss a proposed replacement and keep both facts.\n`/recall` (slash command; private) · Read your facts and standing, or an authorized member's.\n`/reputation` (slash command; private) · Read your standing privately; moderators may choose a member.\n`Abbey: memory` (member menu; private) · Read the selected member's bounded memory card privately.\n\nOpen the member menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "images",
+      "text": "**Abbey · Images**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/see` (slash command; channel-visible) · Describe an image; an optional question also needs generation.\n`/ocr` (slash command; channel-visible) · Read the text in an image.\n`Abbey: describe image` (message menu; private) · Describe the first supported attachment privately.\n`Abbey: read image text` (message menu; private) · Read text from the first supported attachment privately.\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "moderation",
+      "text": "**Abbey · Moderation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/modcall` (slash command; private) · Needs a member and action\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "server",
+      "text": "**Abbey · Server**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/whois` (slash command; channel-visible) · Read a member's profile and roles.\n`Abbey: profile` (member menu; private) · Read the selected member's profile privately.\n`/perms` (slash command; channel-visible) · Explain a member's channel permissions.\n`/server blueprint` (slash command; private) · Create a server blueprint without changing the server.\n`/server create-channel` (slash command; private) · Create a text channel when you and Abbey both have Manage Channels.\n`/server rename-channel` (slash command; private) · Rename a channel when you and Abbey both have Manage Channels.\n`/server slowmode` (slash command; private) · Set channel slowmode when you and Abbey both have Manage Channels.\n`/server delete-channel` (slash command; private) · Delete a channel with confirm:true when you and Abbey both have Manage Channels.\n`/server assign-role` (slash command; private) · Assign a role when you and Abbey both have Manage Roles.\n`/server remove-role` (slash command; private) · Remove a role when you and Abbey both have Manage Roles.\n`/server move-member` (slash command; private) · Move a member in voice when you and Abbey both have Move Members.\n`/server purge` (slash command; private) · Purge recent messages with confirm:true when you and Abbey both have Manage Messages.\n`/webhook` (slash command; private) · Show a safe incoming-webhook setup guide.\n`/forum draft` (slash command; private) · Suggest #help tags and preview a first-post template.\n`/forum post` (slash command; private) · Create a #help forum thread with a first-post template.\n`/forum perms` (slash command; private) · Snapshot and gap-fill Abbey's #help forum overwrite bits.\n\nOpen the member menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "voice",
+      "text": "**Abbey · Voice**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/voice consent` (slash command; private) · Needs voice setup\n`/voice notice` (slash command; private) · Needs voice setup\n`/voice play` (slash command; private) · Needs voice setup\n`/voice pause` (slash command; private) · Needs voice setup\n`/voice resume-music` (slash command; private) · Needs voice setup\n`/voice stop-music` (slash command; private) · Needs voice setup\n`/voice volume` (slash command; private) · Needs voice setup\n`/voice join` (slash command; private) · Needs voice setup\n`/voice resume` (slash command; private) · Needs voice setup\n`/voice leave` (slash command; private) · Needs voice setup\n`/voice status` (slash command; private) · Read your privacy-bounded voice status.\n`/voice diagnostics` (slash command; private) · Needs voice setup\n`/voice mode` (slash command; private) · Needs voice setup\n`/voice verify start` (slash command; private) · Needs voice setup\n`/voice verify report` (slash command; private) · Needs voice setup\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_all",
+      "section": "administration",
+      "text": "**Abbey · Administration**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/admin show` (slash command; private) · Read this server's settings.\n`/admin persona` (slash command; private) · Set the server's default persona.\n`/admin learning` (slash command; private) · Control learning for this server.\n`/admin nsfw` (slash command; private) · Enable or disable Aviva roleplay for this server (NSFW channels only).\n`/admin vision` (slash command; private) · Control image understanding for this server.\n`/admin cooldown` (slash command; private) · Set the unsolicited reply cooldown.\n`/admin act` (slash command; private) · Opt this server into unsolicited replies or turn them off.\n`/admin budget` (slash command; private) · Set the hourly unsolicited reply budget.\n`/admin brain` (slash command; private) · Inspect the learning policy and exploration setting.\n`/admin flush` (slash command; private) · Persist current state and report each result.\n`/admin export` (slash command; private) · Export the server's brain snapshot privately.\n`/admin reset` (slash command; private) · Clear only this channel's transcript.\n`/admin dashboard` (slash command; private) · Open private administration controls.\n`/admin quarantine` (slash command; private) · Mark a member's stored fact as suspect for review.\n`/admin contradict` (slash command; private) · Record that two of a member's stored facts contradict each other.\n`/admin resolve` (slash command; private) · Close a memory review with a verdict.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "start",
+      "text": "**Abbey · Start**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/help` (slash command; private) · Browse commands available to you privately.\n`/stats` (slash command; private) · Read this conversation’s learning and reply budget.\n\nTask buttons open private workflows. Use the section menu for the command reference.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "conversation",
+      "text": "**Abbey · Conversation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/persona route` (slash command; channel-visible) · Choose a persona and explain the routing.\n`/persona ask` (slash command; channel-visible) · Needs generation setup\n`/roleplay` (slash command; channel-visible) · Needs generation setup\n`Ask Abbey` (message menu; private) · Needs generation setup\n`/summarize` (slash command; channel-visible) · Needs generation setup\n`/nsfw` (slash command; private) · Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw).\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "memory",
+      "text": "**Abbey · Memory**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "images",
+      "text": "**Abbey · Images**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/see` (slash command; channel-visible) · Needs image-description setup\n`/ocr` (slash command; channel-visible) · Needs text-extraction setup\n`Abbey: describe image` (message menu; private) · Needs image-description setup\n`Abbey: read image text` (message menu; private) · Needs text-extraction setup\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "moderation",
+      "text": "**Abbey · Moderation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "server",
+      "text": "**Abbey · Server**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/whois` (slash command; channel-visible) · Read a member's profile and roles.\n`Abbey: profile` (member menu; private) · Read the selected member's profile privately.\n`/perms` (slash command; channel-visible) · Explain a member's channel permissions.\n`/server blueprint` (slash command; private) · Create a server blueprint without changing the server.\n`/forum draft` (slash command; private) · Suggest #help tags and preview a first-post template.\n`/forum post` (slash command; private) · Create a #help forum thread with a first-post template.\n\nOpen the member menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "voice",
+      "text": "**Abbey · Voice**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/voice consent` (slash command; private) · Needs voice setup\n`/voice status` (slash command; private) · Read your privacy-bounded voice status.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_none",
+      "section": "administration",
+      "text": "**Abbey · Administration**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "start",
+      "text": "**Abbey · Start**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/help` (slash command; private) · Browse commands available to you privately.\n`/stats` (slash command; private) · Read this conversation’s learning and reply budget.\n\nTask buttons open private workflows. Use the section menu for the command reference.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "conversation",
+      "text": "**Abbey · Conversation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/persona route` (slash command; reply in this DM) · Choose a persona and explain the routing.\n`/persona ask` (slash command; reply in this DM) · Needs generation setup\n`/roleplay` (slash command; reply in this DM) · Needs generation setup\n`Ask Abbey` (message menu; private) · Needs generation setup\n`/summarize` (slash command; reply in this DM) · Needs generation setup\n`/nsfw` (slash command; private) · Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw).\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "memory",
+      "text": "**Abbey · Memory**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "images",
+      "text": "**Abbey · Images**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/see` (slash command; reply in this DM) · Needs image-description setup\n`/ocr` (slash command; reply in this DM) · Needs text-extraction setup\n`Abbey: describe image` (message menu; private) · Needs image-description setup\n`Abbey: read image text` (message menu; private) · Needs text-extraction setup\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "moderation",
+      "text": "**Abbey · Moderation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "server",
+      "text": "**Abbey · Server**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/server blueprint` (slash command; private) · Create a server blueprint without changing the server.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "voice",
+      "text": "**Abbey · Voice**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_none",
+      "section": "administration",
+      "text": "**Abbey · Administration**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "start",
+      "text": "**Abbey · Start**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/help` (slash command; private) · Browse commands available to you privately.\n`/stats` (slash command; private) · Read this conversation’s learning and reply budget.\n\nTask buttons open private workflows. Use the section menu for the command reference.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "conversation",
+      "text": "**Abbey · Conversation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/persona route` (slash command; reply in this DM) · Choose a persona and explain the routing.\n`/persona ask` (slash command; reply in this DM) · Needs generation setup\n`/roleplay` (slash command; reply in this DM) · Needs generation setup\n`Ask Abbey` (message menu; private) · Needs generation setup\n`/summarize` (slash command; reply in this DM) · Summarize the recent conversation through the backend.\n`/nsfw` (slash command; private) · Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw).\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "memory",
+      "text": "**Abbey · Memory**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/remember` (slash command; private) · Store a fact about yourself; moderators may choose a member.\n`/forget` (slash command; private) · Remove a stored fact about yourself or an authorized member.\n`/pending list` (slash command; private) · Review proposed fact replacements.\n`/pending confirm` (slash command; private) · Apply an explicitly chosen fact replacement.\n`/pending dismiss` (slash command; private) · Dismiss a proposed replacement and keep both facts.\n`/recall` (slash command; private) · Read your facts and standing, or an authorized member's.\n`/reputation` (slash command; private) · Read your standing privately; moderators may choose a member.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "images",
+      "text": "**Abbey · Images**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/see` (slash command; reply in this DM) · Needs image-description setup\n`/ocr` (slash command; reply in this DM) · Needs text-extraction setup\n`Abbey: describe image` (message menu; private) · Needs image-description setup\n`Abbey: read image text` (message menu; private) · Needs text-extraction setup\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "moderation",
+      "text": "**Abbey · Moderation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "server",
+      "text": "**Abbey · Server**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/server blueprint` (slash command; private) · Create a server blueprint without changing the server.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "voice",
+      "text": "**Abbey · Voice**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "dm_gen",
+      "section": "administration",
+      "text": "**Abbey · Administration**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "start",
+      "text": "**Abbey · Start**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/help` (slash command; private) · Browse commands available to you privately.\n`/stats` (slash command; private) · Read this conversation’s learning and reply budget.\n\nTask buttons open private workflows. Use the section menu for the command reference.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "conversation",
+      "text": "**Abbey · Conversation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/persona route` (slash command; channel-visible) · Choose a persona and explain the routing.\n`/persona ask` (slash command; channel-visible) · Needs generation setup\n`/roleplay` (slash command; channel-visible) · Needs generation setup\n`Ask Abbey` (message menu; private) · Needs generation setup\n`/summarize` (slash command; channel-visible) · Provider busy; retry shortly\n`/nsfw` (slash command; private) · Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw).\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "memory",
+      "text": "**Abbey · Memory**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "images",
+      "text": "**Abbey · Images**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/see` (slash command; channel-visible) · Images disabled by server policy\n`/ocr` (slash command; channel-visible) · Images disabled by server policy\n`Abbey: describe image` (message menu; private) · Images disabled by server policy\n`Abbey: read image text` (message menu; private) · Images disabled by server policy\n\nOpen the message menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "moderation",
+      "text": "**Abbey · Moderation**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "server",
+      "text": "**Abbey · Server**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/whois` (slash command; channel-visible) · Read a member's profile and roles.\n`Abbey: profile` (member menu; private) · Read the selected member's profile privately.\n`/perms` (slash command; channel-visible) · Explain a member's channel permissions.\n`/server blueprint` (slash command; private) · Create a server blueprint without changing the server.\n`/forum draft` (slash command; private) · Suggest #help tags and preview a first-post template.\n`/forum post` (slash command; private) · Create a #help forum thread with a first-post template.\n\nOpen the member menu, then Apps, for its listed actions.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "voice",
+      "text": "**Abbey · Voice**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n`/voice consent` (slash command; private) · Needs voice setup\n`/voice status` (slash command; private) · Read your privacy-bounded voice status.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    },
+    {
+      "input": "guild_blocked",
+      "section": "administration",
+      "text": "**Abbey · Administration**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\nNo commands in this section are currently available to you.\n\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session."
+    }
+  ],
+  "planned": [],
+  "readme": "<!-- BEGIN GENERATED COMMAND CATALOG -->\n| Command | Context | Response | What it does |\n|---|---|---|---|\n| `/help` | guild, bot DM | private | Browse commands available to you privately. |\n| `/persona route` | guild, bot DM | public | Choose a persona and explain the routing. |\n| `/persona ask` | guild, bot DM | public | Ask a question through the configured generation backend. |\n| `/roleplay` | guild, bot DM | public | Roleplay as Aviva in a DM or NSFW channel when the nsfw gate is on. |\n| `/whois` | guild | public | Read a member's profile and roles. |\n| `Abbey: profile` | guild | private | Read the selected member's profile privately. |\n| `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |\n| `/perms` | guild | public | Explain a member's channel permissions. |\n| `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |\n| `/server blueprint` | guild, bot DM | private | Create a server blueprint without changing the server. |\n| `/server create-channel` | guild | private | Create a text channel when you and Abbey both have Manage Channels. |\n| `/server rename-channel` | guild | private | Rename a channel when you and Abbey both have Manage Channels. |\n| `/server slowmode` | guild | private | Set channel slowmode when you and Abbey both have Manage Channels. |\n| `/server delete-channel` | guild | private | Delete a channel with confirm:true when you and Abbey both have Manage Channels. |\n| `/server assign-role` | guild | private | Assign a role when you and Abbey both have Manage Roles. |\n| `/server remove-role` | guild | private | Remove a role when you and Abbey both have Manage Roles. |\n| `/server move-member` | guild | private | Move a member in voice when you and Abbey both have Move Members. |\n| `/server purge` | guild | private | Purge recent messages with confirm:true when you and Abbey both have Manage Messages. |\n| `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |\n| `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |\n| `/forum post` | guild | private | Create a #help forum thread with a first-post template. |\n| `/forum perms` | guild | private | Snapshot and gap-fill Abbey's #help forum overwrite bits. |\n| `/remember` | guild, bot DM | private | Store a fact about yourself; moderators may choose a member. |\n| `/forget` | guild, bot DM | private | Remove a stored fact about yourself or an authorized member. |\n| `/pending list` | guild, bot DM | private | Review proposed fact replacements. |\n| `/pending confirm` | guild, bot DM | private | Apply an explicitly chosen fact replacement. |\n| `/pending dismiss` | guild, bot DM | private | Dismiss a proposed replacement and keep both facts. |\n| `/recall` | guild, bot DM | private | Read your facts and standing, or an authorized member's. |\n| `/reputation` | guild, bot DM | private | Read your standing privately; moderators may choose a member. |\n| `Abbey: memory` | guild | private | Read the selected member's bounded memory card privately. |\n| `/summarize` | guild, bot DM | public | Summarize the recent conversation through the backend. |\n| `/see` | guild, bot DM | public | Describe an image; an optional question also needs generation. |\n| `/ocr` | guild, bot DM | public | Read the text in an image. |\n| `Abbey: describe image` | guild, bot DM | private | Describe the first supported attachment privately. |\n| `Abbey: read image text` | guild, bot DM | private | Read text from the first supported attachment privately. |\n| `/stats` | guild, bot DM | private | Read this conversation’s learning and reply budget. |\n| `/nsfw` | guild, bot DM | private | Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw). |\n| `/admin show` | guild | private | Read this server's settings. |\n| `/admin persona` | guild | private | Set the server's default persona. |\n| `/admin learning` | guild | private | Control learning for this server. |\n| `/admin nsfw` | guild | private | Enable or disable Aviva roleplay for this server (NSFW channels only). |\n| `/admin vision` | guild | private | Control image understanding for this server. |\n| `/admin cooldown` | guild | private | Set the unsolicited reply cooldown. |\n| `/admin act` | guild | private | Opt this server into unsolicited replies or turn them off. |\n| `/admin budget` | guild | private | Set the hourly unsolicited reply budget. |\n| `/admin brain` | guild | private | Inspect the learning policy and exploration setting. |\n| `/admin flush` | guild | private | Persist current state and report each result. |\n| `/admin export` | guild | private | Export the server's brain snapshot privately. |\n| `/admin reset` | guild | private | Clear only this channel's transcript. |\n| `/admin dashboard` | guild | private | Open private administration controls. |\n| `/admin quarantine` | guild | private | Mark a member's stored fact as suspect for review. |\n| `/admin contradict` | guild | private | Record that two of a member's stored facts contradict each other. |\n| `/admin resolve` | guild | private | Close a memory review with a verdict. |\n| `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |\n| `/voice notice` | guild | private | Publish the member voice consent controls. |\n| `/voice play` | guild | private | Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent. |\n| `/voice pause` | guild | private | Pause mirrored music and close tap capture; listen consent unchanged. |\n| `/voice resume-music` | guild | private | Resume mirrored music only; never renews listen consent. |\n| `/voice stop-music` | guild | private | Stop tap capture and mirrored playback; listen consent unchanged. |\n| `/voice volume` | guild | private | Set mirror volume 0–100; Abbey speech ducks music to ¼. |\n| `/voice join` | guild | private | Start voice after every participant's saved agreement. |\n| `/voice resume` | guild | private | Resume voice after current participant consent checks. |\n| `/voice leave` | guild | private | Stop the current call immediately without deleting consent. |\n| `/voice status` | guild | private | Read your privacy-bounded voice status. |\n| `/voice diagnostics` | guild | private | Read private content-free operator voice diagnostics. |\n| `/voice mode` | guild | private | Read or select local/off voice mode (OpenAI Realtime removed). |\n| `/voice verify start` | guild | private | Arm a local content-free voice acceptance run. |\n| `/voice verify report` | guild | private | Read the private local voice acceptance report. |\n\nThe member voice status, typed voice-mode choices, manager diagnostics, and classic administration dashboard are registered surfaces.\n<!-- END GENERATED COMMAND CATALOG -->",
+  "specs": [
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Browse commands available to you privately.",
+      "key": "Help",
+      "kind": "Slash",
+      "name": "help",
+      "private": true,
+      "section": "start"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Choose a persona and explain the routing.",
+      "key": "PersonaRoute",
+      "kind": "Slash",
+      "name": "persona route",
+      "private": false,
+      "section": "conversation"
+    },
+    {
+      "access": "A0",
+      "condition": "C8",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Ask a question through the configured generation backend.",
+      "key": "PersonaAsk",
+      "kind": "Slash",
+      "name": "persona ask",
+      "private": false,
+      "section": "conversation"
+    },
+    {
+      "access": "A0",
+      "condition": "C8",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Roleplay as Aviva in a DM or NSFW channel when the nsfw gate is on.",
+      "key": "Roleplay",
+      "kind": "Slash",
+      "name": "roleplay",
+      "private": false,
+      "section": "conversation"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Read a member's profile and roles.",
+      "key": "Whois",
+      "kind": "Slash",
+      "name": "whois",
+      "private": false,
+      "section": "server"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Read the selected member's profile privately.",
+      "key": "Profile",
+      "kind": "UserContext",
+      "name": "Abbey: profile",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A0",
+      "condition": "C8",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Ask about a selected message privately.",
+      "key": "AskMessage",
+      "kind": "MessageContext",
+      "name": "Ask Abbey",
+      "private": true,
+      "section": "conversation"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Explain a member's channel permissions.",
+      "key": "Perms",
+      "kind": "Slash",
+      "name": "perms",
+      "private": false,
+      "section": "server"
+    },
+    {
+      "access": "A2",
+      "condition": "C7",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ModerateMembers",
+      "description": "Recommend a moderation action after permission and hierarchy checks.",
+      "key": "Modcall",
+      "kind": "Slash",
+      "name": "modcall",
+      "private": true,
+      "section": "moderation"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Create a server blueprint without changing the server.",
+      "key": "ServerBlueprint",
+      "kind": "Slash",
+      "name": "server blueprint",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A8",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageChannels",
+      "description": "Create a text channel when you and Abbey both have Manage Channels.",
+      "key": "ServerCreateChannel",
+      "kind": "Slash",
+      "name": "server create-channel",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A8",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageChannels",
+      "description": "Rename a channel when you and Abbey both have Manage Channels.",
+      "key": "ServerRenameChannel",
+      "kind": "Slash",
+      "name": "server rename-channel",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A8",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageChannels",
+      "description": "Set channel slowmode when you and Abbey both have Manage Channels.",
+      "key": "ServerSlowmode",
+      "kind": "Slash",
+      "name": "server slowmode",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A8",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageChannels",
+      "description": "Delete a channel with confirm:true when you and Abbey both have Manage Channels.",
+      "key": "ServerDeleteChannel",
+      "kind": "Slash",
+      "name": "server delete-channel",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A9",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageRoles",
+      "description": "Assign a role when you and Abbey both have Manage Roles.",
+      "key": "ServerAssignRole",
+      "kind": "Slash",
+      "name": "server assign-role",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A9",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageRoles",
+      "description": "Remove a role when you and Abbey both have Manage Roles.",
+      "key": "ServerRemoveRole",
+      "kind": "Slash",
+      "name": "server remove-role",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A10",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "MoveMembers",
+      "description": "Move a member in voice when you and Abbey both have Move Members.",
+      "key": "ServerMoveMember",
+      "kind": "Slash",
+      "name": "server move-member",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A11",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageMessages",
+      "description": "Purge recent messages with confirm:true when you and Abbey both have Manage Messages.",
+      "key": "ServerPurge",
+      "kind": "Slash",
+      "name": "server purge",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A3",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageWebhooks",
+      "description": "Show a safe incoming-webhook setup guide.",
+      "key": "Webhook",
+      "kind": "Slash",
+      "name": "webhook",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Suggest #help tags and preview a first-post template.",
+      "key": "ForumDraft",
+      "kind": "Slash",
+      "name": "forum draft",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Create a #help forum thread with a first-post template.",
+      "key": "ForumPost",
+      "kind": "Slash",
+      "name": "forum post",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Snapshot and gap-fill Abbey's #help forum overwrite bits.",
+      "key": "ForumPerms",
+      "kind": "Slash",
+      "name": "forum perms",
+      "private": true,
+      "section": "server"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Store a fact about yourself; moderators may choose a member.",
+      "key": "Remember",
+      "kind": "Slash",
+      "name": "remember",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Remove a stored fact about yourself or an authorized member.",
+      "key": "Forget",
+      "kind": "Slash",
+      "name": "forget",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Review proposed fact replacements.",
+      "key": "PendingList",
+      "kind": "Slash",
+      "name": "pending list",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Apply an explicitly chosen fact replacement.",
+      "key": "PendingConfirm",
+      "kind": "Slash",
+      "name": "pending confirm",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Dismiss a proposed replacement and keep both facts.",
+      "key": "PendingDismiss",
+      "kind": "Slash",
+      "name": "pending dismiss",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Read your facts and standing, or an authorized member's.",
+      "key": "Recall",
+      "kind": "Slash",
+      "name": "recall",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Read your standing privately; moderators may choose a member.",
+      "key": "Reputation",
+      "kind": "Slash",
+      "name": "reputation",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A1",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Read the selected member's bounded memory card privately.",
+      "key": "MemoryMenu",
+      "kind": "UserContext",
+      "name": "Abbey: memory",
+      "private": true,
+      "section": "memory"
+    },
+    {
+      "access": "A0",
+      "condition": "C1",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Summarize the recent conversation through the backend.",
+      "key": "Summarize",
+      "kind": "Slash",
+      "name": "summarize",
+      "private": false,
+      "section": "conversation"
+    },
+    {
+      "access": "A0",
+      "condition": "C3",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Describe an image; an optional question also needs generation.",
+      "key": "See",
+      "kind": "Slash",
+      "name": "see",
+      "private": false,
+      "section": "images"
+    },
+    {
+      "access": "A0",
+      "condition": "C9",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Read the text in an image.",
+      "key": "Ocr",
+      "kind": "Slash",
+      "name": "ocr",
+      "private": false,
+      "section": "images"
+    },
+    {
+      "access": "A0",
+      "condition": "C2",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Describe the first supported attachment privately.",
+      "key": "DescribeImage",
+      "kind": "MessageContext",
+      "name": "Abbey: describe image",
+      "private": true,
+      "section": "images"
+    },
+    {
+      "access": "A0",
+      "condition": "C9",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Read text from the first supported attachment privately.",
+      "key": "ReadImage",
+      "kind": "MessageContext",
+      "name": "Abbey: read image text",
+      "private": true,
+      "section": "images"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Read this conversation’s learning and reply budget.",
+      "key": "Stats",
+      "kind": "Slash",
+      "name": "stats",
+      "private": true,
+      "section": "start"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild",
+        "BotDm"
+      ],
+      "default_member_permissions": null,
+      "description": "Enable or disable Aviva roleplay in this DM (in a server use /admin nsfw).",
+      "key": "Nsfw",
+      "kind": "Slash",
+      "name": "nsfw",
+      "private": true,
+      "section": "conversation"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Read this server's settings.",
+      "key": "AdminShow",
+      "kind": "Slash",
+      "name": "admin show",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Set the server's default persona.",
+      "key": "AdminPersona",
+      "kind": "Slash",
+      "name": "admin persona",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Control learning for this server.",
+      "key": "AdminLearning",
+      "kind": "Slash",
+      "name": "admin learning",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Enable or disable Aviva roleplay for this server (NSFW channels only).",
+      "key": "AdminNsfw",
+      "kind": "Slash",
+      "name": "admin nsfw",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Control image understanding for this server.",
+      "key": "AdminVision",
+      "kind": "Slash",
+      "name": "admin vision",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Set the unsolicited reply cooldown.",
+      "key": "AdminCooldown",
+      "kind": "Slash",
+      "name": "admin cooldown",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Opt this server into unsolicited replies or turn them off.",
+      "key": "AdminAct",
+      "kind": "Slash",
+      "name": "admin act",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Set the hourly unsolicited reply budget.",
+      "key": "AdminBudget",
+      "kind": "Slash",
+      "name": "admin budget",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Inspect the learning policy and exploration setting.",
+      "key": "AdminBrain",
+      "kind": "Slash",
+      "name": "admin brain",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Persist current state and report each result.",
+      "key": "AdminFlush",
+      "kind": "Slash",
+      "name": "admin flush",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Export the server's brain snapshot privately.",
+      "key": "AdminExport",
+      "kind": "Slash",
+      "name": "admin export",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Clear only this channel's transcript.",
+      "key": "AdminReset",
+      "kind": "Slash",
+      "name": "admin reset",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Open private administration controls.",
+      "key": "AdminDashboard",
+      "kind": "Slash",
+      "name": "admin dashboard",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Mark a member's stored fact as suspect for review.",
+      "key": "AdminQuarantine",
+      "kind": "Slash",
+      "name": "admin quarantine",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Record that two of a member's stored facts contradict each other.",
+      "key": "AdminContradict",
+      "kind": "Slash",
+      "name": "admin contradict",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A4",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Close a memory review with a verdict.",
+      "key": "AdminResolve",
+      "kind": "Slash",
+      "name": "admin resolve",
+      "private": true,
+      "section": "administration"
+    },
+    {
+      "access": "A0",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Review, agree to, or withdraw your voice choice.",
+      "key": "VoiceConsent",
+      "kind": "Slash",
+      "name": "voice consent",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A4",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Publish the member voice consent controls.",
+      "key": "VoiceNotice",
+      "kind": "Slash",
+      "name": "voice notice",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent.",
+      "key": "VoicePlay",
+      "kind": "Slash",
+      "name": "voice play",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Pause mirrored music and close tap capture; listen consent unchanged.",
+      "key": "VoicePause",
+      "kind": "Slash",
+      "name": "voice pause",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Resume mirrored music only; never renews listen consent.",
+      "key": "VoiceResumeMusic",
+      "kind": "Slash",
+      "name": "voice resume-music",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Stop tap capture and mirrored playback; listen consent unchanged.",
+      "key": "VoiceStopMusic",
+      "kind": "Slash",
+      "name": "voice stop-music",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Set mirror volume 0–100; Abbey speech ducks music to ¼.",
+      "key": "VoiceVolume",
+      "kind": "Slash",
+      "name": "voice volume",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C5",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Start voice after every participant's saved agreement.",
+      "key": "VoiceJoin",
+      "kind": "Slash",
+      "name": "voice join",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A5",
+      "condition": "C5",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Resume voice after current participant consent checks.",
+      "key": "VoiceResume",
+      "kind": "Slash",
+      "name": "voice resume",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A6",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Stop the current call immediately without deleting consent.",
+      "key": "VoiceLeave",
+      "kind": "Slash",
+      "name": "voice leave",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A0",
+      "condition": "C0",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Read your privacy-bounded voice status.",
+      "key": "VoiceStatus",
+      "kind": "Slash",
+      "name": "voice status",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A4",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Read private content-free operator voice diagnostics.",
+      "key": "VoiceDiagnostics",
+      "kind": "Slash",
+      "name": "voice diagnostics",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A4",
+      "condition": "C4",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": "ManageServer",
+      "description": "Read or select local/off voice mode (OpenAI Realtime removed).",
+      "key": "VoiceMode",
+      "kind": "Slash",
+      "name": "voice mode",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A7",
+      "condition": "C6",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Arm a local content-free voice acceptance run.",
+      "key": "VoiceVerifyStart",
+      "kind": "Slash",
+      "name": "voice verify start",
+      "private": true,
+      "section": "voice"
+    },
+    {
+      "access": "A7",
+      "condition": "C6",
+      "contexts": [
+        "Guild"
+      ],
+      "default_member_permissions": null,
+      "description": "Read the private local voice acceptance report.",
+      "key": "VoiceVerifyReport",
+      "kind": "Slash",
+      "name": "voice verify report",
+      "private": true,
+      "section": "voice"
+    }
+  ]
+}

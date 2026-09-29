@@ -1,0 +1,6 @@
+# ABI-WDBX v1
+{"type":"vector","id":1,"values":[0.5,-0.25,0.125]}
+{"type":"vector","id":2,"values":[-1.0,0.0,1.0]}
+{"type":"kv","key":"completion:1","value":"{\"kind\":\"completion\"}"}
+{"type":"kv","key":"mem:guild-1:1","value":"{\"user\":\"alice\",\"text\":\"likes rust\",\"at\":1000}"}
+{"type":"block","hash":[53,46,168,220,101,179,227,102,193,142,10,228,30,28,88,8,232,90,127,253,45,165,131,211,117,82,71,239,155,158,231,90],"prev_hash":"\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000","timestamp_ms":1753000000000,"sequence":0,"profile":"abi","query_id":1,"response_id":2,"metadata":"genesis: prev_hash in STRING form"}

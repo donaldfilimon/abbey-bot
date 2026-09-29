@@ -1,0 +1,60 @@
+//! SCRATCH-ONLY golden dumper, batch 3 (embedding, WDBX v1 segment,
+//! recall projection, checkpoint payloads). Never part of the oracle checkout.
+use serde_json::{Value, json};
+
+fn write(name: &str, value: &Value) {
+    let dir = std::path::PathBuf::from(std::env::var("ABBEY_GOLDEN_DIR").unwrap());
+    let mut bytes = serde_json::to_vec_pretty(value).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(dir.join(name), bytes).unwrap();
+}
+
+#[test]
+#[ignore = "golden dump"]
+fn dump_goldens_3() {
+    let inputs = ["", "a", "ab", "abc", "hello world", "Hello World", "the quick brown fox", "日本語", "likes rust", "has a cat named Miso",
+        "prefers short answers", "x", "ZZZZ qqqq vvvv", "\u{0}\u{1}\u{7f}", "café crème", &"long ".repeat(200)];
+    let mut embeddings = Vec::new();
+    for input in inputs {
+        let v = crate::embedding::text_embedding(input);
+        embeddings.push(json!({"input": input, "bits": v.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+            "json": serde_json::to_string(&v.to_vec()).unwrap()}));
+    }
+    let mut cosines = Vec::new();
+    for (a, b) in [("hello world", "hello worlds"), ("hello world", "zzzz qqqq vvvv"), ("likes rust", "rust"), ("", "")] {
+        let x = crate::embedding::text_embedding(a);
+        let y = crate::embedding::text_embedding(b);
+        cosines.push(json!({"a": a, "b": b, "bits": crate::embedding::cosine(&x, &y).to_bits()}));
+    }
+    // Recall projection over a sequence of operations.
+    let mut recall = crate::wdbx::Recall::new();
+    let mut steps = Vec::new();
+    let a = recall.remember("discord:1", "discord:2", "likes rust", 1000);
+    let b = recall.remember("discord:1", "discord:3", "likes zig", 1001);
+    let c = recall.remember("discord:dm:2", "discord:2", "has a cat named Miso", 1002);
+    steps.push(json!({"after": "three remembers", "ids": [a, b, c], "render": recall.store().render()}));
+    let forgot = recall.forget("discord:1", b);
+    steps.push(json!({"after": "forget b", "forgot": forgot, "render": recall.store().render()}));
+    let again = recall.forget("discord:1", b);
+    let d = recall.remember("discord:1", "discord:2", "writes \"quoted\" text\nwith newline", 1003);
+    steps.push(json!({"after": "forget b again, remember d", "forgot": again, "id": d, "render": recall.store().render()}));
+    let mut queries = Vec::new();
+    for (g, u, q) in [("discord:1", "discord:2", "rust"), ("discord:1", "discord:2", "quoted"), ("discord:1", "discord:3", "zig"), ("discord:dm:2", "discord:2", "cat"), ("discord:1", "discord:2", "cat")] {
+        let hits = recall.recall_for_user(g, u, q, 5);
+        queries.push(json!({"guild": g, "user": u, "query": q, "hits": hits.iter().map(|h| json!({"id": h.id, "text": h.text, "score_bits": h.score.to_bits()})).collect::<Vec<_>>()}));
+    }
+    let mut reconciled = crate::wdbx::Recall::new();
+    reconciled.remember("discord:1", "discord:2", "stale", 5);
+    reconciled.reconcile_memory_facts(vec![
+        ("discord:1".to_string(), "discord:2".to_string(), "likes rust".to_string(), 1000u64),
+        ("discord:1".to_string(), "discord:2".to_string(), "second".to_string(), 1001u64),
+    ]);
+    // Parse/render identity on the conformance fixture.
+    let fixture = std::fs::read_to_string(std::env::var("ABBEY_WDBX_FIXTURE").unwrap()).unwrap();
+    let parsed = crate::wdbx::WdbxStore::parse(&fixture).unwrap();
+    write("wdbx.json", &json!({
+        "embeddings": embeddings, "cosines": cosines, "steps": steps, "queries": queries,
+        "reconciled_render": reconciled.store().render(),
+        "fixture_render": parsed.render(),
+    }));
+}

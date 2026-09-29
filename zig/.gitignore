@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+*.log
+.env
+.env.*
+!.env.example
+__pycache__/
