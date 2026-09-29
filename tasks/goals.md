@@ -66,6 +66,8 @@ status: done
 
 ## Full-duplex Abbey voice in Discord Engineering
 status: in_progress
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** acceptance policy: rare and negative paths close on unit and integration tests; the main happy path still needs one live observation by Donald. Two-guild isolation is therefore test-accepted.
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** voice reasons through the FM route, PCC first then `fm` system on-device, with the Gemma 4 endpoint (MLX, or Ollama `gemma4`) as the backup after FM. Donald's words: "fm system on device or pcc first with fm backup is mlx/ollama gemma4". The acceptance record must name the model that actually answered. Next: remaining decisions, then wire voice to the FM route after the FM-primary program lands.
 - **2026-09-16:** PRs #132/#134/#135/#136 landed on `origin/main` (`935247d`) via the existing merge queue; worktrees removed. Local `./check.sh` EXIT 0 (1294 passed). rustls 0.23.45 closed RUSTSEC-2026-0285 on the reqwest line; serenity 0.22.4 debt unchanged. Live launchd service not touched.
 - Design: `docs/superpowers/specs/2026-08-20-live-voice-design.md`. Delivery now follows the
   canonical checkout on `main`; dated branch names are archival context, not current guidance.
@@ -279,6 +281,8 @@ status: done
 
 ## Guild learning loop acts in opted-in servers (sub-project 3 of "improve all")
 status: in_progress
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** clear the MLAI guild's `epsilon_override` (0.5) so epsilon decays on the standard schedule. Next: apply it through `/admin` and record the before/after brain stats.
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** acceptance policy: rare and negative paths close on unit and integration tests; the main happy path still needs one live observation by Donald. The `OverBudget` refusal is therefore test-accepted. Still open: `epsilon_override` 0.5 in the MLAI guild (decision pending).
 - Spec: `docs/superpowers/specs/2026-08-19-guild-learning-loop-design.md`; plan: `docs/superpowers/plans/2026-08-19-guild-learning-loop.md`. Decisions: per-guild `/admin act on` opt-in (default off), per-guild hourly budget (default 6, 1–60), in-memory BrainStats in `/admin brain`, `ABBEY_QUIET` still wins. At capture time, sub-projects 1, 2, and 4 still needed their own records; the sections below supersede that planning note.
 - Privacy-safe 2026-08-19 evidence for PRs #16–#17 and commit `101dd96` records the result
   categories opt-in enforcement, policy decisions, reactions, cooldown refusal, delayed rewards,
@@ -333,6 +337,8 @@ status: done
 
 ## Breadth & ops (sub-project 4 of "improve all")
 status: in_progress
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** (1) the Activity OAuth token exchange lives **in abbey-bot on this Mac**, served on a loopback port behind the tunnel, with the client secret in the owner-only env; (2) the goal may close with the serenity-blocked items (Components V2, rustls-webpki advisories via serenity 0.12.5) recorded as accepted upstream debt, plus a follow-up goal that reopens when serenity releases.
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** **Telegram and Slack are dropped from `done` scope.** The adapters stay in code unchanged; live Telegram/Slack acceptance and their tokens are no longer required. Next: the remaining decisions (Activity OAuth host; closing with the upstream serenity debt accepted).
 - **2026-09-22 00:1x EDT: RUSTSEC-2026-0293 accepted by Donald.** `ringbuf` 0.4.8 via songbird 0.6.0 (songbird pins `ringbuf = "0.4"`; fixed 0.5.2 is not semver-compatible). Unreachable here: songbird's only ring buffer is `SharedRb<Heap<u8>>` and `u8` has no `Drop`. `security/rustsec-accepted-debt.json` moves to schema 3: a list of locked dependency paths, each binding its own advisories, rationale and review triggers; `scripts/check-rustsec-debt.py` verifies every path and rejects an advisory whose package is not its path's terminal. The four `rustls-webpki` records gained the CVE aliases the advisory database added on 2026-09-19 (fingerprint-only change, same packages and ranges). Audit is still NOT clean: 5 accepted.
 - 2026-08-19: vision works on a local VLM — ollama `gemma4:e4b` described a screenshot correctly; `/v1` needed a 1,024-token budget (reasoning first) and a reasoning-exhausted error is now honest. launchd user agent for this Mac: `deploy/com.donaldfilimon.abbey-bot.plist` + `deploy/install-launchd.sh` (build, install, load; `--uninstall`).
 - Historical 2026-08-20 installation evidence recorded the categories atomic launchd replacement,
@@ -510,6 +516,8 @@ status: done
 
 ## Complete Abbey: MLX Gemma 4 12B, vision, tools, voice, and cross-platform support
 status: in_progress
+- **2026-09-29 09:3x EDT, ⚑ DECISION (Donald, AskUserQuestion):** platforms: close on macOS live acceptance; Linux and Windows are recorded as compile-checked portability only, not accepted. acceptance policy: rare and negative paths close on unit and integration tests; the main happy path still needs one live observation by Donald. 
+- **2026-09-29 09:2x EDT, ⚑ DECISION (Donald, AskUserQuestion):** with Apple FM primary (pcc, then system), the MLX endpoint's role is **vision/OCR plus last-resort text fallback**. MLX tool continuation is dropped from scope (the 4-bit checkpoint fails it). The goal closes when that role is accepted live. Audit: `.superpowers/sdd/2026-09-29-fm-primary-addenda/older-goals-audit.md` (not tracked). Next: remaining decisions (cross-platform acceptance), then the agent-doable items.
 
 - Captured 2026-08-20 from a full written specification. One coarse intention: make the pinned
   MLX-VLM `mlx-community/gemma-4-12B-it-4bit` sidecar the qualified macOS primary for text,
@@ -971,6 +979,7 @@ status: in_progress
 
 ## Route guild operations through the WDBX episode gate
 status: in_progress
+- **2026-09-29 09:2x EDT, ⚑ DECISION (Donald, AskUserQuestion):** the **proposal stage is the final state**; the deliberate exclusions (DQN/memory-bank vector writes; `operational` retention emits no `forgets`) stay excluded. Erasure work moves to the machine-ledger Federate goal. The goal closes after the first real signed record is observed live (rung 1, Donald's). Next: that live observation.
 - 2026-09-06 first slice (Donald chose "subprocess to the abi binary" over a gRPC
   client or a contract amendment): `src/episode_gate.rs` mirrors `/admin learning
   on|off` into the constitutional ledger as a content-free `proposal` event via
@@ -1232,7 +1241,8 @@ status: done
 
 
 ## 2026-09-06 full modernization integration
-status: in_progress
+status: done
+- **2026-09-29 09:2x EDT, closed as historical on Donald's decision (AskUserQuestion):** this section is the 2026-09-06 modernization checkpoint (`ff5d594`) and is superseded by the later goals in this file (FM primary, voice, episode gate, breadth & ops). Entries appended under it after 2026-09-06 stay as history; new work goes to its own goal. Nothing in its scope is left open that is not tracked by another section.
 
 Historical modernization checkpoint; its results belong to `ff5d594`. The reviewed
 source implements guided help and private full-fact browsing, scoped statistics
@@ -2186,5 +2196,6 @@ someone ran it; the gate's green covers none of the five. Uncommitted at the tim
 
 ## Apple FM primary, auto-deploy, capped style addenda
 status: in_progress
+- **2026-09-29 09:3x EDT, `6422e18` (Task 2):** `fm --instructions` now carries the Abbey persona core plus the static decision instruction; facts, guidance and the transcript stay on stdin. A pure `prompt_budget::fit` keeps fm system (CLI and `fm serve`) within 6,656 input tokens: it drops the oldest turns first, then the least relevant fact lines, and never trims the core, addenda or the "User standing" line. It re-fits after every provider fallback. PCC and non-FM providers are untrimmed and byte-identical to before. Gate 1505 passed / 5 ignored; review clean (7 minors deferred). Next: Task 3 (style signal + addenda ledger).
 - **2026-09-29 08:5x EDT, `bbfd246` + `1d4e99a` (Task 1):** `ABBEY_FM_MODE` takes an ordered list (`pcc,system`), `ABBEY_FM_ROLE=primary` registers FM ahead of the endpoint, per-mode manifest records (`foundation-models-pcc`, `foundation-models`), and an unqualified manifest now degrades that mode (typed `FmQualificationState`, unadmitted, shown in status) instead of failing startup. Review fix: an apply failure demotes the whole mode atomically; `fm serve` and FM vision bind to the system mode. Gate 1492 passed / 5 ignored; exact-head `Gate (macOS)` success on `1d4e99a`. Dormant: live env has no `ABBEY_FM_*` keys. Measured for Task 2: fm system window 8,192 tokens (7,917 in answered, 8,167 errored); from this session `fm models` reports PCC "not available in this context", unmeasured under launchd until Task 6. Next: Task 2 (prompt via `--instructions`, budget 6,656 input tokens).
 - **2026-09-29 08:1x EDT (Task 0):** Donald decided: `fm --model pcc` primary, `fm --model system` fallback, MLX endpoint last (still vision/OCR); CI `deploy-macos` after green `Gate (macOS)` on `main` (standing restart authorization); automatic closed-vocabulary style addenda in learning-enabled guilds; direct push per slice. Spec `docs/superpowers/specs/2026-09-29-fm-primary-addenda-design.md`, plan `docs/superpowers/plans/2026-09-29-fm-primary-addenda.md`. Supersedes "PCC remains intentionally unqualified" for this route only. Baseline `6445eb3`, gate green (1,477 passed / 5 ignored), installed binary SHA equals release build. Next: Task 1 (two FM modes, degrade on unqualified manifest).
