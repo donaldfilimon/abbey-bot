@@ -321,3 +321,34 @@ async fn verify_succeeds_apply_fails_demotes_only_that_mode() {
     assert_eq!(states, ["missing", "missing"]);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn fm_system_routes_carry_the_measured_budget_and_pcc_is_untrimmed() {
+    let mut system = qualified(FmMode::System, false);
+    system.config.endpoint = Some("http://127.0.0.1:1976".into());
+    let runtime = ProviderRuntime::legacy(
+        endpoint(),
+        None,
+        vec![qualified(FmMode::Pcc, false), system],
+        None,
+        true,
+        1,
+        1,
+    );
+    let budget = |name: &str| {
+        runtime.entries[&ProviderId::parse(name).unwrap()]
+            .adapter
+            .as_ref()
+            .unwrap()
+            .prompt_budget()
+    };
+    let fm_system = Some(crate::prompt_budget::Budget::fm_system());
+    assert_eq!(
+        budget(fm_routes::FM_SERVER),
+        fm_system,
+        "fm serve is system"
+    );
+    assert_eq!(budget(fm_routes::FM_CLI_SYSTEM), fm_system);
+    assert_eq!(budget(fm_routes::FM_CLI_PCC), None);
+    assert_eq!(budget("primary"), None);
+}

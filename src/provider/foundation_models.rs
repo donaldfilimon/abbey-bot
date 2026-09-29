@@ -20,7 +20,7 @@ use super::{
 };
 use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
 
-const STATIC_FM_INSTRUCTIONS: &str = "Follow the policy and conversation JSON supplied on stdin. Return only the schema-guided decision.";
+pub(super) const STATIC_FM_INSTRUCTIONS: &str = "Follow the policy and conversation JSON supplied on stdin. Return only the schema-guided decision.";
 const MAX_STDOUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 4 * 1024;
 const ALLOWED_ENVIRONMENT: &[&str] = &[
@@ -207,12 +207,27 @@ impl FoundationModels {
         tools: &[crate::tools::ToolSpec],
         call_id: &str,
     ) -> Result<ModelTurn, LlmError> {
+        self.cli_turn_with_instructions(None, system_prompt, turns, tools, call_id)
+            .await
+    }
+
+    /// `instructions` is static template text (the persona core and addenda)
+    /// and travels on argv ahead of the fixed decision sentence; the
+    /// per-request `system_prompt` (facts and guidance) stays on stdin.
+    pub async fn cli_turn_with_instructions(
+        &self,
+        instructions: Option<&str>,
+        system_prompt: &str,
+        turns: &[ChatTurn],
+        tools: &[crate::tools::ToolSpec],
+        call_id: &str,
+    ) -> Result<ModelTurn, LlmError> {
         let schema = decision_schema(tools)?;
         let transcript = render_transcript(system_prompt, turns)?;
         let file = PrivateSchemaFile::create(&schema).map_err(|error| {
             LlmError::backend(format!("could not prepare the FM response schema: {error}"))
         })?;
-        let invocation = CliInvocation::new(&self.config, &transcript, file.path());
+        let invocation = CliInvocation::new(&self.config, instructions, &transcript, file.path());
         self.verify_cli_identity()?;
         let output = self.run_owned(invocation, file).await?;
         parse_cli_output(&output, tools, call_id)
@@ -259,7 +274,18 @@ pub(super) struct CliInvocation {
 }
 
 impl CliInvocation {
-    pub(super) fn new(config: &FmConfig, prompt: &str, schema: &Path) -> Self {
+    pub(super) fn new(
+        config: &FmConfig,
+        instructions: Option<&str>,
+        prompt: &str,
+        schema: &Path,
+    ) -> Self {
+        let instructions = instructions
+            .filter(|text| !text.trim().is_empty())
+            .map_or_else(
+                || STATIC_FM_INSTRUCTIONS.to_string(),
+                |text| format!("{text}\n\n{STATIC_FM_INSTRUCTIONS}"),
+            );
         Self {
             program: config.cli.clone(),
             args: vec![
@@ -268,7 +294,7 @@ impl CliInvocation {
                 config.mode.as_str().into(),
                 "--no-stream".into(),
                 "--instructions".into(),
-                STATIC_FM_INSTRUCTIONS.into(),
+                instructions.into(),
                 "--schema".into(),
                 schema.as_os_str().to_owned(),
             ],

@@ -1,7 +1,7 @@
 //! Operational context is separate from persona contracts and conversation evidence.
 
-pub(super) fn system_prompt(
-    base: &str,
+/// The operational guidance that follows the persona prompt and its context.
+pub(super) fn guidance(
     scope: &str,
     tool_names: &[&str],
     suffix: Option<&str>,
@@ -16,7 +16,7 @@ pub(super) fn system_prompt(
         )
     };
     let mut system = format!(
-        "{base}\n\nOperational capability context (not conversation evidence):\n{tools}\nDo not claim an action completed without its successful result. Pending, refused, partial and uncertain effects are not completed actions. Do not invent commands or promise future work that has not been scheduled."
+        "Operational capability context (not conversation evidence):\n{tools}\nDo not claim an action completed without its successful result. Pending, refused, partial and uncertain effects are not completed actions. Do not invent commands or promise future work that has not been scheduled."
     );
     if scope.starts_with("discord:") {
         system.push_str(
@@ -68,14 +68,13 @@ mod tests {
 
     #[test]
     fn discord_guidance_names_real_tools_and_supported_recovery_without_claiming_effects() {
-        let system = system_prompt(
-            "Persona",
+        let system = guidance(
             "discord:42",
             &["recall", "inspect_status"],
             None,
             "how do I rename a channel?",
         );
-        assert!(system.starts_with("Persona\n\n"));
+        assert!(system.starts_with("Operational capability context"));
         assert!(system.contains("recall, inspect_status"));
         assert!(system.contains("/help"));
         assert!(system.contains("Do not claim"));
@@ -89,8 +88,7 @@ mod tests {
 
     #[test]
     fn discord_learning_topic_points_at_admin_learning_controls_without_code_rewrite_claims() {
-        let system = system_prompt(
-            "Persona",
+        let system = guidance(
             "discord:42",
             &["recall"],
             None,
@@ -106,8 +104,7 @@ mod tests {
 
     #[test]
     fn disabled_round_does_not_offer_actions_or_discord_controls_on_other_transports() {
-        let system = system_prompt(
-            "Persona",
+        let system = guidance(
             "slack:42",
             &[],
             Some("Private audition"),
@@ -123,13 +120,7 @@ mod tests {
 
     #[test]
     fn operational_context_never_copies_private_scope_identifiers() {
-        let system = system_prompt(
-            "Persona",
-            "discord:private:SECRET-SCOPE",
-            &["recall"],
-            None,
-            "hi",
-        );
+        let system = guidance("discord:private:SECRET-SCOPE", &["recall"], None, "hi");
         assert!(!system.contains("SECRET-SCOPE"));
         assert!(system.len() < 1800);
     }

@@ -150,10 +150,50 @@ impl ProviderConversation<'_> {
             }
         }
     }
+    /// The input budget of the reserved provider, if its window is small.
+    pub fn prompt_budget(&self) -> Option<crate::prompt_budget::Budget> {
+        lock(&self.effects.0)
+            .selected()
+            .and_then(|id| self.runtime.entries.get(id))
+            .and_then(|entry| entry.adapter.as_ref())
+            .and_then(|adapter| adapter.prompt_budget())
+    }
     pub async fn execute(
         &mut self,
         system: &str,
         turns: &[ChatTurn],
+        tools: &[crate::tools::ToolSpec],
+        style: ResponseStyle,
+        deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> Result<ModelTurn, LlmError> {
+        self.execute_request(system, turns, None, tools, style, deltas)
+            .await
+    }
+    /// Execute split prompt parts: single-prompt adapters receive
+    /// [`PromptParts::system`], and adapters that carry the persona out of
+    /// band also receive its static instructions and per-request policy.
+    ///
+    /// [`PromptParts::system`]: crate::prompt_budget::PromptParts::system
+    pub async fn execute_parts(
+        &mut self,
+        parts: &crate::prompt_budget::PromptParts,
+        tools: &[crate::tools::ToolSpec],
+        style: ResponseStyle,
+        deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> Result<ModelTurn, LlmError> {
+        let (system, instructions, policy) = (parts.system(), parts.instructions(), parts.policy());
+        let split = super::super::domain::SplitPrompt {
+            instructions: &instructions,
+            policy: &policy,
+        };
+        self.execute_request(&system, &parts.turns, Some(split), tools, style, deltas)
+            .await
+    }
+    async fn execute_request(
+        &mut self,
+        system: &str,
+        turns: &[ChatTurn],
+        split: Option<super::super::domain::SplitPrompt<'_>>,
         tools: &[crate::tools::ToolSpec],
         style: ResponseStyle,
         deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
@@ -175,6 +215,7 @@ impl ProviderConversation<'_> {
                     call_id: "runtime-turn",
                     style,
                     deltas,
+                    split,
                 })
                 .await
                 .and_then(|turn| {

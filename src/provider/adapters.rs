@@ -8,6 +8,8 @@ pub struct HttpAdapter<T = HttpTransport> {
     pub backend: Backend,
     pub transport: T,
     pub tools_rejected: std::sync::atomic::AtomicBool,
+    /// Input budget of the served model's window; `None` sends untrimmed.
+    pub prompt_budget: Option<crate::prompt_budget::Budget>,
 }
 impl<T: llm::Transport + StreamTransport + Send + Sync> TurnAdapter for HttpAdapter<T> {
     fn provider_id(&self) -> &ProviderId {
@@ -27,6 +29,9 @@ impl<T: llm::Transport + StreamTransport + Send + Sync> TurnAdapter for HttpAdap
             turns,
             tools,
         ))
+    }
+    fn prompt_budget(&self) -> Option<crate::prompt_budget::Budget> {
+        self.prompt_budget
     }
     fn tools_enabled(&self) -> bool {
         !self
@@ -103,6 +108,25 @@ impl TurnAdapter for FmCliAdapter {
     ) -> TurnFuture<'a> {
         Box::pin(self.fm.cli_turn(system, turns, tools, call_id))
     }
+    fn prompt_budget(&self) -> Option<crate::prompt_budget::Budget> {
+        match self.fm.config.mode {
+            super::FmMode::System => Some(crate::prompt_budget::Budget::fm_system()),
+            super::FmMode::Pcc => None,
+        }
+    }
+    fn execute<'a>(&'a self, request: super::domain::AdapterRequest<'a>) -> TurnFuture<'a> {
+        let (instructions, policy) = match request.split {
+            Some(split) => (Some(split.instructions), split.policy),
+            None => (None, request.system),
+        };
+        Box::pin(self.fm.cli_turn_with_instructions(
+            instructions,
+            policy,
+            request.turns,
+            request.tools,
+            request.call_id,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +181,7 @@ mod tests {
                 offered: Mutex::new(Vec::new()),
             },
             tools_rejected: std::sync::atomic::AtomicBool::new(false),
+            prompt_budget: None,
         };
         let tools = crate::tools::production_tools();
         for expected in ["first", "second"] {
@@ -168,6 +193,7 @@ mod tests {
                     call_id: "synthetic",
                     style: llm::ResponseStyle::Default,
                     deltas: None,
+                    split: None,
                 })
                 .await
                 .unwrap();

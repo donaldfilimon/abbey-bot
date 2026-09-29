@@ -294,7 +294,7 @@ fn invocation_uses_argv_and_stdin_without_transcript_saving() {
     let private = "private memory: favorite color blue; $(touch /tmp/nope)";
     let prompt = render_transcript(private, &[ChatTurn::user("hello")]).unwrap();
     let schema = std::env::temp_dir().join("schema.json");
-    let invocation = CliInvocation::new(&cfg, &prompt, &schema);
+    let invocation = CliInvocation::new(&cfg, None, &prompt, &schema);
     assert_eq!(invocation.program, Path::new(DEFAULT_FM_CLI));
     assert!(String::from_utf8_lossy(&invocation.stdin).contains(private));
     let args = invocation
@@ -308,6 +308,75 @@ fn invocation_uses_argv_and_stdin_without_transcript_saving() {
     assert!(!args.iter().any(|arg| arg == "--save-transcript"));
     assert!(!args.iter().any(|arg| arg.contains(private)));
     assert!(!args.iter().any(|arg| arg.contains("favorite color")));
+}
+
+#[test]
+fn cli_argv_contains_instructions_but_no_facts_or_transcript() {
+    let fact = "zebra-fact-7731 keeps a private greenhouse";
+    let question = "quokka-question-4410 about my greenhouse";
+    let context = crate::memory::PersonaContext {
+        channel_summary: "channel-summary-5521".into(),
+        user_facts: vec![fact.into()],
+        reputation: 0.5,
+    };
+    let persona = crate::persona::Persona::Abbey;
+    let core = crate::ask::system_prompt(persona);
+    let parts = crate::prompt_budget::PromptParts::new(
+        core.clone(),
+        &context.render(question),
+        "Operational capability context (not conversation evidence):".into(),
+        vec![
+            ChatTurn::user("earlier-turn-9083"),
+            ChatTurn::assistant("earlier-reply-2290"),
+            ChatTurn::user(question),
+        ],
+    );
+    let fitted = crate::prompt_budget::fit(&parts, crate::prompt_budget::Budget::fm_system());
+    let stdin = render_transcript(&fitted.policy(), &fitted.turns).unwrap();
+    let schema = std::env::temp_dir().join("schema.json");
+    let invocation = CliInvocation::new(
+        &config(FmMode::System),
+        Some(&fitted.instructions()),
+        &stdin,
+        &schema,
+    );
+    let args = invocation
+        .args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    for private in [
+        fact,
+        "zebra-fact-7731",
+        question,
+        "quokka-question-4410",
+        "earlier-turn-9083",
+        "earlier-reply-2290",
+        "channel-summary-5521",
+        "User standing",
+        "Operational capability context",
+    ] {
+        assert!(
+            !args.iter().any(|arg| arg.contains(private)),
+            "{private} reached argv"
+        );
+    }
+    let position = args.iter().position(|arg| arg == "--instructions").unwrap();
+    let instructions = &args[position + 1];
+    assert!(instructions.starts_with(&core), "{instructions}");
+    assert!(
+        instructions.ends_with(foundation_models::STATIC_FM_INSTRUCTIONS),
+        "{instructions}"
+    );
+    let stdin = String::from_utf8(invocation.stdin).unwrap();
+    for expected in [fact, question, "earlier-turn-9083", "channel-summary-5521"] {
+        assert!(stdin.contains(expected), "{expected} missing from stdin");
+    }
+    assert!(
+        !stdin.contains(&core),
+        "the persona core travels once, on argv"
+    );
+    println!("--instructions: {instructions}\n\nstdin: {stdin}");
 }
 
 #[test]

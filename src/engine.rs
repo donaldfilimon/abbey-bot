@@ -72,7 +72,12 @@ impl Session {
 /// ending in the new user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedTurn {
+    /// `persona_core` and `context` joined by a blank line.
     pub system_prompt: String,
+    /// The persona's static system prompt (template text only).
+    pub persona_core: String,
+    /// The persona context rendered for this message (per-request facts).
+    pub context: String,
     pub turns: Vec<ChatTurn>,
     grounding: Grounding,
 }
@@ -161,14 +166,14 @@ impl Engine {
         for source in context.grounding_sources(user_input) {
             grounding.push_source(source);
         }
+        let persona_core = crate::ask::system_prompt(persona);
+        // The message being answered is the relevance query, so the facts
+        // shown are the ones that bear on it.
+        let context = context.render(user_input);
         PreparedTurn {
-            system_prompt: format!(
-                "{}\n\n{}",
-                crate::ask::system_prompt(persona),
-                // The message being answered is the relevance query, so the
-                // facts shown are the ones that bear on it.
-                context.render(user_input)
-            ),
+            system_prompt: format!("{persona_core}\n\n{context}"),
+            persona_core,
+            context,
             turns,
             grounding,
         }

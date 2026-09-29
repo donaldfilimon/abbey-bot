@@ -36,6 +36,10 @@ impl ProviderRuntime {
                     backend,
                     transport: crate::llm::HttpTransport::default(),
                     tools_rejected: std::sync::atomic::AtomicBool::new(false),
+                    // `fm serve` binds to the on-device system model and
+                    // shares its measured window.
+                    prompt_budget: (fm.config.mode == FmMode::System)
+                        .then(crate::prompt_budget::Budget::fm_system),
                 });
                 self.register(
                     id,

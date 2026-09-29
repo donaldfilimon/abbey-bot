@@ -282,6 +282,17 @@ pub struct AdapterRequest<'a> {
     pub call_id: &'a str,
     pub style: crate::llm::ResponseStyle,
     pub deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// `system` split for adapters that carry the persona out of band.
+    pub split: Option<SplitPrompt<'a>>,
+}
+
+/// The static and per-request halves of one system prompt.
+#[derive(Clone, Copy)]
+pub struct SplitPrompt<'a> {
+    /// Static template text only (persona core and addenda): safe for argv.
+    pub instructions: &'a str,
+    /// Facts and operational guidance: must stay off argv.
+    pub policy: &'a str,
 }
 
 /// One asynchronous provider turn expressed in Abbey's existing vocabulary.
@@ -292,6 +303,12 @@ pub trait TurnAdapter: Send + Sync {
     fn provider_id(&self) -> &ProviderId;
     fn tools_enabled(&self) -> bool {
         true
+    }
+
+    /// The input budget this adapter's model can take; `None` means the
+    /// prompt is sent untrimmed.
+    fn prompt_budget(&self) -> Option<crate::prompt_budget::Budget> {
+        None
     }
 
     fn execute<'a>(&'a self, request: AdapterRequest<'a>) -> TurnFuture<'a> {

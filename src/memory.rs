@@ -37,6 +37,9 @@ pub const INTERACTION_CAP: usize = 1000;
 /// The standing a never-seen user starts with, per `MemoryAssembler`
 /// (`userMem?.reputation ?? 0.5`).
 pub const DEFAULT_REPUTATION: f64 = 0.5;
+/// Opens the rendered standing line: authorization context for the person
+/// asking, which prompt budgeting never trims.
+pub const STANDING_PREFIX: &str = "User standing: ";
 /// Discord's hard cap on autocomplete choices.
 pub const AUTOCOMPLETE_MAX_CHOICES: usize = 25;
 /// Discord's hard cap on an autocomplete choice name, in characters.
@@ -453,7 +456,7 @@ impl PersonaContext {
             DEFAULT_REPUTATION
         };
         out.push_str(&format!(
-            "User standing: {:.2} on a 0.00-1.00 scale where {DEFAULT_REPUTATION:.2} is neutral \
+            "{STANDING_PREFIX}{:.2} on a 0.00-1.00 scale where {DEFAULT_REPUTATION:.2} is neutral \
              (higher reflects a stronger recent interaction-quality signal, not tenure or \
              authority). Use this ambient score only to tune response tone. Do not volunteer or \
              infer it to the user. Report standing only when the user explicitly asks and an \

@@ -108,6 +108,7 @@ mod platform;
 mod player_control;
 mod premium_entitlements;
 mod profile;
+mod prompt_budget;
 mod provider;
 mod provider_self_test;
 mod readiness;

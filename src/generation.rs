@@ -16,6 +16,7 @@ use crate::memory::PersonaContext;
 use crate::persona::Persona;
 use crate::pipeline::Outbound;
 use crate::platform::OutboundMessage;
+use crate::prompt_budget::{self, PromptParts};
 use crate::provider::{ConversationEffects, ProviderConversation, ProviderId};
 use crate::runtime::AppState;
 
@@ -474,12 +475,11 @@ async fn generate_conversation<O: Outbound + Sync>(
             &[]
         };
         let tool_names: Vec<_> = tools.iter().map(|tool| tool.name).collect();
-        let system = capability_guidance::system_prompt(
-            &prepared.system_prompt,
-            ask.scope,
-            &tool_names,
-            system_suffix,
-            ask.user_input,
+        let parts = PromptParts::new(
+            prepared.persona_core.clone(),
+            &prepared.context,
+            capability_guidance::guidance(ask.scope, &tool_names, system_suffix, ask.user_input),
+            turns,
         );
         let (text, posted, calls) = loop {
             match conversation.reserve().await {
@@ -487,12 +487,15 @@ async fn generate_conversation<O: Outbound + Sync>(
                 Err(error) if conversation.fallback(&error) => continue,
                 Err(error) => return Err(error),
             }
+            // Fit per reserved provider from the untrimmed parts, so a
+            // fallback re-fits to the new window (or sends everything).
+            let fitted = prompt_budget::fitted(&parts, conversation.prompt_budget());
             let label = conversation.label();
             let result: RoundOutcome = if let Some(ref delivery) = delivery
                 && conversation.streams()
             {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                let work = conversation.execute(&system, &turns, tools, response_style, Some(tx));
+                let work = conversation.execute_parts(&fitted, tools, response_style, Some(tx));
                 stream_received(work, rx, delivery, label, persona, &grounding, &effects)
                     .await
                     .map(|end| match end {
@@ -501,7 +504,7 @@ async fn generate_conversation<O: Outbound + Sync>(
                     })
             } else {
                 conversation
-                    .execute(&system, &turns, tools, response_style, None)
+                    .execute_parts(&fitted, tools, response_style, None)
                     .await
                     .map(|turn| {
                         let text = (!turn.text.trim().is_empty()).then(|| {

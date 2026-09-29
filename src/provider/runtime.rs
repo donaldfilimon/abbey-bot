@@ -206,6 +206,7 @@ impl ProviderRuntime {
                     backend,
                     transport: crate::llm::HttpTransport::default(),
                     tools_rejected: std::sync::atomic::AtomicBool::new(false),
+                    prompt_budget: None,
                 });
                 runtime.register(
                     id,
@@ -236,6 +237,25 @@ impl ProviderRuntime {
         runtime
     }
 
+    /// Registers an admitted synthetic text adapter for cross-module tests.
+    #[cfg(test)]
+    pub(crate) fn register_test_adapter(&mut self, adapter: Arc<dyn TurnAdapter>) {
+        let id = adapter.provider_id().clone();
+        self.register(
+            id.clone(),
+            "synthetic",
+            ProviderClass::LocalServer,
+            ProviderCapabilities::text_with_tools(),
+            ExecutionLocality::SameHost,
+            ProviderProvenance::Configuration,
+            true,
+            config_identity(id.as_str().as_bytes()),
+            Some(adapter),
+            None,
+            true,
+            false,
+        );
+    }
     #[expect(
         clippy::too_many_arguments,
         reason = "one private assembly boundary makes capability and qualification evidence explicit"
@@ -448,6 +468,7 @@ impl ProviderRuntime {
                     backend,
                     transport: crate::llm::HttpTransport::default(),
                     tools_rejected: std::sync::atomic::AtomicBool::new(false),
+                    prompt_budget: None,
                 })),
                 None,
                 local,

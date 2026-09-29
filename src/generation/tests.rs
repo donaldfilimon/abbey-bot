@@ -543,3 +543,128 @@ fn ephemeral_preparation_does_not_create_a_shared_session() {
         None
     );
 }
+
+/// Records the prompt each attempt received; fails first when scripted to.
+struct BudgetFake {
+    id: crate::provider::ProviderId,
+    budget: Option<crate::prompt_budget::Budget>,
+    fail: bool,
+    seen: std::sync::Mutex<Vec<(String, Vec<llm::ChatTurn>)>>,
+}
+
+impl crate::provider::TurnAdapter for BudgetFake {
+    fn provider_id(&self) -> &crate::provider::ProviderId {
+        &self.id
+    }
+    fn prompt_budget(&self) -> Option<crate::prompt_budget::Budget> {
+        self.budget
+    }
+    fn turn<'a>(
+        &'a self,
+        system: &'a str,
+        turns: &'a [llm::ChatTurn],
+        _: &'a [crate::tools::ToolSpec],
+        _: &'a str,
+    ) -> crate::provider::TurnFuture<'a> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((system.to_string(), turns.to_vec()));
+        Box::pin(std::future::ready(if self.fail {
+            Err(llm::LlmError::classified(
+                "synthetic timeout",
+                crate::provider::ProviderFailureKind::Timeout,
+            ))
+        } else {
+            Ok(llm::ModelTurn {
+                text: "fitted answer".into(),
+                calls: Vec::new(),
+            })
+        }))
+    }
+}
+
+#[tokio::test]
+async fn budget_reapplied_after_fallback_to_small_window() {
+    let mut state = AppState::in_memory();
+    let context = PersonaContext::empty();
+    let ask = Ask {
+        session_mode: SessionMode::Shared,
+        scope: "discord:budget",
+        context: &context,
+        user_input: "latest question",
+        now: 10,
+    };
+    {
+        let mut engine = AppState::lock(&state.engine);
+        for index in 0..4 {
+            engine.commit(
+                ask.scope,
+                &format!("old question {index} {}", "q".repeat(600)),
+                &format!("old answer {index} {}", "a".repeat(600)),
+                index,
+            );
+        }
+    }
+    // The small window fits the persona, guidance and latest turn but not the
+    // history, computed from the same parts production renders.
+    let prepared = ask.prepare(&state, Persona::Abbey);
+    let parts = PromptParts::new(
+        prepared.persona_core.clone(),
+        &prepared.context,
+        capability_guidance::guidance(ask.scope, &[], None, ask.user_input),
+        prepared.turns.clone(),
+    );
+    let latest_only = PromptParts {
+        turns: vec![llm::ChatTurn::user("latest question")],
+        ..parts.clone()
+    };
+    let budget = crate::prompt_budget::Budget {
+        max_chars: latest_only.cost() + 10,
+    };
+    assert!(parts.cost() > budget.max_chars);
+
+    let wide = std::sync::Arc::new(BudgetFake {
+        id: crate::provider::ProviderId::parse("primary").unwrap(),
+        budget: None,
+        fail: true,
+        seen: std::sync::Mutex::default(),
+    });
+    let small = std::sync::Arc::new(BudgetFake {
+        id: crate::provider::ProviderId::parse("secondary").unwrap(),
+        budget: Some(budget),
+        fail: false,
+        seen: std::sync::Mutex::default(),
+    });
+    let mut runtime = crate::provider::ProviderRuntime::empty();
+    runtime.register_test_adapter(wide.clone());
+    runtime.register_test_adapter(small.clone());
+    std::sync::Arc::get_mut(&mut state).unwrap().providers = runtime;
+
+    let (text, _, _, _) = generate_read_only::<NoDelivery>(&state, Persona::Abbey, &ask, None)
+        .await
+        .unwrap();
+    assert_eq!(text, "fitted answer");
+
+    let wide_seen = wide.seen.lock().unwrap().clone();
+    let small_seen = small.seen.lock().unwrap().clone();
+    assert_eq!(wide_seen.len(), 1);
+    assert_eq!(small_seen.len(), 1);
+    // The unbudgeted provider got the whole history and the byte-identical
+    // historical prompt; the fallback re-fit to the small window.
+    assert_eq!(wide_seen[0].1, prepared.turns);
+    assert_eq!(
+        wide_seen[0].0,
+        format!(
+            "{}\n\n{}",
+            prepared.system_prompt,
+            capability_guidance::guidance(ask.scope, &[], None, ask.user_input)
+        )
+    );
+    assert_eq!(
+        small_seen[0].1,
+        vec![llm::ChatTurn::user("latest question")]
+    );
+    assert!(small_seen[0].0.starts_with(&prepared.persona_core));
+    assert!(small_seen[0].0.contains(crate::memory::STANDING_PREFIX));
+}
