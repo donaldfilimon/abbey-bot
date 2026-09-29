@@ -24,7 +24,7 @@ Decisions already made (2026-09-21, Donald), not to reopen:
 ## Toolchain and gate
 
 - Zig master, pinned in `build.zig.zon` as `.minimum_zig_version =
-  "0.17.0-dev.2251+1175a3e99"` (same as `~/dev/active/cell-lang`). The gate
+  "0.17.0-dev.2320+1e770dbef"` (same as `~/dev/active/cell-lang`). The gate
   refuses any other `zig version`.
 - **Never write std calls from memory.** Read the signature under
   `zig env` -> `std_dir` first and cite the file in a comment the first time an
