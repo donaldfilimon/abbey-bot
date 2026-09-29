@@ -121,6 +121,13 @@ hand-edit the generated TOML. `check.sh` and `check.ps1` fail on drift.
   The managed service uses its own owner-only env and fixed private data path;
   inspect it with `sh deploy/check-launchd-env.sh ~/.config/abbey-bot/env`,
   not `ps` or the plist.
+- Deploy only on operator direction, with `./deploy/install-launchd.sh`: it
+  builds `--release --locked`, installs under `~/.local/libexec/abbey-bot`, and
+  publishes transactionally with readiness checks and rollback. Before
+  deploying, compare `shasum -a 256` of `target/release/abbey-bot` and the
+  installed binary; equal hashes mean the service already runs that build.
+  `python3 -I deploy/service-status.py` is the read-only current observation.
+  Procedure and qualification: `README.md` *Deploying*.
 - A plist is not proof that an agent is loaded. Enumerate live agents with
   `launchctl list | grep com.donaldfilimon.abbey` and installable artifacts
   with `ls deploy/*.plist`. Do not stop, unload, reinstall, or restart them
