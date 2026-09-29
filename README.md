@@ -187,6 +187,9 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/admin quarantine` | guild | private | Mark a member's stored fact as suspect for review. |
 | `/admin contradict` | guild | private | Record that two of a member's stored facts contradict each other. |
 | `/admin resolve` | guild | private | Close a memory review with a verdict. |
+| `/admin addenda list` | guild | private | List this server's style addenda and suppressions. |
+| `/admin addenda revert` | guild | private | Revert one style addendum and suppress it for 14 days. |
+| `/admin addenda clear` | guild | private | Revert every style addendum and suppress all for 14 days. |
 | `/voice consent` | guild | private | Review, agree to, or withdraw your voice choice. |
 | `/voice notice` | guild | private | Publish the member voice consent controls. |
 | `/voice play` | guild | private | Mirror Spotify/Music from this Mac into voice; manager + present in VC. Music ≠ listen consent. |

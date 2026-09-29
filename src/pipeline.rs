@@ -647,7 +647,7 @@ pub fn assemble_context(
         RECALL_K,
         reputation,
     );
-    context.addenda = state.style_addenda(scoped_guild);
+    context.addenda = state.style_addenda(scoped_guild, runtime::now());
     context
 }
 

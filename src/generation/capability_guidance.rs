@@ -24,7 +24,7 @@ pub(super) fn guidance(
         );
         if learning_topic(user_input) {
             system.push_str(
-                "\nWhen the topic is learning, the guild policy loop, DQN, epsilon, act/budget, or self-improvement: point operators at `/admin act`, `/admin learning`, `/admin brain`, and `/admin budget`. Learning updates the in-process per-guild DQN from settled rewards and does not rewrite Abbey's source code or promise autonomous self-rewrite.",
+                "\nWhen the topic is learning, the guild policy loop, DQN, epsilon, act/budget, or self-improvement: point operators at `/admin act`, `/admin learning`, `/admin brain`, `/admin budget`, and `/admin addenda`. Learning updates the in-process per-guild DQN from settled rewards. In servers that enabled learning, Abbey may adjust tone and length within fixed limits; admins can review or revert with /admin addenda. Abbey does not rewrite her own code.",
             );
         }
     } else {
@@ -56,6 +56,8 @@ fn learning_topic(user_input: &str) -> bool {
         "/admin learning",
         "/admin brain",
         "/admin budget",
+        "/admin addenda",
+        "addenda",
         "guild policy",
         "policy loop",
     ];
@@ -98,8 +100,11 @@ mod tests {
         assert!(system.contains("/admin learning"));
         assert!(system.contains("/admin brain"));
         assert!(system.contains("/admin budget"));
-        assert!(system.contains("does not rewrite Abbey's source code"));
+        assert!(system.contains(
+            "In servers that enabled learning, Abbey may adjust tone and length within fixed limits; admins can review or revert with /admin addenda. Abbey does not rewrite her own code."
+        ));
         assert!(!system.contains("autonomous self-rewrite of code that already happened"));
+        assert!(learning_topic("what are the /admin addenda?"));
     }
 
     #[test]

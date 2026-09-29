@@ -441,7 +441,7 @@ fn pre_addenda_document_loads() {
 #[test]
 fn addenda_round_trip() {
     use crate::brain::addenda::{AddendaLedger, Policy};
-    use crate::brain::style_signal::StyleSignal;
+    use crate::brain::style_signal::{StyleKnob, StyleSignal};
     let dir = temp_dir("addenda");
     let mut ledger = AddendaLedger::default();
     for member in ["a", "a", "b", "b", "c"] {
@@ -449,13 +449,20 @@ fn addenda_round_trip() {
     }
     ledger.observe("d", StyleSignal::TooLong, 2);
     assert_eq!(ledger.tick(&Policy::default(), 3).len(), 1);
+    ledger.revert(StyleKnob::Code, &Policy::default(), 4);
     let mut stores = Stores::default();
     stores.addenda.insert("discord:1".into(), ledger.clone());
     stores.save(&dir).expect("save");
     let loaded = Stores::load(&dir).expect("load");
     assert_eq!(loaded, stores);
     assert_eq!(loaded.addenda["discord:1"], ledger);
-    assert_eq!(loaded.addenda["discord:1"].render(), ledger.render());
+    assert_eq!(loaded.addenda["discord:1"].render(5), ledger.render(5));
+    assert_eq!(
+        loaded.addenda["discord:1"].suppressions(5),
+        ledger.suppressions(5),
+        "suppressions persist"
+    );
+    assert_eq!(ledger.suppressions(5).len(), 1);
     fs::remove_dir_all(&dir).ok();
 }
 

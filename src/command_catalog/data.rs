@@ -804,6 +804,21 @@ pub(super) const REGISTERED: &[CommandSpec] = &[
         true,
         "Close a memory review with a verdict."
     ),
+    admin_spec!(
+        AdminAddendaList,
+        "admin addenda list",
+        "List this server's style addenda and suppressions."
+    ),
+    admin_spec!(
+        AdminAddendaRevert,
+        "admin addenda revert",
+        "Revert one style addendum and suppress it for 14 days."
+    ),
+    admin_spec!(
+        AdminAddendaClear,
+        "admin addenda clear",
+        "Revert every style addendum and suppress all for 14 days."
+    ),
     spec!(
         VoiceConsent,
         Slash,

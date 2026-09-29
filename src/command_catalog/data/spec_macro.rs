@@ -31,3 +31,20 @@ macro_rules! spec {
         }
     };
 }
+
+/// A `/admin …` leaf: guild-only, Manage Server (A4), private, Administration.
+macro_rules! admin_spec {
+    ($key:ident, $name:literal, $description:literal) => {
+        spec!(
+            $key,
+            Slash,
+            $name,
+            GUILD,
+            A4,
+            C0,
+            Administration,
+            true,
+            $description
+        )
+    };
+}

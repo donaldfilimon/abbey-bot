@@ -31,11 +31,13 @@ use crate::runtime::{self, AppState};
 use crate::vision::{self, ImageUnderstanding};
 use crate::{Context, Error};
 
+mod addenda;
 mod dashboard;
 mod media;
 mod memory_commands;
 mod memory_review;
 
+use addenda::admin_addenda;
 pub(crate) use dashboard::open_dashboard_component;
 pub use dashboard::{admin_dashboard, dispatch_admin_component};
 pub use media::{ocr, see, summarize};
@@ -193,7 +195,8 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_dashboard",
         "admin_quarantine",
         "admin_contradict",
-        "admin_resolve"
+        "admin_resolve",
+        "admin_addenda"
     )
 )]
 pub async fn admin(_ctx: Context<'_>) -> Result<(), Error> {

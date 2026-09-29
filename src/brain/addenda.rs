@@ -9,6 +9,11 @@
 //! and [`AddendaLedger::render`] emits only `&'static str` templates. This is
 //! the prompt-injection boundary for self-adjusting style.
 //!
+//! An operator can [`AddendaLedger::revert`] one knob or
+//! [`AddendaLedger::clear`] them all. Either records a [`Suppression`]: for
+//! the TTL that knob is neither observed nor re-applied. Rendering filters by
+//! `now`, so an expired addendum never renders even before the next tick.
+//!
 //! Member keys are hashed with [`crate::wyhash`] under [`MEMBER_KEY_SEED`], a
 //! fixed domain-separation key, so the ledger never holds a raw id while a
 //! later erasure can still recompute a member's hash from their key.
@@ -17,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::brain::style_signal::StyleSignal;
+use crate::brain::style_signal::{StyleKnob, StyleSignal};
 use crate::wyhash;
 
 /// Domain-separation key for member hashes ("style_mk").
@@ -87,6 +92,30 @@ pub struct Addendum {
     pub expires_at: u64,
 }
 
+/// A knob an operator reverted: not observed or re-applied before `until`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Suppression {
+    pub knob: StyleKnob,
+    pub until: u64,
+}
+
+/// What `/admin addenda list` shows for one guild at one instant.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AddendaStatus {
+    /// Addenda render only while the guild has learning on.
+    pub learning_enabled: bool,
+    pub active: Vec<Addendum>,
+    pub suppressions: Vec<Suppression>,
+}
+
+/// Every knob, in render order.
+const KNOBS: [StyleKnob; 4] = [
+    StyleKnob::Length,
+    StyleKnob::Formality,
+    StyleKnob::Emoji,
+    StyleKnob::Code,
+];
+
 /// What a [`AddendaLedger::tick`] changed, for the operator log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddendumChange {
@@ -102,6 +131,9 @@ pub struct AddendaLedger {
     /// At most one per knob, kept in knob order.
     #[serde(default)]
     active: Vec<Addendum>,
+    /// At most one per knob, so bounded by the four knobs.
+    #[serde(default)]
+    suppressed: Vec<Suppression>,
 }
 
 /// The keyed hash a member key is stored as.
@@ -111,7 +143,11 @@ pub fn member_hash(member_key: &str) -> u64 {
 
 impl AddendaLedger {
     /// Record one signal from `member_key` (never stored raw).
+    /// A signal for a suppressed knob is dropped.
     pub fn observe(&mut self, member_key: &str, signal: StyleSignal, now: u64) {
+        if self.is_suppressed(signal.knob(), now) {
+            return;
+        }
         let member = member_hash(member_key);
         let mut own: Vec<usize> = self
             .observations
@@ -147,6 +183,7 @@ impl AddendaLedger {
         });
         self.observations
             .retain(|o| o.at <= now && now - o.at <= policy.window_secs);
+        self.suppressed.retain(|s| now < s.until);
 
         let mut candidates: Vec<StyleSignal> = self.observations.iter().map(|o| o.signal).collect();
         candidates.sort();
@@ -154,6 +191,7 @@ impl AddendaLedger {
         for signal in candidates {
             if self.active.len() >= policy.max_addenda
                 || self.active.iter().any(|a| a.signal.knob() == signal.knob())
+                || self.is_suppressed(signal.knob(), now)
                 || !self.supported(signal, policy)
             {
                 continue;
@@ -195,20 +233,63 @@ impl AddendaLedger {
         net >= policy.signals && members.len() >= policy.distinct_users
     }
 
-    /// Nothing observed and nothing active: the ledger can be dropped.
+    /// Remove `knob`'s addendum and its evidence, and suppress the knob for
+    /// the TTL. True when an addendum was active; the suppression is recorded
+    /// either way.
+    pub fn revert(&mut self, knob: StyleKnob, policy: &Policy, now: u64) -> bool {
+        let reverted = self.active(now).iter().any(|a| a.signal.knob() == knob);
+        self.active.retain(|a| a.signal.knob() != knob);
+        self.observations.retain(|o| o.signal.knob() != knob);
+        let until = now.saturating_add(policy.ttl_secs);
+        match self.suppressed.iter_mut().find(|s| s.knob == knob) {
+            Some(existing) => existing.until = until,
+            None => self.suppressed.push(Suppression { knob, until }),
+        }
+        self.suppressed.sort_by_key(|s| s.knob);
+        reverted
+    }
+
+    /// [`Self::revert`] every knob; returns how many addenda were active.
+    pub fn clear(&mut self, policy: &Policy, now: u64) -> usize {
+        KNOBS
+            .into_iter()
+            .filter(|&knob| self.revert(knob, policy, now))
+            .count()
+    }
+
+    fn is_suppressed(&self, knob: StyleKnob, now: u64) -> bool {
+        self.suppressed
+            .iter()
+            .any(|s| s.knob == knob && now < s.until)
+    }
+
+    /// Nothing observed, active or suppressed: the ledger can be dropped.
     pub fn is_empty(&self) -> bool {
-        self.observations.is_empty() && self.active.is_empty()
+        self.observations.is_empty() && self.active.is_empty() && self.suppressed.is_empty()
     }
 
-    /// The active addenda in render (knob) order.
-    pub fn active(&self) -> Vec<Addendum> {
-        self.active.clone()
+    /// The addenda live at `now`, in render (knob) order.
+    pub fn active(&self, now: u64) -> Vec<Addendum> {
+        self.active
+            .iter()
+            .filter(|a| now < a.expires_at && !self.is_suppressed(a.signal.knob(), now))
+            .copied()
+            .collect()
     }
 
-    /// The fixed templates for the active addenda, at most
-    /// [`MAX_RENDER_BYTES`]; empty when nothing is active.
-    pub fn render(&self) -> String {
-        let signals: Vec<StyleSignal> = self.active().iter().map(|a| a.signal).collect();
+    /// The suppressions live at `now`, in knob order.
+    pub fn suppressions(&self, now: u64) -> Vec<Suppression> {
+        self.suppressed
+            .iter()
+            .filter(|s| now < s.until)
+            .copied()
+            .collect()
+    }
+
+    /// The fixed templates for the addenda live at `now`, at most
+    /// [`MAX_RENDER_BYTES`]; empty when nothing is live.
+    pub fn render(&self, now: u64) -> String {
+        let signals: Vec<StyleSignal> = self.active(now).iter().map(|a| a.signal).collect();
         render_signals(&signals)
     }
 }

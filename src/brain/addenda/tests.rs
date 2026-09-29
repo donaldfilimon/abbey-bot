@@ -37,13 +37,13 @@ fn five_signals_three_users_applies() {
         [AddendumChange::Applied(StyleSignal::TooLong)]
     );
     assert_eq!(
-        ledger.active(),
+        ledger.active(13),
         [Addendum {
             signal: StyleSignal::TooLong,
             expires_at: 13 + policy.ttl_secs,
         }]
     );
-    assert!(ledger.render().contains(template(StyleSignal::TooLong)));
+    assert!(ledger.render(13).contains(template(StyleSignal::TooLong)));
     assert!(ledger.tick(&policy, 14).is_empty(), "applies once");
 }
 
@@ -59,7 +59,7 @@ fn five_signals_two_users_does_not_apply() {
         ledger.observe("g\u{1f}b", StyleSignal::TooLong, at);
     }
     assert!(ledger.tick(&policy, 10).is_empty());
-    assert!(ledger.render().is_empty());
+    assert!(ledger.render(10).is_empty());
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn single_user_spam_never_applies() {
         ledger.observe("g\u{1f}a", StyleSignal::TooLong, at);
     }
     assert!(ledger.tick(&policy, 201).is_empty());
-    assert!(ledger.render().is_empty());
+    assert!(ledger.render(201).is_empty());
     // One member holds at most two observations per signal, so spam neither
     // accumulates nor evicts anyone else's evidence.
     assert_eq!(ledger.observations.len(), 3);
@@ -128,13 +128,13 @@ fn expires_after_ttl() {
         [AddendumChange::Applied(StyleSignal::TooFormal)]
     );
     assert!(ledger.tick(&policy, policy.ttl_secs - 1).is_empty());
-    assert!(!ledger.render().is_empty());
+    assert!(!ledger.render(policy.ttl_secs - 1).is_empty());
     assert_eq!(
         ledger.tick(&policy, policy.ttl_secs),
         [AddendumChange::Expired(StyleSignal::TooFormal)]
     );
-    assert!(ledger.active().is_empty());
-    assert!(ledger.render().is_empty());
+    assert!(ledger.active(policy.ttl_secs).is_empty());
+    assert!(ledger.render(policy.ttl_secs).is_empty());
     // The evidence that applied it was consumed: it does not re-apply.
     assert!(ledger.tick(&policy, policy.ttl_secs + 1).is_empty());
 }
@@ -162,8 +162,8 @@ fn an_active_knob_does_not_flip_or_stack() {
     let flip = ["g\u{1f}x", "g\u{1f}x", "g\u{1f}y", "g\u{1f}y", "g\u{1f}z"];
     members(&mut ledger, &flip, StyleSignal::MoreEmoji, 1);
     assert!(ledger.tick(&policy, 2).is_empty());
-    assert_eq!(ledger.active().len(), 1);
-    assert_eq!(ledger.active()[0].signal, StyleSignal::NoEmoji);
+    assert_eq!(ledger.active(2).len(), 1);
+    assert_eq!(ledger.active(2)[0].signal, StyleSignal::NoEmoji);
 }
 
 #[test]
@@ -184,8 +184,8 @@ fn caps_count_and_bytes() {
         ..Policy::default()
     };
     assert_eq!(ledger.tick(&two, 1).len(), 2);
-    assert_eq!(ledger.active().len(), 2);
-    let knobs: Vec<_> = ledger.active().iter().map(|a| a.signal.knob()).collect();
+    assert_eq!(ledger.active(1).len(), 2);
+    let knobs: Vec<_> = ledger.active(1).iter().map(|a| a.signal.knob()).collect();
     assert_eq!(
         knobs,
         [StyleKnob::Length, StyleKnob::Formality],
@@ -201,15 +201,15 @@ fn caps_count_and_bytes() {
         ..Policy::default()
     };
     ledger.tick(&tight, 1);
-    assert!(!ledger.active().is_empty());
-    assert!(ledger.render().len() <= 150, "{}", ledger.render());
+    assert!(!ledger.active(1).is_empty());
+    assert!(ledger.render(1).len() <= 150, "{}", ledger.render(1));
 
     let mut ledger = AddendaLedger::default();
     for signal in all {
         quorum(&mut ledger, signal, 0);
     }
     assert_eq!(ledger.tick(&Policy::default(), 1).len(), 4);
-    let rendered = ledger.render();
+    let rendered = ledger.render(1);
     assert!(
         rendered.len() <= MAX_RENDER_BYTES,
         "{} bytes",
@@ -255,7 +255,7 @@ fn render_is_template_only() {
     ];
     members(&mut ledger, &keys, signal, 0);
     ledger.tick(&Policy::default(), 0);
-    let rendered = ledger.render();
+    let rendered = ledger.render(0);
     assert!(!rendered.is_empty());
     assert!(!rendered.contains("IGNORE"));
     assert!(!rendered.to_lowercase().contains("token"));
@@ -292,10 +292,110 @@ fn print_four_knob_render() {
         quorum(&mut ledger, signal, 0);
     }
     ledger.tick(&Policy::default(), 1);
-    let rendered = ledger.render();
+    let rendered = ledger.render(1);
     println!(
         "--- rendered addenda ({} bytes) ---\n{rendered}\n---",
         rendered.len()
     );
     assert_eq!(rendered.lines().count(), 5);
+}
+
+#[test]
+fn revert_suppresses_reapplication() {
+    let policy = Policy::default();
+    let mut ledger = AddendaLedger::default();
+    quorum(&mut ledger, StyleSignal::TooLong, 0);
+    ledger.tick(&policy, 0);
+    assert!(
+        ledger.revert(StyleKnob::Length, &policy, 10),
+        "one was active"
+    );
+    assert!(ledger.active(10).is_empty());
+    assert!(ledger.render(10).is_empty());
+    assert_eq!(
+        ledger.suppressions(10),
+        [Suppression {
+            knob: StyleKnob::Length,
+            until: 10 + policy.ttl_secs,
+        }]
+    );
+
+    // Fresh quorum inside the suppression: neither observed nor applied.
+    quorum(&mut ledger, StyleSignal::TooShort, 20);
+    assert!(ledger.tick(&policy, 21).is_empty());
+    assert!(ledger.render(21).is_empty());
+    assert!(
+        ledger.observations.is_empty(),
+        "suppressed observations are dropped"
+    );
+    // Another knob is unaffected.
+    quorum(&mut ledger, StyleSignal::NoEmoji, 22);
+    assert_eq!(
+        ledger.tick(&policy, 23),
+        [AddendumChange::Applied(StyleSignal::NoEmoji)]
+    );
+
+    // After the suppression expires the knob can form again.
+    let after = 10 + policy.ttl_secs;
+    quorum(&mut ledger, StyleSignal::TooLong, after);
+    assert_eq!(
+        ledger.tick(&policy, after),
+        [AddendumChange::Applied(StyleSignal::TooLong)]
+    );
+    assert!(ledger.suppressions(after).is_empty());
+}
+
+#[test]
+fn revert_without_an_active_addendum_still_suppresses() {
+    let policy = Policy::default();
+    let mut ledger = AddendaLedger::default();
+    assert!(!ledger.revert(StyleKnob::Code, &policy, 5));
+    assert!(!ledger.is_empty(), "a live suppression keeps the ledger");
+    assert_eq!(ledger.suppressions(5).len(), 1);
+    // Reverting again refreshes rather than duplicates.
+    assert!(!ledger.revert(StyleKnob::Code, &policy, 50));
+    assert_eq!(
+        ledger.suppressions(50),
+        [Suppression {
+            knob: StyleKnob::Code,
+            until: 50 + policy.ttl_secs,
+        }]
+    );
+    ledger.tick(&policy, 50 + policy.ttl_secs);
+    assert!(ledger.is_empty(), "an expired suppression is pruned");
+}
+
+#[test]
+fn clear_suppresses_every_knob() {
+    let policy = Policy::default();
+    let mut ledger = AddendaLedger::default();
+    for signal in [StyleSignal::TooLong, StyleSignal::NoEmoji] {
+        quorum(&mut ledger, signal, 0);
+    }
+    ledger.tick(&policy, 0);
+    assert_eq!(ledger.clear(&policy, 10), 2);
+    assert!(ledger.render(10).is_empty());
+    assert_eq!(ledger.suppressions(10).len(), 4, "one per knob, bounded");
+    for signal in [
+        StyleSignal::TooShort,
+        StyleSignal::TooFormal,
+        StyleSignal::MoreEmoji,
+        StyleSignal::PreferCode,
+    ] {
+        quorum(&mut ledger, signal, 11);
+    }
+    assert!(ledger.tick(&policy, 12).is_empty());
+    assert_eq!(ledger.clear(&policy, 13), 0, "nothing active to clear");
+}
+
+#[test]
+fn render_filters_by_now_without_a_tick() {
+    let policy = Policy::default();
+    let mut ledger = AddendaLedger::default();
+    quorum(&mut ledger, StyleSignal::TooFormal, 0);
+    ledger.tick(&policy, 0);
+    assert!(!ledger.render(policy.ttl_secs - 1).is_empty());
+    // No tick has run since it applied; it still must not render once expired.
+    assert!(ledger.render(policy.ttl_secs).is_empty());
+    assert!(ledger.active(policy.ttl_secs).is_empty());
 }
