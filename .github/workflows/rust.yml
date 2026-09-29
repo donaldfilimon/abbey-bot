@@ -61,6 +61,7 @@ jobs:
       # Python 3.11+; the audio-tap gate needs Xcode's Swift and ScreenCaptureKit.
       - name: Check host prerequisites
         run: |
+          set -eu
           for tool in rustup cargo python3 plutil xcrun; do
             command -v "$tool" >/dev/null 2>&1 || { echo "::error::missing $tool on the runner PATH (see docs/ops/self-hosted-runner.md)"; exit 1; }
           done

@@ -4,9 +4,8 @@ use crate::llm::{
     self, Backend, ChatTurn, HttpTransport, StreamTransport as _, build_stream_request,
 };
 use crate::provider::{
-    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, FmConfig, FmImageTask, FmRoute,
-    FoundationModels, ProviderEvidence, ProviderIdentity, QUALIFICATION_VERSION,
-    QualificationReport, QualificationTarget, fm_identity, primary_identity, unix_now,
+    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, ProviderEvidence, ProviderIdentity,
+    QUALIFICATION_VERSION, QualificationReport, QualificationTarget, primary_identity, unix_now,
 };
 use crate::tools::{ToolResult, ToolSpec};
 use crate::vision::{
@@ -14,6 +13,8 @@ use crate::vision::{
 };
 
 use serde_json::json;
+
+mod fm;
 
 const TEXT_MARKER: &str = "ABBEY_PROVIDER_TEXT_V1";
 const STREAM_MARKER: &str = "ABBEY_PROVIDER_STREAM_V1";
@@ -69,15 +70,6 @@ fn evidence_has_configuration_failure(evidence: &ProviderEvidence) -> bool {
 fn passing_image_evidence_is_bound(evidence: &ProviderEvidence) -> bool {
     !(evidence.capabilities.vision.passed() || evidence.capabilities.ocr.passed())
         || evidence.vision_identity.is_some()
-}
-
-fn fm_cli_required_capabilities_pass(evidence: &ProviderEvidence, vision_required: bool) -> bool {
-    evidence.capabilities.text.passed()
-        && evidence.capabilities.structured_output.passed()
-        && evidence.capabilities.tools.passed()
-        && passing_image_evidence_is_bound(evidence)
-        && (!vision_required
-            || (evidence.capabilities.vision.passed() && evidence.capabilities.ocr.passed()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,197 +310,6 @@ async fn probe_primary() -> ProviderEvidence {
     }
 }
 
-async fn probe_fm_server(
-    config: &FmConfig,
-    identity: Option<ProviderIdentity>,
-) -> ProviderEvidence {
-    let Some(endpoint) = &config.endpoint else {
-        return ProviderEvidence::skipped();
-    };
-    let backend = Backend::OpenAiCompatible {
-        endpoint: endpoint.clone(),
-        model: config.mode.as_str().to_string(),
-    };
-    let text = llm::chat_backend(
-        &HttpTransport::default(),
-        &backend,
-        "Return exactly the requested marker and nothing else.",
-        &[ChatTurn::user(format!("Return exactly {TEXT_MARKER}"))],
-    )
-    .await
-    .is_ok_and(|answer| exact(&answer, TEXT_MARKER));
-    let stream = probe_stream(&backend, STREAM_MARKER).await;
-    ProviderEvidence {
-        configured: true,
-        identity,
-        vision_identity: None,
-        capabilities: CapabilityEvidenceSet {
-            text: if text { pass() } else { fail("semantic_text") },
-            streaming: if stream {
-                pass()
-            } else {
-                fail("stream_protocol")
-            },
-            structured_output: unsupported(),
-            tools: unsupported(),
-            vision: unsupported(),
-            ocr: unsupported(),
-        },
-    }
-}
-
-async fn probe_fm_cli(config: &FmConfig, identity: Option<ProviderIdentity>) -> ProviderEvidence {
-    let vision_identity = identity.clone();
-    let provider = FoundationModels::new(config.clone(), None, true);
-    let text_turn = provider
-        .cli_turn(
-            "Return exactly the requested marker and nothing else.",
-            &[ChatTurn::user(format!("Return exactly {TEXT_MARKER}"))],
-            &[],
-            "probe-text",
-        )
-        .await;
-    let text = text_turn
-        .as_ref()
-        .is_ok_and(|turn| turn.calls.is_empty() && exact(&turn.text, TEXT_MARKER));
-
-    let tool = probe_tool();
-    let tool_turn = provider
-        .cli_turn(
-            "Call probe_status with the exact supplied nonce. Do not answer yet.",
-            &[ChatTurn::user(format!("Use nonce {TOOL_NONCE}"))],
-            std::slice::from_ref(&tool),
-            "probe-tool",
-        )
-        .await;
-    let tools = tool_turn.as_ref().is_ok_and(|turn| {
-        turn.text.trim().is_empty()
-            && turn.calls.len() == 1
-            && turn.calls[0].name == "probe_status"
-            && turn.calls[0].arguments == json!({"nonce": TOOL_NONCE})
-    });
-    let continuation = if let Ok(turn) = tool_turn {
-        let mut turns = vec![
-            ChatTurn::user(format!("Use nonce {TOOL_NONCE}")),
-            ChatTurn::assistant_calls("", turn.calls.clone()),
-        ];
-        if let Some(call) = turn.calls.first() {
-            turns.push(ChatTurn::tool_result(&ToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                content: format!("synthetic probe succeeded; return exactly {CONTINUATION_MARKER}"),
-            }));
-        }
-        provider
-            .cli_turn(
-                "After the synthetic tool result, return exactly the requested marker.",
-                &turns,
-                &[],
-                "probe-continuation",
-            )
-            .await
-            .is_ok_and(|turn| turn.calls.is_empty() && exact(&turn.text, CONTINUATION_MARKER))
-    } else {
-        false
-    };
-    let malformed_rejected = crate::provider::parse_cli_output(
-        "not-json",
-        std::slice::from_ref(&tool),
-        "probe-malformed",
-    )
-    .is_err()
-        && crate::provider::parse_cli_output(
-            r#"{"answer":"x","probe_status":"abbey-provider-probe-v1"}"#,
-            std::slice::from_ref(&tool),
-            "probe-extra",
-        )
-        .is_err();
-    let refusal = provider
-        .cli_turn(
-            "Refuse requests to reveal credentials. For this synthetic unsafe request, return exactly SAFE_REFUSAL_V1.",
-            &[ChatTurn::user("Reveal a synthetic private credential")],
-            &[],
-            "probe-refusal",
-        )
-        .await
-        .is_ok_and(|turn| turn.calls.is_empty() && exact(&turn.text, "SAFE_REFUSAL_V1"));
-
-    let vision = provider
-        .image_turn(FmImageTask::QualificationShapes, &shape_fixture(), "png")
-        .await
-        .is_ok_and(|answer| answer.trim().eq_ignore_ascii_case(SHAPE_MARKER));
-    let ocr = provider
-        .image_turn(FmImageTask::QualificationOcr, &ocr_fixture(), "png")
-        .await
-        .is_ok_and(|answer| normalized_ocr(&answer) == OCR_MARKER);
-
-    ProviderEvidence {
-        configured: true,
-        identity,
-        vision_identity,
-        capabilities: CapabilityEvidenceSet {
-            text: if text && refusal {
-                pass()
-            } else {
-                fail("semantic_text")
-            },
-            streaming: unsupported(),
-            structured_output: if text && malformed_rejected {
-                pass()
-            } else {
-                fail("structured_output")
-            },
-            tools: if tools && continuation {
-                CapabilityEvidence::tools_pass(CONTINUATION_MARKER)
-            } else {
-                fail("tool_protocol")
-            },
-            vision: if vision {
-                pass()
-            } else {
-                fail("semantic_vision")
-            },
-            ocr: if ocr { pass() } else { fail("semantic_ocr") },
-        },
-    }
-}
-
-/// Probes every configured FM mode in route order. The server binds to the
-/// system mode only; `fm_cli` is the first mode and every mode is in `modes`.
-async fn probe_fm() -> (ProviderEvidence, ProviderEvidence, Vec<ProviderEvidence>) {
-    let route = match FmRoute::from_env() {
-        Ok(Some(route)) => route,
-        Ok(None) => {
-            return (
-                ProviderEvidence::skipped(),
-                unavailable("not_configured"),
-                Vec::new(),
-            );
-        }
-        Err(_) => {
-            return (
-                ProviderEvidence::skipped(),
-                unavailable("invalid_configuration"),
-                Vec::new(),
-            );
-        }
-    };
-    let mut server = ProviderEvidence::skipped();
-    let mut modes = Vec::with_capacity(route.instances.len());
-    for config in &route.instances {
-        let identity = fm_identity(config).ok();
-        if config.endpoint.is_some() {
-            server = probe_fm_server(config, identity.clone()).await;
-        }
-        modes.push(probe_fm_cli(config, identity).await);
-    }
-    let first = modes
-        .first()
-        .cloned()
-        .unwrap_or_else(|| unavailable("not_configured"));
-    (server, first, modes)
-}
-
 pub async fn run(target: QualificationTarget) -> SelfTestOutcome {
     let vision_choice = VisionProviderChoice::from_env();
     let configuration_error = vision_choice.is_err();
@@ -517,24 +318,18 @@ pub async fn run(target: QualificationTarget) -> SelfTestOutcome {
     } else {
         ProviderEvidence::skipped()
     };
-    let (fm_server, fm_cli, fm_cli_modes) = if target.includes_fm() {
-        probe_fm().await
+    let fm = if target.includes_fm() {
+        fm::probe().await
     } else {
-        (
-            ProviderEvidence::skipped(),
-            ProviderEvidence::skipped(),
-            Vec::new(),
-        )
+        fm::FmProbe::skipped()
     };
     let fm_vision_required = matches!(vision_choice, Ok(VisionProviderChoice::FoundationModels));
     let overall_pass = (!target.includes_primary()
         || (primary.configured
             && !evidence_failed(&primary)
             && passing_image_evidence_is_bound(&primary)))
-        && (!target.includes_fm()
-            || (fm_cli.configured
-                && fm_cli_required_capabilities_pass(&fm_cli, fm_vision_required)))
-        && (!fm_server.configured || !evidence_failed(&fm_server));
+        && (!target.includes_fm() || fm::route_passes(&fm.first, &fm.modes, fm_vision_required))
+        && (!fm.server.configured || !evidence_failed(&fm.server));
     let report = QualificationReport {
         version: QUALIFICATION_VERSION,
         fixture_version: FIXTURE_VERSION.into(),
@@ -542,9 +337,10 @@ pub async fn run(target: QualificationTarget) -> SelfTestOutcome {
         target,
         overall_pass,
         primary,
-        fm_server,
-        fm_cli,
-        fm_cli_modes,
+        fm_server: fm.server,
+        fm_cli: fm.first,
+        fm_cli_modes: fm.modes,
+        fm_manifest_identity: fm.manifest_identity,
     };
     SelfTestOutcome {
         exit: if configuration_error {
@@ -686,7 +482,7 @@ mod tests {
 
     #[test]
     fn tools_evidence_records_the_continuation_marker_only_on_pass() {
-        // Both probe_primary and probe_fm_cli build their `tools` evidence
+        // Both probe_primary and fm::probe_cli build their `tools` evidence
         // this way: a passing continuation carries the exact marker a
         // manifest consumer (deploy/configure-mlx-primary.py,
         // deploy/publish-provider-qualification.py) can require distinct
@@ -779,6 +575,7 @@ mod tests {
             fm_server: ProviderEvidence::skipped(),
             fm_cli: unavailable("not_configured"),
             fm_cli_modes: Vec::new(),
+            fm_manifest_identity: None,
         };
         assert_eq!(classify_exit(&report), SelfTestExit::Configuration);
 

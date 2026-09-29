@@ -310,3 +310,41 @@ Only after MLX-Audio is serving on :8181 (`GET /` or `GET /v1/models`; do not re
 - Snapshot weights on disk ≠ a passing smoke.
 - 2026-08-20 `/voice status` / leave observations ≠ current 8/8.
 - Managed Abbey being “connected” ≠ consented capture. Generation backend is configured; live `/voice` 8/8 is still human-gated on Donald in Office Hours VC.
+
+## 2026-09-29 read-only continuation checkpoint
+
+The current source candidate is canonical `main` at
+`fe1987c76947e015c3a54e1ca4a762663829ffb6` with uncommitted CI hardening and
+provider qualification work. The strict local gate passed with 1,551 Rust tests,
+five ignored operator/live tests, 16 offline Swift tests, required WDBX
+conformance, warnings-denied Clippy, and locked release builds. This is source
+acceptance for that working tree, not installed-artifact or live acceptance.
+
+A fresh `python3 -I deploy/service-status.py` observation reports Abbey ready,
+Discord ready, scheduler running, and completed persistence. Telegram and Slack
+are disabled. The built binary SHA-256 is
+`170694e4ade7db6f5e871776d611e8242b3c6f9c5480d705eaf9079782260d63`;
+the installed binary SHA-256 is
+`776c5b1ee91e9c192460804746b1b3f3159508b586b59f2814f62119fa5b87aa`.
+They differ, so this candidate has not been shown to be the installed artifact.
+No service, runner, production environment, or Discord state was changed.
+
+The current FM plan remains incomplete: operator tooling is being implemented;
+auto-deployment and the live FM switch are unverified. PCC refusal must remain
+visible while a separately qualified system mode may serve. Human Discord and
+voice acceptance, fresh participant consent, and platform/provider qualification
+remain distinct from the source gate. Older dated observations above are
+historical and do not override this checkpoint.
+
+The exact-head GitHub `Gate (macOS)` for `fe1987c` is **failed**, not accepted:
+[run 36583240823](https://github.com/donaldfilimon/abbey-bot/actions/runs/36583240823)
+completed with the annotation "The self-hosted runner lost communication with
+the server." Its prerequisite and cargo-audit steps passed, but there is no
+completed gate receipt; GitHub log retrieval reported the job log missing.
+The cause of the communication loss is unknown. Other successful check names
+on that SHA do not substitute for this gate. No runner action or rerun was
+performed in this continuation.
+
+### 2026-09-29 FM operator tooling source checkpoint
+
+Final `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0:1553 Rust tests passed,5 ignored; locked release completed. Candidate SHA256 `c56fadf6e15d42589d61c4afab0b3d9af96969cad8b6b4d5b684285a2a0123f9`. Independent operator-tooling review passed after two fix rounds. Token-free candidate identity wiring accepted a synthetic temporary dry-run manifest and refused stale tool-schema identity; this is not live provider qualification. No runner, launchd, production environment, or installed artifact change occurred. Task5 publication/exact-head CI and Tasks6/7 remain open.

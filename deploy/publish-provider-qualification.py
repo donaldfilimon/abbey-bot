@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import stat
 import subprocess
 import sys
@@ -178,6 +179,76 @@ def validate_report(report: object, target: str, binary_hash: str) -> dict[str, 
     return report
 
 
+def fm_records(report: dict[str, object], binary_hash: str) -> list[dict[str, object]]:
+    """Project actual mode evidence into runtime V2 records, preserving failed modes."""
+    modes = report.get("fm_cli_modes")
+    if not isinstance(modes, list) or not modes:
+        raise PublicationError("provider self-test omitted FM mode evidence")
+    if modes[0] != report.get("fm_cli"):
+        raise PublicationError("FM first-mode evidence differs from fm_cli")
+    hashes = report.get("fm_manifest_identity")
+    required_hashes = {"abbey_binary_sha256", "provider_binary_sha256", "os_sha256", "tool_schema_sha256"}
+    optional_hashes = {"model_sha256", "sandbox_sha256"}
+    if not isinstance(hashes, dict) or not required_hashes.issubset(hashes) or set(hashes) - required_hashes - optional_hashes or hashes.get("abbey_binary_sha256") != binary_hash:
+        raise PublicationError("provider self-test omitted bound FM manifest identity")
+    if any(hashes.get(key) is not None for key in optional_hashes):
+        raise PublicationError("FM manifest identity has unexpected model or sandbox hashes")
+    for key, value in hashes.items():
+        if value is None and key in optional_hashes:
+            continue
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise PublicationError("FM manifest identity hash is malformed")
+    if not isinstance(modes[0], dict):
+        raise PublicationError("FM first-mode evidence is malformed")
+    server = report.get("fm_server")
+    server_streaming = False
+    if isinstance(server, dict) and server.get("configured") is True:
+        caps = server.get("capabilities")
+        if server.get("identity") != next((entry.get("identity") for entry in modes if isinstance(entry, dict) and isinstance(entry.get("identity"), dict) and entry["identity"].get("mode") == "system"), None) or not isinstance(caps, dict) or any(not isinstance(caps.get(k), dict) or caps[k].get("status") not in {"pass", "fail", "unsupported", "skipped"} for k in CAPABILITIES):
+            raise PublicationError("FM server identity or capabilities are malformed")
+        if any(caps[k]["status"] != "pass" for k in ("text", "streaming")):
+            raise PublicationError("FM server lacks passing text/streaming evidence")
+        server_streaming = True
+    records = []
+    seen = set()
+    for entry in modes:
+        if not isinstance(entry, dict) or entry.get("configured") is not True:
+            raise PublicationError("FM mode evidence is not configured")
+        identity = entry.get("identity")
+        if not isinstance(identity, dict) or identity.get("mode") not in {"system", "pcc"}:
+            raise PublicationError("FM mode identity is malformed")
+        mode = identity["mode"]
+        if mode in seen:
+            raise PublicationError("FM mode evidence is duplicated")
+        seen.add(mode)
+        if identity.get("abbey_binary_sha256") != binary_hash or identity.get("fixture_version") != FIXTURE_VERSION or identity.get("cli_sha256") != hashes["provider_binary_sha256"] or not isinstance(identity.get("os_build"), str) or hashlib.sha256(identity["os_build"].encode()).hexdigest() != hashes["os_sha256"]:
+            raise PublicationError("FM mode identity mismatch")
+        capabilities = entry.get("capabilities")
+        if not isinstance(capabilities, dict) or any(not isinstance(capabilities.get(k), dict) or capabilities[k].get("status") not in {"pass", "fail", "unsupported", "skipped"} for k in CAPABILITIES):
+            raise PublicationError("FM mode capabilities are malformed")
+        qualified = all(capabilities[k]["status"] == "pass" for k in ("text", "structured_output", "tools"))
+        if capabilities["tools"]["status"] == "pass" and capabilities["tools"].get("tool_result_marker") != CONTINUATION_MARKER:
+            raise PublicationError("FM mode lacks distinct tool-result continuation marker")
+        if any(capabilities[k]["status"] == "pass" for k in ("vision", "ocr")) and entry.get("vision_identity") != identity:
+            raise PublicationError("FM mode image identity mismatch")
+        records.append({
+            "version": 2, "fixture_version": FIXTURE_VERSION,
+            "provider_id": "foundation-models" if mode == "system" else "foundation-models-pcc",
+            "provider_class": "os_managed_local", "identity": hashes,
+            "declared_capabilities": {k: capabilities[k]["status"] == "pass" for k in CAPABILITIES},
+            "isolation_capabilities": {k: False for k in ("environment_cleared", "absolute_no_shell_execution", "process_tree_contained", "private_runtime_state", "loopback_only", "sandbox_attested")},
+            "qualification_status": "qualified" if qualified else "failed",
+        })
+    if server_streaming:
+        system_record = next((record for record in records if record["provider_id"] == "foundation-models"), None)
+        if system_record is None:
+            raise PublicationError("FM server has no bound system mode")
+        system_record["declared_capabilities"]["streaming"] = True
+    if not any(record["qualification_status"] == "qualified" for record in records):
+        raise PublicationError("FM evidence contains no qualified mode")
+    return records
+
+
 def run_self_test(binary: pathlib.Path, target: str, timeout: int) -> bytes:
     if timeout <= 0 or timeout > 3600:
         raise PublicationError("timeout must be between 1 and 3600 seconds")
@@ -209,6 +280,8 @@ def publish(path: pathlib.Path, payload: bytes) -> None:
         raise PublicationError("manifest parent must be a real directory")
     if parent_metadata.st_uid != os.geteuid():
         raise PublicationError("manifest parent must be owned by the current user")
+    if stat.S_IMODE(parent_metadata.st_mode) != 0o700:
+        raise PublicationError("manifest parent must be private mode 0700")
     if path.exists() or path.is_symlink():
         require_regular_owned(path, "existing manifest", executable=False)
 
@@ -253,7 +326,13 @@ def main() -> int:
             parsed = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise PublicationError("provider self-test report is malformed") from error
-        report = validate_report(parsed, arguments.target, sha256(binary))
+        binary_hash = sha256(binary)
+        if arguments.target == "fm" and isinstance(parsed, dict) and parsed.get("fm_cli_modes"):
+            if type(parsed.get("version")) is not int or parsed.get("version") != QUALIFICATION_VERSION or parsed.get("fixture_version") != FIXTURE_VERSION or parsed.get("target") != "fm" or parsed.get("overall_pass") is not True or type(parsed.get("generated_unix_secs")) is not int or parsed["generated_unix_secs"] < 0:
+                raise PublicationError("provider self-test did not produce passing current evidence")
+            report = fm_records(parsed, binary_hash)
+        else:
+            report = validate_report(parsed, arguments.target, binary_hash)
         payload = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode()
         publish(output, payload)
     except PublicationError as error:

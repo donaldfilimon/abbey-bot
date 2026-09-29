@@ -39,6 +39,7 @@ python3 deploy/check-python-locks.py \
   deploy/mlx-audio-requirements.txt \
   deploy/mlx-audio-build-constraints.txt
 python3 deploy/test-configure-mlx-primary.py
+python3 deploy/test-configure-fm-primary.py
 python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
 python3 deploy/test-check-activity-url-map.py

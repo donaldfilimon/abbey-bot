@@ -23,9 +23,16 @@ def fake_binary(
     omit_vision_identity: bool = False,
     mismatch_vision_identity: bool = False,
     omit_tool_continuation: bool = False,
+    multi_mode: bool = False,
+    refused_pcc: bool = False,
+    duplicate_mode: bool = False,
+    bad_hash: bool = False,
+    mismatched_first: bool = False,
+    server_streaming: bool = False,
+    bad_server_identity: bool = False,
 ) -> None:
     source = f'''#!/usr/bin/env python3
-import hashlib, json, pathlib, sys
+import copy, hashlib, json, pathlib, sys
 binary = pathlib.Path(sys.argv[0])
 digest = hashlib.sha256(binary.read_bytes()).hexdigest()
 capabilities = {{name: {{"status": "pass"}} for name in (
@@ -52,6 +59,28 @@ report = {{
     "fm_server": skipped,
     "fm_cli": fm_cli,
 }}
+if {multi_mode!r}:
+    hashes = {{"abbey_binary_sha256": digest, "provider_binary_sha256": "a"*64, "os_sha256": hashlib.sha256(b"synthetic-os").hexdigest(), "tool_schema_sha256": "b"*64}}
+    fm_cli["identity"].update({{"mode": "pcc", "cli_sha256": "a"*64, "os_build": "synthetic-os", "cli_path": "/usr/bin/fm"}})
+    fm_cli["vision_identity"] = dict(fm_cli["identity"])
+    system = copy.deepcopy(fm_cli)
+    system["identity"]["mode"] = "system"
+    system["vision_identity"] = dict(system["identity"])
+    if {refused_pcc!r}:
+        fm_cli["capabilities"] = {{name: {{"status": "fail", "category": "pcc_refused"}} for name in capabilities}}
+        fm_cli.pop("vision_identity", None)
+    if {server_streaming!r}:
+        report["fm_server"] = {{"configured": True, "identity": dict(system["identity"]), "capabilities": {{name: {{"status": "pass" if name in ("text", "streaming") else "unsupported"}} for name in capabilities}}}}
+        if {bad_server_identity!r}:
+            report["fm_server"]["identity"]["mode"] = "pcc"
+    report["fm_cli_modes"] = [copy.deepcopy(fm_cli), system]
+    report["fm_manifest_identity"] = hashes
+    if {duplicate_mode!r}:
+        report["fm_cli_modes"][1] = copy.deepcopy(fm_cli)
+    if {bad_hash!r}:
+        hashes["tool_schema_sha256"] = "invalid"
+    if {mismatched_first!r}:
+        report["fm_cli_modes"][0]["identity"]["mode"] = "system"
 print(json.dumps(report))
 sys.exit(0 if report["overall_pass"] else 1)
 '''
@@ -132,6 +161,40 @@ def main() -> int:
         assert failed.returncode == 1
         assert output.read_bytes() == original
 
+        fake_binary(binary, passing=True, multi_mode=True)
+        multi = invoke(binary, output)
+        assert multi.returncode == 0, multi.stderr
+        records = json.loads(output.read_text())
+        assert [r["provider_id"] for r in records] == ["foundation-models-pcc", "foundation-models"]
+        assert all(r["qualification_status"] == "qualified" for r in records)
+        assert all(r["version"] == 2 for r in records)
+        fake_binary(binary, passing=True, multi_mode=True, server_streaming=True)
+        with_server = invoke(binary, output)
+        assert with_server.returncode == 0, with_server.stderr
+        assert json.loads(output.read_text())[1]["declared_capabilities"]["streaming"] is True
+        original = output.read_bytes()
+        fake_binary(binary, passing=True, multi_mode=True, server_streaming=True, bad_server_identity=True)
+        wrong_server = invoke(binary, output)
+        assert wrong_server.returncode == 1
+        assert output.read_bytes() == original
+        fake_binary(binary, passing=True, multi_mode=True, refused_pcc=True)
+        partial = invoke(binary, output)
+        assert partial.returncode == 0, partial.stderr
+        records = json.loads(output.read_text())
+        assert records[0]["qualification_status"] == "failed"
+        assert not any(records[0]["declared_capabilities"].values())
+        assert records[1]["qualification_status"] == "qualified"
+        original = output.read_bytes()
+        for option in ("duplicate_mode", "bad_hash", "mismatched_first", "omit_tool_continuation"):
+            fake_binary(binary, passing=True, multi_mode=True, **{option: True})
+            invalid = invoke(binary, output)
+            assert invalid.returncode == 1, (option, invalid.stderr)
+            assert output.read_bytes() == original
+        fake_binary(binary, passing=False, multi_mode=True, refused_pcc=True)
+        failed_multi = invoke(binary, output)
+        assert failed_multi.returncode == 1
+        assert output.read_bytes() == original
+
         output.unlink()
         target = root / "target.json"
         target.write_text("preserve", encoding="utf-8")
@@ -141,7 +204,7 @@ def main() -> int:
         assert rejected.returncode == 1
         assert output.is_symlink() and target.read_text(encoding="utf-8") == "preserve"
 
-    print("provider qualification publication tests passed")
+    print("provider qualification publication tests passed (16 scenarios)")
     return 0
 
 

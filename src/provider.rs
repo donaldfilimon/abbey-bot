@@ -56,8 +56,8 @@ pub use manifest::{ProviderRecord, publish_v2};
 pub use qualification::{
     CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, FmQualificationState, ProbeStatus,
     ProviderEvidence, ProviderIdentity, QUALIFICATION_VERSION, QualificationReport,
-    QualificationTarget, VerifiedFmCapabilities, fm_identity, primary_identity, qualify_fm,
-    unix_now, verify_fm_manifest,
+    QualificationTarget, VerifiedFmCapabilities, fm_identity, fm_manifest_identity,
+    primary_identity, qualify_fm, unix_now, verify_fm_manifest,
 };
 pub use routing::{
     AdaptiveRouter, ConversationRoute, RouteAdmission, RouteAttempt, RouteUnavailableReason,

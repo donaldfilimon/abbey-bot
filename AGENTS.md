@@ -128,6 +128,10 @@ hand-edit the generated TOML. `check.sh` and `check.ps1` fail on drift.
   installed binary; equal hashes mean the service already runs that build.
   `python3 -I deploy/service-status.py` is the read-only current observation.
   Procedure and qualification: `README.md` *Deploying*.
+  `deploy/configure-fm-primary.py` is dry-run by default; explicit `--apply`
+  changes only its four FM route keys through the shared install transaction.
+  It requires at least one identity-matching qualified FM mode; failed PCC
+  records remain unadmitted. Its offline tests use fake restarts only.
 - A plist is not proof that an agent is loaded. Enumerate live agents with
   `launchctl list | grep com.donaldfilimon.abbey` and installable artifacts
   with `ls deploy/*.plist`. Do not stop, unload, reinstall, or restart them

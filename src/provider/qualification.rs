@@ -201,6 +201,11 @@ pub struct QualificationReport {
     /// carries its `mode`), so a publisher can emit one record per mode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fm_cli_modes: Vec<ProviderEvidence>,
+    /// The exact V2 manifest identity (`fm_manifest_identity`) shared by every
+    /// FM mode, including the tool-schema hash only the binary can compute,
+    /// so a publisher can emit per-mode V2 records the runtime will accept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fm_manifest_identity: Option<ProviderIdentityHashes>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

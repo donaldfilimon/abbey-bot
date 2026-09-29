@@ -748,6 +748,7 @@ async fn verified_new_qualification_witness_clears_only_its_exact_persisted_bloc
             },
         },
         fm_cli_modes: Vec::new(),
+        fm_manifest_identity: None,
     };
     std::fs::write(&manifest, serde_json::to_vec(&report).unwrap()).unwrap();
     block(&build()).await;

@@ -110,6 +110,7 @@ mod premium_entitlements;
 mod profile;
 mod prompt_budget;
 mod provider;
+mod provider_identity;
 mod provider_self_test;
 mod readiness;
 mod recall;
@@ -260,6 +261,9 @@ fn main() -> Result<(), Error> {
             std::process::exit(2);
         }
     };
+    if let StartupAction::FmManifestIdentity(cli) = &startup {
+        return provider_identity::run(cli);
+    }
     let managed = if startup == StartupAction::ManagedDiscord {
         configure_managed_panic_hook(None);
         let Some(home) = std::env::var_os("HOME") else {
@@ -537,6 +541,7 @@ enum StartupAction {
     ManagedDiscord,
     VoiceSelfTest(std::path::PathBuf),
     ProviderSelfTest(provider::QualificationTarget),
+    FmManifestIdentity(std::path::PathBuf),
     ServerPlan(server::run::Options),
 }
 
@@ -571,6 +576,21 @@ fn parse_startup_arguments(
     }
     if mode == std::ffi::OsStr::new("--server-plan") {
         return server::run::parse_options(arguments).map(StartupAction::ServerPlan);
+    }
+    if mode == std::ffi::OsStr::new("--fm-manifest-identity") {
+        let usage =
+            || "usage: abbey-bot --fm-manifest-identity --cli ABSOLUTE_PATH --json".to_string();
+        if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--cli")) {
+            return Err(usage());
+        }
+        let cli = std::path::PathBuf::from(arguments.next().ok_or_else(usage)?);
+        if !cli.is_absolute()
+            || arguments.next().as_deref() != Some(std::ffi::OsStr::new("--json"))
+            || arguments.next().is_some()
+        {
+            return Err(usage());
+        }
+        return Ok(StartupAction::FmManifestIdentity(cli));
     }
     if mode == std::ffi::OsStr::new("--provider-self-test") {
         let target = arguments.next().ok_or_else(provider_self_test_usage)?;
@@ -745,3 +765,49 @@ mod startup_argument_tests;
 
 #[cfg(test)]
 mod discord_token_tests;
+
+#[cfg(test)]
+mod fm_identity_cli_tests {
+    use super::*;
+
+    #[test]
+    fn identity_command_requires_exact_absolute_cli_and_json_arguments() {
+        use std::ffi::OsString;
+
+        let cli = std::env::temp_dir().join("abbey-fm-test-cli");
+        let parse = |args: Vec<OsString>| parse_startup_arguments(args.into_iter());
+        assert_eq!(
+            parse(vec![
+                "--fm-manifest-identity".into(),
+                "--cli".into(),
+                cli.clone().into_os_string(),
+                "--json".into(),
+            ])
+            .unwrap(),
+            StartupAction::FmManifestIdentity(cli.clone())
+        );
+        for args in [
+            vec!["--fm-manifest-identity".into()],
+            vec![
+                "--fm-manifest-identity".into(),
+                "--cli".into(),
+                "relative".into(),
+                "--json".into(),
+            ],
+            vec![
+                "--fm-manifest-identity".into(),
+                "--cli".into(),
+                cli.clone().into_os_string(),
+            ],
+            vec![
+                "--fm-manifest-identity".into(),
+                "--cli".into(),
+                cli.into_os_string(),
+                "--json".into(),
+                "--managed-service".into(),
+            ],
+        ] {
+            assert!(parse(args).is_err());
+        }
+    }
+}

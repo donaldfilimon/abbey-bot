@@ -115,6 +115,7 @@ fn successful_fm_report(config: &FmConfig) -> QualificationReport {
             capabilities: passing,
         },
         fm_cli_modes: Vec::new(),
+        fm_manifest_identity: None,
     }
 }
 
@@ -215,6 +216,7 @@ fn report_serialization_contains_no_provider_payload_fields() {
         fm_server: ProviderEvidence::skipped(),
         fm_cli: ProviderEvidence::skipped(),
         fm_cli_modes: Vec::new(),
+        fm_manifest_identity: None,
     })
     .unwrap();
     assert!(!encoded.contains("vision_identity"), "{encoded}");

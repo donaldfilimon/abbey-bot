@@ -893,6 +893,53 @@ weights remain visible through `/profile`.
 
 ## Deploying
 
+The FM primary configurator is an operator action. It defaults to a dry run
+and manages only `ABBEY_FM_MODE=pcc,system`, `ABBEY_FM_ROLE=primary`,
+`ABBEY_FM_CLI`, and `ABBEY_FM_CAPABILITY_MANIFEST`. All other environment
+keys, including secrets, endpoint and vision settings, stay as supplied.
+An explicit `ABBEY_FM_FALLBACK=0` conflicts with primary routing and is refused;
+the operator must resolve that setting separately. Scored or mixed-provider
+V2 documents are refused by this narrow configurator; use its scoreless FM
+publisher output.
+Use an owner-only manifest in a private directory and the exact candidate
+Abbey binary:
+
+```sh
+python3 deploy/configure-fm-primary.py \
+  --binary "$HOME/.local/libexec/abbey-bot/abbey-bot" \
+  --manifest "$HOME/.local/share/abbey-bot/fm-qualification.json"
+```
+
+After reviewing that dry run, an explicit `--apply` takes the existing install
+lock, retains an owner-only rollback copy, atomically writes the environment,
+and verifies a stable launchd restart. If the candidate restart fails, it
+restores the previous environment and attempts to restart it. A retained
+backup is named `env.before-mlx.*` because both configurators share the same
+transaction implementation. The helper reports key names and paths, never
+values. Source gates exercise this path with isolated fixtures and fake
+restarts; they do not deploy or qualify a running service.
+
+The publisher's `--target fm` consumes the Rust report's `fm_cli` first mode,
+ordered `fm_cli_modes`, and `fm_manifest_identity` and writes V2 records for
+`foundation-models` (system) and `foundation-models-pcc` (PCC). A passing
+self-test must qualify at least one mode. A refused mode becomes a `failed`
+record with only capabilities that actually passed; it remains unadmitted.
+A failed self-test never replaces the previous manifest. Legacy reports and
+`--target primary`/`all` retain their existing publication format. Publication
+is a real synthetic provider probe, separate from offline source validation.
+The configurator accepts at least one identity-matching qualified FM mode,
+so a refused PCC mode can leave system serving. This follows the design's
+degraded-service rule and supersedes the plan's first-mode-only cutover rule.
+The configurator calls the candidate binary's token-free
+`--fm-manifest-identity --cli ABSOLUTE_PATH --json` command with a cleared
+environment to verify every identity hash, including the production tool schema.
+This command exits before credentials or application runtime are loaded and
+never invokes inference. Candidates predating that interface are refused.
+The FM server's text/streaming evidence binds to the system record, and an
+existing FM endpoint requires streaming qualification when selecting system.
+Current provider qualification, live Discord behavior, and installed artifact
+identity require their own evidence.
+
 Two paths, both configured entirely through the environment (`DISCORD_TOKEN`,
 optional `ABBEY_GUILD_ID`, `ABBEY_DATA_DIR`, the backend variables, and
 `RUST_LOG`; add the voice variables above only when live voice is wanted).

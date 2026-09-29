@@ -29,6 +29,7 @@ Invoke-Checked -Executable "python" -Arguments @(
     "deploy/mlx-audio-build-constraints.txt"
 )
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-mlx-primary.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-fm-primary.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-publish-provider-qualification.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-check-activity-url-map.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/check-activity-url-map.py")

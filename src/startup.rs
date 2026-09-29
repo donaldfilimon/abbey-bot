@@ -25,6 +25,9 @@ pub(super) async fn run(
 
     match startup {
         StartupAction::Discord | StartupAction::ManagedDiscord => {}
+        StartupAction::FmManifestIdentity(_) => {
+            return Err("FM identity command must run before application startup".into());
+        }
         StartupAction::VoiceSelfTest(output) => {
             let report = voice_self_test::run(&output)
                 .await

@@ -7,10 +7,52 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 WDBX_REVISION = "9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae"
 
+# Deliberately validate the complete small expression, not isolated substrings.
+# A changed expression requires review and matching truth-table tests.
+TRUST_CONDITION = """github.repository == 'donaldfilimon/abbey-bot' &&
+(github.event_name == 'push' ||
+(github.event_name == 'pull_request' &&
+github.event.pull_request.head.repo.full_name == github.repository))"""
+
+def trust_condition(code: str) -> str:
+    match = re.search(r"^    if: >\n((?:      .*\n)+)", code, re.M)
+    return " ".join(match.group(1).split()) if match else ""
+
+def prerequisite_script(workflow: str) -> str:
+    match = re.search(
+        r"^      - name: Check host prerequisites\n        run: \|\n"
+        r"((?:          .*\n)+)", workflow, re.M)
+    return "".join(line[10:] + "\n" for line in match.group(1).splitlines()) if match else ""
+
 def errors(root: Path) -> list[str]:
     problems = []
     workflow = (root / ".github/workflows/rust.yml").read_text()
     code = "\n".join(line for line in workflow.splitlines() if not line.lstrip().startswith("#"))
+    if len(re.findall(r'^    if:', code, re.M)) != 1:
+        problems.append('self-hosted job must have exactly one trust condition')
+    if trust_condition(code) != " ".join(TRUST_CONDITION.split()):
+        problems.append('self-hosted trust condition must match the reviewed complete expression')
+    if not re.search(r'^jobs:\n  gate-macos:\n    name: Gate \(macOS\)\n', code, re.M):
+        problems.append('preserve gate-macos job id and Gate (macOS) check name')
+    if re.findall(r'^  ([\w-]+):$', code.split('jobs:', 1)[-1], re.M) != ['gate-macos']:
+        problems.append('unexpected CI job; review its trust boundary')
+    triggers = code.split('on:', 1)[-1].split('permissions:', 1)[0].strip()
+    if triggers != 'push:\n    branches: ["main"]\n  pull_request:\n    branches: ["main"]':
+        problems.append('unexpected workflow trigger; review event admission')
+    if not re.search(r'^permissions:\n  contents: read\n', code, re.M):
+        problems.append('workflow token must remain contents: read')
+    label_path = root / '.github/actionlint.yaml'
+    labels = label_path.read_text() if label_path.is_file() else ''
+    labels = "\n".join(line for line in labels.splitlines() if not line.lstrip().startswith('#'))
+    if labels.strip() != 'self-hosted-runner:\n  labels:\n    - abbey-bot':
+        problems.append('actionlint must recognize exactly the abbey-bot custom runner label')
+    preflight = prerequisite_script(workflow)
+    if not preflight.startswith('set -eu\n') or 'for tool in rustup cargo python3 plutil xcrun; do' not in preflight:
+        problems.append('host prerequisite step must fail fast and check every required tool')
+    install = workflow.find('- name: Install pinned cargo-audit')
+    gate = workflow.find('run: ./check.sh')
+    if not preflight or install < 0 or gate < install or workflow.find('- name: Check host prerequisites') > install:
+        problems.append('host prerequisites must precede installation and the gate')
     required = [
         'ABBEY_REQUIRE_WDBX_CONFORMANCE: "1"',
         'ABBEY_WDBX_REPO: ${{ github.workspace }}/wdbx',
