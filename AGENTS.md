@@ -33,6 +33,15 @@ hand-edit the generated TOML. `check.sh` and `check.ps1` fail on drift.
   `tests/` contains fixtures only; Rust tests are inline or in `src` test
   modules. `deploy/`, `scripts/`, `contracts/`, `blueprints/`, `activity/`, and
   `tools/` are support surfaces.
+- `zig/` is the separate stdlib-only Zig rewrite, folded in from the former
+  `abbey-bot-zig` repository on 2026-09-28 with its history. It has its own
+  `zig/AGENTS.md`, pinned Zig toolchain, gate (`zig/tools/check.sh`), and CI
+  (`.github/workflows/zig.yml`). Its oracle is this bot pinned at `281ee3b`,
+  not the current tree, so Rust changes here never need a matching Zig change.
+  The root gate's privacy, Python-syntax, shell-syntax, plist, and module-size
+  scans enumerate only root `src/`, `deploy/`, and `scripts/`, so they do not
+  cover `zig/`; the Pages Liquid inventory does include its Markdown, and
+  `.dockerignore` keeps it out of the Rust image.
 - `main.rs` parses the CLI and starts `startup.rs`; the normal path builds
   `runtime::AppState`, then wires Discord, optional Telegram/Slack, voice, and
   persistence. `--server-plan`, `--provider-self-test`, and `--voice-self-test`
