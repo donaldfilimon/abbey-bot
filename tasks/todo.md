@@ -646,7 +646,7 @@ Discord and human voice acceptance remain separate.
 - [x] Task 1: `FmRoute` (pcc,system), role primary, per-mode manifest records, degrade on unqualified manifest
 - [x] Task 2: Abbey prompt via `--instructions`; `prompt_budget::fit` for fm system
 - [x] Task 3: `brain::style_signal` + `brain::addenda` ledger, wired behind `learning_enabled`, persisted additively
-- [ ] Task 4: `/admin addenda list|revert|clear` (catalog 87 → 90), honest capability guidance
+- [x] Task 4: `/admin addenda list|revert|clear` (catalog 87 → 90), honest capability guidance
 - [ ] Task 5: `deploy/configure-fm-primary.py`; `publish-provider-qualification.py --target fm`
 - [ ] Task 6: CI `deploy-macos` job (qualify, install, SHA match, status)
 - [ ] Task 7: live switch to FM primary; Donald's Discord acceptance
