@@ -337,6 +337,8 @@ pub mod recall;
 pub mod recall_policy;
 mod registry;
 mod schedule;
+pub(crate) use schedule::WorkBatch;
+mod delivery_lifecycle;
 
 #[cfg(test)]
 mod tests;

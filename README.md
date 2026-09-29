@@ -1,5 +1,8 @@
 # Abbey Bot
 
+The active source release is Rust-only. See the [retirement and source acceptance record](docs/releases/2026-09-29-rust-only.md) for archival recovery, compatibility decisions, and the separate live operator acceptance boundary.
+
+
 > **Intelligence Without Limits** — Abbey's Discord operational layer (Rust).  
 > Persona routing, memory/WDBX, reputation, and consent-gated voice tooling.  
 > Adjacent to the Swift `AbbeyBot` product; shared contracts, not shared runtime.

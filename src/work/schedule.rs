@@ -3,7 +3,6 @@
 //! destination identity/access. A plan alone never authorizes network delivery.
 use super::*;
 use chrono::{DateTime, Duration, Utc};
-#[cfg(test)]
 use chrono::{LocalResult, NaiveDate, TimeZone, Timelike};
 use chrono_tz::Tz;
 
@@ -41,7 +40,6 @@ impl WorkAutomationPolicy {
         Ok(())
     }
 
-    #[cfg(test)]
     fn quiet(&self, hour: u32) -> bool {
         let start = u32::from(self.quiet_start);
         let end = u32::from(self.quiet_end);
@@ -55,7 +53,6 @@ impl WorkAutomationPolicy {
     }
 }
 
-#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkBatch {
     pub scope: WorkScope,
@@ -89,7 +86,6 @@ fn utc(seconds: u64) -> Result<DateTime<Utc>, WorkError> {
 
 /// Calendar recurrence: choose the first occurrence in a fall-back overlap;
 /// advance through a spring-forward gap to the first valid local minute.
-#[cfg(test)]
 fn local_hour(tz: Tz, day: NaiveDate, hour: u8) -> Result<DateTime<Utc>, WorkError> {
     let mut local = day
         .and_hms_opt(u32::from(hour), 0, 0)
@@ -237,7 +233,6 @@ impl WorkStore {
     /// At most one batch per call. Missed days collapse into one latest briefing;
     /// overdue reminders collapse into that briefing, or one reminder batch.
     /// Quiet hours defer without consuming coverage or quota.
-    #[cfg(test)]
     pub fn next_batch(
         &self,
         scope: &WorkScope,
@@ -463,10 +458,47 @@ impl WorkStore {
         }))
     }
 
+    /// Recheck local authority after reservation without replaying quota/dedupe.
+    pub(crate) fn validate_reserved_batch(
+        &self,
+        access: WorkAccess,
+        batch: &WorkBatch,
+        now: u64,
+    ) -> Result<(), WorkError> {
+        let projects = self.scope_projects(&batch.scope, access, true)?;
+        if self.scope_automation.get(&batch.scope.key()) != Some(&batch.policy)
+            || !batch.policy.enabled
+            || self.scope_automation_actors.get(&batch.scope.key()) != Some(&access.actor)
+            || projects
+                .iter()
+                .map(|p| (p.id, p.revision))
+                .collect::<Vec<_>>()
+                != batch.project_revisions
+            || batch
+                .revisions
+                .iter()
+                .any(|(id, revision)| self.tasks.get(id).is_none_or(|t| t.revision != *revision))
+        {
+            return Err(WorkError::Stale);
+        }
+        self.target(&batch.scope, access, &batch.policy)?;
+        let tz = batch
+            .policy
+            .timezone
+            .parse::<Tz>()
+            .map_err(|_| WorkError::Invalid)?;
+        let local = utc(now)?.with_timezone(&tz);
+        if batch.policy.quiet(local.hour())
+            || local.format("%Y-%m-%d").to_string() != batch.local_day
+        {
+            return Err(WorkError::Stale);
+        }
+        Ok(())
+    }
+
     /// Invoke inside commit_work with freshly obtained access facts, then wait
     /// for its durable result before sending. Attempts consume quota forever;
     /// recovery must mark unfinished attempts ReviewRequired without resending.
-    #[cfg(test)]
     pub fn reserve_batch(
         &mut self,
         access: WorkAccess,
@@ -482,7 +514,6 @@ impl WorkStore {
     /// A private target requires separately resolved transport; it never reuses
     /// the origin team channel or falls back after failure. Fresh origin access
     /// is required alongside the resolved DM channel supplied by the shell.
-    #[cfg(test)]
     pub fn reserve_private_batch(
         &mut self,
         access: WorkAccess,
@@ -499,7 +530,6 @@ impl WorkStore {
         self.reserve_resolved_batch(access, batch, dm_channel, now)
     }
 
-    #[cfg(test)]
     fn reserve_resolved_batch(
         &mut self,
         access: WorkAccess,
@@ -556,7 +586,6 @@ impl WorkStore {
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
 fn same_content(a: &WorkContentRef, b: &WorkContentRef) -> bool {
     match (a, b) {
         (WorkContentRef::Task { id: a, .. }, WorkContentRef::Task { id: b, .. })

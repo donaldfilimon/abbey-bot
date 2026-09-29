@@ -525,11 +525,14 @@ fn classify(
     }
 
     // Scale suffix, e.g. `12k`.
-    if rest.len() >= 2 {
-        let (head, tail) = rest.split_at(rest.len() - 1);
-        if head.chars().all(|c| c.is_ascii_digit())
-            && matches!(tail, "k" | "K" | "m" | "M" | "b" | "B" | "t" | "T")
-        {
+    if rest.len() >= 2
+        && rest.as_bytes().last().is_some_and(|byte| {
+            matches!(byte, b'k' | b'K' | b'm' | b'M' | b'b' | b'B' | b't' | b'T')
+        })
+    {
+        // The suffix is one ASCII byte, so this split is a UTF-8 boundary.
+        let head = &rest[..rest.len() - 1];
+        if head.chars().all(|c| c.is_ascii_digit()) {
             return Some((SpecificKind::Statistic, rest.to_ascii_lowercase(), false));
         }
     }
@@ -694,3 +697,6 @@ fn trim_to_words(s: &str, max: usize) -> String {
 #[cfg(test)]
 #[path = "grounding/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod retired_oracle_tests;

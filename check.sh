@@ -68,6 +68,8 @@ python3 scripts/test-check-rustsec-debt.py
 python3 scripts/check-rustsec-debt.py
 python3 scripts/test-check-wdbx-conformance.py
 python3 scripts/check-wdbx-conformance.py
+python3 scripts/test-check-rust-release.py
+python3 scripts/check-rust-release.py
 python3 scripts/test-check-systemd-unit.py
 python3 scripts/check-systemd-unit.py
 if command -v plutil >/dev/null 2>&1; then

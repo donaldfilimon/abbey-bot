@@ -465,9 +465,12 @@ pub(super) async fn run(
 
     supervisor.finish_startup();
     let scheduler_state = state.clone();
+    let work_transport = std::sync::Arc::new(gateway::work_delivery::DiscordWorkDelivery(
+        client.http.clone(),
+    ));
     supervisor
         .spawn_service(service::TaskName::Scheduler, move |cancel| {
-            scheduler_state.run_scheduler(cancel)
+            scheduler_state.run_scheduler(cancel, work_transport)
         })
         .map_err(|_| runtime::StartupError("scheduler ownership failed".into()))?;
     gateway::start_connectors(&state, &mut supervisor, connectors)

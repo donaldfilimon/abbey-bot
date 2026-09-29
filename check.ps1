@@ -51,6 +51,8 @@ Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-rustsec-deb
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-rustsec-debt.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-wdbx-conformance.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-wdbx-conformance.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-rust-release.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-rust-release.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-systemd-unit.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-systemd-unit.py")
 

@@ -8,6 +8,7 @@ pub enum Tick {
     Persist,
     Settle,
     Summary,
+    Work,
 }
 pub struct Schedule {
     learn: Interval,
@@ -15,6 +16,7 @@ pub struct Schedule {
     persist: Interval,
     settle: Interval,
     summary: Interval,
+    work: Interval,
 }
 impl Schedule {
     pub fn new() -> Self {
@@ -29,6 +31,7 @@ impl Schedule {
             persist: timer(crate::runtime::PERSIST_EVERY),
             settle: timer(crate::runtime::SETTLE_EVERY),
             summary: timer(crate::runtime::SUMMARIZE_EVERY),
+            work: timer(Duration::from_secs(60)),
         }
     }
     pub async fn next(&mut self) -> Tick {
@@ -38,6 +41,7 @@ impl Schedule {
             _ = self.persist.tick() => Tick::Persist,
             _ = self.settle.tick() => Tick::Settle,
             _ = self.summary.tick() => Tick::Summary,
+            _ = self.work.tick() => Tick::Work,
         }
     }
 }
@@ -59,7 +63,7 @@ mod tests {
         assert!(schedule.next().now_or_never().is_none());
         tokio::time::advance(Duration::from_secs(600)).await;
         let mut ticks = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..6 {
             ticks.push(schedule.next().await);
         }
         for expected in [
@@ -68,6 +72,7 @@ mod tests {
             Tick::Persist,
             Tick::Settle,
             Tick::Summary,
+            Tick::Work,
         ] {
             assert_eq!(ticks.iter().filter(|tick| **tick == expected).count(), 1);
         }

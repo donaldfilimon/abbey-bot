@@ -5,6 +5,7 @@ pub(crate) mod interaction_outcomes;
 pub mod shared;
 pub mod slack;
 pub mod telegram;
+pub(crate) mod work_delivery;
 
 #[allow(unused_imports)]
 pub use discord::{DiscordOutbound, abbey_reply_embed, on_discord_event};

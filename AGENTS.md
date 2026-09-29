@@ -33,15 +33,10 @@ hand-edit the generated TOML. `check.sh` and `check.ps1` fail on drift.
   `tests/` contains fixtures only; Rust tests are inline or in `src` test
   modules. `deploy/`, `scripts/`, `contracts/`, `blueprints/`, `activity/`, and
   `tools/` are support surfaces.
-- `zig/` is the separate stdlib-only Zig rewrite, folded in from the former
-  `abbey-bot-zig` repository on 2026-09-28 with its history. It has its own
-  `zig/AGENTS.md`, pinned Zig toolchain, gate (`zig/tools/check.sh`), and CI
-  (`.github/workflows/zig.yml`). Its oracle is this bot pinned at `281ee3b`,
-  not the current tree, so Rust changes here never need a matching Zig change.
-  The root gate's privacy, Python-syntax, shell-syntax, plist, and module-size
-  scans enumerate only root `src/`, `deploy/`, and `scripts/`, so they do not
-  cover `zig/`; the Pages Liquid inventory does include its Markdown, and
-  `.dockerignore` keeps it out of the Rust image.
+- Rust is the sole active bot implementation. The retired rewrite is recoverable
+  from `archive/abbey-bot-zig-before-rust-only-20260929`; preservation, extracted
+  regression fixtures, and capability accounting are recorded in
+  `docs/releases/2026-09-29-rust-only.md`. Keep the archival tag and bundle.
 - `main.rs` parses the CLI and starts `startup.rs`; the normal path builds
   `runtime::AppState`, then wires Discord, optional Telegram/Slack, voice, and
   persistence. `--server-plan`, `--provider-self-test`, and `--voice-self-test`
@@ -105,7 +100,7 @@ hand-edit the generated TOML. `check.sh` and `check.ps1` fail on drift.
   use `mode: disabled` in voice fixtures on non-macOS. Byte-for-byte tracked
   fixtures need LF via `.gitattributes`; cfg-only `mut` bindings need the
   narrow platform lint allowance.
-- CI is `Gate (macOS)` in `.github/workflows/rust.yml` (plus `zig.yml`), on
+- CI is `Gate (macOS)` in `.github/workflows/rust.yml`, on
   the self-hosted macOS arm64 runner labelled `abbey-bot`, for trusted
   same-repo events only. The GitHub-hosted `Gate (Ubuntu)` and
   `Gate (Windows)` jobs were removed on 2026-09-28 (hosted Actions are

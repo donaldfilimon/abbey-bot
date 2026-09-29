@@ -563,3 +563,51 @@ fn missing_legacy_automation_authorizer_never_sends() {
         Ok(None)
     );
 }
+
+#[test]
+fn reserved_batch_rechecks_source_revisions_membership_policy_and_day() {
+    let (store, scope, access, id) = fixture();
+    let now = timestamp("2026-09-24T13:00:00Z");
+    let batch = store.next_batch(&scope, access, now).unwrap().unwrap();
+    let mut reserved = store.clone();
+    reserved.reserve_batch(access, &batch, now).unwrap();
+    reserved
+        .validate_reserved_batch(access, &batch, now)
+        .unwrap();
+    let mut changed = reserved.clone();
+    changed.tasks.get_mut(&id).unwrap().revision += 1;
+    assert_eq!(
+        changed.validate_reserved_batch(access, &batch, now),
+        Err(WorkError::Stale)
+    );
+    let mut changed = reserved.clone();
+    changed
+        .projects
+        .values_mut()
+        .next()
+        .unwrap()
+        .managers
+        .clear();
+    assert_eq!(
+        changed.validate_reserved_batch(access, &batch, now),
+        Err(WorkError::Denied)
+    );
+    let mut changed = reserved.clone();
+    changed
+        .scope_automation
+        .get_mut(&scope.key())
+        .unwrap()
+        .enabled = false;
+    assert_eq!(
+        changed.validate_reserved_batch(access, &batch, now),
+        Err(WorkError::Stale)
+    );
+    assert_eq!(
+        reserved.validate_reserved_batch(access, &batch, now + 86_400),
+        Err(WorkError::Stale)
+    );
+    assert_eq!(
+        reserved.validate_reserved_batch(access, &batch, timestamp("2026-09-25T03:00:00Z")),
+        Err(WorkError::Stale)
+    );
+}

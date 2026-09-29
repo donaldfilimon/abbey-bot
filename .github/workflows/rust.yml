@@ -35,9 +35,24 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, macOS, ARM64, abbey-bot]
     timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: abbey-bot
+    env:
+      ABBEY_REQUIRE_WDBX_CONFORMANCE: "1"
+      ABBEY_WDBX_REPO: ${{ github.workspace }}/wdbx
+      CARGO_TARGET_DIR: ${{ runner.temp }}/abbey-rust-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+          path: abbey-bot
+      - name: Checkout verified WDBX contract revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: donaldfilimon/wdbx
+          ref: 9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae
+          path: wdbx
           persist-credentials: false
       # A persistent host is configured by hand, so fail early with a readable
       # message instead of midway through check.sh. tomllib (scripts/) needs
@@ -58,3 +73,10 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Gate — fmt, privacy, locks, clippy, tests, release build
         run: ./check.sh
+      - name: Remove this run's disposable build output
+        if: always()
+        run: |
+          case "$CARGO_TARGET_DIR" in
+            "$RUNNER_TEMP"/abbey-rust-*) rm -rf -- "$CARGO_TARGET_DIR" ;;
+            *) echo "Unexpected build directory" >&2; exit 1 ;;
+          esac

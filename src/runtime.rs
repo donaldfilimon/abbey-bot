@@ -39,6 +39,7 @@ mod scheduler;
 mod tool_scope;
 mod vision_transport;
 mod work_commit;
+pub(crate) mod work_delivery;
 mod work_recall;
 mod work_recall_policy;
 pub use memory_service::{MemoryService, RememberOutcome, SupersessionOutcome};
@@ -135,6 +136,7 @@ pub struct AppState {
     self_weak: OnceLock<Weak<Self>>,
     persistence_requests: OnceLock<crate::service::persistence::PersistenceRequests>,
     persistence_preparation: tokio::sync::Mutex<()>,
+    work_delivery_running: tokio::sync::Mutex<()>,
     pub stores: Mutex<Stores>,
     pub guilds: Mutex<GuildRegistry>,
     pub brains: Mutex<BrainRegistry<DqnAgent>>,
@@ -386,6 +388,7 @@ impl AppState {
             self_weak: OnceLock::new(),
             persistence_requests: OnceLock::new(),
             persistence_preparation: tokio::sync::Mutex::new(()),
+            work_delivery_running: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -434,6 +437,7 @@ impl AppState {
             self_weak: OnceLock::new(),
             persistence_requests: OnceLock::new(),
             persistence_preparation: tokio::sync::Mutex::new(()),
+            work_delivery_running: tokio::sync::Mutex::new(()),
         })
     }
 

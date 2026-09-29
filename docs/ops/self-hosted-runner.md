@@ -1,6 +1,6 @@
 # Self-hosted macOS runner
 
-The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) and the `Gate (zig)` check (job `gate` in `.github/workflows/zig.yml`, only when `zig/` changes) run on a macOS arm64 runner registered to this repository. GitHub-hosted jobs cannot start while the account's Actions billing is locked (they fail in about two seconds with zero steps), so the workflows have none; self-hosted jobs still run.
+The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) runs on the repository's macOS arm64 runner. It checks out Abbey and WDBX separately, pins WDBX to `9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae`, and requires cross-repository conformance. Each run uses a unique disposable Cargo target directory. GitHub-hosted lanes were removed while Actions billing was locked; their absence is not Linux or Windows acceptance.
 
 ## Registration
 
@@ -11,7 +11,7 @@ The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) and 
 
 A runner is registered to one repository. If the same Mac already runs a runner for another repository (for example `abi`), install a second runner in its own directory, such as `~/actions-runner-abbey-bot`: run `./config.sh` with this repository's URL and token, add the custom label `abbey-bot` when asked, then `./svc.sh install && ./svc.sh start`.
 
-Until a runner with these labels is online, same-repository `Gate (macOS)` and `Gate (zig)` jobs wait in the queue.
+Until a runner with these labels is online, same-repository `Gate (macOS)` jobs wait in the queue.
 
 ## Host requirements
 
@@ -24,7 +24,6 @@ Until a runner with these labels is online, same-repository `Gate (macOS)` and `
 
 The first step of the job checks these tools and fails with a clear message if one is missing. No step uses `sudo`.
 
-`Gate (zig)` additionally needs `curl`, `tar` and `sed` (all ship with macOS). It downloads the Zig master pinned in `zig/build.zig.zon` into the job's `RUNNER_TEMP` on every run, so nothing is installed on the host.
 
 ## Security
 

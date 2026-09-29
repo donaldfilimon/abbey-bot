@@ -443,16 +443,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "tasks/goals.md",
             "tasks/todo.md",
             "tools/abbey-audio-tap/README.md",
-            # zig/ is the Zig rewrite folded in on 2026-09-28; Pages renders its
-            # Markdown too (the selector has no _config.yml exclude model).
-            "zig/AGENTS.md",
-            "zig/CLAUDE.md",
-            "zig/README.md",
-            "zig/contracts/ORACLE.md",
-            "zig/contracts/abbey/corpus/README.md",
-            "zig/contracts/abbey/corpus/compatibility.md",
-            "zig/docs/claims.md",
-            "zig/docs/evidence/2026-09-22-gateway-probe.md",
+            "docs/releases/2026-09-29-rust-only.md",
         }
         self.assertEqual(selected, expected)
 

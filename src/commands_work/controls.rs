@@ -193,7 +193,7 @@ fn automation_reply(policy: &WorkAutomationPolicy) -> String {
         }
     };
     format!(
-        "{destination} Saved automation {} for this scope in {}. Briefing hour: {}; quiet hours: {}–{}; maximum {} deliveries per local day, shared by all projects, briefings and reminders. Delivery runtime is not active in this implementation stage.",
+        "{destination} Saved automation {} for this scope in {}. Briefing hour: {}; quiet hours: {}–{}; maximum {} deliveries per local day, shared by all projects, briefings and reminders. The scheduler checks opted-in scopes every minute and rechecks access before delivery. Ambiguous attempts require review and are not automatically retried.",
         if policy.enabled {
             "opt-in"
         } else {
@@ -291,7 +291,7 @@ mod tests {
         let opt_in = super::automation_reply(&policy);
         println!("Private opt-in: {opt_in}");
         assert!(opt_in.contains("Private delivery to you only"));
-        assert!(opt_in.contains("runtime is not active"));
+        assert!(opt_in.contains("rechecks access before delivery"));
         policy.enabled = false;
         let paused = super::automation_reply(&policy);
         println!("Paused: {paused}");

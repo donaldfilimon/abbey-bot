@@ -190,7 +190,6 @@ impl WorkStore {
     }
 }
 
-#[cfg(test)]
 impl WorkStore {
     /// Canonical bounded fallback renderer. The runtime builder must preserve this
     /// exact source/body pairing, or construct and validate a new frozen draft.
@@ -289,7 +288,6 @@ impl WorkStore {
     }
 }
 
-#[cfg(test)]
 fn shortened(text: &str, limit: usize) -> String {
     let mut chars = text.chars();
     let mut shown: String = chars.by_ref().take(limit).collect();

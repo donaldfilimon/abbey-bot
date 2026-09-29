@@ -73,6 +73,7 @@ pub enum OperationKind {
     ProviderProcess,
     MemoryDrain,
     WorkRecall,
+    WorkDelivery,
     PersistencePreparation,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,6 +305,7 @@ impl ServiceSupervisor {
                     OperationKind::ProviderProcess
                         | OperationKind::MemoryDrain
                         | OperationKind::WorkRecall
+                        | OperationKind::WorkDelivery
                         | OperationKind::PersistencePreparation
                         | OperationKind::Voice
                         | OperationKind::Episode

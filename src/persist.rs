@@ -550,6 +550,7 @@ impl Stores {
         let mut stores: Self =
             serde_json::from_str(&text).map_err(|source| PersistError::Decode { path, source })?;
         stores.work.actions.mark_interrupted();
+        stores.work.mark_interrupted_deliveries();
         Ok(stores)
     }
 

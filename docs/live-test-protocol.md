@@ -1,8 +1,9 @@
 # Live acceptance protocol
 
 This is an operator protocol, not evidence that it ran. Begin only after the
-final provider-routing commit equals `origin/main` and Ubuntu, macOS, and
-Windows CI are green for that exact SHA. A local gate, a pushed commit, hosted
+release commit equals `origin/main` and the self-hosted macOS Rust gate
+is green for that exact SHA with strict pinned WDBX conformance. Linux and
+Windows runtime acceptance remains unverified until supported hosts run it. A local gate, a pushed commit, hosted
 CI, provider qualification, an installed artifact, foreground Discord,
 consented voice, and a managed service are separate acceptance layers. Never
 promote one into proof of another.

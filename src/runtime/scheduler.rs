@@ -65,9 +65,10 @@ impl AppState {
     }
 
     /// One owned scheduler with skipped missed ticks and no immediate startup work.
-    pub async fn run_scheduler(
+    pub(crate) async fn run_scheduler<T: super::work_delivery::WorkDeliveryTransport + 'static>(
         self: Arc<Self>,
         cancel: tokio_util::sync::CancellationToken,
+        work_transport: Arc<T>,
     ) -> crate::service::TaskExit {
         if let Some(status) = self.managed_status() {
             status.scheduler_running();
@@ -88,6 +89,18 @@ impl AppState {
                 biased;
                 () = cancel.cancelled() => return crate::service::TaskExit::Cancelled,
                 tick = schedule.next() => match tick {
+                    Tick::Work => {
+                        if let Some(registry) = self.service.get() {
+                            let state = self.clone();
+                            let transport = work_transport.clone();
+                            let _ = registry.spawn_operation(crate::service::OperationKind::WorkDelivery, move |cancel| async move {
+                                if state.deliver_work(transport.as_ref(), cancel, super::now).await.is_err() {
+                                    tracing::warn!("work delivery persistence failed; reserved attempts require review");
+                                }
+                                crate::service::TaskExit::Returned
+                            });
+                        }
+                    }
                     Tick::Learn => self.learn_all(),
                     Tick::Flush => self.flush_social(),
                     Tick::Settle => self.settle_rewards(),

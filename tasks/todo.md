@@ -622,3 +622,20 @@ verdicts only. Counts: 42 open boxes (measured); 39 still open, 2 done, 1 obsole
     exits 0 ("accepted temporary debt matches: 5 vulnerabilities remain; audit is NOT clean" is
     the expected accepted-debt state, not a failure). L392 itself stays open: the four
     rustls-webpki records are still accepted debt on the untouched Serenity upstream.
+
+## Rust-only source release (2026-09-29)
+
+- [x] Verify clean canonical main and preserve the pre-retirement source in an annotated retention tag and verified complete-history bundle.
+- [x] Pass the unmodified Rust gate with required sibling WDBX conformance and the existing Zig gate; record explicit live exclusions.
+- [x] Account for all 67 rewrite claims; preserve 528 grounding and 192 recall oracle cases with provenance; fix the UTF-8 numeric-suffix panic.
+- [x] Connect existing work scheduling policy to retained runtime delivery, durable reservation, late authorization, terminal outcomes and restart review.
+- [x] Remove the archived rewrite and its build/CI references; require pinned WDBX conformance in Rust CI with regression checks.
+- [x] Pass the complete consolidated local release gate and review the final source diff: 1,477 Rust tests, 16 Swift tests, five explicit operator/live exclusions, strict WDBX conformance, and locked release builds.
+- [x] Publish and protect the retention tag; prepare the binary and release-record inputs.
+
+Post-publication acceptance is recorded alongside the release artifacts in
+`release.json`: canonical local/remote main must match, the self-hosted CI
+`headSha` must equal that main SHA and pass, and the binary/archive checksums
+must verify. Those receipts are generated after this source checklist is
+committed, avoiding a self-referential CI claim. Live provider, installed-service,
+Discord and human voice acceptance remain separate.
