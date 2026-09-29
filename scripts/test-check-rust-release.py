@@ -23,6 +23,7 @@ class ReleaseTests(unittest.TestCase):
             ('working-directory: abbey-bot','working-directory: .'),
             ('github.event.pull_request.head.repo.full_name == github.repository','true'),
             ('run: ./check.sh','run: echo skipped'),
+            ('ABBEY_WDBX_REPO:', 'CARGO_TARGET_DIR: ${{ runner.temp }}/invalid\n      ABBEY_WDBX_REPO:'),
             ('persist-credentials: false','persist-credentials: true'),
             ('timeout-minutes: 60','timeout-minutes: 60\n    continue-on-error: true'),
         ]

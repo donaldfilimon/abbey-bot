@@ -20,12 +20,14 @@ def errors(root: Path) -> list[str]:
         'runs-on: [self-hosted, macOS, ARM64, abbey-bot]',
         "github.repository == 'donaldfilimon/abbey-bot' &&",
         'github.event.pull_request.head.repo.full_name == github.repository',
-        'CARGO_TARGET_DIR: ${{ runner.temp }}/abbey-rust-${{ github.run_id }}-${{ github.run_attempt }}',
+        'echo "CARGO_TARGET_DIR=$RUNNER_TEMP/abbey-rust-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"',
         'run: ./check.sh',
     ]
     for value in required:
         if value not in code:
             problems.append(f"missing required CI contract: {value}")
+    if re.search(r'CARGO_TARGET_DIR:\s*\$\{\{\s*runner\.', code):
+        problems.append('runner context is unavailable in job-level env; set the target at runtime')
     if code.count('persist-credentials: false') != 2 or re.search(r'persist-credentials:\s*true', code):
         problems.append('both checkouts must disable persisted credentials')
     if re.search(r'continue-on-error:\s*true|pull_request_target:|workflow_run:', code):
