@@ -36,6 +36,7 @@ use crate::wdbx::Recall;
 mod memory_service;
 mod provider_setup;
 mod scheduler;
+mod style_addenda;
 mod tool_scope;
 mod vision_transport;
 mod work_commit;
@@ -620,6 +621,7 @@ impl AppState {
                 .collect()
         };
         Self::lock(&self.brains).learn_all(|g| enabled.iter().any(|e| e == g));
+        self.tick_addenda(now());
     }
 
     /// Write reputation through to the store.

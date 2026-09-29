@@ -318,6 +318,7 @@ fn cli_argv_contains_instructions_but_no_facts_or_transcript() {
         channel_summary: "channel-summary-5521".into(),
         user_facts: vec![fact.into()],
         reputation: 0.5,
+        addenda: String::new(),
     };
     let persona = crate::persona::Persona::Abbey;
     let core = crate::ask::system_prompt(persona);

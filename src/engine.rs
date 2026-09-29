@@ -78,6 +78,9 @@ pub struct PreparedTurn {
     pub persona_core: String,
     /// The persona context rendered for this message (per-request facts).
     pub context: String,
+    /// The guild's style addenda (template text), carried to
+    /// `PromptParts::addenda`; deliberately not part of `system_prompt`.
+    pub addenda: String,
     pub turns: Vec<ChatTurn>,
     grounding: Grounding,
 }
@@ -167,6 +170,7 @@ impl Engine {
             grounding.push_source(source);
         }
         let persona_core = crate::ask::system_prompt(persona);
+        let context_addenda = context.addenda.clone();
         // The message being answered is the relevance query, so the facts
         // shown are the ones that bear on it.
         let context = context.render(user_input);
@@ -174,6 +178,7 @@ impl Engine {
             system_prompt: format!("{persona_core}\n\n{context}"),
             persona_core,
             context,
+            addenda: context_addenda,
             turns,
             grounding,
         }
@@ -267,6 +272,7 @@ mod tests {
             channel_summary: "deploy talk".into(),
             user_facts: vec!["likes rust".into()],
             reputation: 0.5,
+            addenda: String::new(),
         };
         let prepared = engine.prepare("c", Persona::Aviva, &context, "hi", 1);
         // Compose from the canonical renderers rather than re-pinning their

@@ -375,6 +375,11 @@ pub struct PersonaContext {
     pub channel_summary: String,
     pub user_facts: Vec<String>,
     pub reputation: f64,
+    /// The guild's rendered style addenda ([`crate::brain::addenda`]): fixed
+    /// template text only, never rendered into the context block or used as
+    /// grounding. Empty outside a Discord guild with learning on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub addenda: String,
 }
 
 impl PersonaContext {
@@ -384,6 +389,7 @@ impl PersonaContext {
             channel_summary: String::new(),
             user_facts: Vec::new(),
             reputation: DEFAULT_REPUTATION,
+            addenda: String::new(),
         }
     }
 
@@ -711,6 +717,7 @@ impl MemoryBank {
                 .unwrap_or_default(),
             user_facts: memory.map(|m| m.facts.clone()).unwrap_or_default(),
             reputation: memory.map_or(DEFAULT_REPUTATION, |m| m.reputation),
+            addenda: String::new(),
         }
     }
 }

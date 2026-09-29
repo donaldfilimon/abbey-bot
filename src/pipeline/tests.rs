@@ -880,3 +880,6 @@ fn distress_outranks_the_guild_default_and_sticky_state() {
 
 #[path = "tests/memory_outcomes.rs"]
 mod memory_outcomes;
+
+#[path = "tests/style_addenda.rs"]
+mod style_addenda;

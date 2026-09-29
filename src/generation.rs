@@ -475,12 +475,20 @@ async fn generate_conversation<O: Outbound + Sync>(
             &[]
         };
         let tool_names: Vec<_> = tools.iter().map(|tool| tool.name).collect();
-        let parts = PromptParts::new(
-            prepared.persona_core.clone(),
-            &prepared.context,
-            capability_guidance::guidance(ask.scope, &tool_names, system_suffix, ask.user_input),
-            turns,
-        );
+        let parts = PromptParts {
+            addenda: prepared.addenda.clone(),
+            ..PromptParts::new(
+                prepared.persona_core.clone(),
+                &prepared.context,
+                capability_guidance::guidance(
+                    ask.scope,
+                    &tool_names,
+                    system_suffix,
+                    ask.user_input,
+                ),
+                turns,
+            )
+        };
         let (text, posted, calls) = loop {
             match conversation.reserve().await {
                 Ok(()) => {}

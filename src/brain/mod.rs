@@ -3,6 +3,7 @@
 //! Everything here is pure: no serenity, no poise, no I/O. Time and randomness
 //! are injected so every test is deterministic.
 
+pub mod addenda;
 pub mod budget;
 pub mod dqn;
 pub mod intent;
@@ -13,4 +14,5 @@ pub mod replay;
 pub mod reward;
 pub mod social;
 pub mod state;
+pub mod style_signal;
 pub mod telemetry;

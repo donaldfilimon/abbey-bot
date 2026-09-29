@@ -412,6 +412,7 @@ mod tests {
             channel_summary: "busy channel ".repeat(40),
             user_facts: vec!["likes rust".into(), "lives by the sea".into()],
             reputation: 0.9,
+            addenda: String::new(),
         };
         let p = PromptParts::new(
             "CORE".into(),

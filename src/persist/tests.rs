@@ -260,6 +260,9 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
     assert_eq!(
         keys,
         [
+            // Added 2026-09-29 by the style-addenda slice; `#[serde(default)]`,
+            // so a pre-addenda document loads with no ledgers.
+            "addenda",
             "brains",
             "events",
             "guilds",
@@ -423,6 +426,37 @@ fn event_trail_is_bounded() {
     }
     assert_eq!(stores.events.len(), MAX_EVENTS);
     assert_eq!(stores.events[0].at, 5, "oldest rows are the ones dropped");
+}
+
+#[test]
+fn pre_addenda_document_loads() {
+    // The exact document a pre-addenda build wrote (one guild, learning on).
+    let old = include_str!("../../tests/fixtures/abbey-state-pre-addenda.json");
+    assert!(!old.contains("\"addenda\""));
+    let stores: Stores = serde_json::from_str(old).expect("pre-addenda document");
+    assert!(stores.addenda.is_empty());
+    assert!(GuildConfigStore::load(&stores, "discord:1").is_some_and(|s| s.learning_enabled));
+}
+
+#[test]
+fn addenda_round_trip() {
+    use crate::brain::addenda::{AddendaLedger, Policy};
+    use crate::brain::style_signal::StyleSignal;
+    let dir = temp_dir("addenda");
+    let mut ledger = AddendaLedger::default();
+    for member in ["a", "a", "b", "b", "c"] {
+        ledger.observe(member, StyleSignal::NoEmoji, 1);
+    }
+    ledger.observe("d", StyleSignal::TooLong, 2);
+    assert_eq!(ledger.tick(&Policy::default(), 3).len(), 1);
+    let mut stores = Stores::default();
+    stores.addenda.insert("discord:1".into(), ledger.clone());
+    stores.save(&dir).expect("save");
+    let loaded = Stores::load(&dir).expect("load");
+    assert_eq!(loaded, stores);
+    assert_eq!(loaded.addenda["discord:1"], ledger);
+    assert_eq!(loaded.addenda["discord:1"].render(), ledger.render());
+    fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

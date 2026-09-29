@@ -485,6 +485,11 @@ pub struct Stores {
     /// the episode gate was configured when the fact was stored.
     #[serde(default)]
     pub memory_receipts: BTreeMap<String, String>,
+    /// Style addenda ledgers keyed by scoped guild id (`brain::addenda`).
+    /// Hashed member keys and enum values only; empty unless a guild with
+    /// learning on has received style feedback.
+    #[serde(default)]
+    pub addenda: BTreeMap<String, crate::brain::addenda::AddendaLedger>,
 }
 
 /// Why a load or save failed. Carries the path so the log line is actionable.

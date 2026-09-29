@@ -264,7 +264,7 @@ pub async fn handle<O: Outbound + Sync>(
     // delayed channel today. It covers a reply-to and a same-channel follow-up.
     // Reactions still land on the untyped path, and edits, threads, and voice
     // are not observed at all.
-    {
+    let attributed = {
         let mut rewards = AppState::lock(&state.rewards);
         if let Some(id) = reply_to {
             rewards.human_replied(id);
@@ -284,13 +284,21 @@ pub async fn handle<O: Outbound + Sync>(
                 .then(|| id.to_owned()),
             None => rewards.observe_in_scope(&scoped_channel, &scoped_user, observed, now),
         };
-        if let Some(turn) = credited {
+        if let Some(turn) = &credited {
             tracing::debug!(
                 turn = %turn,
                 outcome = ?observed,
                 "delayed outcome attributed to an open turn"
             );
         }
+        credited.is_some()
+    };
+    // Style feedback ("too long", "less formal") counts only from a member's
+    // own message about Abbey (a reply to her turn, a follow-up to it, or a
+    // mention), and only while the guild has learning on. The signal is a
+    // closed enum; the words never leave this call (`brain::addenda`).
+    if settings.learning_enabled && (attributed || mentions_bot) {
+        state.observe_style(&scoped_guild, &scoped_user, &text, now);
     }
     let heat = {
         let mut stores = AppState::lock(&state.stores);
@@ -631,14 +639,16 @@ pub fn assemble_context(
     query: &str,
     reputation: f64,
 ) -> PersonaContext {
-    state.memory_service().context_for(
+    let mut context = state.memory_service().context_for(
         scoped_guild,
         scoped_user,
         scoped_channel,
         query,
         RECALL_K,
         reputation,
-    )
+    );
+    context.addenda = state.style_addenda(scoped_guild);
+    context
 }
 
 /// Describe image attachments and fold the descriptions into the text (max 3),

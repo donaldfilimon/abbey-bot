@@ -14,3 +14,4 @@ tests/fixtures/voice_consent_v1.json text eol=lf
 # fixtures byte for byte (after trim_end); pin LF so an autocrlf checkout
 # cannot pass today only because each fixture happens to be one line.
 tests/fixtures/episode_write_*.json text eol=lf
+tests/fixtures/abbey-state-pre-addenda.json text eol=lf
