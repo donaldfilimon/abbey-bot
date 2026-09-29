@@ -1,15 +1,19 @@
 //! Environment-to-provider assembly and the FM qualification boundary.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::llm::Backend;
-use crate::provider::{FmConfig, FoundationModels, VerifiedFmCapabilities, verify_fm_manifest};
+use crate::provider::{
+    FmConfig, FmQualificationState, FmRoute, FoundationModels, VerifiedFmCapabilities, qualify_fm,
+    verify_fm_manifest,
+};
 use crate::vision::{ConfiguredVision, FmVision, RemoteVision, VisionConfig, VisionProviderChoice};
 
 use super::{HttpVisionTransport, StartupError};
 
 pub(super) struct ProviderSetup {
-    pub foundation_models: Option<FoundationModels>,
+    /// One instance per configured FM mode, in route order.
+    pub foundation_models: Vec<FoundationModels>,
     pub vision: Option<ConfiguredVision<HttpVisionTransport>>,
 }
 
@@ -18,18 +22,29 @@ pub(super) fn from_env(
     tools_enabled: bool,
 ) -> Result<ProviderSetup, StartupError> {
     let vision_choice = VisionProviderChoice::from_env().map_err(StartupError)?;
-    let fm_config = FmConfig::from_env().map_err(StartupError)?;
-    let qualified_fm = load_fm_qualification(
-        fm_config.as_ref(),
-        fm_config.as_ref().is_some_and(|config| config.fallback)
-            || matches!(vision_choice, VisionProviderChoice::FoundationModels),
-    )?;
-    let foundation_models = fm_config.clone().map(|config| match qualified_fm {
-        Some(qualified) => {
-            FoundationModels::new_qualified(config, backend, tools_enabled, qualified)
-        }
-        None => FoundationModels::new(config, backend, tools_enabled),
-    });
+    let instances = FmRoute::from_env()
+        .map_err(StartupError)?
+        .map(|route| route.instances)
+        .unwrap_or_default();
+    let fm_vision = matches!(vision_choice, VisionProviderChoice::FoundationModels);
+    let manifest = manifest_path();
+    // Text routing degrades per mode; it never refuses to start.
+    let foundation_models = instances
+        .iter()
+        .cloned()
+        .map(|config| {
+            if !(config.fallback || fm_vision) {
+                return FoundationModels::new(config, backend, tools_enabled);
+            }
+            match load_fm_qualification(manifest.as_deref(), &config) {
+                (Some(qualified), _) => {
+                    FoundationModels::new_qualified(config, backend, tools_enabled, qualified)
+                }
+                (None, state) => FoundationModels::new(config, backend, tools_enabled)
+                    .with_qualification_state(state),
+            }
+        })
+        .collect();
     let vision = match vision_choice {
         VisionProviderChoice::Off => None,
         VisionProviderChoice::Remote => {
@@ -46,14 +61,10 @@ pub(super) fn from_env(
             })
         }
         VisionProviderChoice::FoundationModels => {
-            let config = fm_config.clone().ok_or_else(|| {
+            let config = instances.first().cloned().ok_or_else(|| {
                 StartupError("ABBEY_VISION_PROVIDER=fm requires ABBEY_FM_MODE=system or pcc".into())
             })?;
-            let qualified = qualified_fm.ok_or_else(|| {
-                StartupError(
-                    "ABBEY_VISION_PROVIDER=fm requires a verified FM capability manifest".into(),
-                )
-            })?;
+            let qualified = fm_vision_qualification(manifest.as_deref(), &config)?;
             let fm = FoundationModels::new_qualified(config, backend, tools_enabled, qualified);
             Some(ConfiguredVision::FoundationModels(
                 FmVision::new(fm).map_err(StartupError)?,
@@ -66,28 +77,35 @@ pub(super) fn from_env(
     })
 }
 
-fn load_fm_qualification(
-    config: Option<&FmConfig>,
-    required: bool,
-) -> Result<Option<VerifiedFmCapabilities>, StartupError> {
-    if !required {
-        return Ok(None);
-    }
-    let config = config.ok_or_else(|| {
-        StartupError("FM qualification was requested without ABBEY_FM_MODE=system or pcc".into())
-    })?;
-    let path = std::env::var("ABBEY_FM_CAPABILITY_MANIFEST")
+fn manifest_path() -> Option<PathBuf> {
+    std::env::var("ABBEY_FM_CAPABILITY_MANIFEST")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| {
-            StartupError(
-                "ABBEY_FM_CAPABILITY_MANIFEST is required when FM fallback or vision is enabled"
-                    .into(),
-            )
-        })?;
-    verify_fm_manifest(&path, config)
-        .map(Some)
-        .map_err(StartupError)
+}
+
+/// Per-mode text-routing qualification: an unqualified mode registers
+/// unadmitted with its typed state instead of failing startup.
+fn load_fm_qualification(
+    path: Option<&Path>,
+    config: &FmConfig,
+) -> (Option<VerifiedFmCapabilities>, FmQualificationState) {
+    qualify_fm(path, config)
+}
+
+/// FM vision keeps the strict startup requirement: the first mode must be
+/// qualified by a verified manifest.
+pub(super) fn fm_vision_qualification(
+    path: Option<&Path>,
+    config: &FmConfig,
+) -> Result<VerifiedFmCapabilities, StartupError> {
+    let path = path.ok_or_else(|| {
+        StartupError("ABBEY_FM_CAPABILITY_MANIFEST is required when FM vision is enabled".into())
+    })?;
+    verify_fm_manifest(path, config).map_err(|error| {
+        StartupError(format!(
+            "ABBEY_VISION_PROVIDER=fm requires a verified FM capability manifest: {error}"
+        ))
+    })
 }

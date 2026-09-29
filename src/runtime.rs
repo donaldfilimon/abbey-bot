@@ -335,10 +335,12 @@ impl AppState {
             ));
         }
         providers.apply_configuration(provider_config);
-        if let Some(path) = std::env::var_os("ABBEY_FM_CAPABILITY_MANIFEST") {
-            providers
-                .apply_fm_qualification(std::path::Path::new(&path))
-                .map_err(StartupError)?;
+        if let Some(path) = std::env::var_os("ABBEY_FM_CAPABILITY_MANIFEST")
+            && let Err(error) = providers.apply_fm_qualification(std::path::Path::new(&path))
+        {
+            // Degrade, never refuse to start: the mode keeps its startup
+            // admission and the per-call `fm` identity recheck still applies.
+            tracing::warn!(%error, "FM score evidence unavailable; using default route scores");
         }
         if let Some(directory) = block_directory.as_ref() {
             providers

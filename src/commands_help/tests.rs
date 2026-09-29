@@ -319,6 +319,7 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
         endpoint: None,
         cli: "/does-not-run/fm".into(),
         fallback,
+        primary: false,
         timeout_secs: 1,
     };
     for qualified in [false, true] {

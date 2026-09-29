@@ -56,6 +56,7 @@ fn legacy_report() -> QualificationReport {
         primary: ProviderEvidence::skipped(),
         fm_server: ProviderEvidence::skipped(),
         fm_cli: ProviderEvidence::skipped(),
+        fm_cli_modes: Vec::new(),
     }
 }
 

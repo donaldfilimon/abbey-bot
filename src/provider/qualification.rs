@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::manifest::{
-    FOUNDATION_MODELS_PROVIDER_ID, ManifestDocument, ManifestError, ProviderIdentityHashes,
-    QualificationStatus, production_tool_schema_sha256, read_manifest, sha256_bytes,
+    FOUNDATION_MODELS_PCC_PROVIDER_ID, FOUNDATION_MODELS_PROVIDER_ID, ManifestDocument,
+    ManifestError, ProviderIdentityHashes, QualificationStatus, production_tool_schema_sha256,
+    read_manifest, sha256_bytes,
 };
-use super::{FmConfig, ProviderCapabilities};
+use super::{FmConfig, FmMode, ProviderCapabilities};
 
 pub const QUALIFICATION_VERSION: u32 = 1;
 pub const FIXTURE_VERSION: &str = "abbey-provider-fixtures-v1";
@@ -194,7 +195,12 @@ pub struct QualificationReport {
     pub overall_pass: bool,
     pub primary: ProviderEvidence,
     pub fm_server: ProviderEvidence,
+    /// Evidence for the first configured FM mode; drives the exit status.
     pub fm_cli: ProviderEvidence,
+    /// Evidence for every configured FM mode in route order (each identity
+    /// carries its `mode`), so a publisher can emit one record per mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fm_cli_modes: Vec<ProviderEvidence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,16 +316,87 @@ pub fn fm_manifest_identity(config: &FmConfig) -> Result<ProviderIdentityHashes,
     })
 }
 
+/// Per-mode qualification outcome for text routing. Only `Qualified` admits
+/// the mode; every other state leaves it registered but unadmitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FmQualificationState {
+    Qualified,
+    Missing,
+    Stale,
+    IdentityChanged,
+    Refused(String),
+}
+
+impl FmQualificationState {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Qualified => "qualified",
+            Self::Missing => "missing",
+            Self::Stale => "stale",
+            Self::IdentityChanged => "identity_changed",
+            Self::Refused(_) => "refused",
+        }
+    }
+}
+
+type FmRejection = (FmQualificationState, String);
+
+fn refused(message: impl Into<String>) -> FmRejection {
+    let message = message.into();
+    (FmQualificationState::Refused(message.clone()), message)
+}
+
+fn classify_manifest_error(error: ManifestError) -> FmRejection {
+    let state = match error {
+        ManifestError::MissingOrUnreadable | ManifestError::QualificationMissing => {
+            FmQualificationState::Missing
+        }
+        ManifestError::SchemaMismatch | ManifestError::FixtureMismatch => {
+            FmQualificationState::Stale
+        }
+        ManifestError::IdentityMismatch => FmQualificationState::IdentityChanged,
+        _ => return refused(render_fm_manifest_error(error)),
+    };
+    (state, render_fm_manifest_error(error))
+}
+
+/// The V2 manifest record that qualifies one FM mode.
+pub const fn fm_record_id(mode: FmMode) -> &'static str {
+    match mode {
+        FmMode::System => FOUNDATION_MODELS_PROVIDER_ID,
+        FmMode::Pcc => FOUNDATION_MODELS_PCC_PROVIDER_ID,
+    }
+}
+
+/// Strict verification: FM vision uses this and fails startup on any error.
 pub fn verify_fm_manifest(
     path: &Path,
     config: &FmConfig,
 ) -> Result<VerifiedFmCapabilities, String> {
-    if matches!(config.mode, super::FmMode::Pcc) {
-        return Err(
-            "PCC remains intentionally unqualified; use ABBEY_FM_MODE=system or disable FM".into(),
-        );
+    verify_fm_manifest_typed(path, config).map_err(|(_, message)| message)
+}
+
+/// Degrading verification for text routing: never an error, always a state.
+/// `None` is an unset `ABBEY_FM_CAPABILITY_MANIFEST`.
+pub fn qualify_fm(
+    path: Option<&Path>,
+    config: &FmConfig,
+) -> (Option<VerifiedFmCapabilities>, FmQualificationState) {
+    let Some(path) = path else {
+        return (None, FmQualificationState::Missing);
+    };
+    match verify_fm_manifest_typed(path, config) {
+        Ok(verified) => (Some(verified), FmQualificationState::Qualified),
+        Err((state, _)) => (None, state),
     }
-    match read_manifest(path).map_err(render_fm_manifest_error)? {
+}
+
+fn verify_fm_manifest_typed(
+    path: &Path,
+    config: &FmConfig,
+) -> Result<VerifiedFmCapabilities, FmRejection> {
+    match read_manifest(path).map_err(classify_manifest_error)? {
         ManifestDocument::LegacyV1(report) => verify_legacy_fm_report(&report, config),
         ManifestDocument::V2(manifest) => verify_v2_fm_manifest(&manifest, config),
     }
@@ -328,7 +405,7 @@ pub fn verify_fm_manifest(
 fn verify_legacy_fm_report(
     report: &QualificationReport,
     config: &FmConfig,
-) -> Result<VerifiedFmCapabilities, String> {
+) -> Result<VerifiedFmCapabilities, FmRejection> {
     if report.version != QUALIFICATION_VERSION
         || report.fixture_version != FIXTURE_VERSION
         || report
@@ -342,49 +419,57 @@ fn verify_legacy_fm_report(
             .as_ref()
             .is_some_and(|identity| identity.fixture_version != FIXTURE_VERSION)
     {
-        return Err("ABBEY_FM_CAPABILITY_MANIFEST uses a stale fixture or format version".into());
+        return Err((
+            FmQualificationState::Stale,
+            "ABBEY_FM_CAPABILITY_MANIFEST uses a stale fixture or format version".into(),
+        ));
     }
     let now = unix_now();
     if report.generated_unix_secs > now.saturating_add(300) {
-        return Err("ABBEY_FM_CAPABILITY_MANIFEST has an invalid future timestamp".into());
+        return Err(refused(
+            "ABBEY_FM_CAPABILITY_MANIFEST has an invalid future timestamp",
+        ));
     }
     if !report.overall_pass || !report.target.includes_fm() || !report.fm_cli.configured {
-        return Err(
-            "ABBEY_FM_CAPABILITY_MANIFEST does not record a successful FM qualification".into(),
-        );
+        return Err(refused(
+            "ABBEY_FM_CAPABILITY_MANIFEST does not record a successful FM qualification",
+        ));
     }
-    let expected = fm_identity(config)?;
+    let expected = fm_identity(config).map_err(refused)?;
     if report.fm_cli.identity.as_ref() != Some(&expected) {
-        return Err(
+        return Err((
+            FmQualificationState::IdentityChanged,
             "ABBEY_FM_CAPABILITY_MANIFEST does not match this binary, FM executable, mode, or OS build"
                 .into(),
-        );
+        ));
     }
     let cli = report.fm_cli.capabilities.capabilities();
     if !(cli.text && cli.structured_output && cli.tools) {
-        return Err(
-            "ABBEY_FM_CAPABILITY_MANIFEST lacks required FM CLI text/tool qualification".into(),
-        );
+        return Err(refused(
+            "ABBEY_FM_CAPABILITY_MANIFEST lacks required FM CLI text/tool qualification",
+        ));
     }
     if (cli.vision || cli.ocr) && report.fm_cli.vision_identity.as_ref() != Some(&expected) {
-        return Err(
+        return Err((
+            FmQualificationState::IdentityChanged,
             "ABBEY_FM_CAPABILITY_MANIFEST does not bind its FM image qualification to this executable"
                 .into(),
-        );
+        ));
     }
     let server = match config.endpoint.as_ref() {
         Some(_) => {
             if !report.fm_server.configured || report.fm_server.identity.as_ref() != Some(&expected)
             {
-                return Err(
+                return Err((
+                    FmQualificationState::IdentityChanged,
                     "ABBEY_FM_CAPABILITY_MANIFEST does not bind the configured FM server".into(),
-                );
+                ));
             }
             let capabilities = report.fm_server.capabilities.capabilities();
             if !(capabilities.text && capabilities.streaming) {
-                return Err(
-                    "ABBEY_FM_CAPABILITY_MANIFEST lacks required FM server qualification".into(),
-                );
+                return Err(refused(
+                    "ABBEY_FM_CAPABILITY_MANIFEST lacks required FM server qualification",
+                ));
             }
             Some(capabilities)
         }
@@ -396,9 +481,9 @@ fn verify_legacy_fm_report(
 fn verify_v2_fm_manifest(
     manifest: &super::manifest::ProviderManifest,
     config: &FmConfig,
-) -> Result<VerifiedFmCapabilities, String> {
-    let provider_id = super::ProviderId::parse(FOUNDATION_MODELS_PROVIDER_ID)
-        .map_err(|_| "the Foundation Models provider identity is invalid".to_string())?;
+) -> Result<VerifiedFmCapabilities, FmRejection> {
+    let provider_id = super::ProviderId::parse(fm_record_id(config.mode))
+        .map_err(|_| refused("the Foundation Models provider identity is invalid"))?;
     let required = ProviderCapabilities {
         text: true,
         streaming: config.endpoint.is_some(),
@@ -411,14 +496,14 @@ fn verify_v2_fm_manifest(
         .exact_qualified_record(
             &provider_id,
             super::ProviderClass::OsManagedLocal,
-            &fm_manifest_identity(config)?,
+            &fm_manifest_identity(config).map_err(refused)?,
             required,
         )
-        .map_err(render_fm_manifest_error)?;
+        .map_err(classify_manifest_error)?;
     if !matches!(record.qualification_status, QualificationStatus::Qualified) {
-        return Err(
-            "ABBEY_FM_CAPABILITY_MANIFEST does not record a successful FM qualification".into(),
-        );
+        return Err(refused(
+            "ABBEY_FM_CAPABILITY_MANIFEST does not record a successful FM qualification",
+        ));
     }
 
     let qualified = record.declared_capabilities.as_provider_capabilities();
@@ -464,365 +549,4 @@ fn render_fm_manifest_error(error: ManifestError) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(unix)]
-    use std::io::Write as _;
-    #[cfg(unix)]
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    #[cfg(unix)]
-    static NEXT_TEST_FILE: AtomicU64 = AtomicU64::new(0);
-
-    #[cfg(unix)]
-    struct TestFiles {
-        root: PathBuf,
-        cli: PathBuf,
-        manifest: PathBuf,
-    }
-
-    #[cfg(unix)]
-    impl TestFiles {
-        fn new() -> Self {
-            use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
-
-            let serial = NEXT_TEST_FILE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                ".abbey-qualification-test-{}-{serial}",
-                std::process::id()
-            ));
-            let mut root_builder = std::fs::DirBuilder::new();
-            root_builder.mode(0o700);
-            root_builder.create(&root).unwrap();
-            let cli = root.join(format!("fm-{}-{serial}", std::process::id(),));
-            let manifest = root.join(format!("manifest-{}-{serial}.json", std::process::id(),));
-            let mut cli_file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o700)
-                .open(&cli)
-                .unwrap();
-            cli_file.write_all(b"synthetic fm executable").unwrap();
-            Self {
-                root,
-                cli,
-                manifest,
-            }
-        }
-
-        fn config(&self) -> FmConfig {
-            FmConfig {
-                mode: super::super::FmMode::System,
-                endpoint: None,
-                cli: self.cli.clone(),
-                fallback: true,
-                timeout_secs: 30,
-            }
-        }
-
-        fn write_report(&self, report: &QualificationReport, mode: u32) {
-            use std::os::unix::fs::OpenOptionsExt as _;
-
-            let _ = std::fs::remove_file(&self.manifest);
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(mode)
-                .open(&self.manifest)
-                .unwrap();
-            serde_json::to_writer(&mut file, report).unwrap();
-            file.flush().unwrap();
-        }
-
-        fn write_raw(&self, bytes: &[u8], mode: u32) {
-            use std::os::unix::fs::OpenOptionsExt as _;
-
-            let _ = std::fs::remove_file(&self.manifest);
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(mode)
-                .open(&self.manifest)
-                .unwrap();
-            file.write_all(bytes).unwrap();
-            file.flush().unwrap();
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for TestFiles {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    #[cfg(unix)]
-    fn successful_fm_report(config: &FmConfig) -> QualificationReport {
-        let passing = CapabilityEvidenceSet {
-            text: CapabilityEvidence::pass(),
-            streaming: CapabilityEvidence::unsupported(),
-            structured_output: CapabilityEvidence::pass(),
-            tools: CapabilityEvidence::pass(),
-            vision: CapabilityEvidence::pass(),
-            ocr: CapabilityEvidence::pass(),
-        };
-        QualificationReport {
-            version: QUALIFICATION_VERSION,
-            fixture_version: FIXTURE_VERSION.into(),
-            generated_unix_secs: unix_now(),
-            target: QualificationTarget::Fm,
-            overall_pass: true,
-            primary: ProviderEvidence::skipped(),
-            fm_server: ProviderEvidence::skipped(),
-            fm_cli: ProviderEvidence {
-                configured: true,
-                identity: Some(fm_identity(config).unwrap()),
-                vision_identity: Some(fm_identity(config).unwrap()),
-                capabilities: passing,
-            },
-        }
-    }
-
-    #[cfg(unix)]
-    fn successful_v2_fm_record(config: &FmConfig) -> super::super::ProviderRecord {
-        super::super::ProviderRecord {
-            qualification_run_nonce: None,
-            qualification_generation: None,
-            qualification_completed_unix_secs: None,
-            version: super::super::PROVIDER_MANIFEST_VERSION,
-            fixture_version: FIXTURE_VERSION.to_string(),
-            provider_id: super::super::ProviderId::parse(FOUNDATION_MODELS_PROVIDER_ID).unwrap(),
-            provider_class: super::super::ProviderClass::OsManagedLocal,
-            identity: fm_manifest_identity(config).unwrap(),
-            declared_capabilities: super::super::DeclaredCapabilities {
-                text: true,
-                streaming: false,
-                structured_output: true,
-                tools: true,
-                vision: true,
-                ocr: true,
-            },
-            isolation_capabilities: super::super::QualifiedIsolation {
-                environment_cleared: true,
-                absolute_no_shell_execution: true,
-                process_tree_contained: false,
-                private_runtime_state: true,
-                loopback_only: false,
-                sandbox_attested: false,
-            },
-            qualification_status: QualificationStatus::Qualified,
-            score_policy: None,
-            score_profiles: None,
-        }
-    }
-
-    #[test]
-    fn evidence_maps_only_pass_to_runtime_capability() {
-        let set = CapabilityEvidenceSet {
-            text: CapabilityEvidence::pass(),
-            streaming: CapabilityEvidence::unsupported(),
-            structured_output: CapabilityEvidence::fail("schema_mismatch"),
-            tools: CapabilityEvidence::skipped(),
-            vision: CapabilityEvidence::pass(),
-            ocr: CapabilityEvidence::pass(),
-        };
-        assert_eq!(
-            set.capabilities(),
-            ProviderCapabilities {
-                text: true,
-                streaming: false,
-                structured_output: false,
-                tools: false,
-                vision: true,
-                ocr: true,
-            }
-        );
-    }
-
-    #[test]
-    fn tools_pass_records_marker_other_constructors_do_not() {
-        let evidence = CapabilityEvidence::tools_pass("ABBEY_PROVIDER_CONTINUATION_V1");
-        assert!(evidence.passed());
-        assert_eq!(
-            evidence.tool_result_marker.as_deref(),
-            Some("ABBEY_PROVIDER_CONTINUATION_V1")
-        );
-        let round_tripped: CapabilityEvidence =
-            serde_json::from_value(serde_json::to_value(&evidence).unwrap()).unwrap();
-        assert_eq!(round_tripped, evidence);
-
-        for evidence in [
-            CapabilityEvidence::pass(),
-            CapabilityEvidence::fail("tool_protocol"),
-            CapabilityEvidence::unsupported(),
-            CapabilityEvidence::skipped(),
-        ] {
-            assert_eq!(evidence.tool_result_marker, None);
-        }
-    }
-
-    #[test]
-    fn tool_result_marker_defaults_to_none_when_absent_from_the_wire() {
-        let decoded: CapabilityEvidence = serde_json::from_str(r#"{"status":"pass"}"#).unwrap();
-        assert_eq!(decoded.tool_result_marker, None);
-        assert!(decoded.passed());
-    }
-
-    #[test]
-    fn report_serialization_contains_no_provider_payload_fields() {
-        let encoded = serde_json::to_string(&QualificationReport {
-            version: QUALIFICATION_VERSION,
-            fixture_version: FIXTURE_VERSION.into(),
-            generated_unix_secs: 1,
-            target: QualificationTarget::Fm,
-            overall_pass: false,
-            primary: ProviderEvidence::skipped(),
-            fm_server: ProviderEvidence::skipped(),
-            fm_cli: ProviderEvidence::skipped(),
-        })
-        .unwrap();
-        assert!(!encoded.contains("vision_identity"), "{encoded}");
-        for forbidden in ["prompt", "response_body", "image_bytes", "environment"] {
-            assert!(
-                !encoded.contains(forbidden),
-                "leaked field {forbidden}: {encoded}"
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn manifest_requires_owner_only_exact_identity() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let files = TestFiles::new();
-        let config = files.config();
-        let report = successful_fm_report(&config);
-        files.write_report(&report, 0o600);
-        let verified = verify_fm_manifest(&files.manifest, &config).expect("exact report");
-        assert!(verified.cli.vision && verified.cli.ocr && verified.cli.tools);
-
-        let mut mismatched = report.clone();
-        mismatched
-            .fm_cli
-            .identity
-            .as_mut()
-            .unwrap()
-            .abbey_binary_sha256 = "0".repeat(64);
-        files.write_report(&mismatched, 0o600);
-        assert!(verify_fm_manifest(&files.manifest, &config).is_err());
-
-        files.write_report(&report, 0o600);
-        std::fs::set_permissions(&files.manifest, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let error = verify_fm_manifest(&files.manifest, &config).unwrap_err();
-        assert!(error.contains("group- or world-readable"), "{error}");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn v2_manifest_qualifies_the_same_exact_fm_identity_without_dynamic_eligibility() {
-        let files = TestFiles::new();
-        let config = files.config();
-        let record = successful_v2_fm_record(&config);
-        super::super::publish_v2(&files.manifest, std::slice::from_ref(&record)).unwrap();
-
-        let verified = verify_fm_manifest(&files.manifest, &config).expect("exact v2 record");
-        assert!(verified.cli.text);
-        assert!(verified.cli.structured_output);
-        assert!(verified.cli.tools);
-        assert!(verified.cli.vision);
-        assert!(verified.cli.ocr);
-        assert!(!verified.cli.streaming);
-        assert!(verified.server.is_none());
-
-        let mut mismatched = record;
-        mismatched.identity.os_sha256 = Some("0".repeat(64));
-        super::super::publish_v2(&files.manifest, &[mismatched]).unwrap();
-        let error = verify_fm_manifest(&files.manifest, &config).unwrap_err();
-        assert!(error.contains("identity does not match"), "{error}");
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn manifest_fails_closed_for_every_stale_or_incomplete_shape() {
-        use std::os::unix::fs::symlink;
-
-        let files = TestFiles::new();
-        let config = files.config();
-        let report = successful_fm_report(&config);
-
-        assert!(verify_fm_manifest(&files.manifest, &config).is_err());
-
-        symlink(&files.cli, &files.manifest).unwrap();
-        let error = verify_fm_manifest(&files.manifest, &config).unwrap_err();
-        assert!(error.contains("symlink"), "{error}");
-        std::fs::remove_file(&files.manifest).unwrap();
-
-        files.write_raw(b"{not json", 0o600);
-        assert!(
-            verify_fm_manifest(&files.manifest, &config)
-                .unwrap_err()
-                .contains("malformed")
-        );
-
-        let mut cases = Vec::new();
-        let mut wrong_version = report.clone();
-        wrong_version.version += 1;
-        cases.push(wrong_version);
-        let mut wrong_fixture = report.clone();
-        wrong_fixture.fixture_version = "old-fixture".into();
-        cases.push(wrong_fixture);
-        let mut wrong_binary = report.clone();
-        wrong_binary
-            .fm_cli
-            .identity
-            .as_mut()
-            .unwrap()
-            .abbey_binary_sha256 = "0".repeat(64);
-        cases.push(wrong_binary);
-        let mut wrong_cli_hash = report.clone();
-        wrong_cli_hash.fm_cli.identity.as_mut().unwrap().cli_sha256 = Some("1".repeat(64));
-        cases.push(wrong_cli_hash);
-        let mut wrong_vision_cli_hash = report.clone();
-        wrong_vision_cli_hash
-            .fm_cli
-            .vision_identity
-            .as_mut()
-            .unwrap()
-            .cli_sha256 = Some("2".repeat(64));
-        cases.push(wrong_vision_cli_hash);
-        let mut missing_vision_identity = report.clone();
-        missing_vision_identity.fm_cli.vision_identity = None;
-        cases.push(missing_vision_identity);
-        let mut wrong_cli_path = report.clone();
-        wrong_cli_path.fm_cli.identity.as_mut().unwrap().cli_path =
-            Some(PathBuf::from("/different/fm"));
-        cases.push(wrong_cli_path);
-        let mut wrong_mode = report.clone();
-        wrong_mode.fm_cli.identity.as_mut().unwrap().mode = Some("pcc".into());
-        cases.push(wrong_mode);
-        let mut wrong_os = report.clone();
-        wrong_os.fm_cli.identity.as_mut().unwrap().os_build = "different-build".into();
-        cases.push(wrong_os);
-        let mut failed_report = report.clone();
-        failed_report.overall_pass = false;
-        cases.push(failed_report);
-        let mut wrong_target = report.clone();
-        wrong_target.target = QualificationTarget::Primary;
-        cases.push(wrong_target);
-        let mut missing_tool_evidence = report.clone();
-        missing_tool_evidence.fm_cli.capabilities.tools = CapabilityEvidence::fail("tool_protocol");
-        cases.push(missing_tool_evidence);
-        let mut future = report.clone();
-        future.generated_unix_secs = unix_now().saturating_add(3_600);
-        cases.push(future);
-
-        for case in cases {
-            files.write_report(&case, 0o600);
-            assert!(
-                verify_fm_manifest(&files.manifest, &config).is_err(),
-                "unsafe manifest unexpectedly qualified: {case:?}"
-            );
-        }
-    }
-}
+mod tests;

@@ -75,7 +75,7 @@ pub async fn run(output: &Path) -> Result<VoiceSelfTestReport, String> {
         .providers = crate::provider::ProviderRuntime::legacy(
         configured,
         None,
-        None,
+        Vec::new(),
         None,
         false,
         1,

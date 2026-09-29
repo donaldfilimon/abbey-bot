@@ -4,7 +4,7 @@ use crate::llm::{
     self, Backend, ChatTurn, HttpTransport, StreamTransport as _, build_stream_request,
 };
 use crate::provider::{
-    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, FmConfig, FmImageTask,
+    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, FmConfig, FmImageTask, FmRoute,
     FoundationModels, ProviderEvidence, ProviderIdentity, QUALIFICATION_VERSION,
     QualificationReport, QualificationTarget, fm_identity, primary_identity, unix_now,
 };
@@ -473,27 +473,40 @@ async fn probe_fm_cli(config: &FmConfig, identity: Option<ProviderIdentity>) -> 
     }
 }
 
-async fn probe_fm() -> (ProviderEvidence, ProviderEvidence) {
-    let config = match FmConfig::from_env() {
-        Ok(Some(config)) => config,
-        Ok(None) => return (ProviderEvidence::skipped(), unavailable("not_configured")),
+/// Probes every configured FM mode in route order. The server attaches to the
+/// first mode only; `fm_cli` is the first mode and every mode is in `modes`.
+async fn probe_fm() -> (ProviderEvidence, ProviderEvidence, Vec<ProviderEvidence>) {
+    let route = match FmRoute::from_env() {
+        Ok(Some(route)) => route,
+        Ok(None) => {
+            return (
+                ProviderEvidence::skipped(),
+                unavailable("not_configured"),
+                Vec::new(),
+            );
+        }
         Err(_) => {
             return (
                 ProviderEvidence::skipped(),
                 unavailable("invalid_configuration"),
+                Vec::new(),
             );
         }
     };
-    if matches!(config.mode, crate::provider::FmMode::Pcc) {
-        return (
-            ProviderEvidence::skipped(),
-            unavailable("pcc_not_qualified"),
-        );
+    let mut server = ProviderEvidence::skipped();
+    let mut modes = Vec::with_capacity(route.instances.len());
+    for (index, config) in route.instances.iter().enumerate() {
+        let identity = fm_identity(config).ok();
+        if index == 0 {
+            server = probe_fm_server(config, identity.clone()).await;
+        }
+        modes.push(probe_fm_cli(config, identity).await);
     }
-    let identity = fm_identity(&config).ok();
-    let server = probe_fm_server(&config, identity.clone()).await;
-    let cli = probe_fm_cli(&config, identity).await;
-    (server, cli)
+    let first = modes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| unavailable("not_configured"));
+    (server, first, modes)
 }
 
 pub async fn run(target: QualificationTarget) -> SelfTestOutcome {
@@ -504,10 +517,14 @@ pub async fn run(target: QualificationTarget) -> SelfTestOutcome {
     } else {
         ProviderEvidence::skipped()
     };
-    let (fm_server, fm_cli) = if target.includes_fm() {
+    let (fm_server, fm_cli, fm_cli_modes) = if target.includes_fm() {
         probe_fm().await
     } else {
-        (ProviderEvidence::skipped(), ProviderEvidence::skipped())
+        (
+            ProviderEvidence::skipped(),
+            ProviderEvidence::skipped(),
+            Vec::new(),
+        )
     };
     let fm_vision_required = matches!(vision_choice, Ok(VisionProviderChoice::FoundationModels));
     let overall_pass = (!target.includes_primary()
@@ -527,6 +544,7 @@ pub async fn run(target: QualificationTarget) -> SelfTestOutcome {
         primary,
         fm_server,
         fm_cli,
+        fm_cli_modes,
     };
     SelfTestOutcome {
         exit: if configuration_error {
@@ -760,6 +778,7 @@ mod tests {
             primary: ProviderEvidence::skipped(),
             fm_server: ProviderEvidence::skipped(),
             fm_cli: unavailable("not_configured"),
+            fm_cli_modes: Vec::new(),
         };
         assert_eq!(classify_exit(&report), SelfTestExit::Configuration);
 

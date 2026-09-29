@@ -144,9 +144,26 @@ fn dashboard_input(
         settings.reply_cooldown_seconds,
         now,
     );
+    let fm_modes = data
+        .state
+        .providers
+        .foundation_model_modes()
+        .map(|fm| {
+            format!(
+                "{} {}",
+                fm.config.mode.as_str(),
+                fm.qualification_state().as_str()
+            )
+        })
+        .collect::<Vec<_>>();
+    let fm_status = if fm_modes.is_empty() {
+        String::new()
+    } else {
+        format!("\nApple FM modes: {}.", fm_modes.join(" · "))
+    };
     crate::admin_dashboard::AdminViewInput {
         effective_policy: format!(
-            "{}\n{}\nCurrent rate limits: {} · {} (snapshot; rechecked on action).",
+            "{}\n{}\nCurrent rate limits: {} · {} (snapshot; rechecked on action).{fm_status}",
             crate::admin_dashboard::unsolicited_status(
                 &settings,
                 data.state.quiet,
@@ -627,6 +644,7 @@ mod outcome_tests {
                 endpoint: Some("http://127.0.0.1:9".into()),
                 cli: std::path::PathBuf::from("synthetic-dashboard-cli-not-executed"),
                 fallback: true,
+                primary: false,
                 timeout_secs: 1,
             },
             None,
@@ -642,7 +660,7 @@ mod outcome_tests {
         );
         let mut state = AppState::in_memory();
         std::sync::Arc::get_mut(&mut state).unwrap().providers =
-            ProviderRuntime::legacy(None, None, Some(fm), None, true, 1, 1);
+            ProviderRuntime::legacy(None, None, vec![fm], None, true, 1, 1);
         let data = crate::Data { state, voice: None };
         assert!(data.state.providers.tools_enabled());
         assert!(
@@ -671,6 +689,12 @@ mod outcome_tests {
         assert!(
             view.effective_policy
                 .contains("eligible for policy selection"),
+            "{}",
+            view.effective_policy
+        );
+        assert!(
+            view.effective_policy
+                .contains("Apple FM modes: system qualified."),
             "{}",
             view.effective_policy
         );

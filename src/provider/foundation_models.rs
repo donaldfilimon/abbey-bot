@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use super::{
-    FmConfig, FmImageTask, FmMode, ProviderCapabilities, ProviderFailureKind,
+    FmConfig, FmImageTask, FmMode, FmQualificationState, ProviderCapabilities, ProviderFailureKind,
     VerifiedFmCapabilities, qualification,
 };
 use crate::llm::{Backend, ChatTurn, LlmError, ModelTurn, Role};
@@ -41,6 +41,7 @@ pub struct FoundationModels {
     pub cli_capabilities: ProviderCapabilities,
     qualified: bool,
     qualified_cli_sha256: Option<String>,
+    qualification_state: FmQualificationState,
 }
 
 impl FoundationModels {
@@ -63,7 +64,18 @@ impl FoundationModels {
             cli_capabilities: cli,
             qualified: false,
             qualified_cli_sha256: None,
+            qualification_state: FmQualificationState::Missing,
         }
+    }
+
+    /// Records why an unqualified mode stays unadmitted, for status surfaces.
+    /// A qualified instance keeps `Qualified`.
+    #[must_use]
+    pub fn with_qualification_state(mut self, state: FmQualificationState) -> Self {
+        if !self.qualified {
+            self.qualification_state = state;
+        }
+        self
     }
 
     #[must_use]
@@ -85,6 +97,7 @@ impl FoundationModels {
             cli_capabilities: qualified.cli,
             qualified: true,
             qualified_cli_sha256,
+            qualification_state: FmQualificationState::Qualified,
         }
     }
 
@@ -93,6 +106,11 @@ impl FoundationModels {
     #[must_use]
     pub const fn is_qualified(&self) -> bool {
         self.qualified
+    }
+
+    #[must_use]
+    pub const fn qualification_state(&self) -> &FmQualificationState {
+        &self.qualification_state
     }
 
     #[must_use]

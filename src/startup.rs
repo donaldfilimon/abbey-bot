@@ -216,12 +216,14 @@ pub(super) async fn run(
             "ABBEY_VOICE_LOCAL_ENDPOINT unset — local speech defaults to http://127.0.0.1:8181"
         );
     }
-    if let Some(fm) = state.providers.foundation_models() {
+    for fm in state.providers.foundation_model_modes() {
         tracing::info!(
             mode = fm.config.mode.as_str(),
             fallback = fm.config.fallback,
+            primary = fm.config.primary,
             server = fm.config.endpoint.is_some(),
-            "Apple Foundation Models secondary configured"
+            qualification = fm.qualification_state().as_str(),
+            "Apple Foundation Models mode configured"
         );
     }
     if state.quiet {

@@ -32,6 +32,8 @@ use super::{IsolationCapabilities, ProviderCapabilities, ProviderClass, Provider
 pub const PROVIDER_MANIFEST_VERSION: u32 = 2;
 pub const MAX_PROVIDER_MANIFEST_BYTES: u64 = 256 * 1024;
 pub const FOUNDATION_MODELS_PROVIDER_ID: &str = "foundation-models";
+/// V2 manifest record for `fm --model pcc`; system keeps `foundation-models`.
+pub const FOUNDATION_MODELS_PCC_PROVIDER_ID: &str = "foundation-models-pcc";
 
 #[cfg(unix)]
 #[cfg(test)]

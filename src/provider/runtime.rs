@@ -11,6 +11,7 @@ use crate::vision::{ConfiguredVision, ImageUnderstanding, VisionError};
 
 mod blocks;
 mod conversation;
+mod fm_routes;
 mod identity;
 mod inspection;
 use blocks::BlockStore;
@@ -126,7 +127,8 @@ pub struct ProviderRuntime {
     tools_enabled: bool,
     queue_secs: u64,
     capacity: usize,
-    fm: Option<Arc<FoundationModels>>,
+    /// One instance per configured FM mode, in route order.
+    fm: Vec<Arc<FoundationModels>>,
 }
 
 impl ProviderRuntime {
@@ -140,8 +142,8 @@ impl ProviderRuntime {
         );
     }
     pub(crate) fn attach_service(&self, registry: crate::service::OperationRegistry) {
-        if let Some(fm) = &self.fm {
-            fm.attach_service(registry);
+        for fm in &self.fm {
+            fm.attach_service(registry.clone());
         }
     }
     pub(crate) fn attach_block_writer(&self) -> BlockWriter {
@@ -151,7 +153,7 @@ impl ProviderRuntime {
         Self::legacy(
             None,
             None,
-            None,
+            Vec::new(),
             None,
             true,
             1,
@@ -162,7 +164,7 @@ impl ProviderRuntime {
     pub fn legacy(
         primary: Option<Backend>,
         fallback: Option<Backend>,
-        fm: Option<FoundationModels>,
+        fm: Vec<FoundationModels>,
         vision: Option<ConfiguredVision<crate::runtime::HttpVisionTransport>>,
         tools_enabled: bool,
         capacity: usize,
@@ -184,8 +186,13 @@ impl ProviderRuntime {
             tools_enabled,
             queue_secs,
             capacity,
-            fm: fm.map(Arc::new),
+            fm: fm.into_iter().map(Arc::new).collect(),
         };
+        // Role `primary` puts FM (PCC, then system) ahead of the endpoint.
+        let fm_primary = runtime.fm.iter().any(|fm| fm.config.primary);
+        if fm_primary {
+            runtime.register_foundation_models();
+        }
         for (name, backend) in [("primary", primary), ("local-fallback", fallback)] {
             if let Some(backend) = backend {
                 let caps = ProviderCapabilities::primary(&backend, true);
@@ -220,68 +227,8 @@ impl ProviderRuntime {
                 );
             }
         }
-        if let Some(fm) = runtime.fm.clone() {
-            let admitted = fm.config.fallback && fm.is_qualified();
-            let locality = if fm.config.mode == FmMode::System {
-                ExecutionLocality::SameHost
-            } else {
-                ExecutionLocality::PublicRemote
-            };
-            let identity = config_identity(format!("{:?}", fm.config).as_bytes());
-            if let Some(backend) = fm.server_backend() {
-                let id = ProviderId::parse("foundation-models-server").expect("static ID");
-                let adapter = Arc::new(HttpAdapter {
-                    id: id.clone(),
-                    backend,
-                    transport: crate::llm::HttpTransport::default(),
-                    tools_rejected: std::sync::atomic::AtomicBool::new(false),
-                });
-                runtime.register(
-                    id,
-                    fm.label(),
-                    ProviderClass::OsManagedLocal,
-                    ProviderCapabilities {
-                        vision: false,
-                        ocr: false,
-                        ..fm.server_capabilities.unwrap_or_default()
-                    },
-                    locality,
-                    ProviderProvenance::QualifiedManifest,
-                    admitted && fm.server_capabilities.is_some(),
-                    identity.clone(),
-                    Some(adapter),
-                    None,
-                    false,
-                    true,
-                );
-            }
-            let id = ProviderId::parse("foundation-models-cli").expect("static ID");
-            let adapter = Arc::new(FmCliAdapter {
-                id: id.clone(),
-                fm: fm.clone(),
-            });
-            runtime.register(
-                id,
-                fm.label(),
-                ProviderClass::OsManagedLocal,
-                ProviderCapabilities {
-                    vision: false,
-                    ocr: false,
-                    ..fm.cli_capabilities
-                },
-                locality,
-                if fm.is_qualified() {
-                    ProviderProvenance::QualifiedManifest
-                } else {
-                    ProviderProvenance::Configuration
-                },
-                admitted,
-                identity,
-                Some(adapter),
-                None,
-                false,
-                false,
-            );
+        if !fm_primary {
+            runtime.register_foundation_models();
         }
         if let Some(vision) = vision {
             runtime.set_vision(vision);
@@ -369,7 +316,10 @@ impl ProviderRuntime {
     pub fn apply_configuration(&mut self, mut config: ProviderConfig) {
         // Explicit legacy configuration is the existing cloud authorization boundary.
         for id in &self.order {
-            if matches!(id.as_str(), "primary" | "local-fallback" | "vision") {
+            if matches!(
+                id.as_str(),
+                "primary" | "local-fallback" | "vision" | fm_routes::FM_CLI_PCC
+            ) {
                 config.cloud_allow.insert(id.clone());
             }
         }
@@ -398,102 +348,6 @@ impl ProviderRuntime {
                     ));
             }
         }
-    }
-
-    pub fn apply_fm_qualification(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let Some(fm) = self.fm.as_ref().filter(|fm| fm.is_qualified()) else {
-            return Ok(());
-        };
-        let identity = super::qualification::fm_manifest_identity(&fm.config)?;
-        let document = super::manifest::read_manifest(path)
-            .map_err(|_| "cannot read verified FM score evidence")?;
-        let legacy_identity = super::qualification::fm_identity(&fm.config)?;
-        for name in [
-            "foundation-models-server",
-            "foundation-models-cli",
-            "vision",
-        ] {
-            let id = ProviderId::parse(name).expect("static ID");
-            let Some(entry) = self.entries.get_mut(&id) else {
-                continue;
-            };
-            let descriptor = self.catalog.descriptor(&id).expect("registered descriptor");
-            if descriptor.provenance != ProviderProvenance::QualifiedManifest {
-                continue;
-            }
-            let profiles = RequestClass::ALL
-                .into_iter()
-                .filter(|class| class.supported_by(descriptor.declared_capabilities))
-                .filter_map(|class| match &document {
-                    super::manifest::ManifestDocument::LegacyV1(_) => document
-                        .legacy_score_profile(
-                            if name == "foundation-models-server" {
-                                super::manifest::LegacyScoreRoute::FmServer
-                            } else {
-                                super::manifest::LegacyScoreRoute::FmCli
-                            },
-                            &legacy_identity,
-                            class,
-                            ExecutionLocality::SameHost,
-                            super::qualification::unix_now(),
-                        )
-                        .ok(),
-                    super::manifest::ManifestDocument::V2(manifest) => manifest
-                        .exact_qualified_record(
-                            &ProviderId::parse("foundation-models").expect("static ID"),
-                            ProviderClass::OsManagedLocal,
-                            &identity,
-                            ProviderCapabilities::default(),
-                        )
-                        .ok()
-                        .and_then(|record| {
-                            record
-                                .score_profile(class, ExecutionLocality::SameHost)
-                                .ok()
-                        }),
-                })
-                .collect();
-            entry.qualification_witness = match &document {
-                super::manifest::ManifestDocument::LegacyV1(report) => {
-                    let evidence = if name == "foundation-models-server" {
-                        &report.fm_server
-                    } else {
-                        &report.fm_cli
-                    };
-                    Some(super::manifest::sha256_bytes(
-                        &serde_json::to_vec(&(report.generated_unix_secs, evidence))
-                            .map_err(|_| "cannot encode verified qualification witness")?,
-                    ))
-                }
-                super::manifest::ManifestDocument::V2(manifest) => manifest
-                    .record(&ProviderId::parse("foundation-models").expect("static ID"))
-                    .and_then(|record| record.qualification_run_nonce.clone()),
-            };
-            let (generation, completed) = match &document {
-                super::manifest::ManifestDocument::LegacyV1(report) => {
-                    (None, Some(report.generated_unix_secs))
-                }
-                super::manifest::ManifestDocument::V2(manifest) => manifest
-                    .record(&ProviderId::parse("foundation-models").expect("static ID"))
-                    .map(|record| {
-                        (
-                            record.qualification_generation,
-                            record.qualification_completed_unix_secs,
-                        )
-                    })
-                    .unwrap_or((None, None)),
-            };
-            entry.qualification_generation = generation;
-            entry.qualification_completed_unix_secs = completed;
-            entry.identity = identity.clone();
-            lock(&self.state).router.requalify(
-                id,
-                identity.clone(),
-                profiles,
-                RouteAdmission::QUALIFIED,
-            );
-        }
-        Ok(())
     }
 
     pub fn restore_blocks(&self, path: std::path::PathBuf) -> Result<(), String> {
@@ -606,7 +460,7 @@ impl ProviderRuntime {
         *self = Self::legacy(
             None,
             None,
-            fm,
+            fm.into_iter().collect(),
             None,
             self.tools_enabled,
             self.capacity,
@@ -703,8 +557,13 @@ impl ProviderRuntime {
                 .is_ok()
         })
     }
+    /// The first qualified FM mode (vision and dashboard); `None` if none is.
     pub fn foundation_models(&self) -> Option<&FoundationModels> {
-        self.fm.as_deref()
+        self.fm.iter().find(|fm| fm.is_qualified()).map(|fm| &**fm)
+    }
+    /// Every configured FM mode in route order, qualified or not.
+    pub fn foundation_model_modes(&self) -> impl Iterator<Item = &FoundationModels> {
+        self.fm.iter().map(|fm| &**fm)
     }
 
     pub fn begin(&self, with_tools: bool, streaming: bool) -> ProviderConversation<'_> {

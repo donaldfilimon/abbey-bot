@@ -210,6 +210,7 @@ fn configured_but_ineligible_fm_routes_publish_no_capabilities() {
                 endpoint: Some("http://127.0.0.1:8899".into()),
                 cli: PathBuf::from("/usr/bin/fm"),
                 fallback: false,
+                primary: false,
                 timeout_secs: 30,
             },
             None,
@@ -539,3 +540,32 @@ fn settled_rewards_reach_the_guild_stats() {
 
 #[path = "work_tests.rs"]
 mod work_tests;
+
+#[test]
+fn fm_vision_qualification_stays_strict_without_a_manifest() {
+    let config = crate::provider::FmConfig::from_values(
+        Some("system".into()),
+        None,
+        None,
+        Some("1".into()),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let error = super::provider_setup::fm_vision_qualification(None, &config).unwrap_err();
+    assert!(
+        error.0.contains("ABBEY_FM_CAPABILITY_MANIFEST"),
+        "{}",
+        error.0
+    );
+    let error = super::provider_setup::fm_vision_qualification(
+        Some(std::path::Path::new("/nonexistent-abbey-fm-manifest.json")),
+        &config,
+    )
+    .unwrap_err();
+    assert!(
+        error.0.contains("verified FM capability manifest"),
+        "{}",
+        error.0
+    );
+}

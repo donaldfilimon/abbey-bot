@@ -100,6 +100,7 @@ pub enum ProviderRouteLabel {
     LocalFallback,
     FoundationModelsServer,
     FoundationModelsCli,
+    FoundationModelsCliPcc,
     Vision,
 }
 
@@ -110,6 +111,7 @@ impl ProviderRouteLabel {
             Self::LocalFallback => "local-fallback",
             Self::FoundationModelsServer => "foundation-models-server",
             Self::FoundationModelsCli => "foundation-models-cli",
+            Self::FoundationModelsCliPcc => "foundation-models-cli-pcc",
             Self::Vision => "vision",
         }
     }

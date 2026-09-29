@@ -21,6 +21,7 @@ fn config(mode: FmMode) -> FmConfig {
         endpoint: Some("http://127.0.0.1:1976".into()),
         cli: DEFAULT_FM_CLI.into(),
         fallback: true,
+        primary: false,
         timeout_secs: 30,
     }
 }
@@ -51,8 +52,152 @@ fn pcc_is_only_selected_by_the_exact_explicit_mode() {
     assert!(
         FmConfig::from_values(Some("cloud".into()), None, None, Some("1".into()), None,).is_err()
     );
+    // PCC is no longer refused by mode: it is judged by its own manifest record.
     let error = verify_fm_manifest(Path::new("/manifest-is-never-read"), &pcc).unwrap_err();
-    assert!(error.contains("intentionally unqualified"), "{error}");
+    assert!(!error.contains("intentionally unqualified"), "{error}");
+    assert!(error.contains("ABBEY_FM_CAPABILITY_MANIFEST"), "{error}");
+}
+
+fn route(
+    mode: &str,
+    fallback: Option<&str>,
+    role: Option<&str>,
+    pcc_timeout: Option<&str>,
+) -> Result<Option<FmRoute>, String> {
+    FmRoute::from_values(
+        Some(mode.into()),
+        Some("http://127.0.0.1:1976".into()),
+        Some(TEST_FM_CLI.into()),
+        fallback.map(Into::into),
+        role.map(Into::into),
+        Some("40".into()),
+        pcc_timeout.map(Into::into),
+    )
+}
+
+#[test]
+fn fm_route_parses_ordered_list() {
+    let parsed = route("pcc, system", None, Some("primary"), None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(parsed.role, Some(FmRole::Primary));
+    assert_eq!(
+        parsed
+            .instances
+            .iter()
+            .map(|config| config.mode)
+            .collect::<Vec<_>>(),
+        [FmMode::Pcc, FmMode::System]
+    );
+    // `fm serve` is one server: only the first mode gets the endpoint.
+    assert_eq!(
+        parsed.instances[0].endpoint.as_deref(),
+        Some("http://127.0.0.1:1976")
+    );
+    assert_eq!(parsed.instances[1].endpoint, None);
+    for config in &parsed.instances {
+        assert!(config.fallback && config.primary);
+        assert_eq!(config.cli, Path::new(TEST_FM_CLI));
+    }
+    let reversed = route("system,pcc", Some("1"), None, None).unwrap().unwrap();
+    assert_eq!(reversed.instances[0].mode, FmMode::System);
+    assert_eq!(reversed.instances[1].mode, FmMode::Pcc);
+}
+
+#[test]
+fn fm_route_rejects_duplicates_and_off_in_list() {
+    for mode in [
+        "pcc,pcc",
+        "system, system",
+        "pcc,off",
+        "off,system",
+        "pcc,",
+        ",system",
+        "pcc,,system",
+        "pcc;system",
+        "pcc,cloud",
+    ] {
+        assert!(
+            route(mode, Some("1"), None, None).is_err(),
+            "{mode} must fail closed"
+        );
+    }
+    assert_eq!(route("off", None, None, None), Ok(None));
+    assert!(route("off", None, Some("primary"), None).is_err());
+}
+
+#[test]
+fn single_mode_config_still_parses() {
+    let single = route("system", Some("1"), None, None).unwrap().unwrap();
+    assert_eq!(single.role, Some(FmRole::Fallback));
+    assert_eq!(single.instances.len(), 1);
+    let config = FmConfig::from_values(
+        Some("system".into()),
+        Some("http://127.0.0.1:1976".into()),
+        Some(TEST_FM_CLI.into()),
+        Some("1".into()),
+        Some("40".into()),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(config, single.instances[0]);
+    assert!(config.fallback && !config.primary);
+    assert_eq!(config.timeout_secs, 40);
+    // The compatibility constructor returns the first mode of a list.
+    let first = FmConfig::from_values(Some("pcc,system".into()), None, None, None, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.mode, FmMode::Pcc);
+    assert!(
+        !first.fallback,
+        "no role means registered but never admitted"
+    );
+}
+
+#[test]
+fn role_primary_and_fallback_alias() {
+    let primary = route("pcc,system", Some("1"), Some("primary"), None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(primary.role, Some(FmRole::Primary));
+    assert!(primary.instances.iter().all(|c| c.fallback && c.primary));
+    let explicit = route("system", None, Some("fallback"), None)
+        .unwrap()
+        .unwrap();
+    let alias = route("system", Some("1"), None, None).unwrap().unwrap();
+    assert_eq!(explicit, alias);
+    assert_eq!(alias.role, Some(FmRole::Fallback));
+    let unrouted = route("system", None, None, None).unwrap().unwrap();
+    assert_eq!(unrouted.role, None);
+    assert!(!unrouted.instances[0].fallback && !unrouted.instances[0].primary);
+    for (fallback, role) in [
+        (Some("0"), Some("primary")),
+        (Some("0"), Some("fallback")),
+        (Some("yes"), None),
+        (None, Some("secondary")),
+        (None, Some("PRIMARY")),
+    ] {
+        assert!(
+            route("system", fallback, role, None).is_err(),
+            "{fallback:?}/{role:?} must fail closed"
+        );
+    }
+}
+
+#[test]
+fn pcc_timeout_override() {
+    let parsed = route("pcc,system", None, Some("primary"), Some("90"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(parsed.instances[0].timeout_secs, 90);
+    assert_eq!(parsed.instances[1].timeout_secs, 40);
+    let inherited = route("pcc,system", None, Some("primary"), None)
+        .unwrap()
+        .unwrap();
+    assert!(inherited.instances.iter().all(|c| c.timeout_secs == 40));
+    for timeout in ["0", "soon", "-1"] {
+        assert!(route("pcc", None, Some("primary"), Some(timeout)).is_err());
+    }
 }
 
 #[test]

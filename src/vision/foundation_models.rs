@@ -65,6 +65,7 @@ mod tests {
                 endpoint: None,
                 cli: "/usr/bin/fm".into(),
                 fallback: true,
+                primary: false,
                 timeout_secs: 30,
             },
             None,

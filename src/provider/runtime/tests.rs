@@ -100,7 +100,7 @@ async fn legacy_precedence_and_labels_are_stable() {
     ] {
         let primary = Backend::from_values(key, Some("http://127.0.0.1:11434".into()), None);
         let expected_label = primary.as_ref().unwrap().label();
-        let runtime = ProviderRuntime::legacy(primary, None, None, None, true, 1, 1);
+        let runtime = ProviderRuntime::legacy(primary, None, Vec::new(), None, true, 1, 1);
         assert_eq!(runtime.generation_label(), Some(expected_label));
         assert_eq!(expected_label, expected);
         let mut conversation = runtime.begin(true, false);
@@ -598,6 +598,7 @@ async fn verified_new_qualification_witness_clears_only_its_exact_persisted_bloc
         endpoint: None,
         cli: executable,
         fallback: true,
+        primary: false,
         timeout_secs: 1,
     };
     let record: super::super::ProviderRecord = serde_json::from_value(serde_json::json!({
@@ -625,7 +626,7 @@ async fn verified_new_qualification_witness_clears_only_its_exact_persisted_bloc
     let build = || {
         let verified = super::super::qualification::verify_fm_manifest(&manifest, &cfg).unwrap();
         let fm = FoundationModels::new_qualified(cfg.clone(), None, true, verified);
-        let mut runtime = ProviderRuntime::legacy(None, None, Some(fm), None, true, 1, 1);
+        let mut runtime = ProviderRuntime::legacy(None, None, vec![fm], None, true, 1, 1);
         runtime.clock = clock.clone();
         runtime.apply_fm_qualification(&manifest).unwrap();
         runtime.restore_blocks(blocks.clone()).unwrap();
@@ -746,6 +747,7 @@ async fn verified_new_qualification_witness_clears_only_its_exact_persisted_bloc
                 ocr: CapabilityEvidence::pass(),
             },
         },
+        fm_cli_modes: Vec::new(),
     };
     std::fs::write(&manifest, serde_json::to_vec(&report).unwrap()).unwrap();
     block(&build()).await;
@@ -926,3 +928,5 @@ fn declared_text_without_executable_adapter_is_not_ready() {
             .is_err()
     );
 }
+
+mod fm_route;

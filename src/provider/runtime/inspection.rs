@@ -16,6 +16,7 @@ impl ProviderRuntime {
                     "local-fallback" => ProviderRouteLabel::LocalFallback,
                     "foundation-models-server" => ProviderRouteLabel::FoundationModelsServer,
                     "foundation-models-cli" => ProviderRouteLabel::FoundationModelsCli,
+                    "foundation-models-cli-pcc" => ProviderRouteLabel::FoundationModelsCliPcc,
                     _ => ProviderRouteLabel::Vision,
                 };
                 let snapshot = circuits.iter().find(|snapshot| &snapshot.provider_id == id);

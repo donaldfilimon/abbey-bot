@@ -54,9 +54,10 @@ pub use manifest::{
 #[cfg(all(test, unix))]
 pub use manifest::{ProviderRecord, publish_v2};
 pub use qualification::{
-    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, ProbeStatus, ProviderEvidence,
-    ProviderIdentity, QUALIFICATION_VERSION, QualificationReport, QualificationTarget,
-    VerifiedFmCapabilities, fm_identity, primary_identity, unix_now, verify_fm_manifest,
+    CapabilityEvidence, CapabilityEvidenceSet, FIXTURE_VERSION, FmQualificationState, ProbeStatus,
+    ProviderEvidence, ProviderIdentity, QUALIFICATION_VERSION, QualificationReport,
+    QualificationTarget, VerifiedFmCapabilities, fm_identity, primary_identity, qualify_fm,
+    unix_now, verify_fm_manifest,
 };
 pub use routing::{
     AdaptiveRouter, ConversationRoute, RouteAdmission, RouteAttempt, RouteUnavailableReason,
@@ -109,17 +110,30 @@ impl FmMode {
     }
 }
 
-/// Validated operator configuration. This type contains no credentials.
+/// Where Foundation Models sits in the text route when it is admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FmRole {
+    /// After the configured endpoint and local fallback.
+    Fallback,
+    /// Ahead of the configured endpoint: PCC, then system, then the endpoint.
+    Primary,
+}
+
+/// Validated operator configuration for one FM mode. Contains no credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmConfig {
     pub mode: FmMode,
     pub endpoint: Option<String>,
     pub cli: PathBuf,
+    /// Admitted for text routing (role `fallback` or `primary`).
     pub fallback: bool,
+    /// Registered ahead of the configured endpoint (role `primary`).
+    pub primary: bool,
     pub timeout_secs: u64,
 }
 
 impl FmConfig {
+    /// Single-route compatibility constructor: the first instance of the route.
     pub fn from_values(
         mode: Option<String>,
         endpoint: Option<String>,
@@ -127,25 +141,65 @@ impl FmConfig {
         fallback: Option<String>,
         timeout_secs: Option<String>,
     ) -> Result<Option<Self>, String> {
+        FmRoute::from_values(mode, endpoint, cli, fallback, None, timeout_secs, None)
+            .map(|route| route.and_then(|route| route.instances.into_iter().next()))
+    }
+}
+
+/// Ordered, deduplicated FM modes; each expands to one single-mode `FmConfig`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmRoute {
+    pub role: Option<FmRole>,
+    pub instances: Vec<FmConfig>,
+}
+
+impl FmRoute {
+    pub fn from_values(
+        mode: Option<String>,
+        endpoint: Option<String>,
+        cli: Option<String>,
+        fallback: Option<String>,
+        role: Option<String>,
+        timeout_secs: Option<String>,
+        pcc_timeout_secs: Option<String>,
+    ) -> Result<Option<Self>, String> {
         let value = |raw: Option<String>| {
             raw.map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
         };
         let fallback = match value(fallback).as_deref() {
-            None | Some("0" | "false" | "off") => false,
-            Some("1" | "true" | "on") => true,
+            None => None,
+            Some("0" | "false" | "off") => Some(false),
+            Some("1" | "true" | "on") => Some(true),
             Some(_) => return Err("ABBEY_FM_FALLBACK must be 1 or 0".into()),
         };
-        let mode = match value(mode).as_deref() {
+        let explicit_role = match value(role).as_deref() {
+            None => None,
+            Some("fallback") => Some(FmRole::Fallback),
+            Some("primary") => Some(FmRole::Primary),
+            Some(_) => return Err("ABBEY_FM_ROLE must be fallback or primary".into()),
+        };
+        // `ABBEY_FM_FALLBACK=1` is the alias for role `fallback`; primary
+        // implies admission, so only an explicit `0` beside a role conflicts.
+        let role = match (explicit_role, fallback) {
+            (Some(_), Some(false)) => {
+                return Err("ABBEY_FM_ROLE conflicts with ABBEY_FM_FALLBACK=0".into());
+            }
+            (Some(role), _) => Some(role),
+            (None, Some(true)) => Some(FmRole::Fallback),
+            (None, _) => None,
+        };
+        let modes = match value(mode).as_deref() {
             None | Some("off") => {
-                if fallback {
+                if fallback == Some(true) {
                     return Err("ABBEY_FM_FALLBACK=1 requires ABBEY_FM_MODE=system or pcc".into());
+                }
+                if role.is_some() {
+                    return Err("ABBEY_FM_ROLE requires ABBEY_FM_MODE=system or pcc".into());
                 }
                 return Ok(None);
             }
-            Some("system") => FmMode::System,
-            Some("pcc") => FmMode::Pcc,
-            Some(_) => return Err("ABBEY_FM_MODE must be off, system, or pcc".into()),
+            Some(list) => parse_fm_modes(list)?,
         };
 
         let endpoint = value(endpoint)
@@ -155,41 +209,77 @@ impl FmConfig {
         if !cli.is_absolute() || cli.components().any(|part| part == Component::ParentDir) {
             return Err("ABBEY_FM_CLI must be an absolute path without `..`".into());
         }
-        let timeout_secs = match value(timeout_secs) {
-            None => DEFAULT_TIMEOUT_SECS,
+        let positive = |raw: Option<String>, name: &str| match value(raw) {
+            None => Ok(None),
             Some(raw) => raw
                 .parse::<u64>()
                 .ok()
                 .filter(|seconds| *seconds > 0)
-                .ok_or_else(|| {
-                    "ABBEY_BOT_LLM_TIMEOUT_SECS must be a positive integer for FM".to_string()
-                })?,
+                .map(Some)
+                .ok_or_else(|| format!("{name} must be a positive integer for FM")),
         };
-        Ok(Some(Self {
-            mode,
-            endpoint,
-            cli,
-            fallback,
-            timeout_secs,
-        }))
+        let timeout_secs =
+            positive(timeout_secs, "ABBEY_BOT_LLM_TIMEOUT_SECS")?.unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let pcc_timeout_secs =
+            positive(pcc_timeout_secs, "ABBEY_FM_PCC_TIMEOUT_SECS")?.unwrap_or(timeout_secs);
+        let instances = modes
+            .into_iter()
+            .enumerate()
+            .map(|(index, mode)| FmConfig {
+                mode,
+                // `fm serve` is one server: it attaches to the first mode only.
+                endpoint: if index == 0 { endpoint.clone() } else { None },
+                cli: cli.clone(),
+                fallback: role.is_some(),
+                primary: role == Some(FmRole::Primary),
+                timeout_secs: if mode == FmMode::Pcc {
+                    pcc_timeout_secs
+                } else {
+                    timeout_secs
+                },
+            })
+            .collect();
+        Ok(Some(Self { role, instances }))
     }
 
     pub fn from_env() -> Result<Option<Self>, String> {
-        let config = Self::from_values(
+        let route = Self::from_values(
             std::env::var("ABBEY_FM_MODE").ok(),
             std::env::var("ABBEY_FM_ENDPOINT").ok(),
             std::env::var("ABBEY_FM_CLI").ok(),
             std::env::var("ABBEY_FM_FALLBACK").ok(),
+            std::env::var("ABBEY_FM_ROLE").ok(),
             std::env::var("ABBEY_BOT_LLM_TIMEOUT_SECS").ok(),
+            std::env::var("ABBEY_FM_PCC_TIMEOUT_SECS").ok(),
         )?;
         #[cfg(not(target_os = "macos"))]
-        if config.is_some() {
+        if route.is_some() {
             return Err(
                 "Apple Foundation Models is supported only on macOS; set ABBEY_FM_MODE=off".into(),
             );
         }
-        Ok(config)
+        Ok(route)
     }
+}
+
+fn parse_fm_modes(list: &str) -> Result<Vec<FmMode>, String> {
+    let mut modes = Vec::new();
+    for item in list.split(',').map(str::trim) {
+        let mode = match item {
+            "system" => FmMode::System,
+            "pcc" => FmMode::Pcc,
+            _ => {
+                return Err(
+                    "ABBEY_FM_MODE must be off, or a comma list of distinct system and pcc".into(),
+                );
+            }
+        };
+        if modes.contains(&mode) {
+            return Err("ABBEY_FM_MODE must not repeat a mode".into());
+        }
+        modes.push(mode);
+    }
+    Ok(modes)
 }
 
 fn validate_fm_endpoint(raw: &str) -> Result<(), String> {
