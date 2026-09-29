@@ -340,14 +340,14 @@ impl FmQualificationState {
     }
 }
 
-type FmRejection = (FmQualificationState, String);
+pub(super) type FmRejection = (FmQualificationState, String);
 
 fn refused(message: impl Into<String>) -> FmRejection {
     let message = message.into();
     (FmQualificationState::Refused(message.clone()), message)
 }
 
-fn classify_manifest_error(error: ManifestError) -> FmRejection {
+pub(super) fn classify_manifest_error(error: ManifestError) -> FmRejection {
     let state = match error {
         ManifestError::MissingOrUnreadable | ManifestError::QualificationMissing => {
             FmQualificationState::Missing

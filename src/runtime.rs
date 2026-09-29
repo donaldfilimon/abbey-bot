@@ -338,9 +338,9 @@ impl AppState {
         if let Some(path) = std::env::var_os("ABBEY_FM_CAPABILITY_MANIFEST")
             && let Err(error) = providers.apply_fm_qualification(std::path::Path::new(&path))
         {
-            // Degrade, never refuse to start: the mode keeps its startup
-            // admission and the per-call `fm` identity recheck still applies.
-            tracing::warn!(%error, "FM score evidence unavailable; using default route scores");
+            // Degrade, never refuse to start: the affected mode is demoted
+            // (unadmitted, state recorded) and the other modes still serve.
+            tracing::warn!(%error, "FM mode demoted: qualification evidence could not be applied");
         }
         if let Some(directory) = block_directory.as_ref() {
             providers

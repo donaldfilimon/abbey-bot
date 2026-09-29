@@ -208,3 +208,116 @@ async fn pcc_failure_falls_back_to_system_once() {
     assert_eq!(system.calls.load(Ordering::Relaxed), 1);
     assert_eq!(endpoint.calls.load(Ordering::Relaxed), 0);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn verify_succeeds_apply_fails_demotes_only_that_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = std::env::temp_dir().join(format!("abbey-fm-apply-demote-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let system_cli = root.join("synthetic-fm");
+    std::fs::write(
+        &system_cli,
+        b"synthetic executable identity only; never run",
+    )
+    .unwrap();
+    let config = |mode, cli: std::path::PathBuf| FmConfig {
+        mode,
+        endpoint: None,
+        cli,
+        fallback: true,
+        primary: true,
+        timeout_secs: 1,
+    };
+    let system = config(FmMode::System, system_cli);
+    // Verified at startup, but its executable vanished before apply could
+    // hash it: the rekey cannot complete, so the mode must fail closed.
+    let pcc = config(FmMode::Pcc, root.join("vanished-fm"));
+    let record: super::super::super::ProviderRecord = serde_json::from_value(serde_json::json!({
+        "version": 2, "fixture_version": super::super::super::FIXTURE_VERSION,
+        "provider_id": "foundation-models", "provider_class": "os_managed_local",
+        "identity": super::super::super::qualification::fm_manifest_identity(&system).unwrap(),
+        "declared_capabilities": { "text": true, "streaming": false, "structured_output": true,
+            "tools": true, "vision": false, "ocr": false },
+        "isolation_capabilities": { "environment_cleared": true, "absolute_no_shell_execution": true,
+            "process_tree_contained": false, "private_runtime_state": true, "loopback_only": false, "sandbox_attested": false },
+        "qualification_status": "qualified"
+    }))
+    .unwrap();
+    let manifest = root.join("providers.json");
+    std::fs::write(
+        &manifest,
+        super::super::super::manifest::encode_v2(&[record]).unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let verified = |cfg: &FmConfig| {
+        FoundationModels::new_qualified(
+            cfg.clone(),
+            None,
+            true,
+            VerifiedFmCapabilities {
+                server: None,
+                cli: ProviderCapabilities::text_with_tools(),
+            },
+        )
+    };
+    let build = || {
+        ProviderRuntime::legacy(
+            None,
+            None,
+            vec![verified(&pcc), verified(&system)],
+            None,
+            true,
+            1,
+            1,
+        )
+    };
+
+    let mut runtime = build();
+    assert_eq!(first_choice(&runtime).await, "foundation-models-cli-pcc");
+    let error = runtime.apply_fm_qualification(&manifest).unwrap_err();
+    assert!(error.contains("FM pcc demoted"), "{error}");
+    assert_eq!(first_choice(&runtime).await, "foundation-models-cli");
+    let states = runtime
+        .foundation_model_modes()
+        .map(|fm| fm.qualification_state().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(states, ["refused", "qualified"]);
+    let rendered = crate::inspect::render_provider(&runtime.inspect_snapshot());
+    assert!(
+        rendered.contains("foundation-models-cli-pcc: routable no"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("foundation-models-cli: routable yes"),
+        "{rendered}"
+    );
+    // The unaffected mode was rekeyed to its manifest identity.
+    let system_id = ProviderId::parse("foundation-models-cli").unwrap();
+    assert_eq!(
+        runtime.entries[&system_id].identity,
+        super::super::super::qualification::fm_manifest_identity(&system).unwrap()
+    );
+    assert_eq!(
+        runtime.foundation_models().map(|fm| fm.config.mode),
+        Some(FmMode::System)
+    );
+
+    // An unreadable manifest demotes every verified mode, with the state recorded.
+    let mut runtime = build();
+    assert!(
+        runtime
+            .apply_fm_qualification(&root.join("absent.json"))
+            .is_err()
+    );
+    assert!(!runtime.generation_available());
+    let states = runtime
+        .foundation_model_modes()
+        .map(|fm| fm.qualification_state().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(states, ["missing", "missing"]);
+    let _ = std::fs::remove_dir_all(&root);
+}

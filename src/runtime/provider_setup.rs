@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::llm::Backend;
 use crate::provider::{
-    FmConfig, FmQualificationState, FmRoute, FoundationModels, VerifiedFmCapabilities, qualify_fm,
-    verify_fm_manifest,
+    FmConfig, FmMode, FmQualificationState, FmRoute, FoundationModels, VerifiedFmCapabilities,
+    qualify_fm, verify_fm_manifest,
 };
 use crate::vision::{ConfiguredVision, FmVision, RemoteVision, VisionConfig, VisionProviderChoice};
 
@@ -61,9 +61,7 @@ pub(super) fn from_env(
             })
         }
         VisionProviderChoice::FoundationModels => {
-            let config = instances.first().cloned().ok_or_else(|| {
-                StartupError("ABBEY_VISION_PROVIDER=fm requires ABBEY_FM_MODE=system or pcc".into())
-            })?;
+            let config = fm_vision_instance(&instances)?;
             let qualified = fm_vision_qualification(manifest.as_deref(), &config)?;
             let fm = FoundationModels::new_qualified(config, backend, tools_enabled, qualified);
             Some(ConfiguredVision::FoundationModels(
@@ -94,7 +92,18 @@ fn load_fm_qualification(
     qualify_fm(path, config)
 }
 
-/// FM vision keeps the strict startup requirement: the first mode must be
+/// FM vision binds to the on-device system mode, never PCC.
+pub(super) fn fm_vision_instance(instances: &[FmConfig]) -> Result<FmConfig, StartupError> {
+    instances
+        .iter()
+        .find(|config| config.mode == FmMode::System)
+        .cloned()
+        .ok_or_else(|| {
+            StartupError("ABBEY_VISION_PROVIDER=fm requires system in ABBEY_FM_MODE".into())
+        })
+}
+
+/// FM vision keeps the strict startup requirement: the system mode must be
 /// qualified by a verified manifest.
 pub(super) fn fm_vision_qualification(
     path: Option<&Path>,

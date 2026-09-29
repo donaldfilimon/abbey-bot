@@ -42,6 +42,8 @@ pub struct FoundationModels {
     qualified: bool,
     qualified_cli_sha256: Option<String>,
     qualification_state: FmQualificationState,
+    /// Set once when startup could not apply this mode's manifest evidence.
+    demoted: std::sync::OnceLock<FmQualificationState>,
 }
 
 impl FoundationModels {
@@ -65,6 +67,7 @@ impl FoundationModels {
             qualified: false,
             qualified_cli_sha256: None,
             qualification_state: FmQualificationState::Missing,
+            demoted: std::sync::OnceLock::new(),
         }
     }
 
@@ -98,19 +101,26 @@ impl FoundationModels {
             qualified: true,
             qualified_cli_sha256,
             qualification_state: FmQualificationState::Qualified,
+            demoted: std::sync::OnceLock::new(),
         }
     }
 
     /// Whether the capabilities were loaded from a verified qualification
     /// manifest rather than inferred from explicit configuration alone.
     #[must_use]
-    pub const fn is_qualified(&self) -> bool {
-        self.qualified
+    pub fn is_qualified(&self) -> bool {
+        self.qualified && self.demoted.get().is_none()
     }
 
     #[must_use]
-    pub const fn qualification_state(&self) -> &FmQualificationState {
-        &self.qualification_state
+    pub fn qualification_state(&self) -> &FmQualificationState {
+        self.demoted.get().unwrap_or(&self.qualification_state)
+    }
+
+    /// Records that a verified mode was demoted because its evidence could not
+    /// be applied. The per-call executable recheck stays in force.
+    pub(crate) fn demote(&self, state: FmQualificationState) {
+        let _ = self.demoted.set(state);
     }
 
     #[must_use]

@@ -222,13 +222,19 @@ impl FmRoute {
             positive(timeout_secs, "ABBEY_BOT_LLM_TIMEOUT_SECS")?.unwrap_or(DEFAULT_TIMEOUT_SECS);
         let pcc_timeout_secs =
             positive(pcc_timeout_secs, "ABBEY_FM_PCC_TIMEOUT_SECS")?.unwrap_or(timeout_secs);
+        if endpoint.is_some() && !modes.contains(&FmMode::System) {
+            return Err("ABBEY_FM_ENDPOINT requires system in ABBEY_FM_MODE".into());
+        }
         let instances = modes
             .into_iter()
-            .enumerate()
-            .map(|(index, mode)| FmConfig {
+            .map(|mode| FmConfig {
                 mode,
-                // `fm serve` is one server: it attaches to the first mode only.
-                endpoint: if index == 0 { endpoint.clone() } else { None },
+                // `fm serve` is the on-device server: it binds to system only.
+                endpoint: if mode == FmMode::System {
+                    endpoint.clone()
+                } else {
+                    None
+                },
                 cli: cli.clone(),
                 fallback: role.is_some(),
                 primary: role == Some(FmRole::Primary),

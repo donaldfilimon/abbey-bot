@@ -89,12 +89,12 @@ fn fm_route_parses_ordered_list() {
             .collect::<Vec<_>>(),
         [FmMode::Pcc, FmMode::System]
     );
-    // `fm serve` is one server: only the first mode gets the endpoint.
+    // `fm serve` is the on-device server: only the system mode gets it.
+    assert_eq!(parsed.instances[0].endpoint, None);
     assert_eq!(
-        parsed.instances[0].endpoint.as_deref(),
+        parsed.instances[1].endpoint.as_deref(),
         Some("http://127.0.0.1:1976")
     );
-    assert_eq!(parsed.instances[1].endpoint, None);
     for config in &parsed.instances {
         assert!(config.fallback && config.primary);
         assert_eq!(config.cli, Path::new(TEST_FM_CLI));
@@ -196,8 +196,46 @@ fn pcc_timeout_override() {
         .unwrap();
     assert!(inherited.instances.iter().all(|c| c.timeout_secs == 40));
     for timeout in ["0", "soon", "-1"] {
-        assert!(route("pcc", None, Some("primary"), Some(timeout)).is_err());
+        let error = route("pcc,system", None, Some("primary"), Some(timeout)).unwrap_err();
+        assert!(error.contains("ABBEY_FM_PCC_TIMEOUT_SECS"), "{error}");
     }
+}
+
+#[test]
+fn fm_endpoint_binds_to_system_mode() {
+    let reversed = route("system,pcc", None, Some("primary"), None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reversed.instances[0].mode, FmMode::System);
+    assert!(reversed.instances[0].endpoint.is_some());
+    assert_eq!(reversed.instances[1].endpoint, None);
+    let error = route("pcc", None, Some("primary"), None).unwrap_err();
+    assert!(
+        error.contains("ABBEY_FM_ENDPOINT requires system"),
+        "{error}"
+    );
+    let error = FmConfig::from_values(
+        Some("pcc".into()),
+        Some("http://127.0.0.1:1976".into()),
+        None,
+        Some("1".into()),
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("requires system"), "{error}");
+    // PCC alone is fine without an endpoint.
+    let pcc_only = FmRoute::from_values(
+        Some("pcc".into()),
+        None,
+        None,
+        None,
+        Some("primary".into()),
+        None,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(pcc_only.instances.len(), 1);
 }
 
 #[test]

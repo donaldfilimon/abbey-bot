@@ -473,8 +473,8 @@ async fn probe_fm_cli(config: &FmConfig, identity: Option<ProviderIdentity>) -> 
     }
 }
 
-/// Probes every configured FM mode in route order. The server attaches to the
-/// first mode only; `fm_cli` is the first mode and every mode is in `modes`.
+/// Probes every configured FM mode in route order. The server binds to the
+/// system mode only; `fm_cli` is the first mode and every mode is in `modes`.
 async fn probe_fm() -> (ProviderEvidence, ProviderEvidence, Vec<ProviderEvidence>) {
     let route = match FmRoute::from_env() {
         Ok(Some(route)) => route,
@@ -495,9 +495,9 @@ async fn probe_fm() -> (ProviderEvidence, ProviderEvidence, Vec<ProviderEvidence
     };
     let mut server = ProviderEvidence::skipped();
     let mut modes = Vec::with_capacity(route.instances.len());
-    for (index, config) in route.instances.iter().enumerate() {
+    for config in &route.instances {
         let identity = fm_identity(config).ok();
-        if index == 0 {
+        if config.endpoint.is_some() {
             server = probe_fm_server(config, identity.clone()).await;
         }
         modes.push(probe_fm_cli(config, identity).await);

@@ -569,3 +569,22 @@ fn fm_vision_qualification_stays_strict_without_a_manifest() {
         error.0
     );
 }
+
+#[test]
+fn fm_vision_binds_to_system_mode() {
+    let route = crate::provider::FmRoute::from_values(
+        Some("pcc,system".into()),
+        None,
+        None,
+        None,
+        Some("primary".into()),
+        None,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let chosen = super::provider_setup::fm_vision_instance(&route.instances).unwrap();
+    assert_eq!(chosen.mode, crate::provider::FmMode::System);
+    let error = super::provider_setup::fm_vision_instance(&route.instances[..1]).unwrap_err();
+    assert!(error.0.contains("requires system"), "{}", error.0);
+}
