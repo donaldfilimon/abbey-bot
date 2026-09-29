@@ -1,5 +1,11 @@
 name: Rust
 
+# Trusted same-repo events (push to main, same-repo pull requests) run the
+# macOS gate on the macOS arm64 self-hosted runner registered to this
+# repository with the label abbey-bot. Fork pull requests run the macOS gate on
+# GitHub-hosted macos-15 only: never schedule untrusted code on the
+# self-hosted machine. The Ubuntu and Windows gates stay GitHub-hosted because
+# they prove Linux (dash) and Windows behaviour. See docs/ops/self-hosted-runner.md.
 on:
   push:
     branches: ["main"]
@@ -26,9 +32,8 @@ jobs:
           - name: Ubuntu
             os: ubuntu-24.04
             command: ./check.sh
-          - name: macOS
-            os: macos-15
-            command: ./check.sh
+          # The macOS lane is the gate-macos job below (self-hosted for
+          # trusted events, gate-macos-hosted for fork pull requests).
           - name: Windows
             os: windows-2025
             command: ./check.ps1
@@ -42,3 +47,54 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Gate — fmt, privacy, locks, clippy, tests, release build
         run: ${{ matrix.command }}
+
+  gate-macos:
+    # Same check name as the former macos-15 matrix leg, so branch protection
+    # that requires "Gate (macOS)" keeps matching.
+    name: Gate (macOS)
+    if: >
+      github.repository == 'donaldfilimon/abbey-bot' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: [self-hosted, macOS, ARM64, abbey-bot]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A persistent host is configured by hand, so fail early with a readable
+      # message instead of midway through check.sh. tomllib (scripts/) needs
+      # Python 3.11+; the audio-tap gate needs Xcode's Swift and ScreenCaptureKit.
+      - name: Check host prerequisites
+        run: |
+          for tool in rustup cargo python3 plutil xcrun; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "::error::missing $tool on the runner PATH (see docs/ops/self-hosted-runner.md)"; exit 1; }
+          done
+          python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "python3 must be 3.11 or newer (tomllib); install it with Homebrew")'
+          rustup --version
+          python3 --version
+          env -u TOOLCHAINS xcrun swift --version
+      # rustup honours the exact stable release and components in
+      # rust-toolchain.toml on the first Cargo invocation. On a persistent host
+      # cargo install is a no-op once 0.22.2 is already in ~/.cargo/bin.
+      - name: Install pinned cargo-audit report tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Gate — fmt, privacy, locks, clippy, tests, release build
+        run: ./check.sh
+
+  gate-macos-hosted:
+    name: Gate (macOS) (GitHub-hosted, fork PRs)
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The runner's rustup honours the exact stable release and components in
+      # rust-toolchain.toml on the first Cargo invocation.
+      - name: Install pinned cargo-audit report tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Gate — fmt, privacy, locks, clippy, tests, release build
+        run: ./check.sh
