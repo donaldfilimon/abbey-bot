@@ -290,7 +290,7 @@ def wait_ready(context, expected_pid, expected_sha256, *, entry_ns,
             if first is None:
                 first, pinned = now, candidate
             if now - first >= STABILITY_NS:
-                return
+                return document
         now = monotonic()
         if now >= deadline:
             raise ReadinessError(FailureCode.TIMEOUT)

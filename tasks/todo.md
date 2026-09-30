@@ -647,6 +647,6 @@ Discord and human voice acceptance remain separate.
 - [x] Task 2: Abbey prompt via `--instructions`; `prompt_budget::fit` for fm system
 - [x] Task 3: `brain::style_signal` + `brain::addenda` ledger, wired behind `learning_enabled`, persisted additively
 - [x] Task 4: `/admin addenda list|revert|clear` (catalog 87 → 90), honest capability guidance
-- [ ] Task 5: `deploy/configure-fm-primary.py`; `publish-provider-qualification.py --target fm`
+- [x] Task 5 source/publication verified: `deploy/configure-fm-primary.py`; `publish-provider-qualification.py --target fm` committed at `4fe623bfbdf2cefe6e3a03e88b9d6855129091f7`; exact-head [Gate (macOS)](https://github.com/donaldfilimon/abbey-bot/actions/runs/36644384359/job/109663833122) completed/success (2026-09-30 receipt). Current provider qualification and installed/live acceptance remain separate.
 - [ ] Task 6: CI `deploy-macos` job (qualify, install, SHA match, status)
 - [ ] Task 7: live switch to FM primary; Donald's Discord acceptance

@@ -19,11 +19,12 @@ class EnvironmentError(Exception):
         super().__init__(code)
 
 
-def validate_environment(document: bytes) -> None:
+def environment_values(document: bytes) -> dict[str, str]:
     """Validate supported assignment syntax and required nonblank values.
 
-    Values are transient data and are never returned, logged, expanded, sourced,
-    or used as paths. HOME/data overrides are ignored by the Rust runtime.
+    Values remain transient, unexpanded data and are never logged or sourced.
+    The qualified installer reads only its explicitly validated FM paths.
+    HOME/data overrides are ignored by the Rust runtime.
     """
     if type(document) is not bytes or len(document) > MAX_ENV_BYTES or b'\0' in document:
         raise EnvironmentError('syntax')
@@ -54,3 +55,9 @@ def validate_environment(document: bytes) -> None:
             or present('ABBEY_VOICE_GUILD_ID') != present('ABBEY_VOICE_CHANNEL_ID')
             or (present('ABBEY_VOICE_GUILD_ID') and not present('ABBEY_BOT_LLM_ENDPOINT'))):
         raise EnvironmentError('required_configuration')
+
+    return values
+
+
+def validate_environment(document: bytes) -> None:
+    environment_values(document)

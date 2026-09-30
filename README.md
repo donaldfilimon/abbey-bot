@@ -893,6 +893,37 @@ weights remain visible through `/profile`.
 
 ## Deploying
 
+The Task 6 deployment proposal is deliberately dormant at
+[`deploy/ci/rust-auto-deploy.yml`](deploy/ci/rust-auto-deploy.yml). It is JSON-subset
+YAML, checked by the local gates and `actionlint`; GitHub does not schedule files
+outside `.github/workflows`. The active workflow remains the trusted source gate.
+Activating automatic deployment requires a separate operator decision and live
+runner/service acceptance. The proposal admits deployment only from canonical
+`main` push or manual dispatch after a successful strict gate. Both workflow and
+deployment concurrency disable cancellation; a dedicated deployment group
+serializes publication.
+
+For an operator-directed qualified installation, the explicit opt-in interface is
+`./deploy/install-launchd.sh --qualified-candidate BINARY MANIFEST HEAD`, using
+absolute candidate paths and the full current Git commit. The transaction checks
+clean tracked and nonignored untracked source, rebuilds through Cargo's locked
+artifact protocol and compares exact candidate bytes, then validates FM identity
+and required capabilities from the staged manifest. A configured manifest must
+be beneath the managed home with private parent directories; a dormant FM route
+uses the fixed `~/.config/abbey-bot/fm-capability-manifest.json` destination. This
+operation leaves the owner environment byte-for-byte unchanged, so staging
+qualification for a dormant route does not select FM as primary.
+
+The existing install lock owns binary, plist, and qualification publication.
+Failure restores all three artifacts, removing the candidate manifest when no
+prior manifest existed. Owner-only rollback directories retain `transaction.json`
+with the requested and verified source head, binary and manifest SHA-256, and the
+actual stable readiness document on success. Interrupted or failed cleanup
+retains recovery material and the lock rather than admitting another installer.
+These offline transaction fixtures use relocated temporary homes and fake
+launchd/identity effects; they do not establish provider qualification or live
+service readiness.
+
 The FM primary configurator is an operator action. It defaults to a dry run
 and manages only `ABBEY_FM_MODE=pcc,system`, `ABBEY_FM_ROLE=primary`,
 `ABBEY_FM_CLI`, and `ABBEY_FM_CAPABILITY_MANIFEST`. All other environment

@@ -50,6 +50,7 @@ python3 deploy/test-service-installation.py
 python3 deploy/test-service-readiness.py
 python3 deploy/test-service-status.py
 python3 deploy/test-install-launchd.py
+python3 deploy/test-qualified-install.py
 python3 deploy/test-install-audio-tap-launchd.py
 python3 deploy/test-install-wdbx-gateway-launchd.py
 python3 deploy/test-smoke-mlx-vlm-tool-deltas.py
@@ -71,6 +72,8 @@ python3 scripts/test-check-wdbx-conformance.py
 python3 scripts/check-wdbx-conformance.py
 python3 scripts/test-check-rust-release.py
 python3 scripts/check-rust-release.py
+python3 scripts/test-check-deployment-proposal.py
+python3 scripts/check-deployment-proposal.py
 python3 scripts/test-check-systemd-unit.py
 python3 scripts/check-systemd-unit.py
 if command -v plutil >/dev/null 2>&1; then
