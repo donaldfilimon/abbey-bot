@@ -202,6 +202,7 @@ fn persona_context_render_snapshot() {
         user_facts: vec!["likes rust".into(), "runs a homelab".into()],
         reputation: 0.5,
         addenda: String::new(),
+        personal_memory_permits: Default::default(),
     };
     // Both facts fit the budget, so a focused render shows both and adds
     // no "not shown" note. The query names only "rust", so that fact
@@ -260,6 +261,7 @@ fn render_focuses_facts_on_the_message_and_discloses_the_trim() {
         user_facts,
         reputation: DEFAULT_REPUTATION,
         addenda: String::new(),
+        personal_memory_permits: Default::default(),
     };
 
     let rendered = ctx.render("how do I roll back a kubernetes deploy?");
@@ -315,6 +317,7 @@ fn a_short_fact_list_is_never_trimmed_by_focusing() {
         user_facts: vec!["likes tea".into(), "uses nixos".into()],
         reputation: DEFAULT_REPUTATION,
         addenda: String::new(),
+        personal_memory_permits: Default::default(),
     };
     let rendered = ctx.render("totally unrelated question about pottery");
     assert!(rendered.contains("likes tea"));

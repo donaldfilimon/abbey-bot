@@ -413,6 +413,7 @@ mod tests {
             user_facts: vec!["likes rust".into(), "lives by the sea".into()],
             reputation: 0.9,
             addenda: String::new(),
+            personal_memory_permits: Default::default(),
         };
         let p = PromptParts::new(
             "CORE".into(),

@@ -17,11 +17,11 @@ pub const HELP_TAG_NAMES: &[&str] = &[
 ];
 
 /// Permissions Abbey needs on a forum channel to create posts via the API.
+/// Discord uses SEND_MESSAGES for forum creation and ignores CREATE_PUBLIC_THREADS.
 pub fn required_forum_bot_permissions() -> Permissions {
     Permissions::VIEW_CHANNEL
         | Permissions::SEND_MESSAGES
         | Permissions::SEND_MESSAGES_IN_THREADS
-        | Permissions::CREATE_PUBLIC_THREADS
         | Permissions::EMBED_LINKS
         | Permissions::ATTACH_FILES
         | Permissions::READ_MESSAGE_HISTORY
@@ -95,22 +95,25 @@ pub fn first_post_body(template: Template, details: &str) -> String {
 /// Suggest forum tags from title + details against the channel's available names.
 ///
 /// Matching is case-insensitive substring / keyword based. Returns at most five
-/// names that exist in `available`, preserving `available` order.
+/// names that exist in `available`, preserving `available` order. Resolution
+/// status tags are reserved for explicit user action, never inferred from prose.
 pub fn suggest_tags(title: &str, details: &str, available: &[&str]) -> Vec<String> {
     let haystack = format!("{title}\n{details}").to_ascii_lowercase();
+    let words: Vec<_> = haystack
+        .split(|c: char| !c.is_alphanumeric() && c != '-')
+        .filter(|word| !word.is_empty())
+        .collect();
     let mut out = Vec::new();
     for name in available {
         if out.len() >= 5 {
             break;
         }
         let needle = name.to_ascii_lowercase();
-        if needle.is_empty() {
+        if needle.is_empty() || matches!(needle.as_str(), "solved" | "unresolved") {
             continue;
         }
-        let hit = haystack.contains(&needle)
-            || keywords_for(name)
-                .iter()
-                .any(|kw| haystack.split_whitespace().any(|w| w == *kw));
+        let hit =
+            haystack.contains(&needle) || keywords_for(name).iter().any(|kw| words.contains(kw));
         if hit {
             out.push((*name).to_string());
         }
@@ -122,8 +125,37 @@ fn keywords_for(tag: &str) -> &'static [&'static str] {
     match tag.to_ascii_lowercase().as_str() {
         "wdbx" => &["wdbx", "hnsw", "vector", "mvcc", "retrieval"],
         "abi" => &["abi", "foundation", "fm26", "apple-intelligence"],
-        "abbey" => &["abbey", "bot", "slash", "voice", "persona"],
-        "site-builder" => &["site", "builder", "pages", "frontend", "web"],
+        "abbey" | "abbey-bot" => &[
+            "abbey",
+            "abbey-bot",
+            "bot",
+            "slash",
+            "voice",
+            "persona",
+            "cargo",
+            "clippy",
+        ],
+        "site-builder" | "quesar" => &[
+            "quesar",
+            "site-builder",
+            "site",
+            "builder",
+            "pages",
+            "frontend",
+            "web",
+        ],
+        "ai & ml" => &[
+            "ai",
+            "ml",
+            "llm",
+            "inference",
+            "training",
+            "model",
+            "models",
+            "embedding",
+            "embeddings",
+            "machine-learning",
+        ],
         "mobile" => &["mobile", "ios", "ipad", "iphone", "android"],
         "apple-silicon" => &["silicon", "m1", "m2", "m3", "m4", "mlx", "metal"],
         "build" => &["build", "compile", "cargo", "ci", "gate", "clippy"],
@@ -231,6 +263,43 @@ mod tests {
     }
 
     #[test]
+    fn live_help_tags_match_project_aliases_and_punctuated_keywords() {
+        let available = ["abbey-bot", "abi", "wdbx", "quesar", "AI & ML", "Other"];
+        assert_eq!(
+            suggest_tags("Voice?", "cargo, clippy.", &available),
+            ["abbey-bot"]
+        );
+        assert_eq!(
+            suggest_tags("Frontend", "site-builder pages", &available),
+            ["quesar"]
+        );
+        assert_eq!(
+            suggest_tags("Inference", "LLM embeddings", &available),
+            ["AI & ML"]
+        );
+        assert_eq!(
+            suggest_tags("foundation", "retrieval", &available),
+            ["abi", "wdbx"]
+        );
+        assert!(suggest_tags("email failed", "claimed success", &["AI & ML"]).is_empty());
+    }
+
+    #[test]
+    fn resolution_status_is_never_suggested_even_when_explicit_in_prose() {
+        let available = ["Solved", "Unresolved", "SOLVED", "abbey-bot"];
+        for text in [
+            "unsolved voice bug",
+            "Solved voice bug",
+            "Unresolved voice bug",
+        ] {
+            assert_eq!(
+                suggest_tags(text, "Solved Unresolved", &available),
+                ["abbey-bot"]
+            );
+        }
+    }
+
+    #[test]
     fn clamp_title_enforces_discord_bounds() {
         assert!(clamp_title("a").is_err());
         assert_eq!(clamp_title("  ok  ").unwrap(), "ok");
@@ -249,8 +318,9 @@ mod tests {
         assert!(fill.allow.contains(required));
         assert!(fill.allow.contains(Permissions::VIEW_CHANNEL));
         assert!(fill.deny.contains(Permissions::MANAGE_THREADS));
-        assert!(!fill.deny.contains(Permissions::CREATE_PUBLIC_THREADS));
-        assert!(fill.added.contains(Permissions::CREATE_PUBLIC_THREADS));
+        assert!(fill.deny.contains(Permissions::CREATE_PUBLIC_THREADS));
+        assert!(!fill.added.contains(Permissions::CREATE_PUBLIC_THREADS));
+        assert!(!fill.allow.contains(Permissions::CREATE_PUBLIC_THREADS));
         assert!(!fill.added.contains(Permissions::VIEW_CHANNEL));
     }
 

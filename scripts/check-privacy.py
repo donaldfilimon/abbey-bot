@@ -19,7 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src"
 
 MACRO = re.compile(
-    r"(?:(?:tracing|log)::)?"
+    r"\b(?:(?:tracing|log)::)?"
     r"(?P<name>trace|debug|info|warn|error|event|span|log|print|println|eprint|"
     r"eprintln|write|writeln|panic|dbg)!\s*"
     r"(?P<delimiter>[({[])"
@@ -439,6 +439,7 @@ def scan_shell(path: pathlib.Path) -> list[str]:
 
 def self_test() -> None:
     safe = '''
+        const COMMANDS: &[Spec] = engage_catalog![spec!(Ocr, "OCR command")];
         tracing::warn!(body_status = 413, image_bytes_len = 12, "request body rejected");
         tracing::debug!("image bytes: {}", image_bytes.len());
         std::io::Write::write_vectored(

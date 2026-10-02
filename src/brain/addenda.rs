@@ -75,6 +75,7 @@ pub fn template(signal: StyleSignal) -> &'static str {
         StyleSignal::NoEmoji => "Do not use emoji.",
         StyleSignal::MoreEmoji => "An occasional emoji is welcome where it fits.",
         StyleSignal::PreferCode => "When code helps, show it in a fenced code block.",
+        StyleSignal::FewerFollowUps => "Suppress optional contextual follow-ups in this server.",
     }
 }
 
@@ -106,14 +107,26 @@ pub struct AddendaStatus {
     pub learning_enabled: bool,
     pub active: Vec<Addendum>,
     pub suppressions: Vec<Suppression>,
+    pub pending: Vec<FeedbackEvidence>,
+    pub policy: Policy,
+}
+
+/// Content-free evidence still pending, not the evidence consumed on apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeedbackEvidence {
+    pub signal: StyleSignal,
+    pub supporting: usize,
+    pub opposing: usize,
+    pub distinct_members: usize,
 }
 
 /// Every knob, in render order.
-const KNOBS: [StyleKnob; 4] = [
+const KNOBS: [StyleKnob; 5] = [
     StyleKnob::Length,
     StyleKnob::Formality,
     StyleKnob::Emoji,
     StyleKnob::Code,
+    StyleKnob::FollowUp,
 ];
 
 /// What a [`AddendaLedger::tick`] changed, for the operator log.
@@ -131,7 +144,7 @@ pub struct AddendaLedger {
     /// At most one per knob, kept in knob order.
     #[serde(default)]
     active: Vec<Addendum>,
-    /// At most one per knob, so bounded by the four knobs.
+    /// At most one per knob, so bounded by the five knobs.
     #[serde(default)]
     suppressed: Vec<Suppression>,
 }
@@ -142,6 +155,54 @@ pub fn member_hash(member_key: &str) -> u64 {
 }
 
 impl AddendaLedger {
+    /// Project only current observations without pruning or exposing member hashes.
+    pub fn pending_evidence(&self, policy: &Policy, now: u64) -> Vec<FeedbackEvidence> {
+        [
+            StyleSignal::TooLong,
+            StyleSignal::TooShort,
+            StyleSignal::TooFormal,
+            StyleSignal::TooCasual,
+            StyleSignal::NoEmoji,
+            StyleSignal::MoreEmoji,
+            StyleSignal::PreferCode,
+            StyleSignal::FewerFollowUps,
+        ]
+        .into_iter()
+        .filter_map(|signal| {
+            if self.is_suppressed(signal.knob(), now) {
+                return None;
+            }
+            let current = |o: &&Observation| o.at <= now && now - o.at <= policy.window_secs;
+            let mut members: Vec<_> = self
+                .observations
+                .iter()
+                .filter(current)
+                .filter(|o| o.signal == signal)
+                .map(|o| o.member)
+                .collect();
+            let supporting = members.len();
+            if supporting == 0 {
+                return None;
+            }
+            members.sort_unstable();
+            members.dedup();
+            let opposing = signal.opposite().map_or(0, |opposite| {
+                self.observations
+                    .iter()
+                    .filter(current)
+                    .filter(|o| o.signal == opposite)
+                    .count()
+            });
+            Some(FeedbackEvidence {
+                signal,
+                supporting,
+                opposing,
+                distinct_members: members.len(),
+            })
+        })
+        .collect()
+    }
+
     /// Record one signal from `member_key` (never stored raw).
     /// A signal for a suppressed knob is dropped.
     pub fn observe(&mut self, member_key: &str, signal: StyleSignal, now: u64) {

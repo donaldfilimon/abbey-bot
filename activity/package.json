@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Abbey Embedded App client (P2). No OAuth secrets in this package.",
   "scripts": {
-    "build": "esbuild src/main.js --bundle --format=iife --outfile=app.js --platform=browser --target=es2020"
+    "build": "esbuild src/main.js --bundle --format=iife --outfile=app.js --platform=browser --target=es2020",
+    "test": "node --check court.js && node --test server/court.test.mjs server/court-client.test.mjs server/activity-bridge.test.mjs"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.4.0"

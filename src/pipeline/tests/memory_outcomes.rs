@@ -106,8 +106,8 @@ impl Outbound for Out {
         if attempts.is_empty() {
             assert_eq!(
                 AppState::lock(&self.state.memory_queue).len(),
-                1,
-                "the memory tool must have queued before continuation failed: {}",
+                0,
+                "the model tool must refuse personal writes before continuation fails: {}",
                 message.text
             );
         }
@@ -131,7 +131,7 @@ impl Outbound for Out {
 }
 
 #[tokio::test]
-async fn continuation_failure_delivers_its_memory_outcome_without_reproposal() {
+async fn continuation_failure_does_not_create_a_personal_memory_notice_or_reproposal() {
     for fail_at in [None, Some(2)] {
         let (endpoint, provider) = provider();
         let state = state(endpoint);
@@ -157,10 +157,9 @@ async fn continuation_failure_delivers_its_memory_outcome_without_reproposal() {
         let attempts = out.attempts.lock().unwrap();
         assert_eq!(
             attempts.len(),
-            2,
-            "failure reply followed by the original turn's memory decision"
+            1,
+            "refused model writes create no queued admission or memory notice"
         );
-        assert!(attempts[1].contains("admission is unknown"));
         assert!(AppState::lock(&state.memory_queue).is_empty());
         assert!(
             state
@@ -170,14 +169,14 @@ async fn continuation_failure_delivers_its_memory_outcome_without_reproposal() {
         );
         assert_eq!(
             state.episode_gate.as_ref().unwrap().counters().unavailable,
-            1,
-            "a failed notice does not replay the proposal"
+            0,
+            "a model write refusal never invokes the admission gate"
         );
     }
 }
 
 #[tokio::test]
-async fn failed_original_delivery_cancels_pending_memory_before_submission() {
+async fn failed_original_delivery_leaves_no_model_memory_to_submit() {
     let (endpoint, provider) = provider();
     let state = state(endpoint);
     let out = Out {

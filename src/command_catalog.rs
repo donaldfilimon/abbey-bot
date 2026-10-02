@@ -33,6 +33,20 @@ pub enum CommandKey {
     ForumDraft,
     ForumPost,
     ForumPerms,
+    EngageInvite,
+    EngageIntroduce,
+    EngageIntroduction,
+    EngagePreferences,
+    EngageConfigure,
+    EngageStatus,
+    EngageSnooze,
+    EngageStop,
+    EngageResume,
+    EngageWeekly,
+    EngageDismiss,
+    EngageFeedback,
+    EngageCommunityFeature,
+    EngageCommunityStatus,
     WorkProject,
     WorkProjects,
     WorkGoal,
@@ -52,6 +66,7 @@ pub enum CommandKey {
     WorkReminder,
     WorkRecallConfigure,
     WorkRecallShow,
+    MemoryUse,
     Remember,
     Forget,
     PendingList,
@@ -251,6 +266,7 @@ pub enum HelpSection {
     Conversation,
     Memory,
     Work,
+    Engagement,
     Images,
     Moderation,
     Server,
@@ -258,11 +274,12 @@ pub enum HelpSection {
     Administration,
 }
 impl HelpSection {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Start,
         Self::Conversation,
         Self::Memory,
         Self::Work,
+        Self::Engagement,
         Self::Images,
         Self::Moderation,
         Self::Server,
@@ -275,6 +292,7 @@ impl HelpSection {
             Self::Conversation => "conversation",
             Self::Memory => "memory",
             Self::Work => "work",
+            Self::Engagement => "engagement",
             Self::Images => "images",
             Self::Moderation => "moderation",
             Self::Server => "server",
@@ -288,6 +306,7 @@ impl HelpSection {
             Self::Conversation => "Conversation",
             Self::Memory => "Memory",
             Self::Work => "Work",
+            Self::Engagement => "Engagement",
             Self::Images => "Images",
             Self::Moderation => "Moderation",
             Self::Server => "Server",
@@ -397,6 +416,9 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
         "**Abbey · {}**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n",
         section.label()
     );
+    if section == HelpSection::Voice {
+        text.push_str("\nServer voice only; group DM calls unsupported. Save your own `/voice consent` before listening. Music grants no listening consent. `/voice status` checks the session; a present participant or server manager stops it with `/voice leave`.\n");
+    }
     let mut count = 0;
     let mut member_menu = false;
     let mut message_menu = false;

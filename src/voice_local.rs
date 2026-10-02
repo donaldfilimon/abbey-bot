@@ -75,6 +75,7 @@ enum TurnOutcome {
         transcript: String,
         spoken_answer: String,
         persist: bool,
+        memory_guard: generation::consent::GenerationGuard,
         audio: DecodedAudio,
     },
     Ignored {
@@ -124,6 +125,7 @@ struct PendingCommit {
     scope: String,
     transcript: String,
     spoken_answer: String,
+    memory_guard: generation::consent::GenerationGuard,
 }
 
 fn should_commit_turn(persist_requested: bool, verification_active: bool) -> bool {
@@ -278,23 +280,27 @@ pub async fn run(mut session: LocalSession) {
                     PlaybackObservation::NaturalCompletion => {
                         session.playback.lock().await.take();
                         let pending = pending_commit.take().filter(|pending| pending.turn == turn);
-                        let has_pending_commit = pending.is_some();
                         let committed = session
                             .runtime
                             .with_media_enabled(session.epoch, || {
-                                if let Some(pending) = pending {
+                                let committed = if let Some(pending) = pending
+                                    && pending.memory_guard.check(&session.state).is_ok()
+                                {
                                     AppState::lock(&session.state.engine).commit(
                                         &pending.scope,
                                         &pending.transcript,
                                         &pending.spoken_answer,
                                         runtime::now(),
                                     );
-                                }
+                                    true
+                                } else {
+                                    false
+                                };
                                 // Only Songbird's natural `PlayMode::End` is
                                 // completion evidence. Verification may still
                                 // suppress the conversational commit.
                                 session.runtime.note_completed_turn();
-                                has_pending_commit
+                                committed
                             })
                             .unwrap_or(false);
                         tracing::info!(
@@ -549,6 +555,7 @@ pub async fn run(mut session: LocalSession) {
                         transcript,
                         spoken_answer,
                         persist,
+                        memory_guard,
                         audio,
                     }
                         if turn == turn_generation && session.runtime.media_enabled(session.epoch) =>
@@ -558,6 +565,8 @@ pub async fn run(mut session: LocalSession) {
                             &session.playback,
                             &session.events,
                             &session.runtime,
+                            &session.state,
+                            &memory_guard,
                             session.epoch,
                             audio,
                             turn,
@@ -573,6 +582,7 @@ pub async fn run(mut session: LocalSession) {
                                     scope,
                                     transcript,
                                     spoken_answer,
+                                    memory_guard,
                                 });
                                 tracing::info!(
                                     epoch = session.epoch,
@@ -592,6 +602,12 @@ pub async fn run(mut session: LocalSession) {
                             Ok(false) => {
                                 // Consent or transport state changed after the
                                 // turn was prepared; playback did not begin.
+                                set_activity_status(
+                                    &session,
+                                    !recognition.is_empty() || !recognition_queue.is_empty(),
+                                    !turns.is_empty() || ready_reply.is_some(),
+                                    "prepared output became stale; listening for the next turn",
+                                ).await;
                             }
                             Err(error) => {
                                 tracing::error!(error = %brief(&error), "local voice playback failed");
@@ -738,11 +754,14 @@ fn playback_stop_requested(result: songbird::tracks::TrackResult<()>) -> bool {
     result.is_ok()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn play_audio(
     call: &Arc<Mutex<songbird::Call>>,
     playback: &SharedPlayback,
     events: &mpsc::UnboundedSender<SessionEvent>,
     runtime: &VoiceRuntime,
+    state: &AppState,
+    memory_guard: &generation::consent::GenerationGuard,
     epoch: u64,
     audio: DecodedAudio,
     turn: u64,
@@ -754,7 +773,19 @@ async fn play_audio(
     )
     .into();
     let mut call = call.lock().await;
-    let Some(handle) = runtime.with_media_enabled(epoch, || call.play_input(input)) else {
+    if memory_guard.check(state).is_err() {
+        return Ok(false);
+    }
+    let Some(handle) = runtime
+        .with_media_enabled(epoch, || {
+            memory_guard.check(state).ok().map(|()| {
+                #[cfg(test)]
+                runtime.record_spoken_play_start_for_test();
+                call.play_input(input)
+            })
+        })
+        .flatten()
+    else {
         return Ok(false);
     };
     drop(call);
@@ -763,16 +794,22 @@ async fn play_audio(
         return Err(error);
     }
     let mut playback = playback.lock().await;
+    if memory_guard.check(state).is_err() {
+        let _ = handle.stop();
+        return Ok(false);
+    }
     // Stop only the previous spoken reply. Music owns a separate handle.
     // Recheck the media gate while installing so cancellation cannot leave an
     // unowned TTS handle after the old slot was already reaped.
-    if runtime
-        .with_media_enabled(epoch, || {
-            if let Some(previous) = playback.replace(handle.clone()) {
-                let _ = previous.stop();
-            }
-        })
-        .is_none()
+    if runtime.with_media_enabled(epoch, || {
+        if memory_guard.check(state).is_err() {
+            return false;
+        }
+        if let Some(previous) = playback.replace(handle.clone()) {
+            let _ = previous.stop();
+        }
+        true
+    }) != Some(true)
     {
         let _ = handle.stop();
         return Ok(false);

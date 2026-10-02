@@ -97,6 +97,15 @@ pub(super) async fn generate_turn(
     safely_attributed: bool,
 ) -> TurnOutcome {
     let snapshot = work.runtime.snapshot().await;
+    if !work.runtime.media_enabled(work.consent_epoch)
+        || (safely_attributed
+            && !work
+                .runtime
+                .epoch_attests(work.consent_epoch, work.utterance.speaker_id.unwrap_or(0))
+                .await)
+    {
+        return TurnOutcome::Ignored { turn: work.turn };
+    }
     let persona = persona::route(&transcript, None).persona;
     let scope = voice_scope(
         work.guild_id,
@@ -113,6 +122,7 @@ pub(super) async fn generate_turn(
             // session. Authorized withdrawal already returned above.
             return TurnOutcome::Ignored { turn: work.turn };
         };
+        let memory_guard = generation::consent::GenerationGuard::fresh(&work.state);
         let spoken_answer = crate::offline_voice::spoken_text(&answer);
         let audio = match work.client.synthesize(&spoken_answer).await {
             Ok(audio) => audio,
@@ -124,6 +134,16 @@ pub(super) async fn generate_turn(
                 };
             }
         };
+        if let Err(error) = memory_guard.check(&work.state) {
+            return TurnOutcome::Failed {
+                turn: work.turn,
+                stage: "personal context",
+                error: error.to_string(),
+            };
+        }
+        if !work.runtime.media_enabled(work.consent_epoch) {
+            return TurnOutcome::Ignored { turn: work.turn };
+        }
         return TurnOutcome::Ready {
             turn: work.turn,
             ready_at: Instant::now(),
@@ -131,6 +151,7 @@ pub(super) async fn generate_turn(
             transcript,
             spoken_answer,
             persist: false,
+            memory_guard,
             audio,
         };
     }
@@ -152,17 +173,29 @@ pub(super) async fn generate_turn(
     } else {
         PersonaContext::empty()
     };
+    let request = generation::Ask {
+        subject: safely_attributed.then_some((scoped_guild.as_str(), scoped_user.as_str())),
+        session_mode: crate::generation::SessionMode::SourceOnly,
+        scope: &scope,
+        context: &context,
+        user_input: &transcript,
+        now: runtime::now(),
+    };
+    let memory_guard = match generation::consent::GenerationGuard::capture(&work.state, &request) {
+        Ok(guard) => guard,
+        Err(error) => {
+            return TurnOutcome::Failed {
+                turn: work.turn,
+                stage: "personal context",
+                error: error.to_string(),
+            };
+        }
+    };
     let generation = generation::generate_without_delivery(
         &work.state,
         &work.backend,
         persona,
-        &generation::Ask {
-            session_mode: crate::generation::SessionMode::Shared,
-            scope: &scope,
-            context: &context,
-            user_input: &transcript,
-            now: runtime::now(),
-        },
+        &request,
         Some(VOICE_SYSTEM_SUFFIX),
     )
     .await;
@@ -176,6 +209,16 @@ pub(super) async fn generate_turn(
             };
         }
     };
+    if let Err(error) = memory_guard.check(&work.state) {
+        return TurnOutcome::Failed {
+            turn: work.turn,
+            stage: "personal context",
+            error: error.to_string(),
+        };
+    }
+    if !work.runtime.media_enabled(work.consent_epoch) {
+        return TurnOutcome::Ignored { turn: work.turn };
+    }
     let spoken_answer = crate::offline_voice::spoken_text(&answer);
     let synthesis_started = Instant::now();
     let audio = match work.client.synthesize(&spoken_answer).await {
@@ -193,13 +236,25 @@ pub(super) async fn generate_turn(
         synthesis_seconds = synthesis_started.elapsed().as_secs_f64(),
         "local voice synthesis finished"
     );
+    if let Err(error) = memory_guard.check(&work.state) {
+        return TurnOutcome::Failed {
+            turn: work.turn,
+            stage: "personal context",
+            error: error.to_string(),
+        };
+    }
+    if !work.runtime.media_enabled(work.consent_epoch) {
+        return TurnOutcome::Ignored { turn: work.turn };
+    }
     TurnOutcome::Ready {
         turn: work.turn,
         ready_at: Instant::now(),
         scope,
         transcript,
         spoken_answer,
-        persist: safely_attributed,
+        // Voice recognition is transient; never retain a conversational transcript.
+        persist: false,
+        memory_guard,
         audio,
     }
 }

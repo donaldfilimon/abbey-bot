@@ -1,4 +1,5 @@
 //! Per-generation completion ownership; background drains cannot steal replies.
+#[cfg(test)]
 use crate::runtime::AppState;
 use std::future::Future;
 use std::sync::Mutex;
@@ -94,6 +95,7 @@ impl Default for MemoryTurn {
 }
 
 impl MemoryTurn {
+    #[cfg(test)]
     pub fn completion(&self) -> Completion {
         let (sender, receiver) = oneshot::channel();
         AppState::lock(&self.pending).push(receiver);

@@ -200,12 +200,23 @@ impl DiscordFixture {
                             .unwrap();
                         ("image/png", encoded.into_inner())
                     } else if method == "POST" && route == "/v1/chat/completions" {
-                        (
-                            "application/json",
-                            json!({"choices":[{"message":{"role":"assistant","content":"x".repeat(3_000)},"finish_reason":"stop"}]})
-                                .to_string()
-                                .into_bytes(),
-                        )
+                        if body["stream"] == true {
+                            (
+                                "text/event-stream",
+                                format!(
+                                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                                    json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"x".repeat(3_000)},"finish_reason":null}]}),
+                                    json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})
+                                ).into_bytes(),
+                            )
+                        } else {
+                            (
+                                "application/json",
+                                json!({"choices":[{"message":{"role":"assistant","content":"x".repeat(3_000)},"finish_reason":"stop"}]})
+                                    .to_string()
+                                    .into_bytes(),
+                            )
+                        }
                     } else if is_permission_lookup && route.contains("/members/") {
                         let mut member = Member::default();
                         member.user = user(ACTOR);
@@ -637,6 +648,7 @@ fn assert_private_no_mentions_reply(requests: &[Request]) -> &str {
 mod admin_tests;
 mod guard_tests;
 mod help_tests;
+mod media_consent_tests;
 mod memory_browser_tests;
 mod menu_tests;
 mod pending_tests;

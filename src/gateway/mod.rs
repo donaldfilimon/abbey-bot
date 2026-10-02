@@ -1,6 +1,8 @@
 //! Gateway trinity — exports, validated connector configuration, and wiring.
 
 pub mod discord;
+mod engagement_community;
+pub(crate) mod engagement_delivery;
 pub(crate) mod interaction_outcomes;
 pub mod shared;
 pub mod slack;
@@ -174,3 +176,5 @@ mod connector_configuration_tests {
         assert_eq!(error, "connector configuration is not valid Unicode");
     }
 }
+
+pub(crate) mod community_ops;

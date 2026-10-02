@@ -35,6 +35,8 @@ mod scoring;
 pub use catalog::ProviderCatalog;
 pub use circuit::{CircuitPhase, ProviderFailureKind, RetryAfter};
 pub use config::ProviderConfig;
+#[cfg(test)]
+pub(crate) use domain::AdapterRequest;
 pub use domain::{
     BlockedReason, DetectionState, DiscoveryBoundary, Eligibility, IsolationCapabilities,
     ProviderClass, ProviderDescriptor, ProviderId, ProviderProvenance, TurnAdapter, TurnFuture,

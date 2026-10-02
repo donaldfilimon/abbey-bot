@@ -1,264 +1,412 @@
-/**
- * Preferred rebuild path using @discord/embedded-app-sdk.
- *
- * Pages currently serves the hand-maintained ../app.js (no bundler / no CDN
- * PREFIX). Keep both in sync for P2 behavior:
- *  - ready()
- *  - pre-auth channel/guild from SDK URL context
- *  - getInstanceConnectedParticipants + ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE
- *    after ready (no OAuth scopes required)
- *  - authorize + server token exchange + authenticate when endpoint is live
- *  - getChannel + truthful setActivity after authenticate
- *
- * Rebuild with a bundler into ../app.js when you want the official SDK package
- * in production. Never put DISCORD_CLIENT_SECRET in client code.
- */
-import { DiscordSDK } from '@discord/embedded-app-sdk';
+/** Abbey Activity client source. Build app.js with npm run build. */
+(function () {
+  var CLIENT_ID = '1147940171099152464';
+  var KNOWN_CHANNELS = {
+    '1495755277859815595': 'Office Hours',
+  };
+  var KNOWN_GUILDS = {
+    '1275617641620443146': 'MLAI Community',
+  };
 
-const CLIENT_ID = '1147940171099152464';
-const KNOWN_CHANNELS = {
-  '1495755277859815595': 'Office Hours',
-};
-const KNOWN_GUILDS = {
-  '1275617641620443146': 'MLAI Community',
-};
-const TOKEN_PATHS = ['/.proxy/api/token', './api/token', '/api/token'];
+  var TOKEN_PATHS = [
+    '/.proxy/api/token',
+    './api/token',
+    '/api/token',
+  ];
 
-const els = {
-  status: document.getElementById('status'),
-  mode: document.getElementById('mode'),
-  channel: document.getElementById('channel'),
-  guild: document.getElementById('guild'),
-  participants: document.getElementById('participants'),
-  auth: document.getElementById('auth'),
-  hint: document.getElementById('hint'),
-};
+  var els = {
+    status: document.getElementById('status'),
+    mode: document.getElementById('mode'),
+    channel: document.getElementById('channel'),
+    guild: document.getElementById('guild'),
+    participants: document.getElementById('participants'),
+    auth: document.getElementById('auth'),
+    hint: document.getElementById('hint'),
+  };
 
-function setText(el, text) {
-  if (el) el.textContent = text;
-}
+  var params = new URLSearchParams(window.location.search);
+  var frameId = params.get('frame_id') || '';
+  var channelId = params.get('channel_id') || '';
+  var guildId = params.get('guild_id') || '';
+  var instanceId = params.get('instance_id') || '';
+  var forceOauth = params.get('oauth') === '1';
+  var source = window.parent === window ? null : (window.parent.opener || window.parent);
+  // Match production/native RPC origins; the exact parent source is also required.
+  var rpcOrigins = new Set([window.location.origin, 'https://discord.com',
+    'https://discordapp.com', 'https://ptb.discord.com', 'https://ptb.discordapp.com',
+    'https://canary.discord.com', 'https://canary.discordapp.com',
+    'https://staging.discord.co', 'https://pax.discord.com', 'null']);
 
-function setMode(mode) {
-  setText(els.mode, mode);
-  if (els.mode) {
-    els.mode.classList.remove('mode-idle', 'mode-waiting');
-    els.mode.classList.add(mode === 'idle' ? 'mode-idle' : 'mode-waiting');
+  var state = {
+    mode: 'waiting',
+    ready: false,
+    authenticated: false,
+    channelName: null,
+    participants: [],
+    nonce: 0,
+    pending: Object.create(null),
+  };
+
+  function setText(el, text) {
+    if (el) el.textContent = text;
   }
-}
 
-function formatChannel(channelId, name) {
-  if (!channelId) return 'Not in an embedded Activity frame';
-  if (name) return `${name} (${channelId})`;
-  const known = KNOWN_CHANNELS[channelId];
-  return known ? `${known} (${channelId})` : channelId;
-}
-
-function formatGuild(guildId, channelId) {
-  if (!guildId) return channelId ? 'DM / group DM (no guild)' : '\u2014';
-  const known = KNOWN_GUILDS[guildId];
-  return known ? `${known} (${guildId})` : guildId;
-}
-
-function renderParticipants(participants) {
-  const list = participants || [];
-  const n = list.length;
-  if (!n) {
-    setText(els.participants, '0 participants');
-    return;
-  }
-  const names = list.map((p) => p.global_name || p.username || p.id || 'member');
-  setText(els.participants, `${n} \u2014 ${names.join(', ')}`);
-}
-
-async function tokenEndpointReady(forceOauth) {
-  if (forceOauth) return TOKEN_PATHS[0];
-  for (const path of TOKEN_PATHS) {
-    try {
-      const res = await fetch(path.replace(/\/token$/, '/token/health'), {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      if (res.ok) {
-        const body = await res.json().catch(() => ({}));
-        if (body && body.ok) return path;
-      }
-    } catch {
-      /* try next */
+  function setMode(mode) {
+    state.mode = mode;
+    setText(els.mode, mode);
+    if (els.mode) {
+      els.mode.classList.remove('mode-idle', 'mode-waiting');
+      els.mode.classList.add(mode === 'idle' ? 'mode-idle' : 'mode-waiting');
     }
   }
-  return null;
-}
 
-async function exchangeCode(code, tokenPath) {
-  const res = await fetch(tokenPath, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
-  if (!res.ok) throw new Error(`token HTTP ${res.status}`);
-  const body = await res.json();
-  if (!body.access_token) throw new Error('no access_token');
-  return body.access_token;
-}
-
-async function syncParticipants(discordSdk) {
-  try {
-    const { participants } =
-      await discordSdk.commands.getInstanceConnectedParticipants();
-    renderParticipants(participants);
-  } catch (err) {
-    setText(
-      els.participants,
-      `Participants unavailable (${err?.message || 'rpc'})`,
-    );
+  function formatChannel() {
+    if (!channelId) return 'Not in an embedded Activity frame';
+    if (state.channelName) return state.channelName + ' (' + channelId + ')';
+    var known = KNOWN_CHANNELS[channelId];
+    if (known) return known + ' (' + channelId + ')';
+    return channelId;
   }
-  try {
-    await discordSdk.subscribe(
-      'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE',
-      ({ participants }) => renderParticipants(participants),
-    );
-  } catch {
-    /* optional */
+
+  function formatGuild() {
+    if (!guildId) return channelId ? 'DM / group DM (no guild)' : '\u2014';
+    var known = KNOWN_GUILDS[guildId];
+    return known ? known + ' (' + guildId + ')' : guildId;
   }
-}
 
-async function setupAuthenticated(discordSdk, tokenPath) {
-  setText(els.auth, 'Attempting authorize\u2026');
-  const { code } = await discordSdk.commands.authorize({
-    client_id: CLIENT_ID,
-    response_type: 'code',
-    state: '',
-    prompt: 'none',
-    scope: [
-      'identify',
-      'guilds',
-      'applications.commands',
-      'rpc.activities.write',
-    ],
-  });
+  function renderContext() {
+    setText(els.channel, formatChannel());
+    setText(els.guild, formatGuild());
+  }
 
-  setText(els.auth, 'Exchanging code (server-side secret)\u2026');
-  const access_token = await exchangeCode(code, tokenPath);
-  const auth = await discordSdk.commands.authenticate({ access_token });
-  setText(
-    els.auth,
-    auth?.user?.username
-      ? `Authenticated as ${auth.user.username}`
-      : 'Authenticated',
-  );
-
-  let channelName = null;
-  if (discordSdk.channelId != null && discordSdk.guildId != null) {
-    try {
-      const channel = await discordSdk.commands.getChannel({
-        channel_id: discordSdk.channelId,
-      });
-      channelName = channel?.name ?? null;
-    } catch {
-      /* keep pre-auth label */
+  function renderParticipants() {
+    var n = state.participants ? state.participants.length : 0;
+    if (!n) {
+      setText(els.participants, '0 participants');
+      return;
     }
-  }
-  setText(els.channel, formatChannel(discordSdk.channelId, channelName));
-  setText(els.guild, formatGuild(discordSdk.guildId, discordSdk.channelId));
-
-  const mode = discordSdk.channelId ? 'idle' : 'waiting';
-  setMode(mode);
-  // Truthful mode only — never invent a bot Go Live / stream.
-  try {
-    await discordSdk.commands.setActivity({
-      activity: {
-        type: 0,
-        details: 'Abbey \u00b7 Intelligence Without Limits',
-        state:
-          mode === 'waiting'
-            ? 'Waiting for voice context'
-            : 'Idle in voice Activity',
-      },
+    var names = state.participants.map(function (p) {
+      return p.global_name || p.username || p.id || 'member';
     });
-  } catch {
-    /* needs rpc.activities.write */
+    setText(els.participants, n + ' \u2014 ' + names.join(', '));
   }
-}
 
-async function main() {
-  if (window.parent === window) {
+  function nextNonce() {
+    state.nonce += 1;
+    return 'abbey-' + state.nonce;
+  }
+
+  function sendCommand(cmd, args, evt) {
+    return new Promise(function (resolve, reject) {
+      if (!source) {
+        reject(new Error('No Discord parent frame'));
+        return;
+      }
+      var nonce = nextNonce();
+      state.pending[nonce] = { resolve: resolve, reject: reject };
+      var frame = { cmd: cmd, args: args || {}, nonce: nonce };
+      if (evt) frame.evt = evt;
+      source.postMessage([1, frame], '*');
+      setTimeout(function () {
+        if (state.pending[nonce]) {
+          delete state.pending[nonce];
+          reject(new Error('RPC timeout: ' + cmd));
+        }
+      }, 8000);
+    });
+  }
+
+  function handleFrameMessage(payload) {
+    if (!payload || typeof payload !== 'object') return;
+
+    if (payload.nonce && state.pending[payload.nonce]) {
+      var pending = state.pending[payload.nonce];
+      delete state.pending[payload.nonce];
+      if (payload.evt === 'ERROR') {
+        pending.reject(
+          new Error((payload.data && payload.data.message) || 'RPC error')
+        );
+        return;
+      }
+      pending.resolve(payload.data);
+      return;
+    }
+
+    if (payload.evt === 'READY') {
+      onReady();
+      return;
+    }
+    if (
+      payload.evt === 'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE' &&
+      payload.data
+    ) {
+      state.participants = payload.data.participants || [];
+      renderParticipants();
+    }
+  }
+
+  function onMessage(event) {
+    if (event.source !== source || !rpcOrigins.has(event.origin)) return;
+    var data = event.data;
+    if (!Array.isArray(data) || data.length !== 2 || data[0] !== 1) return;
+    handleFrameMessage(data[1]);
+  }
+
+  function healthPathFor(tokenPath) {
+    if (tokenPath.slice(-6) === '/token') {
+      return tokenPath.slice(0, -6) + '/token/health';
+    }
+    return tokenPath + '/health';
+  }
+
+  async function tokenEndpointReady() {
+    if (forceOauth) return TOKEN_PATHS[0];
+    for (var i = 0; i < TOKEN_PATHS.length; i++) {
+      var path = TOKEN_PATHS[i];
+      try {
+        var res = await fetch(healthPathFor(path), {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) continue;
+        var body = await res.json().catch(function () {
+          return {};
+        });
+        if (body && body.ok) return path;
+      } catch (_) {
+        /* try next */
+      }
+    }
+    return null;
+  }
+
+  async function tryTokenExchange(code, tokenPath) {
+    var res = await fetch(tokenPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code }),
+    });
+    if (!res.ok) throw new Error('token HTTP ' + res.status + ' at ' + tokenPath);
+    var body = await res.json();
+    if (!body || !body.access_token) throw new Error('no access_token');
+    return body.access_token;
+  }
+
+  async function syncParticipants() {
+    try {
+      var part = await sendCommand(
+        'GET_ACTIVITY_INSTANCE_CONNECTED_PARTICIPANTS',
+        {}
+      );
+      state.participants = (part && part.participants) || [];
+      renderParticipants();
+    } catch (err) {
+      setText(
+        els.participants,
+        'Participants unavailable (' +
+          ((err && err.message) || 'rpc') +
+          ')'
+      );
+    }
+    try {
+      await sendCommand(
+        'SUBSCRIBE',
+        {},
+        'ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE'
+      );
+    } catch (_) {
+      /* optional */
+    }
+  }
+
+  async function applySetActivity() {
+    try {
+      await sendCommand('SET_ACTIVITY', {
+        activity: {
+          type: 0,
+          details: 'Abbey \u00b7 Intelligence Without Limits',
+          state:
+            state.mode === 'waiting'
+              ? 'Waiting for voice context'
+              : 'Idle in voice Activity',
+        },
+      });
+    } catch (_) {
+      /* needs rpc.activities.write after authorize */
+    }
+  }
+
+  async function tryAuthorizeFlow(tokenPath) {
+    setText(els.auth, 'Attempting authorize\u2026');
+    try {
+      var authz = await sendCommand('AUTHORIZE', {
+        client_id: CLIENT_ID,
+        response_type: 'code',
+        state: '',
+        prompt: 'none',
+        scope: [
+          'identify',
+          'guilds',
+          'applications.commands',
+          'rpc.activities.write',
+        ],
+      });
+      var code = authz && authz.code;
+      if (!code) throw new Error('authorize returned no code');
+
+      setText(els.auth, 'Exchanging code (server-side secret)\u2026');
+      var accessToken = await tryTokenExchange(code, tokenPath);
+
+      var auth = await sendCommand('AUTHENTICATE', {
+        access_token: accessToken,
+      });
+      state.authenticated = true;
+      setText(
+        els.auth,
+        'Authenticated' +
+          (auth && auth.user && auth.user.username
+            ? ' as ' + auth.user.username
+            : '')
+      );
+
+      if (channelId && guildId) {
+        try {
+          var channel = await sendCommand('GET_CHANNEL', {
+            channel_id: channelId,
+          });
+          if (channel && channel.name) {
+            state.channelName = channel.name;
+            renderContext();
+          }
+        } catch (_) {
+          /* keep pre-auth label */
+        }
+      }
+
+      await applySetActivity();
+      setText(els.status, 'Abbey is ready in this voice Activity.');
+    } catch (err) {
+      state.authenticated = false;
+      setText(
+        els.auth,
+        'Pre-auth context only \u2014 OAuth/token exchange failed'
+      );
+      setText(
+        els.hint,
+        'Token path was selected but auth failed: ' +
+          ((err && err.message) || String(err)) +
+          '. Channel/guild IDs and participant count still come from the Activity iframe (no OAuth required for those).'
+      );
+    }
+  }
+
+  async function onReady() {
+    if (state.ready) return;
+    state.ready = true;
+    setText(els.status, 'Abbey is ready in this voice Activity.');
+    renderContext();
+    setMode(channelId ? 'idle' : 'waiting');
+    setText(els.auth, 'READY \u2014 pre-auth context');
+
+    // Participants require no OAuth scopes (Embedded App SDK docs).
+    await syncParticipants();
+
+    var tokenPath = await tokenEndpointReady();
+    if (!tokenPath) {
+      setText(
+        els.hint,
+        'Channel/guild + participant count are live without OAuth. Map a token exchange host and open with ?oauth=1 (or serve /api/token/health) to enable authorize, getChannel name, and setActivity. Secret stays in operator env \u2014 see activity/server/token-exchange.example.mjs.'
+      );
+      return;
+    }
+    await tryAuthorizeFlow(tokenPath);
+  }
+
+  function showPlainBrowserSmoke() {
     // Pages browser check only — never claim Portal URL mapping from this tab.
     setText(
       els.status,
-      'Pages shell only \u2014 ready() needs the Discord Activity iframe (rocket launch).',
+      'Pages shell only \u2014 ready() needs the Discord Activity iframe (rocket launch).'
     );
     setText(els.auth, 'No Discord parent (plain browser)');
     setText(
       els.hint,
-      'This tab proves GitHub Pages is serving activity/. It does not prove Developer Portal URL mapping. Launch Abbey from the Discord rocket in a voice channel to complete ready(). Conversational voice still needs /voice join consent:true \u2014 this Activity never fakes Go Live or claims Portal is done.',
+      'This tab proves GitHub Pages is serving activity/. It does not prove Developer Portal URL mapping. Launch Abbey from the Discord rocket in a voice channel to complete ready(). Conversational voice still needs /voice join consent:true \u2014 this Activity never fakes Go Live or claims Portal is done.'
     );
+    setText(els.participants, '\u2014');
     setMode('waiting');
-    return;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const forceOauth = params.get('oauth') === '1';
-
-  let discordSdk;
-  try {
-    discordSdk = new DiscordSDK(CLIENT_ID);
-  } catch (err) {
+  function showReadyTimeout() {
+    if (state.ready) return;
     setText(
       els.status,
-      'Waiting for Discord ready() \u2014 SDK init failed (often missing frame_id / instance_id / platform).',
-    );
-    setText(els.auth, err?.message || 'SDK init failed');
-    setText(
-      els.hint,
-      'Embedded App parent may exist but the SDK could not start. Often a cold Pages/proxy cache or Portal URL map still unset/mismatched. This client cannot see Portal state \u2014 do not treat this message as proof the map is wrong or done. Retry rocket launch after ~1 min; only Donald confirming Abbey inside the discordsays iframe closes the operator gate.',
-    );
-    setMode('waiting');
-    return;
-  }
-
-  const readyWatchdog = setTimeout(() => {
-    setText(
-      els.status,
-      'Waiting for Discord ready() \u2014 parent frame present, READY never arrived.',
+      'Waiting for Discord ready() \u2014 parent frame present, READY never arrived.'
     );
     setText(els.auth, 'ready() timeout');
     setText(
       els.hint,
-      'Embedded App parent exists but ready() did not complete. Often a cold Pages/proxy cache, missing frame_id, or Portal URL map still unset/mismatched. This client cannot see Portal state \u2014 do not treat this message as proof the map is wrong or done. Retry rocket launch after ~1 min; only Donald confirming Abbey inside the discordsays iframe closes the operator gate.',
+      'Embedded App parent exists but ready() did not complete. Often a cold Pages/proxy cache, missing frame_id, or Portal URL map still unset/mismatched. This client cannot see Portal state \u2014 do not treat this message as proof the map is wrong or done. Retry rocket launch after ~1 min; only Donald confirming Abbey inside the discordsays iframe closes the operator gate.'
     );
     setMode('waiting');
-  }, 8000);
+  }
 
-  await discordSdk.ready();
-  clearTimeout(readyWatchdog);
-  setText(els.status, 'Abbey is ready in this voice Activity.');
-  setText(els.channel, formatChannel(discordSdk.channelId, null));
-  setText(els.guild, formatGuild(discordSdk.guildId, discordSdk.channelId));
-  setMode(discordSdk.channelId ? 'idle' : 'waiting');
-  setText(els.auth, 'READY \u2014 pre-auth context');
+  renderContext();
+  setMode('waiting');
+  setText(els.auth, 'Connecting\u2026');
+  setText(els.participants, '\u2014');
 
-  await syncParticipants(discordSdk);
-
-  const tokenPath = await tokenEndpointReady(forceOauth);
-  if (!tokenPath) {
-    setText(
-      els.hint,
-      'Channel/guild + participant count are live without OAuth. Map a token exchange host and open with ?oauth=1 (or serve /api/token/health) to enable authorize, getChannel name, and setActivity. Secret stays in operator env \u2014 see activity/server/token-exchange.example.mjs.',
-    );
+  if (!source) {
+    showPlainBrowserSmoke();
+    window.__abbeyActivity = {
+      clientId: CLIENT_ID,
+      channelId: channelId,
+      guildId: guildId,
+      instanceId: instanceId,
+      getMode: function () {
+        return state.mode;
+      },
+      isAuthenticated: function () {
+        return state.authenticated;
+      },
+      isReady: function () {
+        return state.ready;
+      },
+    };
     return;
   }
 
-  try {
-    await setupAuthenticated(discordSdk, tokenPath);
-  } catch (err) {
-    setText(els.auth, 'Pre-auth context only \u2014 OAuth/token exchange failed');
-    setText(
-      els.hint,
-      `Token path ${tokenPath} was reachable but auth failed: ${
-        err?.message || String(err)
-      }`,
-    );
-  }
-}
+  window.addEventListener('message', onMessage);
+  source.postMessage(
+    [
+      0,
+      {
+        v: 1,
+        encoding: 'json',
+        client_id: CLIENT_ID,
+        frame_id: frameId,
+      },
+    ],
+    '*'
+  );
 
-main();
+  setTimeout(function () {
+    if (!state.ready) showReadyTimeout();
+  }, 8000);
+
+  window.__abbeyActivity = {
+    clientId: CLIENT_ID,
+    channelId: channelId,
+    guildId: guildId,
+    instanceId: instanceId,
+    getMode: function () {
+      return state.mode;
+    },
+    isAuthenticated: function () {
+      return state.authenticated;
+    },
+    isReady: function () {
+      return state.ready;
+    },
+  };
+})();

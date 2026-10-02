@@ -621,3 +621,73 @@ fn a_future_projection_version_fails_closed_before_reconciliation() {
     assert!(error.contains("unsupported memory projection version 2"));
     assert!(error.contains("supports up to 1"));
 }
+
+#[test]
+fn legacy_facts_are_inspectable_but_not_generated() {
+    let state = AppState::in_memory();
+    let service = state.memory_service();
+    service.remember("g", "u", "uses rust", 1).unwrap();
+    assert_eq!(service.facts("g", "u"), ["uses rust"]);
+    assert!(service.recall("g", "u", "rust", 10).is_empty());
+    let context = service.context_for("g", "u", "c", "rust", 10, 0.5);
+    assert!(context.user_facts.is_empty());
+    assert!(context.channel_summary.is_empty());
+    assert!(
+        context
+            .personal_memory_permits
+            .validates_context(&context.user_facts, &context.channel_summary)
+    );
+    assert!(
+        !context
+            .personal_memory_permits
+            .validates_context(&["injected".into()], "")
+    );
+}
+
+#[test]
+fn forgetting_revokes_exact_proof_and_old_permits() {
+    use crate::personal_memory::*;
+    let state = AppState::in_memory();
+    let service = state.memory_service();
+    service.remember("g", "u", "uses rust", 1).unwrap();
+    {
+        let mut stores = AppState::lock(&state.stores);
+        let subject = stores
+            .personal_memory
+            .entry(subject_key("g", "u"))
+            .or_default();
+        subject.schema = 1;
+        subject.policy_version = 1;
+        subject.choice = UseChoice::On;
+        let key = fact_key("g", "u", "uses rust");
+        subject.proofs.insert(
+            key.clone(),
+            FactProof {
+                authority: FactAuthority::MemberConfirmed,
+                member: MemberProof {
+                    actor: "u".into(),
+                    subject: "u".into(),
+                    guild: "g".into(),
+                    interaction_id: "i".into(),
+                    platform: "discord".into(),
+                    at: 1,
+                    policy_version: 1,
+                },
+                fact_key: key,
+                previous_revision: 0,
+            },
+        );
+    }
+    let context = service.context_for("g", "u", "c", "rust", 10, 0.5);
+    assert_eq!(context.user_facts, ["uses rust"]);
+    assert!(state.validate_personal_memory_permits(&context.personal_memory_permits));
+    assert!(service.forget("g", "u", "uses rust"));
+    assert!(!state.validate_personal_memory_permits(&context.personal_memory_permits));
+    service.remember("g", "u", "uses rust", 2).unwrap();
+    assert!(
+        service
+            .context_for("g", "u", "c", "rust", 10, 0.5)
+            .user_facts
+            .is_empty()
+    );
+}

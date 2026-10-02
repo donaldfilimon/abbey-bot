@@ -7,7 +7,7 @@ abbey-bot is a headless Discord bot whose only interactive surface is the
 Discord gateway, and on this machine the launchd service
 `com.donaldfilimon.abbey-bot` already owns that token. So "run the app" means
 driving the release binary through its **token-free modes** with
-`.Codex/skills/run-abbey-bot/smoke.sh`, which runs non-plan modes with an
+`.agents/skills/run-abbey-bot/smoke.sh`, which runs non-plan modes with an
 explicit nonsecret environment allowlist and a timeout. The only credentialed
 mode is the read-only `plan` REST diff, which refuses `--apply`. The artifacts
 that stand in for a screenshot are the provider JSON report and the Kokoro WAV
@@ -42,7 +42,7 @@ prove the report came from the binary you built.
 ## Run (agent path)
 
 ```bash
-.Codex/skills/run-abbey-bot/smoke.sh all
+.agents/skills/run-abbey-bot/smoke.sh all
 ```
 
 That runs `build`, `args`, `provider primary`, `voice`, `status` in order and
@@ -77,7 +77,7 @@ Most PRs touch `src/commands_voice/`, `src/commands_help/`,
 filtered `cargo test`:
 
 ```bash
-.Codex/skills/run-abbey-bot/smoke.sh test voice_ux::
+.agents/skills/run-abbey-bot/smoke.sh test voice_ux::
 ```
 
 Verified: `running 10 tests … 10 passed`, exit 0. The driver exits 1 when a
@@ -87,7 +87,7 @@ exits 0, which reads exactly like a pass.
 ### Server-plan dry run (touches the live guild, read-only)
 
 ```bash
-.Codex/skills/run-abbey-bot/smoke.sh plan 1275617641620443146
+.agents/skills/run-abbey-bot/smoke.sh plan 1275617641620443146
 ```
 
 Verified on the MLAI Community guild: `changes (0)` plus two manual-review
@@ -110,13 +110,17 @@ Full gate (fmt, deploy/privacy checks, Swift audio-tap tests, locked
 clippy, locked tests, locked release build):
 
 ```bash
-./check.sh > /tmp/Codex-501/gate.log 2>&1; echo "EXIT: $?"
+gate_log="$(mktemp "${TMPDIR:-/tmp}/abbey-bot-gate.XXXXXX")"
+./check.sh > "$gate_log" 2>&1
+gate_exit=$?
+printf 'EXIT: %s; log: %s\n' "$gate_exit" "$gate_log"
+test "$gate_exit" -eq 0
 ```
 
 Verified 2026-09-08: exit 0 in 163 s, `1277 passed; 0 failed; 5 ignored`.
 Never run it under `nohup`/`&`: the installer signal tests inherit `SIG_IGN`
-and fail. A `.rs` edit already triggers it through the PostToolUse hook in
-`.Codex/settings.json`.
+and fail. Claude's PostToolUse hook in `.claude/settings.json` runs the gate
+after Rust edits; Codex sessions must invoke the gate explicitly.
 
 ## Gotchas
 

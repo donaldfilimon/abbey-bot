@@ -18,6 +18,8 @@ const MAX_IDENTITY_BYTES: usize = 4 * 1024;
 const MAX_PROFILE_BYTES: usize = 1024;
 const MAX_CREDENTIAL_BYTES: usize = 64 * 1024;
 
+const LOCAL_ONLY: &str = "ABBEY_LOCAL_ONLY";
+
 const DISCOVERY: &str = "ABBEY_PROVIDER_DISCOVERY";
 const ORDER: &str = "ABBEY_PROVIDER_ORDER";
 const DISABLED: &str = "ABBEY_PROVIDER_DISABLED";
@@ -29,6 +31,7 @@ const SANDBOX_RUNNER: &str = "ABBEY_PROVIDER_SANDBOX_RUNNER";
 const SANDBOX_PROFILE: &str = "ABBEY_PROVIDER_SANDBOX_PROFILE";
 
 const RESERVED_VARIABLES: &[&str] = &[
+    LOCAL_ONLY,
     DISCOVERY,
     ORDER,
     DISABLED,
@@ -103,6 +106,8 @@ impl fmt::Debug for ProviderSettings {
 /// Parsed provider policy and exact provider-specific settings.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProviderConfig {
+    /// Refuse every inference route whose execution is not on this host.
+    pub local_only: bool,
     /// Exact provider identities for which bounded discovery is permitted.
     pub discovery: BTreeSet<ProviderId>,
     /// Deterministic operator tie order. Stable provider ID breaks later ties.
@@ -123,6 +128,7 @@ impl fmt::Debug for ProviderConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ProviderConfig")
+            .field("local_only", &self.local_only)
             .field("discovery", &self.discovery)
             .field("order", &self.order)
             .field("disabled", &self.disabled)
@@ -150,6 +156,16 @@ impl ProviderConfig {
         V: Into<OsString>,
     {
         let variables = collect_provider_variables(variables)?;
+        let local_only = match variables.get(LOCAL_ONLY).map(|v| v.trim()) {
+            None | Some("") | Some("0") => false,
+            Some("1") => true,
+            Some(_) => {
+                return Err(ProviderConfigError::for_variable(
+                    LOCAL_ONLY,
+                    "must be 0 or 1",
+                ));
+            }
+        };
         let discovery = parse_id_set(DISCOVERY, variables.get(DISCOVERY))?;
         let order = parse_id_order(ORDER, variables.get(ORDER))?;
         let disabled = parse_id_set(DISABLED, variables.get(DISABLED))?;
@@ -217,6 +233,7 @@ impl ProviderConfig {
         }
 
         Ok(Self {
+            local_only,
             discovery,
             order,
             disabled,
@@ -319,7 +336,7 @@ where
             }
             continue;
         };
-        if !name.starts_with(PROVIDER_PREFIX) {
+        if !name.starts_with(PROVIDER_PREFIX) && name != LOCAL_ONLY {
             continue;
         }
         let value = value.into();

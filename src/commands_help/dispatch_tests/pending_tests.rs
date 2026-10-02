@@ -87,6 +87,7 @@ async fn pending_confirm_waits_for_ack_before_permissions_and_effects() {
     let fixture = DiscordFixture::new().await;
     let data = configured_data();
     let mut session = pending_fixture_session(&data);
+    session.owner = OTHER;
     fixture.permissions.store(
         (Permissions::MANAGE_MESSAGES | Permissions::VIEW_CHANNEL).bits(),
         Ordering::SeqCst,
@@ -96,7 +97,8 @@ async fn pending_confirm_waits_for_ack_before_permissions_and_effects() {
         .state
         .memory_service()
         .subject_snapshot("discord:123", "discord:790");
-    let press = pending_press(&fixture, "c");
+    let mut press = pending_press(&fixture, "c");
+    press.user.id = serenity::all::UserId::new(OTHER);
     let operation = crate::commands_brain::handle_pending_press(
         &fixture.context,
         &press,
@@ -135,6 +137,7 @@ async fn pending_old_index_never_targets_a_shifted_proposal() {
     let fixture = DiscordFixture::new().await;
     let data = configured_data();
     let mut session = pending_fixture_session(&data);
+    session.owner = OTHER;
     fixture.permissions.store(
         (Permissions::MANAGE_MESSAGES | Permissions::VIEW_CHANNEL).bits(),
         Ordering::SeqCst,
@@ -149,7 +152,8 @@ async fn pending_old_index_never_targets_a_shifted_proposal() {
         .state
         .memory_service()
         .subject_snapshot("discord:123", "discord:790");
-    let press = pending_press(&fixture, "c");
+    let mut press = pending_press(&fixture, "c");
+    press.user.id = serenity::all::UserId::new(OTHER);
     assert!(
         !crate::commands_brain::handle_pending_press(
             &fixture.context,

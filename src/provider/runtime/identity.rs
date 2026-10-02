@@ -8,6 +8,9 @@ pub(super) fn backend_locality(backend: &Backend) -> ExecutionLocality {
     }
 }
 pub(super) fn endpoint_locality(endpoint: &str) -> ExecutionLocality {
+    if reqwest::Url::parse(endpoint).is_ok_and(|url| crate::llm::url_is_loopback(&url)) {
+        return ExecutionLocality::SameHost;
+    }
     let evidence = reqwest::Url::parse(endpoint)
         .ok()
         .and_then(|url| {

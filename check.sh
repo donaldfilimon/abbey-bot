@@ -49,6 +49,7 @@ python3 deploy/test-service-environment.py
 python3 deploy/test-service-installation.py
 python3 deploy/test-service-readiness.py
 python3 deploy/test-service-status.py
+python3 deploy/test-community-operations-control.py
 python3 deploy/test-install-launchd.py
 python3 deploy/test-qualified-install.py
 python3 deploy/test-install-audio-tap-launchd.py

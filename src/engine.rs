@@ -83,6 +83,7 @@ pub struct PreparedTurn {
     pub addenda: String,
     pub turns: Vec<ChatTurn>,
     grounding: Grounding,
+    pub(crate) personal_memory_permits: crate::personal_memory::MemoryUsePermitSet,
 }
 
 impl PreparedTurn {
@@ -154,11 +155,30 @@ impl Engine {
         context: &PersonaContext,
         user_input: &str,
     ) -> PreparedTurn {
-        let mut turns: Vec<ChatTurn> = self
+        let turns = self
             .sessions
             .get(scope)
             .map(|session| session.turns.iter().cloned().collect())
             .unwrap_or_default();
+        Self::prepare_turns(persona, context, user_input, turns)
+    }
+
+    /// Prepare only supplied authorized context, without reading any session.
+    /// Semantic scope and transport authorization remain the caller's authority.
+    pub fn prepare_source_only(
+        persona: Persona,
+        context: &PersonaContext,
+        user_input: &str,
+    ) -> PreparedTurn {
+        Self::prepare_turns(persona, context, user_input, Vec::new())
+    }
+
+    fn prepare_turns(
+        persona: Persona,
+        context: &PersonaContext,
+        user_input: &str,
+        mut turns: Vec<ChatTurn>,
+    ) -> PreparedTurn {
         turns.push(ChatTurn::user(user_input));
         let mut grounding = Grounding::from_sources(
             turns
@@ -171,6 +191,7 @@ impl Engine {
         }
         let persona_core = crate::ask::system_prompt(persona);
         let context_addenda = context.addenda.clone();
+        let context_permits = context.personal_memory_permits.clone();
         // The message being answered is the relevance query, so the facts
         // shown are the ones that bear on it.
         let context = context.render(user_input);
@@ -181,6 +202,7 @@ impl Engine {
             addenda: context_addenda,
             turns,
             grounding,
+            personal_memory_permits: context_permits,
         }
     }
 
@@ -273,6 +295,7 @@ mod tests {
             user_facts: vec!["likes rust".into()],
             reputation: 0.5,
             addenda: String::new(),
+            personal_memory_permits: Default::default(),
         };
         let prepared = engine.prepare("c", Persona::Aviva, &context, "hi", 1);
         // Compose from the canonical renderers rather than re-pinning their

@@ -8,7 +8,7 @@
 //!
 //! Pure: no serenity, no poise, no clock. Time is injected as unix seconds.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +94,9 @@ pub struct GuildSettings {
     /// Opt-in per guild via `/admin act on`; `ABBEY_QUIET=1` overrides.
     #[serde(default)]
     pub unsolicited: bool,
+    /// Scoped channel admission. None preserves legacy eligibility; an empty set denies all.
+    #[serde(default)]
+    pub unsolicited_channels: Option<BTreeSet<String>>,
     /// Hourly budget of unsolicited actions for the whole guild.
     #[serde(default = "default_budget_per_hour")]
     pub unsolicited_per_hour: u32,
@@ -117,10 +120,19 @@ impl Default for GuildSettings {
             reply_cooldown_seconds: DEFAULT_COOLDOWN_SECONDS,
             epsilon_override: None,
             unsolicited: false,
+            unsolicited_channels: None,
             unsolicited_per_hour: DEFAULT_BUDGET_PER_HOUR,
             locale: "en".to_owned(),
             nsfw_roleplay_enabled: false,
         }
+    }
+}
+
+impl GuildSettings {
+    pub fn unsolicited_channel_allowed(&self, scoped_channel: &str) -> bool {
+        self.unsolicited_channels
+            .as_ref()
+            .is_none_or(|channels| channels.contains(scoped_channel))
     }
 }
 
@@ -367,6 +379,29 @@ mod tests {
     /// A guild that has never chosen must not be learning from its members, and
     /// `commands_brain.rs` already provides the operator toggle that makes
     /// opting in reachable.
+    #[test]
+    fn channel_admission_is_additive_and_round_trips_without_widening() {
+        let legacy = serde_json::to_value(GuildSettings::default()).unwrap();
+        let mut old = legacy.as_object().unwrap().clone();
+        old.remove("unsolicited_channels");
+        let old: GuildSettings = serde_json::from_value(serde_json::Value::Object(old)).unwrap();
+        assert!(old.unsolicited_channel_allowed("discord:c"));
+        for channels in [BTreeSet::new(), BTreeSet::from(["discord:c".to_string()])] {
+            let settings = GuildSettings {
+                unsolicited_channels: Some(channels.clone()),
+                ..old.clone()
+            };
+            let restored: GuildSettings =
+                serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+            assert_eq!(restored.unsolicited_channels, Some(channels));
+            assert!(!restored.unsolicited_channel_allowed("discord:other"));
+            assert_eq!(
+                restored.unsolicited_channel_allowed("discord:c"),
+                settings.unsolicited_channel_allowed("discord:c")
+            );
+        }
+    }
+
     #[test]
     fn learning_is_off_until_a_guild_opts_in() {
         assert!(

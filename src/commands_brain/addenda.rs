@@ -21,6 +21,8 @@ pub enum KnobChoice {
     Emoji,
     #[name = "code"]
     Code,
+    #[name = "follow_up"]
+    FollowUp,
 }
 
 impl From<KnobChoice> for StyleKnob {
@@ -30,6 +32,7 @@ impl From<KnobChoice> for StyleKnob {
             KnobChoice::Formality => Self::Formality,
             KnobChoice::Emoji => Self::Emoji,
             KnobChoice::Code => Self::Code,
+            KnobChoice::FollowUp => Self::FollowUp,
         }
     }
 }
@@ -40,6 +43,7 @@ const fn knob_name(knob: StyleKnob) -> &'static str {
         StyleKnob::Formality => "formality",
         StyleKnob::Emoji => "emoji",
         StyleKnob::Code => "code",
+        StyleKnob::FollowUp => "follow_up",
     }
 }
 
@@ -52,6 +56,7 @@ const fn direction(signal: StyleSignal) -> &'static str {
         StyleSignal::NoEmoji => "no emoji",
         StyleSignal::MoreEmoji => "some emoji",
         StyleSignal::PreferCode => "code blocks",
+        StyleSignal::FewerFollowUps => "fewer follow-ups",
     }
 }
 
@@ -104,6 +109,36 @@ fn render_list(status: &AddendaStatus, now: u64) -> String {
                 "\n- **{}** · {} left",
                 knob_name(suppression.knob),
                 time_left(suppression.until.saturating_sub(now))
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "\n\nLearning: {}. Quorum: {} net signals, {} distinct supporting members within {}. Pending counts exclude evidence consumed when an addendum applied.",
+        if status.learning_enabled { "on" } else { "off; feedback is not collected or applied" },
+        status.policy.signals,
+        status.policy.distinct_users,
+        time_left(status.policy.window_secs),
+    ));
+    if status.pending.is_empty() {
+        out.push_str("\nNo pending feedback in this window.");
+    } else {
+        out.push_str("\n**Pending feedback** (support / oppose; distinct supporters)");
+        for evidence in &status.pending {
+            out.push_str(&format!(
+                "\n- {}: {} / {}; {} members{}",
+                direction(evidence.signal),
+                evidence.supporting,
+                evidence.opposing,
+                evidence.distinct_members,
+                if status
+                    .active
+                    .iter()
+                    .any(|a| a.signal.knob() == evidence.signal.knob())
+                {
+                    "; active knob waits for expiry"
+                } else {
+                    ""
+                },
             ));
         }
     }
@@ -201,7 +236,7 @@ pub async fn addenda_clear(ctx: Context<'_>) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::brain::addenda::{Addendum, Suppression};
+    use crate::brain::addenda::{Addendum, FeedbackEvidence, Suppression};
 
     const DAY: u64 = 24 * 3600;
 
@@ -234,6 +269,7 @@ mod tests {
                 knob: StyleKnob::Code,
                 until: 14 * DAY + 5,
             }],
+            ..AddendaStatus::default()
         }
     }
 
@@ -305,9 +341,70 @@ mod tests {
                 expires_at: 14 * DAY,
             })
             .collect(),
-            suppressions: Vec::new(),
+            suppressions: [
+                StyleKnob::Length,
+                StyleKnob::Formality,
+                StyleKnob::Emoji,
+                StyleKnob::Code,
+                StyleKnob::FollowUp,
+            ]
+            .into_iter()
+            .map(|knob| Suppression {
+                knob,
+                until: 14 * DAY,
+            })
+            .collect(),
+            pending: [
+                StyleSignal::TooLong,
+                StyleSignal::TooShort,
+                StyleSignal::TooFormal,
+                StyleSignal::TooCasual,
+                StyleSignal::NoEmoji,
+                StyleSignal::MoreEmoji,
+                StyleSignal::PreferCode,
+                StyleSignal::FewerFollowUps,
+            ]
+            .into_iter()
+            .map(|signal| FeedbackEvidence {
+                signal,
+                supporting: 64,
+                opposing: 64,
+                distinct_members: 64,
+            })
+            .collect(),
+            ..AddendaStatus::default()
         };
-        assert!(render_list(&full, 0).len() < 2000);
+        let text = render_list(&full, 0);
+        println!("--- fullest status ---\n{text}");
+        assert!(text.len() < 2000, "{} bytes", text.len());
+        assert_eq!(
+            clamp_message(text.clone()),
+            text,
+            "no evidence is truncated"
+        );
+        assert!(text.contains("code blocks: 64 / 64; 64 members"));
+    }
+
+    #[test]
+    fn pending_feedback_names_policy_counts_and_learning_gate() {
+        let status = AddendaStatus {
+            pending: vec![FeedbackEvidence {
+                signal: StyleSignal::TooLong,
+                supporting: 4,
+                opposing: 1,
+                distinct_members: 2,
+            }],
+            ..AddendaStatus::default()
+        };
+        let text = render_list(&status, 0);
+        println!("--- pending status ---\n{text}");
+        assert!(
+            text.contains("Quorum: 5 net signals, 3 distinct supporting members within 7 days")
+        );
+        assert!(text.contains("shorter: 4 / 1; 2 members"));
+        assert!(text.contains("off; feedback is not collected or applied"));
+        assert!(text.contains("exclude evidence consumed"));
+        assert!(!text.contains("discord:"));
     }
 
     #[test]

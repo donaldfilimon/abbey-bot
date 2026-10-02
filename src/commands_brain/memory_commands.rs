@@ -38,8 +38,7 @@ pub async fn remember(
     #[description = "A single concise fact, stated in third person"]
     #[max_length = 300]
     fact: String,
-    #[description = "Who it is about (default: you; moderators may choose another member)"]
-    user: Option<User>,
+    #[description = "Who it is about (only your own personal memory)"] user: Option<User>,
     #[description = "An existing fact this replaces — it is removed only because you said so"]
     #[autocomplete = "autocomplete_fact"]
     #[max_length = 300]
@@ -48,8 +47,8 @@ pub async fn remember(
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
-    if !memory_subject_authorized(ctx, subject).await {
-        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+    if !personal_memory_write_authorized(ctx.author().id.get(), subject.id.get()) {
+        send_private_no_mentions(ctx, "Personal memory writes belong to the member concerned. Ask them to use `/remember` or `/forget` themselves.".into()).await?;
         return Ok(());
     }
     let u = scoped_user(subject);
@@ -61,7 +60,7 @@ pub async fn remember(
     let fact = match memory::validated_fact(&fact) {
         Ok(fact) => fact,
         Err(message) => {
-            ctx.say(message).await?;
+            send_private_no_mentions(ctx, message.to_string()).await?;
             return Ok(());
         }
     };
@@ -93,62 +92,56 @@ pub async fn remember(
             },
         }
     }
-    let receipt = match memory_gate::admit_fact(state, &g, &u, &fact, replaces.as_deref()).await {
+    let selected_old = match replaces.as_deref() {
+        Some(old) => match state.memory_service().resolve_fact(&g, &u, old) {
+            Some(selected) => Some(selected),
+            None => {
+                return send_private_no_mentions(
+                    ctx,
+                    "No remembered fact matches what you asked to replace.".into(),
+                )
+                .await;
+            }
+        },
+        None => None,
+    };
+    let action = match super::personal_memory_commands::authenticated_action(ctx, subject.id.get())
+    {
+        Ok(action) => action,
+        Err(error) => return send_private_no_mentions(ctx, error.to_string()).await,
+    };
+    let receipt = match memory_gate::admit_fact(state, &g, &u, &fact, selected_old.as_deref()).await
+    {
         Ok(receipt) => receipt,
         Err(message) => {
-            ctx.say(message).await?;
+            send_private_no_mentions(ctx, message.to_string()).await?;
             return Ok(());
         }
     };
-    // `replaces` is an explicit human signal, so it is authoritative and needs
-    // no confirmation step. Without it nothing is ever removed here.
-    let outcome = match replaces.as_deref() {
-        Some(old) => state
-            .memory_service()
-            .remember_replacing(&g, &u, &fact, old, runtime::now()),
-        None => state
-            .memory_service()
-            .remember(&g, &u, &fact, runtime::now()),
-    };
-    if let Some(digest_hex) = &receipt {
-        match &outcome {
-            Ok(runtime::RememberOutcome::Stored(stored)) => {
-                memory_gate::settle_receipts(state, &g, &u, stored, None, digest_hex);
-            }
-            Ok(runtime::RememberOutcome::Superseded { stored, removed }) => {
-                memory_gate::settle_receipts(state, &g, &u, stored, Some(removed), digest_hex);
-            }
-            // Admitted, but the local store refused after all (a concurrent
-            // write). The candidate stands in the ledger with nothing behind
-            // it; the log is the record.
-            _ => tracing::warn!("episode gate: admitted fact candidate stored nothing locally"),
+    let request = format!("discord:{}:remember", ctx.id());
+    let outcome = match selected_old {
+        Some(old) => {
+            state
+                .correct_personal_memory_fact(action, old, fact.clone(), request, receipt)
+                .await
         }
-    }
+        None => {
+            state
+                .remember_personal_memory_fact(action, fact.clone(), request, receipt)
+                .await
+        }
+    };
     let reply = match outcome {
-        Ok(runtime::RememberOutcome::Stored(fact)) => {
-            format!("Stored about <@{}>: {fact}", subject.id.get())
-        }
-        Ok(runtime::RememberOutcome::Superseded { stored, removed }) => format!(
-            "Stored about <@{}>: {stored}\nReplaced: {removed}",
-            subject.id.get()
+        Ok(_) => format!(
+            "Stored your fact: {fact}\nStoring and generated use are separate choices. Review `/memory_use`."
         ),
-        Ok(runtime::RememberOutcome::Proposed { stored, proposed }) => format!(
-            "Stored about <@{}>: {stored}\nProposed to replace: {proposed} — nothing was removed. Run /pending confirm to apply it.",
-            subject.id.get()
-        ),
-        Ok(runtime::RememberOutcome::Unchanged) => {
-            "Already on record (or the fact list is full).".to_string()
-        }
-        Err(message) => {
-            ctx.say(message).await?;
-            return Ok(());
-        }
+        Err(error) => super::personal_memory_commands::failure(&error, false),
     };
-    ctx.say(clamp_message(reply)).await?;
+    send_private_no_mentions(ctx, reply).await?;
     Ok(())
 }
 
-async fn autocomplete_fact(ctx: Context<'_>, partial: &str) -> Vec<String> {
+pub(super) async fn autocomplete_fact(ctx: Context<'_>, partial: &str) -> Vec<String> {
     let g = scoped_guild(ctx);
     let u = scoped_user(ctx.author());
     let state = &ctx.data().state;
@@ -166,36 +159,38 @@ pub async fn forget(
     #[description = "The fact to remove"]
     #[autocomplete = "autocomplete_fact"]
     fact: String,
-    #[description = "Who it is about (default: you; moderators may choose another member)"]
-    user: Option<User>,
+    #[description = "Who it is about (only your own personal memory)"] user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
-    if !memory_subject_authorized(ctx, subject).await {
-        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+    if !personal_memory_write_authorized(ctx.author().id.get(), subject.id.get()) {
+        send_private_no_mentions(ctx, "Personal memory writes belong to the member concerned. Ask them to use `/remember` or `/forget` themselves.".into()).await?;
         return Ok(());
     }
     let u = scoped_user(subject);
     let state = &ctx.data().state;
     let Some(selected) = state.memory_service().resolve_fact(&g, &u, &fact) else {
-        ctx.say("Nothing by that wording was on record.").await?;
+        send_private_no_mentions(ctx, "Nothing by that wording was on record.".into()).await?;
         return Ok(());
     };
+    let action = match super::personal_memory_commands::authenticated_action(ctx, subject.id.get())
+    {
+        Ok(action) => action,
+        Err(error) => return send_private_no_mentions(ctx, error.to_string()).await,
+    };
     if let Err(message) = memory_gate::admit_forget(state, &g, &u, &selected).await {
-        ctx.say(message).await?;
+        send_private_no_mentions(ctx, message.to_string()).await?;
         return Ok(());
     }
-    let removed = state.memory_service().forget(&g, &u, &selected);
-    if removed {
-        memory_gate::drop_receipt(state, &g, &u, &selected);
-    }
-    ctx.say(if removed {
-        "Forgotten."
-    } else {
-        "Nothing by that wording was on record."
-    })
-    .await?;
+    let reply = match state
+        .forget_personal_memory_fact(action, selected, format!("discord:{}:forget", ctx.id()))
+        .await
+    {
+        Ok(_) => "Forgotten from your stored facts.".to_string(),
+        Err(error) => super::personal_memory_commands::failure(&error, false),
+    };
+    send_private_no_mentions(ctx, reply).await?;
     Ok(())
 }
 
@@ -384,7 +379,9 @@ where
     let Ok(permissions) = permissions().await else {
         return Ok(None);
     };
-    if !crate::memory_card::subject_authorized(session.owner, session.subject, &permissions) {
+    if !personal_memory_write_authorized(session.owner, session.subject)
+        || !crate::memory_card::subject_authorized(session.owner, session.subject, &permissions)
+    {
         return Ok(None);
     }
     Ok(Some(effect(action, index).await))
@@ -580,8 +577,26 @@ pub async fn pending_list(
     }
     let subject_id = subject.id.get();
     let ctx_id = ctx.id();
-    let body = format_pending_list_body(subject_id, &pending);
-    let rows = pending_action_rows(ctx_id, subject_id, &pending, 0);
+    let mut body = format_pending_list_body(subject_id, &pending);
+    let own_subject = personal_memory_write_authorized(ctx.author().id.get(), subject_id);
+    if !own_subject {
+        body = format!(
+            "Proposals for <@{subject_id}> (read-only). Only this member may confirm or dismiss.\n"
+        );
+        for (index, entry) in pending.iter().enumerate() {
+            body.push_str(&format!(
+                "{}. {} → {}\n",
+                index + 1,
+                entry.old_fact,
+                entry.new_fact
+            ));
+        }
+    }
+    let rows = if own_subject {
+        pending_action_rows(ctx_id, subject_id, &pending, 0)
+    } else {
+        Vec::new()
+    };
     ctx.send(
         poise::CreateReply::default()
             .content(clamp_message(body))
@@ -590,7 +605,9 @@ pub async fn pending_list(
             .allowed_mentions(crate::gateway::no_mentions()),
     )
     .await?;
-    run_pending_component_session(ctx, subject, pending).await?;
+    if own_subject {
+        run_pending_component_session(ctx, subject, pending).await?;
+    }
     Ok(())
 }
 
@@ -601,14 +618,14 @@ pub async fn pending_confirm(
     #[description = "The old fact to remove"]
     #[autocomplete = "autocomplete_pending"]
     old_fact: String,
-    #[description = "Who it is about (default: you; moderators may choose another member)"]
-    user: Option<User>,
+    #[description = "Who it is about (only your own personal memory)"] user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
-    if !memory_subject_authorized(ctx, subject).await {
-        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+    if !personal_memory_write_authorized(ctx.author().id.get(), subject.id.get()) {
+        ctx.say("Only the member concerned may change their personal memory proposals.")
+            .await?;
         return Ok(());
     }
     let u = scoped_user(subject);
@@ -624,14 +641,14 @@ pub async fn pending_dismiss(
     #[description = "The old fact to keep"]
     #[autocomplete = "autocomplete_pending"]
     old_fact: String,
-    #[description = "Who it is about (default: you; moderators may choose another member)"]
-    user: Option<User>,
+    #[description = "Who it is about (only your own personal memory)"] user: Option<User>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let g = scoped_guild(ctx);
     let subject = user.as_ref().unwrap_or(ctx.author());
-    if !memory_subject_authorized(ctx, subject).await {
-        ctx.say(CROSS_USER_MEMORY_DENIED).await?;
+    if !personal_memory_write_authorized(ctx.author().id.get(), subject.id.get()) {
+        ctx.say("Only the member concerned may change their personal memory proposals.")
+            .await?;
         return Ok(());
     }
     let u = scoped_user(subject);
@@ -709,4 +726,48 @@ pub async fn reputation(
     )))
     .await?;
     Ok(())
+}
+
+fn personal_memory_write_authorized(actor: u64, subject: u64) -> bool {
+    actor == subject
+}
+
+#[cfg(test)]
+mod personal_memory_write_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn moderator_cannot_confirm_or_dismiss_another_members_proposal() {
+        let session = PendingComponentSession {
+            command_id: 1,
+            owner: 42,
+            subject: 43,
+            guild: Some(7),
+            channel: 8,
+            version: 0,
+            displayed: Vec::new(),
+        };
+        for action in [PendingButtonAction::Confirm, PendingButtonAction::Dismiss] {
+            let result = authorized_pending_effect(
+                async { Ok(()) },
+                &session,
+                || Some((action, 0)),
+                || async {
+                    Ok(vec![
+                        crate::command_catalog::DiscordPermission::Administrator,
+                    ])
+                },
+                |_, _| async { true },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result, None);
+        }
+    }
+
+    #[test]
+    fn writes_require_the_member_concerned_without_a_moderator_override() {
+        assert!(personal_memory_write_authorized(42, 42));
+        assert!(!personal_memory_write_authorized(42, 43));
+    }
 }

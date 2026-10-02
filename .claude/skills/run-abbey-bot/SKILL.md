@@ -110,13 +110,17 @@ Full gate (fmt, deploy/privacy checks, Swift audio-tap tests, locked
 clippy, locked tests, locked release build):
 
 ```bash
-./check.sh > /tmp/claude-501/gate.log 2>&1; echo "EXIT: $?"
+gate_log="$(mktemp "${TMPDIR:-/tmp}/abbey-bot-gate.XXXXXX")"
+./check.sh > "$gate_log" 2>&1
+gate_exit=$?
+printf 'EXIT: %s; log: %s\n' "$gate_exit" "$gate_log"
+test "$gate_exit" -eq 0
 ```
 
 Verified 2026-09-08: exit 0 in 163 s, `1277 passed; 0 failed; 5 ignored`.
 Never run it under `nohup`/`&`: the installer signal tests inherit `SIG_IGN`
-and fail. A `.rs` edit already triggers it through the PostToolUse hook in
-`.claude/settings.json`.
+and fail. Claude's PostToolUse hook in `.claude/settings.json` runs the gate
+after Rust edits; Codex sessions must invoke the gate explicitly.
 
 ## Gotchas
 

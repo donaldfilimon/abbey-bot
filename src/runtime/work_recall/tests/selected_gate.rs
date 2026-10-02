@@ -75,10 +75,8 @@ fn configured(
     ServiceSupervisor,
     crate::service::persistence::PersistenceWriter,
 ) {
-    let mut state = AppState::in_memory_with_persistence(
-        Some(std::env::temp_dir().join("selected-gate-injected")),
-        Arc::new(Sink::default()),
-    );
+    let sink = Sink::isolated();
+    let mut state = AppState::in_memory_with_persistence(sink.directory.clone(), sink);
     Arc::get_mut(&mut state).unwrap().episode_gate = Some(gate);
     let mut supervisor = ServiceSupervisor::new();
     supervisor.finish_startup();

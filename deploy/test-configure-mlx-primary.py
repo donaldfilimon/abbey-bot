@@ -87,6 +87,19 @@ def skipped_entry() -> dict[str, object]:
     "transaction and owner-only mode tests require POSIX filesystem and signals",
 )
 class ConfigureMlxPrimaryTests(unittest.TestCase):
+    def wait_for_restart_barrier(
+        self, process: subprocess.Popen[str], ready: Path
+    ) -> None:
+        # Synchronize on the fake restart, not Python startup speed under a
+        # shared build load. Fail promptly if the child exits before the barrier.
+        deadline = time.monotonic() + 30
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(
+            ready.exists(),
+            f"configurator did not reach restart barrier; child status={process.poll()}",
+        )
+
     def fixture(self, root: Path) -> tuple[Path, Path, Path, Path, Path]:
         env = root / "env"
         env.write_text(
@@ -562,10 +575,7 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
                 env=child_environment,
             )
             try:
-                deadline = time.monotonic() + 5
-                while not ready.exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue(ready.exists(), "first configurator did not reach restart")
+                self.wait_for_restart_barrier(first, ready)
                 second = self.run_script(
                     "--env-file",
                     env,
@@ -633,10 +643,7 @@ class ConfigureMlxPrimaryTests(unittest.TestCase):
                 env=child_environment,
             )
             try:
-                deadline = time.monotonic() + 5
-                while not ready.exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue(ready.exists(), "configurator did not acquire the lock")
+                self.wait_for_restart_barrier(process, ready)
                 process.send_signal(signal.SIGTERM)
                 time.sleep(0.1)
                 self.assertIsNone(process.poll(), "termination bypassed the transaction")

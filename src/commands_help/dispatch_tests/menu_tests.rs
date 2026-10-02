@@ -190,3 +190,38 @@ async fn registered_image_failure_uses_typed_private_member_guidance() {
     }
     assert!(provider.calls.load(Ordering::SeqCst) > 0);
 }
+
+#[tokio::test]
+async fn personal_memory_adapter_selected_human_and_bot_history_never_reaches_provider() {
+    let fixture = DiscordFixture::new().await;
+    let provider = ProviderFixture::new().await;
+    let data = configured_data_at(Some(provider.address));
+    let commands = crate::application_commands();
+    let command = command_by_key(&commands, CommandKey::AskMessage);
+    assert!(!command_by_key(&commands, CommandKey::PersonaAsk).ephemeral);
+    data.state
+        .memory_service()
+        .remember(
+            &format!("discord:{GUILD}"),
+            &format!("discord:{OTHER}"),
+            "cutoff",
+            2,
+        )
+        .unwrap();
+    for bot in [false, true] {
+        let mut selected = Message::default();
+        selected.author = user(OTHER);
+        selected.author.bot = bot;
+        selected.content = "HISTORICAL_WITHDRAWN_PRIVATE_TEXT".into();
+        invoke_message_menu(&fixture, command, &data, selected, true).await;
+        let requests = fixture.take_requests();
+        let guidance = assert_private_no_mentions_reply(&requests);
+        assert!(guidance.contains("historical source material"));
+        assert!(guidance.contains("type a fresh request"));
+        assert!(guidance.contains("visible in the channel"));
+        assert!(guidance.contains("send Abbey a DM"));
+        assert!(!guidance.contains("fresh request privately"));
+        assert!(!guidance.contains("HISTORICAL_WITHDRAWN_PRIVATE_TEXT"));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+}

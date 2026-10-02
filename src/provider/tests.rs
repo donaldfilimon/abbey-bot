@@ -319,6 +319,7 @@ fn cli_argv_contains_instructions_but_no_facts_or_transcript() {
         user_facts: vec![fact.into()],
         reputation: 0.5,
         addenda: String::new(),
+        personal_memory_permits: Default::default(),
     };
     let persona = crate::persona::Persona::Abbey;
     let core = crate::ask::system_prompt(persona);

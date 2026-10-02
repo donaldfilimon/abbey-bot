@@ -115,6 +115,20 @@ Active voice guidance includes a wake-name example and the stop command.
 <!-- BEGIN GENERATED COMMAND CATALOG -->
 | Command | Context | Response | What it does |
 |---|---|---|---|
+| `/engage introduce` | guild | private | Propose a mutually approved introduction in this server. |
+| `/engage introduction` | guild | private | Privately review, edit or withdraw your own introduction. |
+| `/engage invite` | guild, bot DM | private | Request a policy-gated Activity or voice invitation. |
+| `/engage preferences` | guild, bot DM | private | Show your private contact settings. |
+| `/engage configure` | guild, bot DM | private | Save explicit contact limits and timezone. |
+| `/engage status` | guild, bot DM | private | Show your contact policy and delivery blockers. |
+| `/engage snooze` | guild, bot DM | private | Postpone your existing candidates. |
+| `/engage stop` | guild, bot DM | private | Stop personalized contact globally or by scope. |
+| `/engage resume` | guild, bot DM | private | Explicitly resume your chosen scope. |
+| `/engage weekly` | guild, bot DM | private | Choose an explicit scoped weekly subscription. |
+| `/engage dismiss` | guild, bot DM | private | Dismiss your own pending candidate. |
+| `/engage feedback` | guild, bot DM | private | Record feedback on your sent delivery. |
+| `/engage community feature` | guild | private | Configure a public feature and explicit channel. |
+| `/engage community-status` | guild | private | Show aggregate public engagement status. |
 | `/work project` | guild, bot DM | private | Create a personal or channel project. |
 | `/work projects` | guild, bot DM | private | List projects available here. |
 | `/work goal` | guild, bot DM | private | Record a project goal. |
@@ -156,10 +170,11 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |
 | `/forum post` | guild | private | Create a #help forum thread with a first-post template. |
 | `/forum perms` | guild | private | Snapshot and gap-fill Abbey's #help forum overwrite bits. |
-| `/remember` | guild, bot DM | private | Store a fact about yourself; moderators may choose a member. |
-| `/forget` | guild, bot DM | private | Remove a stored fact about yourself or an authorized member. |
+| `/memory_use` | guild, bot DM | private | Privately review or change your generated-use consent; confirm an exact stored fact. |
+| `/remember` | guild, bot DM | private | Store a fact about yourself; generated-use consent is a separate choice. |
+| `/forget` | guild, bot DM | private | Remove one of your own stored facts. |
 | `/pending list` | guild, bot DM | private | Review proposed fact replacements. |
-| `/pending confirm` | guild, bot DM | private | Apply an explicitly chosen fact replacement. |
+| `/pending confirm` | guild, bot DM | private | Apply an explicitly chosen replacement in your own memory. |
 | `/pending dismiss` | guild, bot DM | private | Dismiss a proposed replacement and keep both facts. |
 | `/recall` | guild, bot DM | private | Read your facts and standing, or an authorized member's. |
 | `/reputation` | guild, bot DM | private | Read your standing privately; moderators may choose a member. |
@@ -208,6 +223,16 @@ Active voice guidance includes a wake-name example and the stop command.
 
 The member voice status, typed voice-mode choices, manager diagnostics, and classic administration dashboard are registered surfaces.
 <!-- END GENERATED COMMAND CATALOG -->
+
+The Conversation dashboard's **Allow this channel** and **Block this channel**
+controls scope unsolicited replies and welcomes independently of learning and
+personal memory consent. Existing settings without `unsolicited_channels` retain
+legacy channel eligibility. The first channel action replaces that legacy scope
+with an explicit list: allowing selects only the current channel; blocking starts
+with no eligible channels. Later actions add or remove the current channel.
+Mentions, direct messages and explicit commands still answer. Guild opt-in, quiet
+mode, provider readiness and rate limits remain applicable. Each change reports
+the running state and the persistence result separately.
 
 ### Work records
 
@@ -407,6 +432,39 @@ plan and a unit test validates it, including every permission name it uses.
 Exit codes: 0 done or nothing to do, 1 the guild refused or a blocker stands,
 2 the invocation or the plan is wrong.
 
+Retained runtime community maintenance is separately disabled unless
+`ABBEY_COMMUNITY_POLICY` names an absolute, owner-only version-1 JSON policy.
+Its guild and owner must match a fresh Discord observation. Start in `propose`:
+the scheduler records dry-run receipts without changing Discord. `apply` permits
+only the exact owner-authored action inventory, with a maximum of five changes
+and two creations per day, a seven-day target cooldown, fresh access checks and
+readback. Private, age-restricted and protected targets are refused. Interest
+roles grant no guild permissions; ordinary membership grants require explicit
+member/role matrix entries and completed rules screening.
+
+The Autonomous Operations dashboard exposes mode controls only to the current
+guild owner whose identity matches the configured policy. A mode change does
+not approve additional actions. The owner-local equivalent is:
+
+```sh
+python3 deploy/community-operations-control.py --policy /absolute/private/policy.json --mode stopped
+```
+
+Operational receipts live in `community-operations/receipts.json` under the
+runtime data directory, separately from conversational memory. Reservations
+persist before Discord writes; uncertain outcomes require review rather than
+automatic replay. A crash-held execution lease also requires owner review.
+Discord updates are multi-step operations, so recovery uses inspected receipts
+and verified compensating changes, without an atomic rollback promise.
+
+For a strictly local deployment, set `ABBEY_LOCAL_ONLY=1`. Execution filters
+remote adapters, including fallback and content-processing routes; unavailable
+qualified local generation remains unavailable. The default `0` preserves
+existing deployments. The Models dashboard distinguishes this requested
+policy from effective adapter readiness. Personal durable facts require the
+member's explicit `/remember` action; the model's compatibility memory tool
+refuses automatic writes and replacements.
+
 On Apple Silicon, install the pinned local speech sidecar once before enabling
 local voice:
 
@@ -517,7 +575,7 @@ selected from the environment, first match wins:
 | Env var | Backend |
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic Messages API (external, per-token cost); model `claude-sonnet-5`. This secret is environment-only and is never placed in a commit or image layer. |
-| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (for example Ollama or llama.cpp/llama-server). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. Plain HTTP is accepted only for loopback; remote endpoints require HTTPS, and credentials/query strings in the base URL are rejected. The source default model name and next cross-platform deployment target is **`gemma4:12b`**; this is not a claim about the currently installed service. The operator choice supersedes both the interim `gemma4:e4b` choice and the 2026-08-19 benchmark's `gpt-oss:20b` recommendation. The dated benchmark remains historical timing evidence: gpt-oss answered in 7–25 s, e4b in 13–37 s, and 12b in 32–94 s on that host. Ollama uses the model field; a server bound to one model may ignore it. Local replies stream: the message appears within ~4 s and grows; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
+| `ABBEY_BOT_LLM_ENDPOINT` (+ `ABBEY_BOT_LLM_MODEL`) | An OpenAI-compatible server, usually loopback (for example Ollama or llama.cpp/llama-server). Base URL only, e.g. `http://127.0.0.1:11434` — the bot POSTs to `<endpoint>/v1/chat/completions`. Plain HTTP is accepted only for loopback; remote endpoints require HTTPS, and credentials/query strings in the base URL are rejected. The source default model name and next cross-platform deployment target is **`gemma4:12b`**; this is not a claim about the currently installed service. The operator choice supersedes both the interim `gemma4:e4b` choice and the 2026-08-19 benchmark's `gpt-oss:20b` recommendation. The dated benchmark remains historical timing evidence: gpt-oss answered in 7–25 s, e4b in 13–37 s, and 12b in 32–94 s on that host. Ollama uses the model field; a server bound to one model may ignore it. Local replies stream: available text is posted once it reaches 60 characters or the four-second delivery timer fires, then grows; backend startup, queueing, and time to first text can delay that first post; one generation runs at a time (`ABBEY_BOT_LLM_CONCURRENCY`), extra turns wait up to `ABBEY_BOT_LLM_QUEUE_SECS` (90) then get an honest "busy" line. Reasoning models are handled: the local budget is 4,096 tokens, and a reply whose budget went entirely to `reasoning` is reported as exactly that. |
 
 The backend contract is intentionally portable. Linux and Windows retain the
 same OpenAI-compatible endpoint seam and may use Ollama, llama.cpp, or another
@@ -1238,3 +1296,57 @@ The offline suite uses synthetic PCM and fake HTTP sources. Source/build checks
 cannot prove permission, live capture exclusion, audible playback or ducking in
 Discord. Installation, permission setup, real capture and live launchd changes
 remain separate operator actions and were not performed for this implementation.
+
+### Verified engagement invitations
+
+`/engage invite kind:activity` or `kind:voice` saves an eligible configured
+member's explicit request as a durable candidate. It uses the retained scheduler,
+shared member quotas, original-context access checks and (for server origins)
+the unsolicited server gate/budget. An existing pending invitation is deduped;
+suppressed duplicate requests retain their interaction identity across restarts;
+an uncertain send is held for review without automatic retry. A new explicit
+request after a terminal outcome can create another invitation. `/engage status`
+shows current invitation blockers and this member's recent origin-scoped states.
+
+Activity invitations default off. The optional operator-only
+`ABBEY_ACTIVITY_READINESS_FILE` points at the acceptance JSON described in
+[Activity acceptance](docs/activities.md#engagement-invitation-readiness).
+No member/model command can mark an Activity ready. Voice invitations require the
+existing selected local voice backend and eligible local text route; they only
+explain `/voice consent`, `/voice status`, manager `/voice join consent:true` and
+`/voice resume consent:true`. They never save agreement, create a voice runtime,
+join, resume, or begin audio processing. Human audible acceptance is separate.
+
+### Member engagement feedback and inspection
+
+`/engage feedback delivery useful|dismissed` accepts one explicit response per
+member on their own confirmed Sent receipt. Both introduction participants own
+the linked publication receipt. Useful/Dismissed is separate from delivery
+success and the conversation classifier's unresolved result. A successful send
+never manufactures useful feedback. `/engage status` privately shows counts for
+pending, reserved, sent, cancelled, rejected and review-required receipts; an
+uncertain delivery stays consumed and is never automatically retried.
+
+In a server with existing learning enabled, explicit dismissed receipts or a
+member's direct unquoted “fewer follow-ups” request can contribute to the existing
+bounded style ledger. Five net observations from at least three members within
+seven days activate a reduction for fourteen days. Evidence remains capped at
+64 observations and two per member per signal; active addenda remain capped at
+four and 400 rendered bytes. This reduction suppresses only optional contextual
+FollowUp candidates in that server at proposal, reservation and final admission.
+DM feedback is never imported into a guild ledger. It cannot enable contact,
+raise limits, remove a stop, change destinations or timezone, or subscribe anyone.
+`/admin addenda list`, `revert follow_up` and `clear` inspect and suppress this
+closed change using the same existing expiry and revert policy. Quoted examples
+and code remain excluded from conversational feedback.
+
+Manager `/engage community-status` reports only current-server receipt totals
+and bounded transient process timing aggregates. It exposes no member, candidate,
+receipt or message identifiers and no private text. Managed operational events
+record closed phase names, durations and failure categories: queue delay,
+canonical provider first nonempty text, first confirmed Discord post, completion
+and failure. Provider first-text time excludes provider admission queue delay;
+Discord confirmation is observed only after the send returns successfully.
+Deterministic invitations and introductions omit generation phases. Voice keeps
+its existing separate measurements. These source hooks and synthetic tests do
+not attest live provider, Discord, Activity or human voice latency.

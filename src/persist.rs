@@ -251,9 +251,56 @@ pub fn persist_canonical(
     directory: &Path,
     stores: &Stores,
 ) -> Result<(), PersistErrorCategory> {
+    // Preserve the pure encoding failure contract before creating any filesystem owner.
+    crate::personal_memory::validate_metadata(
+        &stores.personal_memory,
+        &stores.personal_memory_exposure,
+    )
+    .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    let encoded = serde_json::to_vec(stores).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    serde_json::from_slice::<Stores>(&encoded).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    let owner =
+        personal_memory::lease(directory).map_err(|_| PersistErrorCategory::CreateTemporary)?;
+    let marker =
+        personal_memory::load(directory).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    if !marker.withdrawals.is_empty() || !marker.activations.is_empty() {
+        return Err(PersistErrorCategory::SnapshotEncode);
+    }
+    persist_canonical_owned(&owner, sink, directory, stores)
+}
+
+pub(crate) fn persist_canonical_owned(
+    owner: &personal_memory::Lease,
+    sink: &dyn PersistenceSink,
+    directory: &Path,
+    stores: &Stores,
+) -> Result<(), PersistErrorCategory> {
+    if !owner.owns(directory) {
+        return Err(PersistErrorCategory::SnapshotEncode);
+    }
+    crate::personal_memory::validate_metadata(
+        &stores.personal_memory,
+        &stores.personal_memory_exposure,
+    )
+    .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    let disk = Stores::load(directory).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    if disk.canonical_base.get() != stores.canonical_base.get() {
+        return Err(PersistErrorCategory::SnapshotEncode);
+    }
     let bytes = serde_json::to_vec(stores).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
     serde_json::from_slice::<Stores>(&bytes).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
-    sink.publish(directory, &Stores::state_path(directory), &bytes)
+    sink.publish(directory, &Stores::state_path(directory), &bytes)?;
+    // Update only this snapshot's lineage. Clone performs a deep copy of this cell.
+    if std::fs::read(Stores::state_path(directory)).is_ok_and(|actual| actual == bytes) {
+        use sha2::Digest;
+        stores.canonical_base.set(Some(
+            sha2::Sha256::digest(&bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn persist_projection(
@@ -450,8 +497,37 @@ pub struct ReputationRow {
 ///
 /// Every field is `#[serde(default)]` so a document written by an older build
 /// still loads — a missing section means "empty", never "refuse to start".
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+/// Publication lineage is runtime ownership metadata, not persisted semantic state.
+#[derive(Debug, Default)]
+pub(crate) struct CanonicalBase(std::sync::Mutex<Option<String>>);
+impl CanonicalBase {
+    pub(crate) fn get(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+    pub(crate) fn set(&self, value: Option<String>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+    }
+}
+impl Clone for CanonicalBase {
+    fn clone(&self) -> Self {
+        Self(std::sync::Mutex::new(self.get()))
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Stores {
+    /// Exact canonical bytes this in-memory image descends from; never serialized.
+    #[serde(skip)]
+    pub(crate) canonical_base: CanonicalBase,
+    #[serde(default)]
+    pub personal_memory: BTreeMap<String, crate::personal_memory::PersonalMemorySubject>,
+    #[serde(default)]
+    pub personal_memory_exposure: crate::personal_memory::ExposureState,
     /// Canonical chief-of-staff work state. A pre-feature document loads empty.
     #[serde(default)]
     pub work: crate::work::WorkStore,
@@ -490,6 +566,30 @@ pub struct Stores {
     /// learning on has received style feedback.
     #[serde(default)]
     pub addenda: BTreeMap<String, crate::brain::addenda::AddendaLedger>,
+}
+
+impl PartialEq for Stores {
+    /// Compare persisted payloads explicitly; canonical lineage is checked separately
+    /// by publication CAS and is never semantic document equality.
+    fn eq(&self, other: &Self) -> bool {
+        self.payload_eq(other)
+    }
+}
+impl Stores {
+    pub(crate) fn payload_eq(&self, other: &Self) -> bool {
+        self.personal_memory == other.personal_memory
+            && self.personal_memory_exposure == other.personal_memory_exposure
+            && self.work == other.work
+            && self.guilds == other.guilds
+            && self.brains == other.brains
+            && self.reputations == other.reputations
+            && self.events == other.events
+            && self.pending_rewards == other.pending_rewards
+            && self.memory == other.memory
+            && self.memory_projection_version == other.memory_projection_version
+            && self.memory_receipts == other.memory_receipts
+            && self.addenda == other.addenda
+    }
 }
 
 /// Why a load or save failed. Carries the path so the log line is actionable.
@@ -554,6 +654,22 @@ impl Stores {
         };
         let mut stores: Self =
             serde_json::from_str(&text).map_err(|source| PersistError::Decode { path, source })?;
+        crate::personal_memory::validate_metadata(
+            &stores.personal_memory,
+            &stores.personal_memory_exposure,
+        )
+        .map_err(|_| PersistError::Io {
+            op: "unsupported-personal-memory",
+            path: Self::state_path(dir),
+            source: io::Error::other("unsupported or invalid personal memory metadata"),
+        })?;
+        use sha2::Digest;
+        stores.canonical_base.set(Some(
+            sha2::Sha256::digest(text.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+        ));
         stores.work.actions.mark_interrupted();
         stores.work.mark_interrupted_deliveries();
         Ok(stores)
@@ -634,3 +750,9 @@ impl ReputationStore for Stores {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub(crate) mod community_ops;
+pub(crate) mod community_proposals;
+mod owned_file;
+
+pub(crate) mod personal_memory;

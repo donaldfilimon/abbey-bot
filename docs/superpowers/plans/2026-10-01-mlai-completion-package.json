@@ -1,0 +1,409 @@
+{
+  "schema_version": 1,
+  "status": "Proposed",
+  "planning_goal": "continue until plan is DONE",
+  "master": "docs/superpowers/plans/2026-10-01-mlai-completion-program.md",
+  "design": "docs/superpowers/specs/2026-10-01-mlai-completion-program-design.md",
+  "projects": [
+    {
+      "slug": "activity-launch",
+      "title": "MLAI Activity Production Launch",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-activity-launch-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-activity-launch.md",
+      "requirements": 8,
+      "tasks": 4,
+      "files": [
+        "- Modify: `activity/server/court.mjs`\n- Modify: `activity/server/court.test.mjs`",
+        "- Modify: `activity/court.js`\n- Modify: `activity/server/court-client.test.mjs`\n- Modify: `activity/README.md`",
+        "- Modify: `activity/app.js`\n- Modify: `activity/court.js`\n- Modify: `activity/index.html`\n- Modify: `activity/server/court-client.test.mjs`",
+        "- Modify: `activity/README.md`\n- Modify: `docs/activities.md`\n- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`"
+      ]
+    },
+    {
+      "slug": "voice-completion",
+      "title": "MLAI Voice Completion",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-voice-completion-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-voice-completion.md",
+      "requirements": 8,
+      "tasks": 4,
+      "files": [
+        "- Modify: `src/commands_voice/auto_listen_gate.rs`\n- Modify: `src/voice_consent.rs`\n- Modify: `src/voice_consent_store.rs`\n- Modify: `src/commands_voice/supervision.rs`",
+        "- Modify: `src/commands_voice/supervision.rs`\n- Modify: `src/commands_voice/auto_listen.rs`\n- Modify: `src/service.rs`\n- Modify: `src/voice_session/ownership.rs`",
+        "- Modify: `src/commands_voice/supervision.rs`\n- Modify: `src/voice_local.rs`\n- Modify: `src/voice_session.rs`\n- Modify: `src/observability.rs`\n- Modify: `src/observability/tests.rs`",
+        "- Modify: `README.md`\n- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`\n- Modify: `deploy/watch-office-hours-auto-listen.sh`"
+      ]
+    },
+    {
+      "slug": "text-reliability",
+      "title": "MLAI Text Latency and Reliability",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-text-reliability-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-text-reliability.md",
+      "requirements": 8,
+      "tasks": 4,
+      "files": [
+        "- Modify: `src/observability.rs`\n- Modify: `src/observability/tests.rs`\n- Modify: `src/provider/runtime/conversation.rs`\n- Modify: `src/generation.rs`",
+        "- Modify: `src/pipeline.rs`\n- Modify: `src/generation.rs`\n- Modify: `src/gateway/interaction_outcomes.rs`\n- Modify: `src/gateway/discord.rs`\n- Modify: `src/gateway/slack.rs`\n- Modify: `src/gateway/telegram.rs`\n- Modify: `src/generation/tests.rs`\n- Modify: `src/pipeline/tests/memory_outcomes.rs`\n- Modify: `src/provider/runtime/tests.rs`\n- Re-enumerate `impl Outbound` sites before mutation because concurrent writers may add more; Task2 owns migration of newly found adapters/fakes too.",
+        "- Create: `src/generation/stream_owner.rs`\n- Modify: `src/generation.rs`\n- Modify: `src/generation/tests.rs`\n- Modify: `src/service/framework.rs`",
+        "- Modify: `src/provider_self_test.rs`\n- Modify: `src/runtime.rs`\n- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`"
+      ]
+    },
+    {
+      "slug": "learning-quality",
+      "title": "MLAI Bounded Learning Quality",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-learning-quality-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-learning-quality.md",
+      "requirements": 8,
+      "tasks": 5,
+      "files": [
+        "- Modify: `src/brain/reward.rs`\n- Modify: `src/brain/reward/tests.rs`\n- Modify: `src/persist.rs`\n- Modify: `src/persist/tests.rs`\n- Modify: `src/gateway/interaction_outcomes.rs`\n- Modify: `src/pipeline.rs`",
+        "- Create: `src/brain/ask_signature.rs`\n- Modify: `src/brain/mod.rs` (this task registers ask_signature)\n- Modify: `src/brain/outcome.rs`\n- Modify: `src/brain/telemetry.rs`\n- Modify: `src/persist.rs`\n- Modify: `src/persist/tests.rs`\n- Modify: `src/commands_brain/dashboard.rs`",
+        "- Create: `src/brain/correction.rs`\n- Modify: `src/brain/mod.rs` (this task registers correction)\n- Modify: `src/pipeline.rs`\n- Modify: `src/generation.rs`\n- Modify: `src/grounding.rs`",
+        "- Create: `src/brain/erasure.rs`\n- Modify: `src/brain/mod.rs` (this task registers erasure)\n- Modify: `src/runtime/memory_service.rs`\n- Modify: `src/brain/reward.rs`\n- Modify: `src/brain/social.rs`\n- Modify: `src/brain/addenda.rs`\n- Modify: `src/persist.rs`\n- Modify: `src/commands_brain.rs`",
+        "- Create: `tests/fixtures/learning-quality-v1.json`\n- Create: `src/brain/quality_evaluation.rs`\n- Modify: `src/brain/mod.rs` (register quality_evaluation)\n- Modify: `src/brain/outcome.rs`\n- Modify: `src/grounding.rs`\n- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`"
+      ]
+    },
+    {
+      "slug": "continuity",
+      "title": "MLAI Opt-in Conversation Continuity",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-continuity-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-continuity.md",
+      "requirements": 8,
+      "tasks": 3,
+      "files": [
+        "- Create: `src/work/continuity.rs`\n- Create: `src/work/continuity/tests.rs`\n- Modify: `src/work.rs`",
+        "- Create: `src/commands_work/continuity.rs`\n- Modify: `src/commands_work.rs`\n- Modify: `src/runtime/memory_service.rs`\n- Modify: `src/pipeline.rs`\n- Modify: `src/command_catalog.rs`\n- Modify: `src/command_catalog/tests.rs`",
+        "- Modify: `src/persist.rs`\n- Modify: `src/persist/tests.rs`\n- Modify: `src/runtime/memory_service.rs`\n- Modify: `src/memory_gate.rs`"
+      ]
+    },
+    {
+      "slug": "initiative",
+      "title": "MLAI Appropriate Initiative and Follow-ups",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-initiative-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-initiative.md",
+      "requirements": 8,
+      "tasks": 3,
+      "files": [
+        "- Create: `src/work/follow_up.rs`\n- Create: `src/work/follow_up/tests.rs`\n- Modify: `src/work.rs`\n- Modify: `src/work/policy.rs`\n- Modify: `src/commands_work/controls.rs`\n- Modify: `src/engagement.rs` (created by approved Engagement Task1)\n- Modify: `src/engagement/schedule.rs` (created by approved Engagement Task3)",
+        "- Modify: `src/engagement/lifecycle.rs` (created by approved Engagement Task3)\n- Modify: `src/runtime/engagement_delivery.rs` (created by approved Engagement Task4)\n- Modify: `src/runtime/engagement_delivery/tests.rs` (created by approved Engagement Task4)\n- Modify: `src/gateway/engagement_delivery.rs` (created by approved Engagement Task4)\n- Modify: `src/service/scheduler.rs`",
+        "- Modify: `src/work/policy.rs`\n- Modify: `src/commands_work/controls.rs`\n- Modify: `src/engagement.rs` (created by approved Engagement Task1)\n- Modify: `src/engagement/schedule.rs` (created by approved Engagement Task3)\n- Modify: `src/runtime/engagement_delivery.rs` (created by approved Engagement Task4)\n- Modify: `src/commands_engage.rs` (created by approved Engagement Task2)\n- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`"
+      ]
+    },
+    {
+      "slug": "member-workflows",
+      "title": "MLAI Member Workflows and Server Acceptance",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-member-workflows-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-member-workflows.md",
+      "requirements": 8,
+      "tasks": 3,
+      "files": [
+        "- Create: `src/forum_resolution.rs`\n- Modify: `src/commands_forum.rs`\n- Modify: `src/main.rs`\n- Modify: `src/command_catalog.rs`\n- Modify: `src/command_catalog/tests.rs`",
+        "- Modify: `src/command_catalog.rs`\n- Modify: `src/command_catalog/tests.rs`\n- Modify: `src/commands_help.rs`\n- Modify: `src/commands_work.rs`\n- Modify: `src/forum.rs`",
+        "- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`\n- Modify: `README.md`"
+      ]
+    },
+    {
+      "slug": "release-qualification",
+      "title": "MLAI Release and Completion Qualification",
+      "spec": "docs/superpowers/specs/2026-10-01-mlai-release-qualification-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-mlai-release-qualification.md",
+      "requirements": 8,
+      "tasks": 3,
+      "files": [
+        "- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`",
+        "- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`\n- Modify: `README.md`",
+        "- Modify: `docs/MLAI-LIVE-ACCEPTANCE.md`\n- Modify: `tasks/goals.md`\n- Modify: `tasks/todo.md`"
+      ]
+    }
+  ],
+  "requirement_task_map": {
+    "activity-launch": {
+      "1": [
+        1,
+        2
+      ],
+      "2": [
+        1
+      ],
+      "3": [
+        1
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        2
+      ],
+      "6": [
+        4
+      ],
+      "7": [
+        3,
+        4
+      ],
+      "8": [
+        4
+      ]
+    },
+    "voice-completion": {
+      "1": [
+        1
+      ],
+      "2": [
+        1,
+        2
+      ],
+      "3": [
+        2,
+        3
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        4
+      ],
+      "6": [
+        3
+      ],
+      "7": [
+        4
+      ],
+      "8": [
+        4
+      ]
+    },
+    "text-reliability": {
+      "1": [
+        1,
+        4
+      ],
+      "2": [
+        1
+      ],
+      "3": [
+        2
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        3
+      ],
+      "6": [
+        3
+      ],
+      "7": [
+        4
+      ],
+      "8": [
+        4
+      ]
+    },
+    "learning-quality": {
+      "1": [
+        1
+      ],
+      "2": [
+        1
+      ],
+      "3": [
+        1
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        2
+      ],
+      "6": [
+        3
+      ],
+      "7": [
+        4
+      ],
+      "8": [
+        5
+      ]
+    },
+    "continuity": {
+      "1": [
+        1
+      ],
+      "2": [
+        1,
+        2
+      ],
+      "3": [
+        1,
+        2
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        2
+      ],
+      "6": [
+        3
+      ],
+      "7": [
+        3
+      ],
+      "8": [
+        2
+      ]
+    },
+    "initiative": {
+      "1": [
+        1
+      ],
+      "2": [
+        1,
+        2
+      ],
+      "3": [
+        2
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        1,
+        3
+      ],
+      "6": [
+        1,
+        3
+      ],
+      "7": [
+        1,
+        2
+      ],
+      "8": [
+        3
+      ]
+    },
+    "member-workflows": {
+      "1": [
+        3
+      ],
+      "2": [
+        1,
+        2,
+        3
+      ],
+      "3": [
+        1,
+        3
+      ],
+      "4": [
+        1
+      ],
+      "5": [
+        2
+      ],
+      "6": [
+        2
+      ],
+      "7": [
+        3
+      ],
+      "8": [
+        3
+      ]
+    },
+    "release-qualification": {
+      "1": [
+        1
+      ],
+      "2": [
+        1
+      ],
+      "3": [
+        1,
+        2
+      ],
+      "4": [
+        2
+      ],
+      "5": [
+        2
+      ],
+      "6": [
+        2
+      ],
+      "7": [
+        3
+      ],
+      "8": [
+        3
+      ]
+    }
+  },
+  "total_tasks": 39,
+  "total_requirements": 64,
+  "numbered_requirements": 64,
+  "external_workstreams": [
+    {
+      "slug": "member-engagement",
+      "spec": "docs/superpowers/specs/2026-10-01-member-engagement-design.md",
+      "plan": "docs/superpowers/plans/2026-10-01-member-engagement.md",
+      "tasks": 10,
+      "status": "Approved design; execution separate",
+      "section_task_map": {
+        "preferences": [
+          1,
+          2
+        ],
+        "limits_and_cancellation": [
+          3
+        ],
+        "delivery": [
+          4
+        ],
+        "conversation": [
+          5
+        ],
+        "invitations": [
+          6
+        ],
+        "community": [
+          7
+        ],
+        "introductions": [
+          8
+        ],
+        "feedback": [
+          9
+        ],
+        "acceptance": [
+          10
+        ]
+      }
+    }
+  ],
+  "total_requirements_note": "64 numbered requirements plus separately approved engagement section requirements",
+  "document_sha256": {
+    "docs/superpowers/plans/2026-10-01-mlai-completion-program.md": "3545abb97aa163ca967024b543ebd9eed8b74251210b806d6e9f3e58cfe5c5a4",
+    "docs/superpowers/specs/2026-10-01-mlai-completion-program-design.md": "6aa26871a51540ebe808ff75c01d6772090fb9e7771c0f8464a5ad249e6c4640",
+    "docs/superpowers/specs/2026-10-01-mlai-activity-launch-design.md": "7101b54dfa767ab3d5330c8b074c3dbcf3917179b02aca754834514d5c1ece2d",
+    "docs/superpowers/plans/2026-10-01-mlai-activity-launch.md": "25b78d270d271abc8fc137b13de0fb81bf0c573b90867bb264d45581f9c30d93",
+    "docs/superpowers/specs/2026-10-01-mlai-voice-completion-design.md": "d599d5159aad8df690e9655b580dab465a7b59628825d0d231a184f0d840f984",
+    "docs/superpowers/plans/2026-10-01-mlai-voice-completion.md": "fd477eec65352ced2957e1824879f338060dd2c45e07a9667d24988e6305027c",
+    "docs/superpowers/specs/2026-10-01-mlai-text-reliability-design.md": "a95194bff4a139c0dff5cedf8186a6ed4b6a08301ffe91375491e9143d4adff1",
+    "docs/superpowers/plans/2026-10-01-mlai-text-reliability.md": "8de05d0e3b57580399223ef9b385e000f1ef99e45c57ad5ef551f3956a560457",
+    "docs/superpowers/specs/2026-10-01-mlai-learning-quality-design.md": "badf6269916d8a401fa49409f53267e9fd6dfd0920c6ea83dad63361371675b8",
+    "docs/superpowers/plans/2026-10-01-mlai-learning-quality.md": "0c5636a2a89ca3c8e13b953c7f5d37903e6386026f62733b4b848fd9fa67edbe",
+    "docs/superpowers/specs/2026-10-01-mlai-continuity-design.md": "bd103e67079d190dfccadd272da21e8841db81536f95daa7f508d0ae8187d110",
+    "docs/superpowers/plans/2026-10-01-mlai-continuity.md": "0d80963182da000b649d414706fa8c0cc795f8b2b252dd11721ed133e46dc46a",
+    "docs/superpowers/specs/2026-10-01-mlai-initiative-design.md": "f5183039032ee5b8068d56be5424fc672295112d46c873e3c51e52bbe1658d98",
+    "docs/superpowers/plans/2026-10-01-mlai-initiative.md": "e5a08624bc2ad4f09a6966c28a305876f60818234f9431b8fbeb90e7b1f3b1b9",
+    "docs/superpowers/specs/2026-10-01-mlai-member-workflows-design.md": "c7ca523038f34659e232b0a98cf04082be65555a8d2f67604c7cc1cce6a96bb6",
+    "docs/superpowers/plans/2026-10-01-mlai-member-workflows.md": "1ac1e85ab5843bbdfc96ad97b57301c375694b6317998764700827852092fa57",
+    "docs/superpowers/specs/2026-10-01-mlai-release-qualification-design.md": "a24762b453e4ed827e00e305866fe2945da3bab0f950c09555533dbed051c8a5",
+    "docs/superpowers/plans/2026-10-01-mlai-release-qualification.md": "3bbaab8fd93bd0895a9e5fadebb0ac9fde752064e63c4ab02f666ef3b6fb98d6",
+    "docs/superpowers/specs/2026-10-01-member-engagement-design.md": "eb61d8bbf902ccdf9839667d05dec52e2a6e6f6c2627c9db93d3d18c470c899e",
+    "docs/superpowers/plans/2026-10-01-member-engagement.md": "5bd780983fafe9d1fb7bdb554887064cbb9f7154fd6bbd7f6dec03a9b0717e5e"
+  },
+  "review_receipt": "docs/superpowers/plans/2026-10-01-mlai-completion-review.md"
+}

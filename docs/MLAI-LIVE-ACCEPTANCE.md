@@ -348,3 +348,225 @@ performed in this continuation.
 ### 2026-09-29 FM operator tooling source checkpoint
 
 Final `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0:1553 Rust tests passed,5 ignored; locked release completed. Candidate SHA256 `c56fadf6e15d42589d61c4afab0b3d9af96969cad8b6b4d5b684285a2a0123f9`. Independent operator-tooling review passed after two fix rounds. Token-free candidate identity wiring accepted a synthetic temporary dry-run manifest and refused stale tool-schema identity; this is not live provider qualification. No runner, launchd, production environment, or installed artifact change occurred. Task5 publication/exact-head CI and Tasks6/7 remain open.
+
+
+### 2026-10-01 owner-directed profile, Activity and server organization
+
+Current: Discord application description was updated and read back successfully
+(HTTP 200). The managed bot was transactionally updated after `./check.sh`
+exited 0: 1,556 Rust tests passed, five ignored; warnings-denied Clippy, Python
+gates, offline Swift audio-tap checks and locked release build completed.
+Installed and candidate SHA-256 both equal
+`b2c8b6aab6832a4d5cd88978e1f8c560a5d3c73e2a8eb672e781c7b6d0668344`.
+The owner environment and voice configuration were preserved. Discord's member
+list visibly showed `Playing Bad Idea Court • professionally unserious` after
+installation. Read-only status reported Discord ready, scheduler running and
+last persistence complete; one bot process was observed.
+
+The install attempt first refused a retained September 29 lock. No installer
+process or open lock holder existed; its last candidate binary, plist and env
+matched the healthy installed artifacts. The lock was preserved by rename as
+`~/.local/share/abbey-bot/install.lock.retained-2026-10-01-court`, leaving
+rollback material intact. The documented installer then completed successfully.
+
+Partial: `activity/` now includes Bad Idea Court, an anonymous shared-vote party
+game with ephemeral bounded rooms. Its Node multiplayer regression test passed;
+two browser clients observed a shared 1–1 vote and hung-jury verdict. A managed
+loopback host `com.donaldfilimon.abbey-court` serves the reviewed copy at
+`http://127.0.0.1:8791/` (HTTP 200). The existing Activity Entry Point `launch`
+(type 4, handler 2) was verified through REST. The new game is NOT published
+in Discord: current GitHub Pages still serves the old shell, Pages cannot host
+the shared API, no public HTTPS backend route was configured, and Portal mapping
+was not changed or accepted. No OAuth secret was added, no Discord message was
+sent by the operator tools, and no voice playback/capture acceptance was run.
+
+Current: the owner-authorized MLAI redesign used three independent read-only
+agent reviews and serialized REST writes. Snapshot inventory: 49 channels
+(including 10 categories), 26 roles. Category order is START HERE, COMMONS,
+AI LAB, PRODUCTS, BUILD LOG, VOICE, SOCIAL, SUPPORTER, STAFF, ARCHIVE.
+THE STACK was renamed AI LAB; programming-chat and research moved into AI LAB;
+off-topic and commands moved into SOCIAL. Twenty-six channel topics were
+clarified, retaining product-specific qualification and private-access copy.
+All category/child ordering and planned parents were read back and verified.
+Discord rejected a bulk request with multiple parent changes (HTTP 400, code
+40009); individual parent changes with `lock_permissions=false`, followed by
+a position-only bulk reorder, succeeded.
+
+Before/after checks preserved all 49 channel IDs, normalized overwrite sets,
+role names/permissions/positions, bot role memberships, channel types, forum
+metadata, voice settings, Community special-channel pointers and the exact
+onboarding object (two prompts, six default channels). No channels, messages,
+roles or members were deleted. No permission synchronization, membership change,
+role reorder, commit, push or PR was performed. These configuration checks do
+not claim a complete human member roster or human-witnessed conversational voice.
+Private before/after snapshots, reviews, execution plan, source-gate log and
+preview are retained under
+`~/.local/share/abbey-bot/server-redesign-2026-10-01/`.
+
+### 2026-10-01 continuation: onboarding and forums
+
+Current, API readback: the existing Research option now includes research;
+Apple Silicon and Site builder now include their respective channels. Prompt
+and option IDs, titles, role selections, six default channels, enabled state,
+and advanced mode are preserved. Discord reorders channel arrays; verification
+compares channel membership rather than treating array order as policy.
+
+Current, API readback: help retains its six tag IDs and adds optional Solved
+and Unresolved tags; showcase has Demo, Tool, App, Library, Creative; research
+has Paper, Experiment, Replication, Review, Dataset. Help and research use list
+layout, showcase gallery, all use recent activity sorting and seven-day default
+archive duration for future threads. Existing overwrites, flags, slowmode,
+reactions, topic, parent, type and NSFW state were compared and preserved.
+No thread messages, existing thread tag assignments or permissions were edited.
+
+The precise permission review corrects an earlier proposal's interpretation:
+17179869184 denies MANAGE_THREADS (bit 34), not CREATE_PUBLIC_THREADS (bit 35).
+Forum creation requires SEND_MESSAGES; everyone and Member role profiles in
+the snapshot can create and reply in all three forums. This is a permission
+calculation, not a witnessed action by a human member.
+
+Evidence and pre-change snapshots remain in the owner-private directory
+`~/.local/share/abbey-bot/server-redesign-2026-10-01/`, including
+`onboarding-links-before.json`, `onboarding-links-after.json`,
+`forum-layouts-before.json`, `forum-layouts-after.json`, and
+`forum-permission-review.md`. Bot service read-only status remains ready with
+Discord ready, scheduler running, and completed persistence.
+
+Partial: connected Sites hosting is available, but its publication workflow
+requires a source commit and push, which remains subject to operator approval.
+The Activity still runs on the local host; public hosting and the human-gated
+Developer Portal URL mapping remain uncompleted.
+
+### 2026-10-01 continuation: forum suggestions and Voice help
+
+Current source and installed artifact: forum suggestions recognize the live
+abbey-bot, quesar and AI & ML tags and punctuation-delimited keywords. Solved
+and Unresolved are excluded from automatic suggestions; resolution remains an
+explicit member choice. The forum permission gap-fill no longer adds
+CREATE_PUBLIC_THREADS, which the forum creation endpoint ignores, and preserves
+an existing deny for that unrelated bit. No live permission changes were made.
+
+Voice help now explains server-only calls, individual saved consent, music's
+separate consent boundary, status and participant/manager stopping controls.
+The printed/read owner page fits at 1,996 characters, including every eligible
+entry and the footer. Tests cover all eight voice capability combinations for
+the owner; ordinary member help still hides operator diagnostics.
+
+Verification: focused forum filter passed 9 tests (including two command forum
+tests); catalog suite passed 19; full `./check.sh` exited 0 with 1,560 Rust tests
+passed, zero failed and five intentional ignores, offline Swift audio checks,
+warnings-denied Clippy and locked release build. Activity test passed 1/1.
+The reviewer approved the final bounded diff after the new owner-size regression
+caught and corrected overflow. These are source checks, not a human voice test.
+
+Operator-authorized deployment: `./deploy/install-launchd.sh` exited 0 and
+reported `installation: ready`. Installed and release SHA-256 both equal
+`b965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9`.
+Runtime source fingerprint (321 files) stayed fixed through the gate.
+Read-only managed status after installation reports Discord ready, scheduler
+running and completed persistence. The exact compiled help was rendered in the
+offline test; no Discord test message or human-witnessed voice claim is made.
+
+
+### 2026-10-01 continuation: Activity recovery and bounded engagement
+
+Current local Activity: disconnect recovery keeps the current case, clears stale
+shared totals, preserves subsequent solo votes across failed polls, and replaces
+solo state with validated authoritative shared state on reconnection. Solo votes
+are not silently uploaded. Malformed round/count/vote responses fall back to
+solo mode. The managed local client was updated atomically without restarting
+the room server. Its served SHA-256 matches source:
+`b1e64c317bb9c27c6c21f42f99adb6333822d47fd169a87d7e74d1b5ed2a1e1a`.
+
+Verification: `npm --prefix activity test` exited 0, three tests passed,
+including deterministic client failure/recovery and actual HTTP room behavior.
+A browser preview visibly recorded one approval in a connected shared room.
+The full source gate before subsequent streaming/style work exited 0 with
+1,560 Rust tests passed, zero failed and five intentional ignores, plus offline
+Swift audio checks, warnings-denied Clippy and locked release build. Public
+HTTPS hosting, Portal mapping and an actual new Court iframe remain Partial.
+The reviewed source archive is a Node package, not a deployable Sites Worker.
+
+Voice readiness: the token-free local self-test exited 0 in 50 seconds with
+100% synthetic round-trip word recall through Kokoro, Whisper and generation.
+This is synthetic audio evidence, not human-witnessed Discord conversation.
+Read-only Discord REST at about 08:05 EDT found Abbey in Office Hours,
+self-muted and self-deafened; H2 was absent (Unknown Voice State). H2 has no valid
+Local policy-1 receipt, so his own `/voice consent` agreement is still needed.
+Other present participants need their own valid receipts, followed by manager
+join/resume from the call. No receipt or voice state was forged.
+
+Operator-directed engagement: one Abbey-authored invitation was delivered in
+H2's existing bot DM at 12:06:29 UTC, message `1555189156974559404`.
+One contextual MLAI general invitation was delivered at 12:08:01 UTC,
+message `1555189546193256471`. Both returned the bot author and message IDs;
+measured REST delivery was 700 ms and 804 ms respectively. These timings do
+not measure model generation latency. No reply has been observed yet. No mass
+mentions or repeated sends were used. Other installed guilds' default-off
+unsolicited policy was preserved; no new installations or permissions changed.
+
+
+### 2026-10-01 validated source: streaming stability and learning inspection
+
+Current source: progressive streaming edits wait two seconds after successful
+send/edit and skip missed ticks; final completion and honest failure replacement
+remain immediate. Two paused-time regressions failed before the change at
+100 ms and 1.1 seconds spacing, then passed. Quoted/code/blockquoted style
+phrases are ignored as member preference, with ordinary contractions preserved.
+`/admin addenda list` now shows current-window aggregate supporting/opposing
+counts, distinct supporters, quorum, learning status and suppression. No member
+identities, hashes or feedback text are exposed; persisted schema and policy
+are unchanged. Consumed application evidence is not presented as pending.
+
+Verification: generation suite 16 passed; style signal suite 8 passed; addenda
+filter 41 passed, all with exit 0. The actual rendered full status was read and
+fits under 2,000 bytes without clamp loss. Independent scoped review approved
+these changes. `./check.sh` exited 0: 1,568 Rust tests passed, zero failed,
+five intentional ignores, offline Swift 16 tests/release build, warnings-denied
+Clippy and locked Rust release build. Source fingerprint remained unchanged:
+`4a257548503f8ed8aa5e83f2b6355b7b34dca385d43433c67ae84ab7dc20345e`
+(521 source/support files).
+
+The validated release SHA-256 is
+`18b1a1794d54001e9c51c83743575664a7e4f2fdc9e566726b6c2b7680f18914`.
+At this observation the installed binary remains
+`b965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9`;
+these new Rust changes are not claimed as installed. The operator's latest
+request moved the next work into architectural brainstorming and planning.
+No new production dependency, commit, push or permission change was made.
+
+Correction to earlier read-only coordination: current source DOES call
+`try_auto_listen_while_present` from `commands_voice/supervision.rs` for a human
+join while PresenceOnly. A claim that the helper has no caller is stale or
+incorrect for this tree. It still checks durable all-present consent. The
+external Office Hours watcher separately uses restart-based startup retries.
+Neither source hook nor synthetic voice probe proves a human voice exchange.
+
+
+### 2026-10-02 integrated source baseline and retained voice preparation
+
+The integrated Task 9 engagement, maintenance, provider FIFO, and Activity
+candidate received independent review and passed
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh`: 1,883 Rust tests passed,
+zero failed, eight ignored; offline Swift suites passed 12 and 16 tests;
+Clippy, WDBX conformance, and locked release build passed. Before/after input
+hashes matched. The baseline release SHA-256 was
+`2b316049f29f4720004ad746eceba53adcfea9e7c24555aaabeb36b2b1119489`.
+The parent verification receipt is retained in
+`Archive/2026-10-02-workspace-program/bot-qualified-integration-adoption-20261002/parent-verification.json`.
+This supersedes the earlier failed combined gate for source qualification;
+it does not establish installation or live acceptance.
+
+The next source slice transfers PresenceOnly join preparation from a detached
+spawn to the existing retained Voice operation registry. Shutdown invalidates
+its start generation and observes cleanup before freeze. Its new regression
+failed against detached behavior, then passed; supervision passed 3 tests and
+voice-session coverage passed 63 tests. Independent review approved source
+integration. The full strict gate for this changed slice is pending.
+Consent, media epochs, and existing activation checks are preserved.
+
+Court protocol-v2 candidate has separately passed 20 Node tests, Liquid checks,
+and independent review, with two local browser clients witnessing shared votes.
+Public HTTPS hosting, Portal mapping, two Discord Activity clients, installed
+provider behavior, ordinary-member journeys, and human voice conversation
+remain open. No installed service change is claimed by these source records.

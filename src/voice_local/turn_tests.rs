@@ -5,6 +5,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 struct Fixture {
+    state: Arc<AppState>,
     runtime: Arc<VoiceRuntime>,
     input: mpsc::Sender<crate::offline_voice::VoiceFrame>,
     events: mpsc::UnboundedReceiver<&'static str>,
@@ -158,7 +159,7 @@ impl Fixture {
         let backend = state.providers.local_voice_route().unwrap();
         let actor = tokio::spawn(run(LocalSession {
             runtime: Arc::clone(&runtime),
-            state,
+            state: Arc::clone(&state),
             // Each fixture owns its scheduler. On songbird's process-global
             // default scheduler, standalone drivers created and dropped by
             // concurrent tests interfere: a freshly played track's command
@@ -184,6 +185,7 @@ impl Fixture {
             backend,
         }));
         Self {
+            state,
             runtime,
             input,
             events,
@@ -631,5 +633,204 @@ async fn stalled_recognition_fails_closed_with_a_withdrawal_queued() {
         fixture.actor.is_finished(),
         "late STT must not restart the actor"
     );
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn personal_memory_adapter_withdrawal_during_voice_synthesis_suppresses_playback() {
+    let mut fixture = Fixture::with_gate("unused", "synthesis").await;
+    fixture.utterance(1).await;
+    fixture.expect("generation").await;
+    fixture.expect("synthesis").await;
+    fixture
+        .state
+        .memory_service()
+        .remember("discord:1", "discord:2", "synthetic exposure cutoff", 2)
+        .unwrap();
+    fixture.release.take().unwrap().send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !fixture
+            .runtime
+            .snapshot()
+            .await
+            .status
+            .contains("personal context failed locally")
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        fixture
+            .runtime
+            .media_enabled(fixture.runtime.current_epoch())
+    );
+    assert!(fixture.playback.lock().await.is_none());
+    assert_eq!(
+        AppState::lock(&fixture.state.engine).session_len("discord:voice:1:2:consent:1:speaker:1"),
+        0
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn personal_memory_adapter_final_voice_play_rechecks_after_waiting_for_call_lock() {
+    let fixture = Fixture::new("unused").await;
+    let guard = generation::consent::GenerationGuard::fresh(&fixture.state);
+    let call = Arc::new(Mutex::new(songbird::Call::standalone_from_config(
+        std::num::NonZeroU64::new(1).unwrap(),
+        std::num::NonZeroU64::new(99).unwrap(),
+        songbird::Config::default().scheduler(songbird::driver::Scheduler::new(
+            songbird::driver::SchedulerConfig::default(),
+        )),
+    )));
+    let (events, mut event_rx) = mpsc::unbounded_channel();
+    {
+        let locked = call.lock().await;
+        let play = play_audio(
+            &call,
+            &fixture.playback,
+            &events,
+            &fixture.runtime,
+            &fixture.state,
+            &guard,
+            fixture.runtime.current_epoch(),
+            DecodedAudio {
+                sample_rate: 24_000,
+                channels: 1,
+                pcm_f32: vec![0; 9600],
+            },
+            1,
+        );
+        tokio::pin!(play);
+        tokio::select! {
+            biased;
+            _ = &mut play => panic!("playback did not wait for the owned call lock"),
+            _ = std::future::ready(()) => {}
+        }
+        fixture
+            .state
+            .memory_service()
+            .remember("discord:1", "discord:2", "synthetic cutoff while queued", 2)
+            .unwrap();
+        drop(locked);
+        assert!(!play.await.unwrap());
+    }
+    assert!(
+        fixture
+            .runtime
+            .media_enabled(fixture.runtime.current_epoch())
+    );
+    assert!(fixture.playback.lock().await.is_none());
+    assert!(event_rx.try_recv().is_err());
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn personal_memory_adapter_completed_voice_never_retains_transcript() {
+    let mut fixture = Fixture::new("unused").await;
+    fixture.utterance(1).await;
+    fixture.expect("generation").await;
+    fixture.release.take().unwrap().send(()).unwrap();
+    fixture.expect("synthesis").await;
+    fixture.expect_playback(true).await;
+    fixture
+        ._lifecycle
+        .send(SessionEvent::PlaybackTerminated {
+            turn: 1,
+            termination: PlaybackTermination::Natural,
+        })
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while fixture.runtime.snapshot().await.completed_turns != 1 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let scope = voice_scope(1, 2, fixture.runtime.current_epoch(), Some(1), 1, true);
+    assert_eq!(AppState::lock(&fixture.state.engine).session_len(&scope), 0);
+    assert!(
+        fixture
+            .state
+            .memory_service()
+            .facts("discord:1", "discord:1")
+            .is_empty()
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn personal_memory_adapter_final_voice_play_rechecks_after_activation_gate_wait() {
+    let fixture = Fixture::new("unused").await;
+    let guard = generation::consent::GenerationGuard::fresh(&fixture.state);
+    let call = Arc::new(Mutex::new(songbird::Call::standalone_from_config(
+        std::num::NonZeroU64::new(1).unwrap(),
+        std::num::NonZeroU64::new(99).unwrap(),
+        songbird::Config::default().scheduler(songbird::driver::Scheduler::new(
+            songbird::driver::SchedulerConfig::default(),
+        )),
+    )));
+    let runtime = fixture.runtime.clone();
+    let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder = tokio::task::spawn_blocking(move || {
+        runtime.hold_activation_gate_for_test(|| {
+            held_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+    });
+    held_rx.await.unwrap();
+    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    fixture
+        .runtime
+        .observe_next_media_gate_for_test(reached.clone());
+    let runtime = fixture.runtime.clone();
+    let state = fixture.state.clone();
+    let playback = fixture.playback.clone();
+    let epoch = runtime.current_epoch();
+    let (events, mut event_rx) = mpsc::unbounded_channel();
+    let play = tokio::spawn(async move {
+        play_audio(
+            &call,
+            &playback,
+            &events,
+            &runtime,
+            &state,
+            &guard,
+            epoch,
+            DecodedAudio {
+                sample_rate: 24_000,
+                channels: 1,
+                pcm_f32: vec![0; 9600],
+            },
+            1,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !reached.load(std::sync::atomic::Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    fixture
+        .state
+        .memory_service()
+        .remember(
+            "discord:1",
+            "discord:2",
+            "synthetic cutoff behind activation gate",
+            2,
+        )
+        .unwrap();
+    release_tx.send(()).unwrap();
+    holder.await.unwrap();
+    assert!(!play.await.unwrap().unwrap());
+    assert_eq!(fixture.runtime.spoken_play_starts_for_test(), 0);
+    assert!(fixture.playback.lock().await.is_none());
+    assert!(event_rx.try_recv().is_err());
     fixture.stop().await;
 }

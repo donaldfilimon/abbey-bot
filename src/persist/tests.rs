@@ -268,6 +268,8 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
             "guilds",
             "memory",
             "memory_projection_version",
+            "personal_memory",
+            "personal_memory_exposure",
             // Added 2026-09-06 by the memory-candidate amendment; `#[serde(default)]`
             // and no `deny_unknown_fields`, so files cross both ways between builds.
             "memory_receipts",
@@ -629,4 +631,99 @@ fn non_roundtrippable_snapshot_is_categorized_before_any_output() {
         persist_canonical(&FsPersistenceSink, Path::new("/never-touched"), &stores),
         Err(PersistErrorCategory::SnapshotEncode)
     );
+}
+
+#[test]
+fn legacy_work_loads_without_engagement_and_preserves_other_sections() {
+    let mut stores = Stores::default();
+    let project = stores
+        .work
+        .create_project(
+            crate::work::WorkAccess {
+                actor: 9,
+                guild: None,
+                channel: 19,
+                can_view: true,
+                can_manage: false,
+            },
+            "Existing project",
+            "legacy-project",
+        )
+        .unwrap();
+    let receipt: crate::work::WorkDeliveryReceipt = serde_json::from_value(serde_json::json!({
+        "id":2, "project_id":project, "recipient":19, "local_day":"2026-09-30",
+        "at":1790798400_u64, "state":"Sent", "message_id":20
+    }))
+    .unwrap();
+    stores.work.sequence = 2;
+    stores.work.deliveries.insert(2, receipt);
+    stores
+        .memory
+        .remember("discord:dm:9", "discord:9", "existing fact", 1);
+    let mut encoded = serde_json::to_value(&stores).unwrap();
+    encoded["work"]
+        .as_object_mut()
+        .unwrap()
+        .remove("engagement");
+    encoded["memory_projection_version"] = serde_json::json!(1);
+    let loaded: Stores = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(
+        loaded.work.engagement,
+        crate::engagement::EngagementStore::default()
+    );
+    let mut roundtrip = serde_json::to_value(loaded).unwrap();
+    roundtrip["work"]
+        .as_object_mut()
+        .unwrap()
+        .remove("engagement");
+    assert_eq!(roundtrip, encoded);
+}
+
+#[test]
+fn engagement_roundtrips_through_canonical_stores_without_other_changes() {
+    use crate::engagement::{DestinationPreference, EngagementScope, MemberPolicy};
+    let dir = temp_dir("engagement");
+    let mut stores = Stores {
+        memory_projection_version: 1,
+        ..Default::default()
+    };
+    stores.work.engagement.member_policies.insert(
+        9,
+        MemberPolicy {
+            daily_limit: Some(2),
+            timezone: Some("America/New_York".into()),
+            destinations: [(
+                EngagementScope::Guild {
+                    guild: 1,
+                    channel: 2,
+                },
+                DestinationPreference::Private,
+            )]
+            .into(),
+            ..Default::default()
+        },
+    );
+    stores.save(&dir).expect("canonical save");
+    assert_eq!(Stores::load(&dir).expect("canonical load"), stores);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn owning_save_advances_lineage_but_stale_clone_does_not() {
+    let dir = temp_dir("lineage-repeat");
+    let mut owner = Stores::default();
+    owner.save(&dir).unwrap();
+    let stale = owner.clone();
+    owner.memory.remember("g", "u", "first", 1);
+    owner.save(&dir).unwrap();
+    owner.memory.remember("g", "u", "second", 2);
+    owner.save(&dir).unwrap();
+    owner.save(&dir).unwrap();
+    assert_eq!(Stores::load(&dir).unwrap(), owner);
+    assert!(stale.save(&dir).is_err());
+    assert_eq!(
+        Stores::load(&dir).unwrap().memory.facts("g", "u"),
+        ["first", "second"]
+    );
+    fs::remove_dir_all(dir).unwrap();
 }

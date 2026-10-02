@@ -331,12 +331,12 @@ pub(super) async fn run(
                         None,
                     );
                 }
-                // Spec (botarchitecture / discordbmapi): Online + Listening "for questions".
+                // Presence describes the playful social surface without claiming audio capture.
                 ctx.set_presence(
-                    Some(serenity::gateway::ActivityData::listening("for questions")),
+                    Some(serenity::gateway::ActivityData::playing("Bad Idea Court • professionally unserious")),
                     serenity::model::user::OnlineStatus::Online,
                 );
-                tracing::info!("presence set: Online, listening for questions");
+                tracing::info!("presence set: Online, playing Bad Idea Court");
                 if let Some(events) = shell_state.operational_events() {
                     let _ = events.record(
                         observability::EventComponent::Discord,
@@ -473,9 +473,15 @@ pub(super) async fn run(
     let work_transport = std::sync::Arc::new(gateway::work_delivery::DiscordWorkDelivery(
         client.http.clone(),
     ));
+    let engagement_transport = std::sync::Arc::new(
+        gateway::engagement_delivery::DiscordEngagementDelivery(client.http.clone()),
+    );
+    let maintenance = std::sync::Arc::new(gateway::community_ops::DiscordCommunityMaintenance(
+        client.http.clone(),
+    ));
     supervisor
         .spawn_service(service::TaskName::Scheduler, move |cancel| {
-            scheduler_state.run_scheduler(cancel, work_transport)
+            scheduler_state.run_scheduler(cancel, work_transport, engagement_transport, maintenance)
         })
         .map_err(|_| runtime::StartupError("scheduler ownership failed".into()))?;
     gateway::start_connectors(&state, &mut supervisor, connectors)

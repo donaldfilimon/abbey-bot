@@ -33,9 +33,17 @@ use crate::provider::ProviderRuntime;
 use crate::vision::{VisionError, VisionRequest, VisionTransport};
 use crate::wdbx::Recall;
 
+pub(crate) mod activity_readiness;
+mod community_filesystem;
+pub(crate) mod engagement_candidates;
+mod engagement_commit;
+pub(crate) mod engagement_community;
+pub(crate) mod engagement_delivery;
+mod engagement_metrics;
 mod memory_service;
+mod personal_memory_commit;
 mod provider_setup;
-mod scheduler;
+pub(crate) mod scheduler;
 mod style_addenda;
 mod tool_scope;
 mod vision_transport;
@@ -131,6 +139,11 @@ pub struct HttpVisionTransport {
 /// would deadlock against it (reported on PR #10, fixed after #16). `engine`
 /// and `recall` are only ever taken alone or last.
 pub struct AppState {
+    personal_memory_blocked: std::sync::atomic::AtomicBool,
+    personal_memory_mutation: Mutex<()>,
+    personal_memory_reconciliation: Mutex<personal_memory_commit::ReconciliationState>,
+    personal_memory_pending:
+        Mutex<std::collections::BTreeMap<String, Arc<personal_memory_commit::PendingRequest>>>,
     operational_events: OnceLock<crate::service::telemetry::TelemetryRequests>,
     managed_status: OnceLock<Arc<crate::service::status::ManagedStatus>>,
     service: OnceLock<crate::service::OperationRegistry>,
@@ -138,6 +151,10 @@ pub struct AppState {
     persistence_requests: OnceLock<crate::service::persistence::PersistenceRequests>,
     persistence_preparation: tokio::sync::Mutex<()>,
     work_delivery_running: tokio::sync::Mutex<()>,
+    engagement_delivery_running: tokio::sync::Mutex<()>,
+    community_maintenance_running: tokio::sync::Mutex<()>,
+    engagement_metrics: Mutex<std::collections::BTreeMap<u64, engagement_metrics::Metrics>>,
+    engagement_events_healthy: std::sync::atomic::AtomicBool,
     pub stores: Mutex<Stores>,
     pub guilds: Mutex<GuildRegistry>,
     pub brains: Mutex<BrainRegistry<DqnAgent>>,
@@ -273,6 +290,10 @@ impl AppState {
             }
             None => (Stores::default(), Recall::new()),
         };
+        let mut stores = stores;
+        let personal_memory_blocked = data_dir
+            .as_ref()
+            .is_some_and(|dir| crate::persist::personal_memory::recover(&mut stores, dir).is_err());
         let mut recall = recall;
         let work_recall_disk = Self::restore_work_projection(&stores, &mut recall);
         let (stores, recall) =
@@ -391,7 +412,15 @@ impl AppState {
             self_weak: OnceLock::new(),
             persistence_requests: OnceLock::new(),
             persistence_preparation: tokio::sync::Mutex::new(()),
+            personal_memory_blocked: std::sync::atomic::AtomicBool::new(personal_memory_blocked),
+            personal_memory_mutation: Mutex::new(()),
+            personal_memory_pending: Mutex::new(Default::default()),
+            personal_memory_reconciliation: Mutex::new(Default::default()),
             work_delivery_running: tokio::sync::Mutex::new(()),
+            engagement_delivery_running: tokio::sync::Mutex::new(()),
+            community_maintenance_running: tokio::sync::Mutex::new(()),
+            engagement_metrics: Mutex::new(std::collections::BTreeMap::new()),
+            engagement_events_healthy: std::sync::atomic::AtomicBool::new(true),
         }))
     }
 
@@ -440,7 +469,15 @@ impl AppState {
             self_weak: OnceLock::new(),
             persistence_requests: OnceLock::new(),
             persistence_preparation: tokio::sync::Mutex::new(()),
+            personal_memory_blocked: std::sync::atomic::AtomicBool::new(false),
+            personal_memory_mutation: Mutex::new(()),
+            personal_memory_pending: Mutex::new(Default::default()),
+            personal_memory_reconciliation: Mutex::new(Default::default()),
             work_delivery_running: tokio::sync::Mutex::new(()),
+            engagement_delivery_running: tokio::sync::Mutex::new(()),
+            community_maintenance_running: tokio::sync::Mutex::new(()),
+            engagement_metrics: Mutex::new(std::collections::BTreeMap::new()),
+            engagement_events_healthy: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -470,10 +507,17 @@ impl AppState {
         self: &Arc<Self>,
         registry: crate::service::OperationRegistry,
     ) -> crate::service::persistence::PersistenceWriter {
-        let writer = crate::service::persistence::PersistenceWriter::start(
+        let weak = Arc::downgrade(self);
+        let writer = crate::service::persistence::PersistenceWriter::start_observed(
             self.data_dir.clone(),
             self.persistence_sink.clone(),
+            Some(Arc::new(move |base| {
+                if let Some(state) = weak.upgrade() {
+                    Self::lock(&state.stores).canonical_base.set(base);
+                }
+            })),
         );
+
         if let Some(gate) = &self.episode_gate {
             gate.attach_service(registry.clone());
         }
@@ -562,7 +606,12 @@ impl AppState {
     }
 
     pub fn memory_service(&self) -> MemoryService<'_> {
-        MemoryService::new(&self.stores, &self.recall)
+        MemoryService::new(
+            &self.stores,
+            &self.recall,
+            &self.personal_memory_blocked,
+            &self.personal_memory_mutation,
+        )
     }
 
     /// One coherent standing snapshot from the canonical SocialBrain/store
@@ -772,12 +821,15 @@ impl AppState {
 
     fn persist_snapshot(&self, snapshots: (Stores, Recall)) -> PersistReport {
         let revision = snapshots.0.work.recall.projection_revision;
-        let report = crate::service::persistence::write_snapshot(
+        let report = crate::service::persistence::write_snapshot_published(
             self.data_dir.as_deref(),
             &*self.persistence_sink,
             crate::service::persistence::Snapshot {
                 stores: snapshots.0,
                 recall: snapshots.1,
+            },
+            |base| {
+                Self::lock(&self.stores).canonical_base.set(base);
             },
         );
         self.observe_work_projection(revision, report);

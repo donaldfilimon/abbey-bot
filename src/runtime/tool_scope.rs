@@ -2,55 +2,11 @@
 use super::*;
 
 impl crate::tools::ToolHost for ToolScope<'_> {
-    fn remember_fact(&mut self, fact: &str, supersedes: Option<&str>) -> String {
-        // A model may PROPOSE that a new fact replaces an old one, but never
-        // apply it. `remember_proposing` stores the new fact and queues the
-        // proposal; the old fact survives until a human confirms. There is no
-        // model-callable path to `remember_replacing` — a model must not be
-        // able to confirm its own contested claim.
-        // With the episode gate configured every memory write is proposed to
-        // the ledger first, and this trait is synchronous, so the model path
-        // cannot propose here. It queues instead (Donald's choice 2026-09-06):
-        // the write is proposed and stored by the next drain, and the model is
-        // told nothing is on record yet. A supersession stays a proposal the
-        // person confirms; the old fact is never removed by the model.
-        if self.state.gate_for(&self.scoped_guild).is_some() {
-            return match crate::memory_gate::enqueue(
-                self.state,
-                &self.scoped_guild,
-                &self.scoped_user,
-                fact,
-                supersedes,
-                self.now,
-                self.memory_turn,
-            ) {
-                Ok(message) | Err(message) => message,
-            };
-        }
-        let service = self.state.memory_service();
-        let outcome = match supersedes {
-            Some(old) => service.remember_proposing(
-                &self.scoped_guild,
-                &self.scoped_user,
-                fact,
-                old,
-                self.now,
-            ),
-            None => service.remember(&self.scoped_guild, &self.scoped_user, fact, self.now),
-        };
-        match outcome {
-            Ok(RememberOutcome::Stored(fact)) => format!("Stored: {fact}"),
-            Ok(RememberOutcome::Proposed { stored, proposed }) => format!(
-                "Stored: {stored}. Proposed to replace {proposed:?}, which is unchanged until the person confirms."
-            ),
-            Ok(RememberOutcome::Superseded { stored, removed }) => {
-                format!("Stored: {stored}. Replaced: {removed}")
-            }
-            Ok(RememberOutcome::Unchanged) => {
-                "Already on record (or the fact list is full).".to_string()
-            }
-            Err(message) => message.to_string(),
-        }
+    fn remember_fact(&mut self, _fact: &str, _supersedes: Option<&str>) -> String {
+        // Retain the tool and turn interface for in-flight provider compatibility.
+        // A model invocation is never the member's explicit storage consent.
+        let _turn = self.memory_turn;
+        "Personal memory was not stored or queued. Ask the member to use `/remember` themselves to save a self-authored fact; use `/recall` to review existing facts.".into()
     }
 
     fn lookup_reputation(&mut self, user_id: Option<&str>) -> String {
@@ -85,16 +41,8 @@ impl crate::tools::ToolHost for ToolScope<'_> {
         format!("Switched to {persona}; continue the conversation as {persona}.")
     }
 
-    fn recent_messages(&mut self, limit: usize) -> String {
-        let text = AppState::lock(&self.state.stores)
-            .memory
-            .channel_mut(&self.scoped_channel)
-            .render_recent(limit);
-        if text.trim().is_empty() {
-            "No recent messages on record for this channel.".to_string()
-        } else {
-            text
-        }
+    fn recent_messages(&mut self, _limit: usize) -> String {
+        "Inherited channel messages are retained for authorized inspection and are unavailable to generated conversation.".into()
     }
 
     fn inspect_status(&mut self, aspect: crate::tools::InspectAspect) -> String {
@@ -147,7 +95,22 @@ impl crate::tools::ToolHost for ToolScope<'_> {
 
     fn list_facts(&mut self) -> String {
         let service = self.state.memory_service();
-        let (facts, pending) = service.subject_snapshot(&self.scoped_guild, &self.scoped_user);
-        crate::inspect::render_facts(&facts, &pending)
+        let context = service.context_for(
+            &self.scoped_guild,
+            &self.scoped_user,
+            &self.scoped_channel,
+            "",
+            0,
+            0.5,
+        );
+        crate::inspect::render_facts(&context.user_facts, &[])
     }
 }
+
+#[cfg(test)]
+#[path = "tool_scope/memory_consent_tests.rs"]
+mod memory_consent_tests;
+
+#[cfg(test)]
+#[path = "tool_scope/generated_use_tests.rs"]
+mod generated_use_tests;

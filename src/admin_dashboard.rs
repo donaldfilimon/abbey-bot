@@ -10,16 +10,24 @@ pub enum AdminPage {
     Overview,
     Conversation,
     Learning,
+    Media,
+    Moderation,
+    AutonomousOperations,
+    Models,
     Operations,
     ConfirmReset,
 }
 
 impl AdminPage {
     /// Navigable dashboard pages exposed by the classic page select.
-    pub const NAV: [Self; 4] = [
+    pub const NAV: [Self; 8] = [
         Self::Overview,
         Self::Conversation,
         Self::Learning,
+        Self::Media,
+        Self::Moderation,
+        Self::AutonomousOperations,
+        Self::Models,
         Self::Operations,
     ];
 
@@ -28,8 +36,12 @@ impl AdminPage {
         match self {
             Self::Overview => "Overview",
             Self::Conversation => "Conversation",
-            Self::Learning => "Learning",
-            Self::Operations => "Operations",
+            Self::Learning => "Memory",
+            Self::Media => "Media",
+            Self::Moderation => "Moderation",
+            Self::AutonomousOperations => "Autonomous Operations",
+            Self::Models => "Models",
+            Self::Operations => "Diagnostics",
             Self::ConfirmReset => "Confirm reset",
         }
     }
@@ -47,6 +59,9 @@ pub enum AdminAction {
     SetCooldown(u32),
     SetBudget(u32),
     SetEpsilon(u16),
+    SetCommunityMode(crate::community_ops::Mode),
+    ReviewProposals,
+    SetChannelParticipation(bool),
     Flush,
     Export,
     RequestReset,
@@ -63,6 +78,9 @@ pub enum AdminEffect {
     SetCooldown(u32),
     SetBudget(u32),
     SetEpsilon(u16),
+    SetCommunityMode(crate::community_ops::Mode),
+    ReviewProposals,
+    SetChannelParticipation(bool),
     Persist,
     Export,
     ResetChannel,
@@ -77,6 +95,10 @@ pub struct AdminViewInput {
     pub brain_summary: String,
     pub capabilities: Vec<&'static str>,
     pub operation_result: Option<String>,
+    pub media_status: String,
+    pub models_status: String,
+    pub autonomous_status: String,
+    pub channel_status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,10 +135,15 @@ impl AdminAction {
     pub const fn slug(self) -> &'static str {
         match self {
             Self::SelectPage => "page-select",
+            Self::ReviewProposals => "review-proposals",
             Self::View(AdminPage::Overview) => "view-overview",
             Self::View(AdminPage::Conversation) => "view-conversation",
             Self::View(AdminPage::Learning) => "view-learning",
             Self::View(AdminPage::Operations) => "view-operations",
+            Self::View(AdminPage::Media) => "view-media",
+            Self::View(AdminPage::Moderation) => "view-moderation",
+            Self::View(AdminPage::AutonomousOperations) => "view-autonomous",
+            Self::View(AdminPage::Models) => "view-models",
             Self::View(AdminPage::ConfirmReset) | Self::RequestReset => "request-reset",
             Self::SetLearning(true) => "learning-on",
             Self::SetLearning(false) => "learning-off",
@@ -129,13 +156,20 @@ impl AdminAction {
             Self::SetPersona(Persona::Abi) => "persona-abi",
             Self::SetCooldown(0) => "cooldown-0",
             Self::SetCooldown(20) => "cooldown-20",
-            Self::SetCooldown(_) => "cooldown-60",
+            Self::SetCooldown(120) => "cooldown-120",
+            Self::SetCooldown(60) => "cooldown-60",
+            Self::SetCooldown(_) => "cooldown-unsupported",
             Self::SetBudget(1) => "budget-1",
             Self::SetBudget(6) => "budget-6",
             Self::SetBudget(_) => "budget-60",
             Self::SetEpsilon(5) => "epsilon-5",
             Self::SetEpsilon(20) => "epsilon-20",
             Self::SetEpsilon(_) => "epsilon-50",
+            Self::SetCommunityMode(crate::community_ops::Mode::Stopped) => "community-stopped",
+            Self::SetCommunityMode(crate::community_ops::Mode::Propose) => "community-propose",
+            Self::SetCommunityMode(crate::community_ops::Mode::Apply) => "community-apply",
+            Self::SetChannelParticipation(true) => "channel-allow",
+            Self::SetChannelParticipation(false) => "channel-block",
             Self::Flush => "flush",
             Self::Export => "export",
             Self::ConfirmReset => "confirm-reset",
@@ -145,10 +179,15 @@ impl AdminAction {
     fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "page-select" => Self::SelectPage,
+            "review-proposals" => Self::ReviewProposals,
             "view-overview" => Self::View(AdminPage::Overview),
             "view-conversation" => Self::View(AdminPage::Conversation),
             "view-learning" => Self::View(AdminPage::Learning),
             "view-operations" => Self::View(AdminPage::Operations),
+            "view-media" => Self::View(AdminPage::Media),
+            "view-moderation" => Self::View(AdminPage::Moderation),
+            "view-autonomous" => Self::View(AdminPage::AutonomousOperations),
+            "view-models" => Self::View(AdminPage::Models),
             "request-reset" => Self::RequestReset,
             "learning-on" => Self::SetLearning(true),
             "learning-off" => Self::SetLearning(false),
@@ -162,12 +201,18 @@ impl AdminAction {
             "cooldown-0" => Self::SetCooldown(0),
             "cooldown-20" => Self::SetCooldown(20),
             "cooldown-60" => Self::SetCooldown(60),
+            "cooldown-120" => Self::SetCooldown(120),
             "budget-1" => Self::SetBudget(1),
             "budget-6" => Self::SetBudget(6),
             "budget-60" => Self::SetBudget(60),
             "epsilon-5" => Self::SetEpsilon(5),
             "epsilon-20" => Self::SetEpsilon(20),
             "epsilon-50" => Self::SetEpsilon(50),
+            "community-stopped" => Self::SetCommunityMode(crate::community_ops::Mode::Stopped),
+            "community-propose" => Self::SetCommunityMode(crate::community_ops::Mode::Propose),
+            "community-apply" => Self::SetCommunityMode(crate::community_ops::Mode::Apply),
+            "channel-allow" => Self::SetChannelParticipation(true),
+            "channel-block" => Self::SetChannelParticipation(false),
             "flush" => Self::Flush,
             "export" => Self::Export,
             "confirm-reset" => Self::ConfirmReset,
@@ -234,11 +279,17 @@ impl AdminSession {
             AdminAction::SelectPage => AdminPage::Overview,
             AdminAction::RequestReset | AdminAction::ConfirmReset => AdminPage::ConfirmReset,
             AdminAction::SetLearning(_) => AdminPage::Learning,
-            AdminAction::SetVision(_)
-            | AdminAction::SetUnsolicited(_)
+            AdminAction::SetVision(_) => AdminPage::Media,
+            AdminAction::SetUnsolicited(_)
             | AdminAction::SetPersona(_)
             | AdminAction::SetCooldown(_) => AdminPage::Conversation,
-            AdminAction::SetBudget(_) | AdminAction::SetEpsilon(_) => AdminPage::Learning,
+            AdminAction::SetBudget(_) | AdminAction::SetChannelParticipation(_) => {
+                AdminPage::Conversation
+            }
+            AdminAction::SetEpsilon(_) => AdminPage::Learning,
+            AdminAction::SetCommunityMode(_) | AdminAction::ReviewProposals => {
+                AdminPage::AutonomousOperations
+            }
             AdminAction::Flush | AdminAction::Export => AdminPage::Operations,
         };
         Ok((
@@ -318,6 +369,9 @@ pub fn reduce(action: AdminAction, settings: &GuildSettings) -> AdminEffect {
         | AdminAction::SetCooldown(_)
         | AdminAction::SetBudget(_)
         | AdminAction::SetEpsilon(_) => AdminEffect::None,
+        AdminAction::SetCommunityMode(mode) => AdminEffect::SetCommunityMode(mode),
+        AdminAction::ReviewProposals => AdminEffect::ReviewProposals,
+        AdminAction::SetChannelParticipation(allow) => AdminEffect::SetChannelParticipation(allow),
         AdminAction::Flush => AdminEffect::Persist,
         AdminAction::Export => AdminEffect::Export,
         AdminAction::ConfirmReset => AdminEffect::ResetChannel,
@@ -341,21 +395,36 @@ pub fn render(page: AdminPage, input: &AdminViewInput) -> String {
             input.capabilities.join(", ")
         ),
         AdminPage::Conversation => format!(
-            "**Administration · Conversation**\nDefault persona: **{}**\nVision: **{}**\nUnsolicited action: **{}**\nCooldown: **{}s**{result}",
+            "**Administration · Conversation**\nDefault persona: **{}**\nUnsolicited action: **{}**\nCooldown: **{}s**\n{}{result}",
             crate::guild::persona_name(input.settings.default_persona),
-            on_off(input.settings.vision_enabled),
             on_off(input.settings.unsolicited),
             input.settings.reply_cooldown_seconds,
+            input.channel_status,
         ),
         AdminPage::Learning => format!(
-            "**Administration · Learning**\nLearning: **{}**\nHourly budget: **{}/h**\nEpsilon: **{:.3}**\n{}{result}",
+            "**Administration · Memory**\nAdaptive learning: **{}**\nEpsilon: **{:.3}**\n{}\nPersonal facts are separate from policy learning. Members use `/remember`, `/recall`, and `/forget` for their own facts; switching learning off does not erase memory.{result}",
             on_off(input.settings.learning_enabled),
-            input.settings.unsolicited_per_hour,
             input.epsilon,
             input.brain_summary,
         ),
+        AdminPage::Media => format!(
+            "**Administration · Media**\n{}\nAdult roleplay requested: **{}**. Guild NSFW admission is still required; an enabled setting grants no channel or voice consent. Individual voice choices use `/voice consent`; `/voice status` shows your bounded state. Music never grants listening consent.{result}",
+            input.media_status,
+            on_off(input.settings.nsfw_roleplay_enabled)
+        ),
+        AdminPage::Moderation => format!(
+            "**Administration · Moderation**\nAbbey provides proposals and recommendations; this dashboard does not execute sanctions. Use `/modcall` for a permission- and hierarchy-checked recommendation. Human moderators own evidence review and decisions. No dashboard button grants moderation authority.{result}"
+        ),
+        AdminPage::AutonomousOperations => format!(
+            "**Administration · Autonomous Operations**\n{}\nPolicy snapshot. Only the current guild owner matching the policy can change its mode. Mode buttons change mode only. Review proposals opens one exact pending draft; fresh owner approval appends that action without changing mode. Apply enables only finalized owner-approved actions subject to runtime guards.{result}",
+            input.autonomous_status
+        ),
+        AdminPage::Models => format!(
+            "**Administration · Models**\n{}\nEligibility is a snapshot, not proof of a successful request. Provider routing is configured by the host operator; this dashboard changes no provider or fallback settings.",
+            input.models_status
+        ),
         AdminPage::Operations => format!(
-            "**Administration · Operations**\nFlush reports the actual canonical and WDBX persistence outcomes. Export is a private attachment. Reset requires a second interaction and affects this channel's transcript only.{result}"
+            "**Administration · Diagnostics**\nFlush reports the actual canonical and WDBX persistence outcomes. Export is a private attachment. Reset requires a second interaction and affects this channel's transcript only.{result}"
         ),
         AdminPage::ConfirmReset => format!(
             "**Administration · Confirm reset**\nConfirming clears only this channel's multi-turn transcript. Facts, policy, reputation, other channels, and other servers remain intact.{result}"
@@ -373,9 +442,6 @@ pub fn unsolicited_status(settings: &GuildSettings, quiet: bool, generation: boo
     if !settings.unsolicited {
         blockers.push("server opt-in is off (`/admin act on`)");
     }
-    if !settings.learning_enabled {
-        blockers.push("learning is off (`/admin learning on`)");
-    }
     if !generation {
         blockers.push("generation provider is unavailable; ask the operator to check readiness");
     }
@@ -385,7 +451,7 @@ pub fn unsolicited_status(settings: &GuildSettings, quiet: bool, generation: boo
         format!("blocked: {}", blockers.join("; "))
     };
     format!(
-        "Unsolicited requested: {} · Effective replies: {effective}. Budget: {}/h; cooldown: {}s (checked when acting).",
+        "Unsolicited requested: {} · Effective replies: {effective}. Budget: {}/h across the server; cooldown: {}s per channel (checked when acting). Learning changes adaptation, not participation.",
         on_off(settings.unsolicited),
         settings.unsolicited_per_hour,
         settings.reply_cooldown_seconds
@@ -420,6 +486,112 @@ mod tests {
     use super::*;
 
     #[test]
+    fn channel_controls_round_trip_without_granting_cross_guild_authority() {
+        let session = AdminSession {
+            owner: 42,
+            guild: 7,
+            expiry: 100,
+            page: AdminPage::Conversation,
+        };
+        for allow in [true, false] {
+            let action = AdminAction::SetChannelParticipation(allow);
+            let id = session.custom_id(action);
+            let (parsed, parsed_action) = AdminSession::parse(&id, 42, Some(7), 99).unwrap();
+            assert_eq!(parsed.page, AdminPage::Conversation);
+            assert_eq!(parsed_action, action);
+            assert_eq!(
+                reduce(action, &GuildSettings::default()),
+                AdminEffect::SetChannelParticipation(allow)
+            );
+            assert_eq!(
+                AdminSession::parse(&id, 42, Some(8), 99),
+                Err(Rejection::ForeignGuild)
+            );
+        }
+    }
+
+    #[test]
+    fn community_mode_buttons_round_trip_in_owner_bound_protocol() {
+        use crate::community_ops::Mode;
+        let session = AdminSession {
+            owner: 42,
+            guild: 7,
+            expiry: 100,
+            page: AdminPage::AutonomousOperations,
+        };
+        for mode in [Mode::Stopped, Mode::Propose, Mode::Apply] {
+            let action = AdminAction::SetCommunityMode(mode);
+            let id = session.custom_id(action);
+            let (parsed, parsed_action) = AdminSession::parse(&id, 42, Some(7), 99).unwrap();
+            assert_eq!(parsed.page, AdminPage::AutonomousOperations);
+            assert_eq!(parsed_action, action);
+            assert_eq!(
+                reduce(action, &GuildSettings::default()),
+                AdminEffect::SetCommunityMode(mode)
+            );
+            assert_eq!(
+                AdminSession::parse(&id, 43, Some(7), 99),
+                Err(Rejection::ForeignOwner)
+            );
+            assert_eq!(
+                AdminSession::parse(&id, 42, Some(8), 99),
+                Err(Rejection::ForeignGuild)
+            );
+            assert_eq!(
+                AdminSession::parse(&id, 42, Some(7), 101),
+                Err(Rejection::Expired)
+            );
+        }
+    }
+
+    #[test]
+    fn all_eight_pages_round_trip_through_owner_bound_protocol_and_select() {
+        assert_eq!(AdminPage::NAV.len(), 8);
+        for page in AdminPage::NAV {
+            let session = AdminSession {
+                owner: 42,
+                guild: 7,
+                expiry: 100,
+                page,
+            };
+            let action = AdminAction::View(page);
+            assert_eq!(
+                AdminSession::parse(&session.custom_id(action), 42, Some(7), 99)
+                    .unwrap()
+                    .1,
+                action
+            );
+            assert_eq!(
+                resolve_select_action(AdminAction::SelectPage, &[action.slug().into()]),
+                Ok(action)
+            );
+        }
+        assert!(!AdminPage::NAV.contains(&AdminPage::ConfirmReset));
+    }
+
+    #[test]
+    fn exposed_cooldown_presets_round_trip_and_reduce_exactly() {
+        assert_eq!(
+            AdminAction::parse(AdminAction::SetCooldown(119).slug()),
+            None
+        );
+        for value in [0, 20, 60, 120] {
+            let action = AdminAction::SetCooldown(value);
+            assert_eq!(AdminAction::parse(action.slug()), Some(action));
+            let settings = GuildSettings {
+                reply_cooldown_seconds: 599,
+                ..GuildSettings::default()
+            };
+            assert_eq!(reduce(action, &settings), AdminEffect::SetCooldown(value));
+            let settings = GuildSettings {
+                reply_cooldown_seconds: value,
+                ..settings
+            };
+            assert_eq!(reduce(action, &settings), AdminEffect::None);
+        }
+    }
+
+    #[test]
     fn vision_policy_and_operation_readiness_remain_distinct() {
         assert!(vision_status(false, true, true).contains("blocked by server setting"));
         let text = vision_status(true, true, false);
@@ -428,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn requested_act_on_exposes_learning_and_quiet_blockers() {
+    fn requested_act_on_is_independent_of_learning_and_exposes_quiet_blockers() {
         let settings = GuildSettings {
             unsolicited: true,
             learning_enabled: false,
@@ -436,7 +608,7 @@ mod tests {
         };
         let text = unsolicited_status(&settings, true, false);
         assert!(text.contains("requested: on"));
-        assert!(text.contains("learning is off"));
+        assert!(!text.contains("learning is off"));
         assert!(text.contains("host quiet"));
         assert!(text.contains("provider"));
     }

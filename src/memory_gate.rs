@@ -7,11 +7,13 @@ mod turn;
 pub use turn::{Decision, MemoryTurn};
 
 use crate::episode_gate::{GateOutcome, MemoryCandidateRequest, MemoryClass, RetentionClass};
+#[cfg(test)]
 use crate::memory;
 use crate::runtime::{self, AppState, RememberOutcome};
 
 /// Queued model-tool writes per process. The tool host is synchronous and
 /// cannot propose, so it queues; a full queue refuses rather than grows.
+#[cfg(test)]
 pub const MAX_QUEUED: usize = 64;
 
 /// One model-tool memory write waiting for the gate (Donald's choice
@@ -37,6 +39,7 @@ pub struct Drained {
 
 /// Queue a model-tool write for the next drain. `Err` is the message to give
 /// the model; nothing is stored either way.
+#[cfg(test)]
 pub fn enqueue(
     state: &AppState,
     scoped_guild: &str,
@@ -372,8 +375,9 @@ pub fn drop_receipt(state: &AppState, scoped_guild: &str, scoped_user: &str, fac
         .take_receipt(scoped_guild, scoped_user, fact);
 }
 
-/// After a successful local write, key the stored fact by its receipt and
-/// drop the receipt of anything it replaced.
+/// Legacy acceptance helper: key a directly stored test fact by its receipt
+/// and drop the receipt of anything it replaced.
+#[cfg(test)]
 pub fn settle_receipts(
     state: &AppState,
     scoped_guild: &str,
@@ -437,7 +441,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_a_gate_the_model_tool_queues_and_a_dead_gate_stores_nothing() {
+    async fn model_refusal_precedes_gate_and_legacy_queued_recovery_still_fails_closed() {
         let mut state = AppState::in_memory();
         Arc::get_mut(&mut state).unwrap().episode_gate = Some(dead_gate());
         let (g, u) = ("discord:123456789012345678", "discord:42");
@@ -445,17 +449,36 @@ mod tests {
         let mut host = scope(&state);
         host.memory_turn = Some(&turn);
         let reply = host.remember_fact("likes compilers", None);
-        assert!(reply.starts_with("Queued"), "{reply}");
-        assert!(reply.contains("nothing is on record yet"));
+        assert!(reply.contains("not stored or queued"), "{reply}");
         assert!(state.memory_service().facts(g, u).is_empty());
-        assert_eq!(AppState::lock(&state.memory_queue).len(), 1);
+        assert!(AppState::lock(&state.memory_queue).is_empty());
+        assert_eq!(
+            state.episode_gate.as_ref().unwrap().counters().unavailable,
+            0
+        );
+        // Preserve legacy recovery coverage using the isolated test enqueue seam.
         assert!(
-            host.remember_fact("likes compilers", None)
+            enqueue(&state, g, u, "likes compilers", None, 10, Some(&turn))
+                .unwrap()
+                .starts_with("Queued")
+        );
+        assert!(
+            enqueue(&state, g, u, "likes compilers", None, 10, Some(&turn))
+                .unwrap_err()
                 .starts_with("Already queued")
         );
         assert!(
-            host.remember_fact("moved to zig", Some("likes compilers"))
-                .starts_with("Queued")
+            enqueue(
+                &state,
+                g,
+                u,
+                "moved to zig",
+                Some("likes compilers"),
+                10,
+                Some(&turn)
+            )
+            .unwrap()
+            .starts_with("Queued")
         );
         assert_eq!(AppState::lock(&state.memory_queue).len(), 2);
 
@@ -736,11 +759,12 @@ mod tests {
         let mut host = scope(&state);
         host.memory_turn = Some(&turn);
         let reply = host.remember_fact("likes compilers", None);
-        assert!(reply.starts_with("Stored"), "{reply}");
-        assert_eq!(
-            state.memory_service().facts(g, u),
-            vec!["likes compilers".to_string()]
-        );
+        assert!(reply.contains("not stored or queued"), "{reply}");
+        assert!(state.memory_service().facts(g, u).is_empty());
+        state
+            .memory_service()
+            .remember(g, u, "likes compilers", 10)
+            .unwrap();
         assert!(AppState::lock(&state.memory_queue).is_empty());
         assert!(
             state

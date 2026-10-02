@@ -372,6 +372,8 @@ pub fn render_stats(stats: &InteractionStats) -> String {
 /// (bot-architecture.md `PersonaContext`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersonaContext {
+    #[serde(default)]
+    pub personal_memory_permits: crate::personal_memory::MemoryUsePermitSet,
     pub channel_summary: String,
     pub user_facts: Vec<String>,
     pub reputation: f64,
@@ -386,6 +388,7 @@ impl PersonaContext {
     /// The spec's `.empty`: nothing known, neutral standing.
     pub fn empty() -> Self {
         Self {
+            personal_memory_permits: Default::default(),
             channel_summary: String::new(),
             user_facts: Vec::new(),
             reputation: DEFAULT_REPUTATION,
@@ -710,6 +713,7 @@ impl MemoryBank {
     pub fn context_for(&self, guild: &str, user: &str, scoped_channel: &str) -> PersonaContext {
         let memory = self.user(guild, user);
         PersonaContext {
+            personal_memory_permits: Default::default(),
             channel_summary: self
                 .channels
                 .get(scoped_channel)

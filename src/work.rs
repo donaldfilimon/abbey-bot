@@ -258,6 +258,7 @@ pub struct ReminderCoverage {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct WorkStore {
+    pub engagement: crate::engagement::EngagementStore,
     pub recall: recall::WorkRecallState,
     pub recall_policies: recall_policy::RecallPolicies,
     pub sequence: u64,

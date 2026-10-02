@@ -1,6 +1,15 @@
 //! Runtime work dispatched by the single retained scheduler.
 use super::*;
 
+pub(crate) trait CommunityMaintenance: Send + Sync {
+    fn maintain(
+        &self,
+        state: Arc<AppState>,
+        cancel: tokio_util::sync::CancellationToken,
+        now: u64,
+    ) -> impl std::future::Future<Output = Result<(), &'static str>> + Send;
+}
+
 impl AppState {
     /// Rolling channel summaries — the spec's "rolling 2k-token summary
     /// compressed via ABI". For every channel whose count is
@@ -65,11 +74,18 @@ impl AppState {
     }
 
     /// One owned scheduler with skipped missed ticks and no immediate startup work.
-    pub(crate) async fn run_scheduler<T: super::work_delivery::WorkDeliveryTransport + 'static>(
+    pub(crate) async fn run_scheduler<T, E, M>(
         self: Arc<Self>,
         cancel: tokio_util::sync::CancellationToken,
         work_transport: Arc<T>,
-    ) -> crate::service::TaskExit {
+        engagement_transport: Arc<E>,
+        maintenance: Arc<M>,
+    ) -> crate::service::TaskExit
+    where
+        T: super::work_delivery::WorkDeliveryTransport + 'static,
+        E: super::engagement_delivery::EngagementTransport + 'static,
+        M: CommunityMaintenance + 'static,
+    {
         if let Some(status) = self.managed_status() {
             status.scheduler_running();
             let _ = status.refresh();
@@ -92,10 +108,33 @@ impl AppState {
                     Tick::Work => {
                         if let Some(registry) = self.service.get() {
                             let state = self.clone();
+                            let transport = engagement_transport.clone();
+                            let _ = registry.spawn_operation(crate::service::OperationKind::EngagementDelivery, move |cancel| async move {
+                                if state.deliver_engagement(transport.as_ref(), cancel, super::now).await.is_err() {
+                                    tracing::warn!("engagement settlement persistence failed; attempts require review");
+                                }
+                                crate::service::TaskExit::Returned
+                            });
+                        }
+                        if let Some(registry) = self.service.get() {
+                            let state = self.clone();
                             let transport = work_transport.clone();
                             let _ = registry.spawn_operation(crate::service::OperationKind::WorkDelivery, move |cancel| async move {
-                                if state.deliver_work(transport.as_ref(), cancel, super::now).await.is_err() {
+                                if state.clone().deliver_work(transport.as_ref(), cancel.clone(), super::now).await.is_err() {
                                     tracing::warn!("work delivery persistence failed; reserved attempts require review");
+                                }
+                                crate::service::TaskExit::Returned
+                            });
+                        }
+                        if let Some(registry) = self.service.get() {
+                            let state = self.clone();
+                            let maintenance = maintenance.clone();
+                            let _ = registry.spawn_operation(crate::service::OperationKind::CommunityMaintenance, move |cancel| async move {
+                                let Ok(_single_flight) = state.community_maintenance_running.try_lock() else {
+                                    return crate::service::TaskExit::Returned;
+                                };
+                                if let Err(reason) = maintenance.maintain(state.clone(), cancel, super::now()).await {
+                                    tracing::warn!(reason, "community maintenance stopped");
                                 }
                                 crate::service::TaskExit::Returned
                             });

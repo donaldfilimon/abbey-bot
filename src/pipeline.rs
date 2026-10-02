@@ -28,7 +28,7 @@ use crate::persona::Persona;
 use crate::platform::{OutboundMessage, RemoteAttachment, RouteDecision, SocialEvent, triage};
 use crate::routing_signals;
 use crate::runtime::{self, AppState};
-use crate::vision::{self, ImageUnderstanding};
+use crate::vision;
 
 /// Window for "channel heat" — messages in the last five minutes (spec).
 pub const HEAT_WINDOW_SECS: u64 = 300;
@@ -40,6 +40,15 @@ pub const REACT_EMOJI: &str = "👍";
 /// What a shell must be able to do for the pipeline. Returns the sent
 /// message's native id so rewards can be keyed to it.
 pub trait Outbound {
+    fn completed_exchange(
+        &self,
+        _state: &AppState,
+        _event: &SocialEvent,
+        _response: &str,
+    ) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+
     fn send(
         &self,
         native_channel_id: &str,
@@ -112,7 +121,7 @@ pub(crate) struct Ctx {
 /// Shared unsolicited-speech gates — `quiet` then `act off`, in that order,
 /// each respecting `forced` (mention/DM bypass). This is the unification
 /// point for the duplication at 142-147 (Welcome) and 222-230 (normal flow):
-/// both paths call this ordered chain, normal flow adds the learning gate.
+/// both paths call this ordered chain; learning controls adaptation separately.
 fn check_unsolicited(settings: &GuildSettings, quiet: bool, forced: bool) -> Result<(), Outcome> {
     ensure!(forced || !quiet, Outcome::Ignored("quiet"));
     ensure!(forced || settings.unsolicited, Outcome::Ignored("act off"));
@@ -137,8 +146,11 @@ pub(crate) fn guards(ctx: &Ctx, state: &AppState) -> Result<(), Outcome> {
         Outcome::Ignored("act off")
     );
     ensure!(
-        ctx.forced || ctx.settings.learning_enabled,
-        Outcome::Ignored("learning off")
+        ctx.forced
+            || ctx
+                .settings
+                .unsolicited_channel_allowed(&ctx.scoped_channel),
+        Outcome::Ignored("channel participation off")
     );
     Ok(())
 }
@@ -246,6 +258,9 @@ pub async fn handle<O: Outbound + Sync>(
             // `quiet` → `act off` chain via `check_unsolicited`.
             if let Err(outcome) = check_unsolicited(&settings, state.quiet, false) {
                 return outcome;
+            }
+            if !settings.unsolicited_channel_allowed(&scoped_channel) {
+                return Outcome::Ignored("channel participation off");
             }
             return welcome(state, out, &event.native_channel_id, &display_name).await;
         }
@@ -388,10 +403,12 @@ pub async fn handle<O: Outbound + Sync>(
     };
 
     if action == BotAction::Stay {
-        AppState::lock(&state.brains).remember(
-            &scoped_guild,
-            crate::brain::reward::RewardCollector::silence_experience(encoded.to_vec()),
-        );
+        if settings.learning_enabled {
+            AppState::lock(&state.brains).remember(
+                &scoped_guild,
+                crate::brain::reward::RewardCollector::silence_experience(encoded.to_vec()),
+            );
+        }
         return Outcome::Stayed;
     }
 
@@ -418,14 +435,17 @@ pub async fn handle<O: Outbound + Sync>(
         {
             return Outcome::ReplyFailed(e);
         }
-        // A reaction back lands on the user's own message, so that is the key.
-        AppState::lock(&state.rewards).register_reply(
-            encoded.to_vec(),
-            BotAction::React.index(),
-            event.native_message_id.clone(),
-            scoped_guild.clone(),
-            now,
-        );
+        // Learning-off participation does not enqueue training experiences.
+        if settings.learning_enabled {
+            // A reaction back lands on the user's own message, so that is the key.
+            AppState::lock(&state.rewards).register_reply(
+                encoded.to_vec(),
+                BotAction::React.index(),
+                event.native_message_id.clone(),
+                scoped_guild.clone(),
+                now,
+            );
+        }
         return Outcome::Reacted;
     }
 
@@ -473,13 +493,29 @@ pub async fn handle<O: Outbound + Sync>(
         &enriched,
         reputation,
     );
+    let guard = match crate::generation::consent::GenerationGuard::capture(
+        state,
+        &Ask {
+            session_mode: crate::generation::SessionMode::Shared,
+            subject: Some((&scoped_guild, &scoped_user)),
+            scope: &scoped_channel,
+            context: &context,
+            user_input: &enriched,
+            now,
+        },
+    ) {
+        Ok(guard) => guard,
+        Err(error) => return Outcome::ReplyFailed(error.to_string()),
+    };
     let reply_to = Some(event.native_message_id.clone());
     let memory_turn = crate::memory_gate::MemoryTurn::default();
+    let text_started = tokio::time::Instant::now();
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
         // while this turn waits for its slot. Tools are offered only when
         // someone addressed Abbey — budgeted policy replies stay single-shot.
         let ask = Ask {
+            subject: Some((&scoped_guild, &scoped_user)),
             session_mode: crate::generation::SessionMode::Shared,
             scope: &scoped_channel,
             context: &context,
@@ -526,25 +562,50 @@ pub async fn handle<O: Outbound + Sync>(
             return Outcome::ReplyFailed(e.to_string());
         }
     };
+    if let Err(error) = guard.check(state) {
+        return Outcome::ReplyFailed(error.to_string());
+    }
     // A tool may have switched the persona; the transcript keeps its history
     // and the next turn prepares with the new persona.
     if persona != initial_persona {
         AppState::lock(&state.engine).set_session_persona(&scoped_channel, persona, now);
     }
-    AppState::lock(&state.engine).commit(&scoped_channel, &enriched, &answer, now);
 
     let sent_id = match already_sent {
         Some(id) => id,
         None => {
             let reply = OutboundMessage {
-                text: answer,
+                text: answer.clone(),
                 reply_to_native_message_id: reply_to,
                 title: None,
                 accent_color: None,
             };
+            if let Err(error) = guard.check(state) {
+                return Outcome::ReplyFailed(error.to_string());
+            }
             match out.send(&event.native_channel_id, &reply).await {
-                Ok(id) => id,
+                Ok(id) => {
+                    if event.network == crate::platform::SocialNetwork::Discord {
+                        crate::generation::timing::record(
+                            state,
+                            crate::observability::EventCode::DiscordFirstPost,
+                            crate::observability::EventOutcome::Succeeded,
+                            text_started.elapsed(),
+                            None,
+                        );
+                    }
+                    id
+                }
                 Err(e) => {
+                    if event.network == crate::platform::SocialNetwork::Discord {
+                        crate::generation::timing::record(
+                            state,
+                            crate::observability::EventCode::DiscordPostFailure,
+                            crate::observability::EventOutcome::Failed,
+                            text_started.elapsed(),
+                            Some(crate::observability::OperationalErrorCategory::Unavailable),
+                        );
+                    }
                     finish_memory_turn(state, out, &event, memory_turn, false).await;
                     return Outcome::ReplyFailed(e);
                 }
@@ -552,22 +613,34 @@ pub async fn handle<O: Outbound + Sync>(
         }
     };
 
+    if let Err(error) = guard.check(state) {
+        return Outcome::ReplyFailed(error.to_string());
+    }
+    // The delivered exchange remains inspection-only; preparation never imports it.
+    AppState::lock(&state.engine).commit(&scoped_channel, &enriched, &answer, now);
+
+    if forced {
+        out.completed_exchange(state, &event, &sent_id).await;
+    }
+
     // The full turn: scope and ask travel with it so a later follow-up in this
     // channel — one with no reply-to pointer — can still be attributed back to
     // this exact action.
-    AppState::lock(&state.rewards).register_turn(ReplyTurn {
-        state: encoded.to_vec(),
-        action: BotAction::Reply.index(),
-        sent_native_message_id: sent_id,
-        scope: scoped_channel.clone(),
-        scoped_guild_id: scoped_guild.clone(),
-        // The human's own words, not `enriched`: vision folds Abbey-written
-        // image descriptions into the prompt text, and padding the ask with
-        // them would depress every later topic-overlap ratio.
-        ask: text.clone(),
-        asker: scoped_user.clone(),
-        now,
-    });
+    if forced || settings.learning_enabled {
+        AppState::lock(&state.rewards).register_turn(ReplyTurn {
+            state: encoded.to_vec(),
+            action: BotAction::Reply.index(),
+            sent_native_message_id: sent_id,
+            scope: scoped_channel.clone(),
+            scoped_guild_id: scoped_guild.clone(),
+            // The human's own words, not `enriched`: vision folds Abbey-written
+            // image descriptions into the prompt text, and padding the ask with
+            // them would depress every later topic-overlap ratio.
+            ask: text.clone(),
+            asker: scoped_user.clone(),
+            now,
+        });
+    }
     {
         let mut stores = AppState::lock(&state.stores);
         AppState::lock(&state.social).record_interaction(
@@ -676,7 +749,7 @@ async fn enrich_with_vision<O: Outbound + Sync>(
         let Ok(bytes) = out.fetch(&att.url, vision::MAX_IMAGE_BYTES).await else {
             continue;
         };
-        if let Ok(desc) = vision_client.describe(bytes).await {
+        if let Ok(desc) = vision_client.describe_source_only(bytes).await {
             described.push((att.filename.clone(), desc));
         }
     }
@@ -699,7 +772,8 @@ async fn welcome<O: Outbound + Sync>(
     }
     let system = engine::welcome_prompt(display_name);
     let text = match state
-        .chat(&system, &[llm::ChatTurn::user("Say hello.")])
+        .providers
+        .chat_source_only(&system, &[llm::ChatTurn::user("Say hello.")])
         .await
     {
         Ok((t, _)) => ask::tidy_reply(Persona::Abi, &t),
@@ -763,3 +837,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 #[path = "pipeline/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pipeline/participation_tests.rs"]
+mod participation_tests;

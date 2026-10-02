@@ -379,7 +379,7 @@ async fn registered_autocomplete_guards_skip_defer_and_rest_and_keep_suggestions
         }
     }
     assert_eq!(
-        checked, 5,
+        checked, 6,
         "all existing autocomplete callbacks are exercised"
     );
 }

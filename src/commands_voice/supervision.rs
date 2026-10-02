@@ -287,7 +287,7 @@ pub(super) async fn on_voice_state_update(
         let upgrade_runtime = Arc::clone(&runtime);
         let upgrade_state = Arc::clone(&data.state);
         let upgrade_ctx = ctx.clone();
-        tokio::spawn(async move {
+        let admitted = retain_presence_upgrade(&runtime, async move {
             match super::try_auto_listen_while_present(&upgrade_ctx, upgrade_runtime, upgrade_state)
                 .await
             {
@@ -300,6 +300,9 @@ pub(super) async fn on_voice_state_update(
                 ),
             }
         });
+        if let Err(reason) = admitted {
+            tracing::warn!(reason, "PresenceOnly auto-listen join hook not admitted");
+        }
         return;
     }
 
@@ -528,9 +531,77 @@ pub(super) async fn on_voice_permissions_changed(
         .await;
 }
 
+// Keep this admission seam separate from the Discord facts so shutdown ownership
+// can be exercised without opening a gateway or preparing a real model.
+fn retain_presence_upgrade<F>(runtime: &VoiceRuntime, preparation: F) -> Result<(), &'static str>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    runtime.spawn_owned(preparation)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shutdown_retains_presence_upgrade_until_cleanup_finishes() {
+        use crate::service::{
+            FreezeError, ReapOutcome, ServiceSupervisor, ShutdownReason, StageBudget, TaskExit,
+        };
+        use crate::voice::{VoiceBackendConfig, VoiceConfig};
+        use tokio::sync::oneshot;
+        use tokio::time::Instant;
+
+        let mut supervisor = ServiceSupervisor::new();
+        supervisor.finish_startup();
+        let runtime = Arc::new(VoiceRuntime::new(VoiceConfig::selected_only(
+            1,
+            2,
+            VoiceBackendConfig::Disabled,
+            true,
+        )));
+        runtime.attach_service(supervisor.operations());
+        let generation = runtime
+            .reserve_start_if_unchanged(runtime.start_operation_token())
+            .unwrap();
+        let preparing = Arc::clone(&runtime);
+        let (entered, started) = oneshot::channel();
+        let (cancelled, cancellation_seen) = oneshot::channel();
+        let (release, cleanup) = oneshot::channel();
+        retain_presence_upgrade(&runtime, async move {
+            let _ = entered.send(());
+            preparing.wait_for_start_cancellation(generation).await;
+            assert!(!preparing.start_is_current(generation));
+            let _ = cancelled.send(());
+            let _ = cleanup.await;
+        })
+        .unwrap();
+        started.await.unwrap();
+        supervisor.begin_draining(ShutdownReason::Signal, Instant::now());
+        runtime.begin_draining();
+        supervisor.request_cancellation();
+        cancellation_seen.await.unwrap();
+        let now = Instant::now();
+        let report = supervisor
+            .cancel_and_reap(StageBudget {
+                deadline: now,
+                abort_at: now,
+            })
+            .await;
+        let retained = report.outcome == ReapOutcome::TimedOut && report.outstanding.len() == 1;
+        let freeze = supervisor.try_freeze(true);
+        release.send(()).unwrap();
+        assert!(
+            retained,
+            "preparation cleanup must remain a retained Voice owner"
+        );
+        assert_eq!(freeze, Err(FreezeError::TasksNotJoined));
+        let completed = supervisor.next_completion().await;
+        assert_eq!(completed.exit, TaskExit::Returned);
+        assert_eq!(supervisor.try_freeze(true), Ok(()));
+        assert!(retain_presence_upgrade(&runtime, async {}).is_err());
+    }
 
     fn healthy() -> BotVoiceFacts {
         BotVoiceFacts {

@@ -57,3 +57,39 @@ fn work_recall_outcomes_remain_closed_content_free_events() {
         assert!(encoded.len() < 512);
     }
 }
+
+#[test]
+fn text_phase_events_never_contain_sensitive_or_dynamic_fields() {
+    for code in [
+        EventCode::GenerationQueue,
+        EventCode::GenerationFirstText,
+        EventCode::DiscordFirstPost,
+        EventCode::GenerationCompleted,
+        EventCode::GenerationFailure,
+        EventCode::DiscordPostFailure,
+        EventCode::EngagementQueue,
+        EventCode::EngagementCompleted,
+        EventCode::EngagementFailure,
+    ] {
+        let event = OperationalEvent::new(1, EventComponent::Provider, code, EventOutcome::Failed)
+            .unwrap()
+            .with_duration(std::time::Duration::from_millis(10))
+            .with_error(OperationalErrorCategory::Unavailable);
+        let doc: serde_json::Value = serde_json::from_slice(&event.encode().unwrap()).unwrap();
+        for key in doc.as_object().unwrap().keys() {
+            assert!(
+                [
+                    "schema_version",
+                    "occurred_at_unix_ms",
+                    "component",
+                    "code",
+                    "outcome",
+                    "error_category",
+                    "duration_ms"
+                ]
+                .contains(&key.as_str()),
+                "{key}"
+            );
+        }
+    }
+}

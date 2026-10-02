@@ -20,6 +20,7 @@ fn access() -> WorkAccess {
 }
 #[derive(Default)]
 struct Sink {
+    directory: Option<std::path::PathBuf>,
     writes: Mutex<Vec<Vec<u8>>>,
     canonical: AtomicUsize,
     fail_at: AtomicUsize,
@@ -27,6 +28,27 @@ struct Sink {
     hold_at: AtomicUsize,
     entered: tokio::sync::Notify,
     release: (Mutex<bool>, std::sync::Condvar),
+}
+impl Sink {
+    fn isolated() -> Arc<Self> {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "abbey-recall-sink-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let mut sink = Self::default();
+        sink.directory = Some(directory);
+        Arc::new(sink)
+    }
+}
+impl Drop for Sink {
+    fn drop(&mut self) {
+        if let Some(directory) = &self.directory {
+            let _ = std::fs::remove_dir_all(directory);
+        }
+    }
 }
 impl PersistenceSink for Sink {
     fn publish(
@@ -118,11 +140,8 @@ async fn fixture() -> (
     Arc<Sink>,
     WorkSourceKey,
 ) {
-    let sink = Arc::new(Sink::default());
-    let state = AppState::in_memory_with_persistence(
-        Some(std::env::temp_dir().join("recall-injected")),
-        sink.clone(),
-    );
+    let sink = Sink::isolated();
+    let state = AppState::in_memory_with_persistence(sink.directory.clone(), sink.clone());
     let mut supervisor = ServiceSupervisor::new();
     supervisor.finish_startup();
     let writer = state.attach_service(supervisor.operations());
@@ -342,11 +361,16 @@ async fn source_disable_while_gate_pending_retains_original_as_retired() {
             .is_empty()
     );
     assert_eq!(AppState::lock(&state.stores).work.recall.records.len(), 1);
+    assert_eq!(
+        state.memory_service().facts("discord:dm:1", "discord:1"),
+        ["generic concurrent fact"]
+    );
     assert!(
-        !state
+        state
             .memory_service()
             .recall("discord:dm:1", "discord:1", "generic", 4)
-            .is_empty()
+            .is_empty(),
+        "preserved legacy memory still requires explicit generated-use consent"
     );
     stop(supervisor, writer).await;
 }

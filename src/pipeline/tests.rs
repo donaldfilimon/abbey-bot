@@ -1,6 +1,7 @@
 use super::testing::FakeOut;
 use super::*;
 use crate::platform::{EventKind, SocialNetwork};
+use crate::vision::ImageUnderstanding;
 
 fn message(text: &str, guild: Option<&str>, from: &str) -> SocialEvent {
     SocialEvent {
@@ -164,19 +165,24 @@ async fn discord_telegram_and_slack_share_canonical_persona_tool_memory_and_visi
             .iter()
             .map(|call| crate::tools::dispatch(call, &mut host).content)
             .collect::<Vec<_>>();
-        assert_eq!(tool_results[0], "Stored: Sam likes Rust.");
-        assert_eq!(tool_results[1], "• Sam likes Rust.");
+        assert!(tool_results[0].contains("not stored or queued"));
+        assert!(tool_results[0].contains("`/remember`"));
+        assert_eq!(tool_results[1], "Nothing on record.");
         assert_eq!(
             tool_results[2],
             "Reputation 0.50 (0 = poor, 1 = excellent)."
         );
-        assert!(tool_results[3].contains(text), "{}", tool_results[3]);
+        assert!(tool_results[3].contains("unavailable to generated conversation"));
+        assert!(!tool_results[3].contains(text));
         assert!(tool_results[4].contains("Abi"), "{}", tool_results[4]);
         assert_eq!(host.persona, Persona::Abi);
-        assert_eq!(
-            state.memory_service().facts(&scoped_guild, &scoped_user),
-            ["Sam likes Rust."]
+        assert!(
+            state
+                .memory_service()
+                .facts(&scoped_guild, &scoped_user)
+                .is_empty()
         );
+        assert!(AppState::lock(&state.memory_queue).is_empty());
 
         behavior.push((reply, enriched, selected_persona, tool_results));
         scopes.push((scoped_guild, scoped_user, scoped_channel));
@@ -204,10 +210,10 @@ async fn discord_telegram_and_slack_share_canonical_persona_tool_memory_and_visi
                 );
             }
         }
-        assert_eq!(stores.memory.facts(guild, user), ["Sam likes Rust."]);
+        assert!(stores.memory.facts(guild, user).is_empty());
     }
     assert_eq!(stores.memory.channels.len(), networks.len());
-    assert_eq!(stores.memory.fact_records().len(), networks.len());
+    assert!(stores.memory.fact_records().is_empty());
     drop(stores);
 
     assert_eq!(
@@ -496,7 +502,7 @@ async fn live_dm_round_trip_against_the_configured_backend() {
 }
 
 #[tokio::test]
-async fn quiet_and_learning_off_gate_unsolicited_speech_before_the_policy() {
+async fn quiet_gates_unsolicited_speech_while_learning_off_does_not() {
     let mut state = AppState::in_memory();
     std::sync::Arc::get_mut(&mut state).unwrap().quiet = true;
     let out = FakeOut::default();
@@ -533,7 +539,16 @@ async fn quiet_and_learning_off_gate_unsolicited_speech_before_the_policy() {
         None,
     )
     .await;
-    assert_eq!(outcome, Outcome::Ignored("learning off"));
+    assert_ne!(outcome, Outcome::Ignored("learning off"));
+    assert_eq!(
+        AppState::lock(&state.brains).loaded_guilds(),
+        vec!["discord:g".to_string()]
+    );
+    assert_eq!(
+        AppState::lock(&state.brains).experience_count("discord:g"),
+        Some(0)
+    );
+    assert!(AppState::lock(&state.rewards).export_pending().is_empty());
 }
 
 #[tokio::test]
@@ -764,7 +779,7 @@ async fn a_member_join_welcome_is_gated_like_any_unsolicited_speech() {
 }
 
 #[test]
-fn two_dm_users_never_share_recall_or_facts() {
+fn dm_semantic_rows_without_canonical_consent_never_enter_generation() {
     let state = AppState::in_memory();
     let alice = message("hi", None, "alice");
     let bob = message("hi", None, "bob");
@@ -792,11 +807,19 @@ fn two_dm_users_never_share_recall_or_facts() {
         "rust",
         0.5,
     );
-    assert_eq!(for_alice.user_facts, ["alice likes rust"]);
+    assert!(for_alice.user_facts.is_empty());
+    assert_eq!(
+        AppState::lock(&state.recall)
+            .recall_for_user(&alice.scoped_guild_id(), &alice.scoped_user_id(), "rust", 5)
+            .into_iter()
+            .map(|fact| fact.text)
+            .collect::<Vec<_>>(),
+        ["alice likes rust"]
+    );
 }
 
 #[test]
-fn two_users_in_one_guild_never_share_semantic_recall() {
+fn guild_semantic_rows_without_canonical_consent_never_enter_generation() {
     let state = AppState::in_memory();
     AppState::lock(&state.recall).remember(
         "discord:g",
@@ -826,11 +849,20 @@ fn two_users_in_one_guild_never_share_semantic_recall() {
         "editor preference",
         0.5,
     );
+    assert!(alice.user_facts.is_empty());
+    assert!(bob.user_facts.is_empty());
     assert_eq!(
-        alice.user_facts,
-        ["alice's private editor preference is helix"]
+        AppState::lock(&state.recall)
+            .facts_for_user("discord:g", "discord:alice")
+            .len(),
+        1
     );
-    assert_eq!(bob.user_facts, ["bob's private editor preference is vim"]);
+    assert_eq!(
+        AppState::lock(&state.recall)
+            .facts_for_user("discord:g", "discord:bob")
+            .len(),
+        1
+    );
 }
 
 #[test]

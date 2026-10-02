@@ -5,7 +5,7 @@ use serenity::all::Message;
 use crate::commands::clamp_message;
 use crate::image_attachment::{self, AttachmentFetcher, ResolvedAttachment, Selection};
 use crate::runtime::AppState;
-use crate::vision::{self, ImageUnderstanding};
+use crate::vision;
 use crate::{Context, Error};
 
 const NO_SUPPORTED_IMAGE: &str =
@@ -87,7 +87,7 @@ pub async fn describe_image(ctx: Context<'_>, message: Message) -> Result<(), Er
     let Some(bytes) = selected_image(ctx, &message).await? else {
         return Ok(());
     };
-    let reply = match vision_client.describe(bytes).await {
+    let reply = match vision_client.describe_source_only(bytes).await {
         Ok(description) => vision::render_see("Abbey", &description),
         Err(error) => {
             tracing::warn!(failure = ?error.provider_failure(), "vision context-menu description failed");
@@ -118,7 +118,7 @@ pub async fn read_image_text(ctx: Context<'_>, message: Message) -> Result<(), E
     let Some(bytes) = selected_image(ctx, &message).await? else {
         return Ok(());
     };
-    let reply = match vision_client.extract_text(bytes).await {
+    let reply = match vision_client.extract_text_source_only(bytes).await {
         Ok(text) => vision::render_ocr(&text),
         Err(error) => {
             tracing::warn!(failure = ?error.provider_failure(), "vision context-menu OCR failed");

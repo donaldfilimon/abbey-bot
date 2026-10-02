@@ -31,6 +31,23 @@ fn member_key(scoped_guild: &str, scoped_user: &str) -> String {
 }
 
 impl AppState {
+    /// Guild-local reduction never changes a member policy or another kind.
+    pub(crate) fn follow_up_reduced(
+        &self,
+        scope: &crate::engagement::EngagementScope,
+        now: u64,
+    ) -> bool {
+        let crate::engagement::EngagementScope::Guild { guild, .. } = scope else {
+            return false;
+        };
+        let status = self.addenda_status(&format!("discord:{guild}"), now);
+        status.learning_enabled
+            && status
+                .active
+                .iter()
+                .any(|a| a.signal == style_signal::StyleSignal::FewerFollowUps)
+    }
+
     /// Record the style signal in a member's own message, if it carries one.
     /// The caller has already established that the guild has learning on.
     pub fn observe_style(&self, scoped_guild: &str, scoped_user: &str, text: &str, now: u64) {
@@ -105,10 +122,15 @@ impl AppState {
             .config(scoped_guild, &mut *stores)
             .learning_enabled;
         let ledger = stores.addenda.get(scoped_guild);
+        let policy = Policy::default();
         AddendaStatus {
             learning_enabled,
             active: ledger.map(|l| l.active(now)).unwrap_or_default(),
             suppressions: ledger.map(|l| l.suppressions(now)).unwrap_or_default(),
+            pending: ledger
+                .map(|l| l.pending_evidence(&policy, now))
+                .unwrap_or_default(),
+            policy,
         }
     }
 
@@ -248,7 +270,41 @@ mod tests {
         assert_eq!(state.clear_addenda(fresh, 5), 0);
         let status = state.addenda_status(fresh, 5);
         assert!(status.active.is_empty());
-        assert_eq!(status.suppressions.len(), 4);
+        assert_eq!(
+            status
+                .suppressions
+                .iter()
+                .map(|s| s.knob)
+                .collect::<Vec<_>>(),
+            vec![
+                StyleKnob::Length,
+                StyleKnob::Formality,
+                StyleKnob::Emoji,
+                StyleKnob::Code,
+                StyleKnob::FollowUp
+            ]
+        );
+        set_learning(&state, fresh, true);
+        for feedback in [
+            "too short",
+            "too formal",
+            "more emoji",
+            "prefer code",
+            "fewer follow-ups",
+        ] {
+            for member in [
+                "discord:1",
+                "discord:1",
+                "discord:2",
+                "discord:2",
+                "discord:3",
+            ] {
+                state.observe_style(fresh, member, feedback, 6);
+            }
+        }
+        state.tick_addenda(7);
+        assert!(state.addenda_status(fresh, 7).active.is_empty());
+        assert_eq!(state.style_addenda(fresh, 7), "");
     }
 
     #[test]
@@ -259,5 +315,75 @@ mod tests {
             assert_eq!(state.style_addenda(scope, 1), "");
         }
         assert!(AppState::lock(&state.stores).addenda.is_empty());
+    }
+
+    #[test]
+    fn pending_status_is_guild_isolated_and_marks_retained_feedback_learning_off() {
+        let state = AppState::in_memory();
+        let guild = "discord:81";
+        set_learning(&state, guild, true);
+        state.observe_style(guild, "discord:private-member", "too long", 10);
+        let status = state.addenda_status(guild, 10);
+        assert_eq!(status.pending[0].supporting, 1);
+        assert_eq!(status.policy, Policy::default());
+        assert!(!format!("{status:?}").contains("private-member"));
+        assert!(state.addenda_status("discord:82", 10).pending.is_empty());
+        set_learning(&state, guild, false);
+        let off = state.addenda_status(guild, 11);
+        assert!(!off.learning_enabled);
+        assert_eq!(off.pending[0].supporting, 1);
+    }
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use super::*;
+    #[test]
+    fn reduction_stays_guild_local_and_never_changes_member_policy() {
+        let state = AppState::in_memory();
+        {
+            let mut stores = AppState::lock(&state.stores);
+            AppState::lock(&state.guilds)
+                .update("discord:1", &mut *stores, |s| s.learning_enabled = true);
+        }
+        for user in [
+            "discord:7",
+            "discord:7",
+            "discord:8",
+            "discord:8",
+            "discord:9",
+        ] {
+            state.observe_style("discord:1", user, "fewer follow-ups", 10);
+        }
+        state.tick_addenda(10);
+        let scope = crate::engagement::EngagementScope::Guild {
+            guild: 1,
+            channel: 2,
+        };
+        assert!(state.follow_up_reduced(&scope, 10));
+        assert!(!state.follow_up_reduced(
+            &crate::engagement::EngagementScope::Guild {
+                guild: 3,
+                channel: 2
+            },
+            10
+        ));
+        assert!(!state.follow_up_reduced(
+            &crate::engagement::EngagementScope::Dm {
+                member: 7,
+                channel: 2
+            },
+            10
+        ));
+        assert!(
+            AppState::lock(&state.stores)
+                .work
+                .engagement
+                .member_policies
+                .is_empty()
+        );
+        assert!(!state.follow_up_reduced(&scope, 10 + Policy::default().ttl_secs));
+        state.revert_addendum("discord:1", StyleKnob::FollowUp, 11);
+        assert!(!state.follow_up_reduced(&scope, 11));
     }
 }

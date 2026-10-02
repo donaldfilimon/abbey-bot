@@ -79,6 +79,7 @@ struct Entry {
     image: Option<Arc<dyn VisionAdapter>>,
     label: &'static str,
     local_voice: bool,
+    locality: ExecutionLocality,
     stream_only: bool,
     slots: Arc<tokio::sync::Semaphore>,
     identity: ProviderIdentityHashes,
@@ -122,6 +123,7 @@ pub struct ProviderRuntime {
     entries: BTreeMap<ProviderId, Entry>,
     order: Vec<ProviderId>,
     legacy_order: bool,
+    local_only: bool,
     state: Mutex<OperationalState>,
     clock: Arc<dyn ProviderClock>,
     tools_enabled: bool,
@@ -177,6 +179,7 @@ impl ProviderRuntime {
             entries: BTreeMap::new(),
             order: Vec::new(),
             legacy_order: true,
+            local_only: false,
             operational_events: std::sync::OnceLock::new(),
             state: Mutex::new(OperationalState {
                 router: AdaptiveRouter::new(Vec::new()),
@@ -240,13 +243,62 @@ impl ProviderRuntime {
     /// Registers an admitted synthetic text adapter for cross-module tests.
     #[cfg(test)]
     pub(crate) fn register_test_adapter(&mut self, adapter: Arc<dyn TurnAdapter>) {
+        self.register_test_adapter_with_locality(adapter, ExecutionLocality::SameHost);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn register_test_adapter_with_locality(
+        &mut self,
+        adapter: Arc<dyn TurnAdapter>,
+        locality: ExecutionLocality,
+    ) {
+        self.register_test_adapter_capabilities(
+            adapter,
+            locality,
+            ProviderCapabilities::text_with_tools(),
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn register_test_streaming_adapter(&mut self, adapter: Arc<dyn TurnAdapter>) {
+        self.register_test_adapter_capabilities(
+            adapter,
+            ExecutionLocality::SameHost,
+            ProviderCapabilities {
+                streaming: true,
+                ..ProviderCapabilities::text_with_tools()
+            },
+        );
+    }
+
+    /// Hold real provider capacity without introducing a second route-reservation loop.
+    #[cfg(test)]
+    pub(crate) async fn hold_test_slot(
+        &self,
+        id: &ProviderId,
+    ) -> tokio::sync::OwnedSemaphorePermit {
+        self.entries[id]
+            .slots
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap()
+    }
+
+    #[cfg(test)]
+    fn register_test_adapter_capabilities(
+        &mut self,
+        adapter: Arc<dyn TurnAdapter>,
+        locality: ExecutionLocality,
+        capabilities: ProviderCapabilities,
+    ) {
         let id = adapter.provider_id().clone();
         self.register(
             id.clone(),
             "synthetic",
             ProviderClass::LocalServer,
-            ProviderCapabilities::text_with_tools(),
-            ExecutionLocality::SameHost,
+            capabilities,
+            locality,
             ProviderProvenance::Configuration,
             true,
             config_identity(id.as_str().as_bytes()),
@@ -323,6 +375,7 @@ impl ProviderRuntime {
                 image,
                 label,
                 local_voice,
+                locality,
                 stream_only,
                 slots: Arc::new(tokio::sync::Semaphore::new(self.capacity)),
                 identity,
@@ -333,7 +386,19 @@ impl ProviderRuntime {
         );
     }
 
+    fn permits_locality(&self, entry: &Entry) -> bool {
+        !self.local_only || entry.locality == ExecutionLocality::SameHost
+    }
+
     pub fn apply_configuration(&mut self, mut config: ProviderConfig) {
+        self.local_only = config.local_only;
+        if self.local_only {
+            for (id, entry) in &self.entries {
+                if entry.locality != ExecutionLocality::SameHost {
+                    config.disabled.insert(id.clone());
+                }
+            }
+        }
         // Explicit legacy configuration is the existing cloud authorization boundary.
         for id in &self.order {
             if matches!(
@@ -534,6 +599,11 @@ impl ProviderRuntime {
                 false,
                 !state.blocks.failed(),
             );
+            let admission = RouteAdmission {
+                policy_allowed: admission.policy_allowed
+                    && self.permits_locality(&self.entries[id]),
+                ..admission
+            };
             match state.router.assess(id, class, now, admission) {
                 Ok(()) => return Ok(()),
                 Err(error) => reason = reason.max(error),
@@ -561,6 +631,9 @@ impl ProviderRuntime {
             .any(|id| (!local || self.entries[id].local_voice) && self.eligible(id, class))
     }
     fn eligible(&self, id: &ProviderId, class: RequestClass) -> bool {
+        if !self.permits_locality(&self.entries[id]) {
+            return false;
+        }
         let state = lock(&self.state);
         self.catalog.descriptor(id).is_some_and(|descriptor| {
             state
@@ -595,6 +668,13 @@ impl ProviderRuntime {
             None,
         )
     }
+    /// Fresh source-only generation cannot send its context off this host,
+    /// including through fallback or a previously reserved provider lease.
+    pub fn begin_source_only(&self, with_tools: bool, streaming: bool) -> ProviderConversation<'_> {
+        let mut conversation = self.begin(with_tools, streaming);
+        conversation.same_host_only = true;
+        conversation
+    }
     pub fn voice(&self, id: &ProviderId) -> ProviderConversation<'_> {
         self.conversation(RequestClass::TextReadOnly, false, true, Some(id.clone()))
     }
@@ -611,6 +691,7 @@ impl ProviderRuntime {
             class,
             streaming,
             local,
+            same_host_only: local,
             initial,
             lease: None,
         }
@@ -621,7 +702,25 @@ impl ProviderRuntime {
         system: &str,
         turns: &[ChatTurn],
     ) -> Result<(String, &'static str), LlmError> {
-        let mut conversation = self.begin(false, false);
+        self.chat_conversation(self.begin(false, false), system, turns)
+            .await
+    }
+
+    pub async fn chat_source_only(
+        &self,
+        system: &str,
+        turns: &[ChatTurn],
+    ) -> Result<(String, &'static str), LlmError> {
+        self.chat_conversation(self.begin_source_only(false, false), system, turns)
+            .await
+    }
+
+    async fn chat_conversation(
+        &self,
+        mut conversation: ProviderConversation<'_>,
+        system: &str,
+        turns: &[ChatTurn],
+    ) -> Result<(String, &'static str), LlmError> {
         loop {
             conversation.reserve().await?;
             let result = conversation
@@ -642,6 +741,7 @@ pub struct ProviderConversation<'a> {
     class: RequestClass,
     streaming: bool,
     local: bool,
+    same_host_only: bool,
     initial: Option<ProviderId>,
     lease: Option<AttemptLease<'a>>,
 }
@@ -655,3 +755,11 @@ struct AttemptLease<'a> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime/admission_tests.rs"]
+mod admission_tests;
+
+#[cfg(test)]
+#[path = "runtime/local_only_tests.rs"]
+mod local_only_tests;

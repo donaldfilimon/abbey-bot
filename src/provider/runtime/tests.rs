@@ -172,7 +172,8 @@ async fn actual_stream_post_closes_fallback_but_unposted_failure_can_retry() {
             &state,
             crate::persona::Persona::Abbey,
             &crate::generation::Ask {
-                session_mode: crate::generation::SessionMode::Ephemeral,
+                subject: None,
+                session_mode: crate::generation::SessionMode::SourceOnly,
                 scope: "scope",
                 context: &context,
                 user_input: "question",
@@ -214,7 +215,9 @@ async fn tool_continuation_is_pinned_and_a_validated_host_effect_cannot_replay()
     let second = fake(&mut runtime, "secondary", vec![], vec![], true);
     let mut state = crate::runtime::AppState::in_memory();
     Arc::get_mut(&mut state).unwrap().providers = runtime;
-    let context = crate::memory::PersonaContext::empty();
+    let context = state
+        .memory_service()
+        .context_for("guild", "user", "channel", "question", 0, 0.5);
     let mut host = crate::runtime::ToolScope {
         memory_turn: None,
         state: &state,
@@ -230,7 +233,8 @@ async fn tool_continuation_is_pinned_and_a_validated_host_effect_cannot_replay()
             &state,
             &mut host,
             &crate::generation::Ask {
-                session_mode: crate::generation::SessionMode::Ephemeral,
+                subject: Some(("guild", "user")),
+                session_mode: crate::generation::SessionMode::SourceOnly,
                 scope: "scope",
                 context: &context,
                 user_input: "question",
@@ -531,7 +535,8 @@ async fn accepted_delivery_with_lost_result_cannot_replay_on_another_provider() 
     let context = crate::memory::PersonaContext::empty();
     let out = UncertainDelivery::default();
     let ask = crate::generation::Ask {
-        session_mode: crate::generation::SessionMode::Ephemeral,
+        subject: None,
+        session_mode: crate::generation::SessionMode::SourceOnly,
         scope: "scope",
         context: &context,
         user_input: "question",

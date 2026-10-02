@@ -293,7 +293,7 @@ async fn reveal_leaves_a_pre_existing_view_gate_alone_and_overwrites_warns() {
     );
     assert!(reveal.is_clear(), "{:?}", reveal.blockers);
     assert!(
-            reveal.changes.iter().any(|c| matches!(c, Change::EditChannel { name, category, topic: TopicEdit::Set(_), .. } if name == "rules" && category == "START HERE")),
+            reveal.changes.iter().any(|c| matches!(c, Change::EditChannel { name, category, topic: TopicEdit::Set(_), .. } if name == "rules" && category == "ENTER MLAI")),
             "{:?}",
             reveal.changes
         );
@@ -337,7 +337,7 @@ async fn reveal_leaves_a_pre_existing_view_gate_alone_and_overwrites_warns() {
 
     let scope = Scope {
         stage: Stage::Overwrites,
-        category: Some("START HERE".into()),
+        category: Some("ENTER MLAI".into()),
     };
     let report = diff(&plan, &guild.snapshot, &scope);
     assert!(
@@ -491,7 +491,7 @@ async fn gating_a_visible_channel_warns_about_the_lockout() {
     );
     let scope = Scope {
         stage: Stage::Overwrites,
-        category: Some("BUILD LOG".into()),
+        category: Some("SHIP ROOM".into()),
     };
     let report = diff(&plan, &guild.snapshot, &scope);
     let warning = report

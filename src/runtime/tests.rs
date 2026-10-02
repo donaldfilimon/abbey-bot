@@ -3,6 +3,26 @@ use crate::brain::social::ReputationStore;
 use crate::guild::GuildSettings;
 use crate::persist::{PersistComponentOutcome, PersistErrorCategory, PersistOverall};
 
+/// Each test owns its consent lease directory, including fake publication tests.
+struct TestDirectory(PathBuf);
+impl TestDirectory {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "abbey-runtime-test-{}-{sequence}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).expect("fresh test directory");
+        Self(path)
+    }
+}
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn dqn_round_trips_through_the_brain_trait() {
     let mut a = fresh_brain();
@@ -38,13 +58,12 @@ fn process_persistence_reports_memory_only_without_calling_a_sink() {
 
 #[test]
 fn canonical_failure_skips_the_wdbx_projection() {
+    let directory = TestDirectory::new();
     let sink = crate::persist::tests::RuntimeRecordingSink::fail_canonical(
         PersistErrorCategory::SyncTemporary,
     );
-    let state = AppState::in_memory_with_persistence(
-        Some(PathBuf::from("/injected/state")),
-        Arc::new(sink.clone()),
-    );
+    let state =
+        AppState::in_memory_with_persistence(Some(directory.0.clone()), Arc::new(sink.clone()));
     let report = state.persist_all_at(42);
     assert_eq!(report.overall, PersistOverall::Failed);
     assert_eq!(
@@ -60,11 +79,10 @@ fn canonical_failure_skips_the_wdbx_projection() {
 
 #[test]
 fn both_durable_components_committing_is_complete() {
+    let directory = TestDirectory::new();
     let sink = crate::persist::tests::RuntimeRecordingSink::success();
-    let state = AppState::in_memory_with_persistence(
-        Some(PathBuf::from("/injected/state")),
-        Arc::new(sink.clone()),
-    );
+    let state =
+        AppState::in_memory_with_persistence(Some(directory.0.clone()), Arc::new(sink.clone()));
     let report = state.persist_all_at(42);
     assert_eq!(report.overall, PersistOverall::Complete);
     assert_eq!(report.canonical_state, PersistComponentOutcome::Committed);
@@ -74,13 +92,12 @@ fn both_durable_components_committing_is_complete() {
 
 #[test]
 fn projection_failure_is_partial_after_a_canonical_commit() {
+    let directory = TestDirectory::new();
     let sink = crate::persist::tests::RuntimeRecordingSink::fail_projection(
         PersistErrorCategory::SyncDirectory,
     );
-    let state = AppState::in_memory_with_persistence(
-        Some(PathBuf::from("/injected/state")),
-        Arc::new(sink.clone()),
-    );
+    let state =
+        AppState::in_memory_with_persistence(Some(directory.0.clone()), Arc::new(sink.clone()));
     let report = state.persist_all_at(42);
     assert_eq!(report.overall, PersistOverall::Partial);
     assert_eq!(report.canonical_state, PersistComponentOutcome::Committed);
@@ -324,7 +341,7 @@ fn cached_guild_inspect_uses_the_recorded_settings_and_injected_time() {
 }
 
 #[test]
-fn all_tool_memory_writes_use_the_scope_timestamp() {
+fn refused_tool_memory_writes_preserve_the_member_timestamp() {
     let state = AppState::in_memory();
     state
         .memory_service()
@@ -349,13 +366,13 @@ fn all_tool_memory_writes_use_the_scope_timestamp() {
         .memory
         .user("discord:g", "discord:u")
         .expect("subject memory");
-    assert_eq!(memory.updated_at, 4_242);
-    assert_eq!(memory.pending_supersessions.len(), 1);
-    assert_eq!(memory.pending_supersessions[0].at, 4_242);
+    assert_eq!(memory.updated_at, 1);
+    assert!(memory.pending_supersessions.is_empty());
+    assert_eq!(memory.facts, ["uses rust"]);
 }
 
 #[test]
-fn list_facts_isolated_to_the_exact_canonical_subject() {
+fn generated_list_facts_withholds_legacy_facts_and_pending_proposals() {
     let state = AppState::in_memory();
     let service = state.memory_service();
     service
@@ -383,19 +400,22 @@ fn list_facts_isolated_to_the_exact_canonical_subject() {
 
     let rendered = crate::tools::ToolHost::list_facts(&mut scope);
 
-    assert!(rendered.contains("own fact"), "{rendered}");
-    assert!(rendered.contains("own replacement"), "{rendered}");
+    assert_eq!(rendered, "Nothing on record.");
+    assert!(!rendered.contains("own fact"), "{rendered}");
+    assert!(!rendered.contains("own replacement"), "{rendered}");
     assert!(!rendered.contains("other user fact"), "{rendered}");
     assert!(!rendered.contains("other guild fact"), "{rendered}");
+    assert_eq!(
+        service.facts("discord:g", "discord:u"),
+        ["own fact", "own replacement"]
+    );
 }
 
 /// The safety property at its real integration point: a model calling
-/// `remember_fact` with `supersedes` must PROPOSE, never delete. Verified
-/// here through the actual `ToolHost` impl rather than by reading the
-/// routing — `remember_proposing` being correct in isolation would not
-/// prove `ToolScope` routes to it instead of `remember_replacing`.
+/// `remember_fact` refuses inferred durable writes, including supersession.
+/// Verify the real ToolHost boundary rather than the storage service alone.
 #[test]
-fn a_model_supersedes_argument_proposes_and_never_deletes() {
+fn a_model_supersedes_argument_is_refused_and_preserves_member_facts() {
     let state = AppState::in_memory();
     state
         .memory_service()
@@ -414,23 +434,23 @@ fn a_model_supersedes_argument_proposes_and_never_deletes() {
 
     let reply =
         crate::tools::ToolHost::remember_fact(&mut scope, "moved to zig", Some("uses rust"));
-    assert!(reply.contains("Proposed to replace"), "{reply}");
+    assert!(reply.contains("not stored or queued"), "{reply}");
 
-    // BOTH facts must survive. The model does not get to delete.
+    // Only the member-authored fact survives; no inferred replacement is stored.
     let facts = state.memory_service().facts("discord:g", "discord:u");
     assert!(facts.contains(&"uses rust".to_string()), "{facts:?}");
-    assert!(facts.contains(&"moved to zig".to_string()), "{facts:?}");
+    assert!(!facts.contains(&"moved to zig".to_string()), "{facts:?}");
     assert_eq!(
         state
             .memory_service()
             .pending_supersessions("discord:g", "discord:u")
             .len(),
-        1
+        0
     );
 }
 
 #[test]
-fn tool_memory_uses_the_shared_fact_validator() {
+fn tool_memory_refuses_both_valid_and_invalid_model_facts() {
     let state = AppState::in_memory();
     let mut scope = ToolScope {
         memory_turn: None,
@@ -444,11 +464,11 @@ fn tool_memory_uses_the_shared_fact_validator() {
     };
     assert_eq!(
         crate::tools::ToolHost::remember_fact(&mut scope, "  Donald\nlikes\tRust.  ", None),
-        "Stored: Donald likes Rust."
+        "Personal memory was not stored or queued. Ask the member to use `/remember` themselves to save a self-authored fact; use `/recall` to review existing facts."
     );
     assert_eq!(
         state.memory_service().facts("discord:g", "discord:u"),
-        ["Donald likes Rust."]
+        Vec::<String>::new()
     );
     assert_eq!(
         crate::tools::ToolHost::remember_fact(
@@ -456,11 +476,11 @@ fn tool_memory_uses_the_shared_fact_validator() {
             &"🦀".repeat(crate::memory::MAX_FACT_CHARS + 1),
             None
         ),
-        "Keep one remembered fact to 300 characters or fewer."
+        "Personal memory was not stored or queued. Ask the member to use `/remember` themselves to save a self-authored fact; use `/recall` to review existing facts."
     );
     assert_eq!(
         state.memory_service().facts("discord:g", "discord:u").len(),
-        1
+        0
     );
 }
 

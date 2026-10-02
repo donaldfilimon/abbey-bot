@@ -105,6 +105,60 @@ fn observations_outside_the_window_do_not_count() {
 }
 
 #[test]
+fn pending_evidence_counts_opposition_and_distinct_supporters_without_mutating() {
+    let policy = Policy {
+        window_secs: 10,
+        ..Policy::default()
+    };
+    let mut ledger = AddendaLedger::default();
+    members(
+        &mut ledger,
+        &["private:a", "private:a", "private:b"],
+        StyleSignal::TooLong,
+        10,
+    );
+    ledger.observe("private:c", StyleSignal::TooShort, 10);
+    ledger.observe("private:stale", StyleSignal::TooLong, 0);
+    ledger.observe("private:future", StyleSignal::TooLong, 21);
+    let before = serde_json::to_string(&ledger).unwrap();
+    let evidence = ledger.pending_evidence(&policy, 20);
+    assert_eq!(
+        evidence[0],
+        FeedbackEvidence {
+            signal: StyleSignal::TooLong,
+            supporting: 3,
+            opposing: 1,
+            distinct_members: 2,
+        }
+    );
+    assert_eq!(
+        evidence[1],
+        FeedbackEvidence {
+            signal: StyleSignal::TooShort,
+            supporting: 1,
+            opposing: 3,
+            distinct_members: 1,
+        }
+    );
+    assert_eq!(serde_json::to_string(&ledger).unwrap(), before);
+    assert!(!format!("{evidence:?}").contains("private:"));
+    assert!(ledger.pending_evidence(&policy, 32).is_empty());
+}
+
+#[test]
+fn applied_evidence_is_consumed_and_suppression_has_no_pending_counts() {
+    let policy = Policy::default();
+    let mut ledger = AddendaLedger::default();
+    quorum(&mut ledger, StyleSignal::TooLong, 1);
+    assert_eq!(ledger.pending_evidence(&policy, 1)[0].supporting, 5);
+    ledger.tick(&policy, 1);
+    assert!(ledger.pending_evidence(&policy, 1).is_empty());
+    ledger.revert(StyleKnob::Length, &policy, 2);
+    quorum(&mut ledger, StyleSignal::TooShort, 3);
+    assert!(ledger.pending_evidence(&policy, 3).is_empty());
+}
+
+#[test]
 fn observations_are_bounded() {
     let mut ledger = AddendaLedger::default();
     for index in 0..(MAX_OBSERVATIONS + 10) {
@@ -375,12 +429,26 @@ fn clear_suppresses_every_knob() {
     ledger.tick(&policy, 0);
     assert_eq!(ledger.clear(&policy, 10), 2);
     assert!(ledger.render(10).is_empty());
-    assert_eq!(ledger.suppressions(10).len(), 4, "one per knob, bounded");
+    assert_eq!(
+        ledger
+            .suppressions(10)
+            .iter()
+            .map(|s| s.knob)
+            .collect::<Vec<_>>(),
+        vec![
+            StyleKnob::Length,
+            StyleKnob::Formality,
+            StyleKnob::Emoji,
+            StyleKnob::Code,
+            StyleKnob::FollowUp
+        ]
+    );
     for signal in [
         StyleSignal::TooShort,
         StyleSignal::TooFormal,
         StyleSignal::MoreEmoji,
         StyleSignal::PreferCode,
+        StyleSignal::FewerFollowUps,
     ] {
         quorum(&mut ledger, signal, 11);
     }
@@ -398,4 +466,34 @@ fn render_filters_by_now_without_a_tick() {
     // No tick has run since it applied; it still must not render once expired.
     assert!(ledger.render(policy.ttl_secs).is_empty());
     assert!(ledger.active(policy.ttl_secs).is_empty());
+}
+
+#[test]
+fn follow_up_reduction_uses_existing_quorum_expiry_and_revert() {
+    let mut ledger = AddendaLedger::default();
+    let p = Policy::default();
+    let signal = StyleSignal::FewerFollowUps;
+    for member in ["a", "a", "b", "b"] {
+        ledger.observe(member, signal, 10);
+    }
+    assert!(ledger.tick(&p, 10).is_empty());
+    ledger.observe("c", signal, 11);
+    assert_eq!(ledger.tick(&p, 11), vec![AddendumChange::Applied(signal)]);
+    assert!(
+        ledger
+            .render(11)
+            .contains("Suppress optional contextual follow-ups")
+    );
+    assert!(ledger.active(11 + p.ttl_secs).is_empty());
+    assert!(ledger.revert(StyleKnob::FollowUp, &p, 12));
+    for member in ["a", "a", "b", "b", "c"] {
+        ledger.observe(member, signal, 13);
+    }
+    assert!(ledger.tick(&p, 13).is_empty());
+    assert!(ledger.pending_evidence(&p, 13).is_empty());
+    assert_eq!(signal.opposite(), None);
+    assert!(ledger.render(13).is_empty());
+    assert_eq!(p.max_addenda, 4);
+    assert_eq!(MAX_OBSERVATIONS, 64);
+    assert_eq!(MAX_PER_MEMBER_SIGNAL, 2);
 }

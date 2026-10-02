@@ -1,6 +1,6 @@
 //! Retained FIFO writer. Only owned snapshots cross into the blocking actor.
 use crate::persist::{
-    PersistComponentOutcome, PersistReport, PersistenceSink, Stores, persist_canonical,
+    PersistComponentOutcome, PersistReport, PersistenceSink, Stores, persist_canonical_owned,
     persist_projection,
 };
 use crate::wdbx::Recall;
@@ -68,6 +68,13 @@ pub struct PersistenceWriter {
 }
 impl PersistenceWriter {
     pub fn start(dir: Option<PathBuf>, sink: Arc<dyn PersistenceSink>) -> Self {
+        Self::start_observed(dir, sink, None)
+    }
+    pub fn start_observed(
+        dir: Option<PathBuf>,
+        sink: Arc<dyn PersistenceSink>,
+        published: Option<Arc<dyn Fn(Option<String>) + Send + Sync>>,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel();
         let state = Arc::new(Mutex::new(State {
             accepting: true,
@@ -113,6 +120,11 @@ impl PersistenceWriter {
                                             .lock()
                                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                                             .final_progress = progress;
+                                    }
+                                },
+                                |base| {
+                                    if let Some(callback) = &published {
+                                        callback(base)
                                     }
                                 },
                             ))
@@ -231,18 +243,20 @@ impl PersistenceRequests {
         Ok(receive)
     }
 }
-pub fn write_snapshot(
+pub fn write_snapshot_published(
     dir: Option<&std::path::Path>,
     sink: &dyn PersistenceSink,
     snapshot: Snapshot,
+    published: impl FnMut(Option<String>),
 ) -> PersistReport {
-    write_snapshot_observed(dir, sink, snapshot, |_| {})
+    write_snapshot_observed(dir, sink, snapshot, |_| {}, published)
 }
 fn write_snapshot_observed(
     dir: Option<&std::path::Path>,
     sink: &dyn PersistenceSink,
     mut snapshot: Snapshot,
     mut observed: impl FnMut(ComponentProgress),
+    mut published: impl FnMut(Option<String>),
 ) -> PersistReport {
     let Some(dir) = dir else {
         observed(ComponentProgress {
@@ -251,7 +265,19 @@ fn write_snapshot_observed(
         });
         return PersistReport::memory_only();
     };
-    if let Err(category) = persist_canonical(sink, dir, &snapshot.stores) {
+    let owner = crate::persist::personal_memory::lease(dir);
+    let canonical = owner
+        .as_ref()
+        .map_err(|_| crate::persist::PersistErrorCategory::CreateTemporary)
+        .and_then(|owner| {
+            let marker = crate::persist::personal_memory::load(dir)
+                .map_err(|_| crate::persist::PersistErrorCategory::SnapshotEncode)?;
+            if !marker.withdrawals.is_empty() || !marker.activations.is_empty() {
+                return Err(crate::persist::PersistErrorCategory::SnapshotEncode);
+            }
+            persist_canonical_owned(owner, sink, dir, &snapshot.stores)
+        });
+    if let Err(category) = canonical {
         observed(ComponentProgress {
             canonical_state: Some(PersistComponentOutcome::Failed(category)),
             wdbx_projection: Some(PersistComponentOutcome::SkippedCanonicalFailure),
@@ -260,6 +286,9 @@ fn write_snapshot_observed(
             PersistComponentOutcome::Failed(category),
             PersistComponentOutcome::SkippedCanonicalFailure,
         );
+    }
+    if let Ok(disk) = Stores::load(dir) {
+        published(disk.canonical_base.get());
     }
     observed(ComponentProgress {
         canonical_state: Some(PersistComponentOutcome::Committed),

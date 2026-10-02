@@ -21,6 +21,8 @@ mod control;
 mod music;
 mod ownership;
 mod playback;
+#[cfg(test)]
+mod test_support;
 mod verification;
 pub use ownership::VoiceTask;
 
@@ -343,6 +345,10 @@ pub struct VoiceRuntime {
     // `discord_sessions`. Synchronous gateway/data-plane paths take only the
     // latter two and release them before awaiting lifecycle cleanup.
     activation_gate: SyncMutex<()>,
+    #[cfg(test)]
+    media_gate_observer: SyncMutex<Option<Arc<AtomicBool>>>,
+    #[cfg(test)]
+    test_spoken_play_starts: AtomicU64,
     start_changes: watch::Sender<u64>,
     discord_sessions: SyncMutex<DiscordSessions>,
     dropped_input: AtomicU64,
@@ -435,6 +441,10 @@ impl VoiceRuntime {
             start_generation: AtomicU64::new(0),
             pending_start_generation: AtomicU64::new(0),
             activation_gate: SyncMutex::new(()),
+            #[cfg(test)]
+            media_gate_observer: SyncMutex::new(None),
+            #[cfg(test)]
+            test_spoken_play_starts: AtomicU64::new(0),
             start_changes,
             discord_sessions: SyncMutex::new(DiscordSessions::default()),
             dropped_input: AtomicU64::new(0),
@@ -601,6 +611,8 @@ impl VoiceRuntime {
     /// but playback start and durable commit must occur inside this closure so
     /// neither can begin after the consent gate closes.
     pub fn with_media_enabled<T>(&self, epoch: u64, action: impl FnOnce() -> T) -> Option<T> {
+        #[cfg(test)]
+        self.observe_media_gate_wait_for_test();
         let _activation = self
             .activation_gate
             .lock()

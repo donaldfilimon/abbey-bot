@@ -11,44 +11,13 @@ pub async fn summarize(
     count: Option<usize>,
     #[description = "Force a persona"] r#as: Option<PersonaChoice>,
 ) -> Result<(), Error> {
-    ctx.defer().await?;
-    let count = count.unwrap_or(50);
-    let state = &ctx.data().state;
-    let ch = scoped_channel(ctx);
-    let transcript = AppState::lock(&state.stores)
-        .memory
-        .channel_mut(&ch)
-        .render_recent(count);
-    if transcript.trim().is_empty() {
-        ctx.say("I have not seen any messages in this channel yet — with the MESSAGE_CONTENT intent off, only mentions and DMs reach me.")
-            .await?;
-        return Ok(());
-    }
-    let persona = r#as.map_or(crate::persona::Persona::Abbey, Into::into);
-    let Some(_) = state.generation_label() else {
-        ctx.say(clamp_message(ask::degraded_reply(persona))).await?;
-        return Ok(());
-    };
-    let (system, user) = engine::summarize_prompt(persona, &transcript, count);
-    let outcome = state.chat(&system, &[llm::ChatTurn::user(user)]).await;
-    let reply = match outcome {
-        Ok((summary, provider_label)) => {
-            let summary = ask::tidy_reply(persona, &summary);
-            AppState::lock(&state.stores)
-                .memory
-                .channel_mut(&ch)
-                .summary
-                .clone_from(&summary);
-            ask::render_answer(persona, provider_label, &summary)
-        }
-        Err(e) => {
-            tracing::warn!(failure = ?e.provider_failure(), "summary generation failed");
-            crate::commands_help::provider_recovery(ctx, e.provider_failure())
-                .await
-                .to_string()
-        }
-    };
-    ctx.say(clamp_message(reply)).await?;
+    ctx.defer_ephemeral().await?;
+    let _ = (count, r#as);
+    ctx.send(poise::CreateReply::default()
+        .content("Channel summarization is temporarily unavailable: retained messages need source authorization before Abbey can use them for generation. No channel history was read or submitted. You can type a fresh request with `/persona ask`; its answer is visible in the channel. For a private conversation, send Abbey a DM.")
+        .ephemeral(true)
+        .allowed_mentions(crate::gateway::no_mentions()))
+        .await?;
     Ok(())
 }
 
@@ -91,7 +60,7 @@ pub async fn see(
             return Ok(());
         }
     };
-    let description = match vision_client.describe(bytes).await {
+    let description = match vision_client.describe_source_only(bytes).await {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(failure = ?e.provider_failure(), "vision description failed");
@@ -106,7 +75,8 @@ pub async fn see(
             let folded = vision::fold_descriptions(&q, &[(image.filename.clone(), description)]);
             let outcome = {
                 state
-                    .chat(&ask::system_prompt(persona), &[llm::ChatTurn::user(folded)])
+                    .providers
+                    .chat_source_only(&ask::system_prompt(persona), &[llm::ChatTurn::user(folded)])
                     .await
             };
             match outcome {
@@ -148,7 +118,7 @@ pub async fn ocr(
     };
     let reply = match fetch_attachment(state, &image).await {
         Err(_) => "Could not read that attachment. Check that it is available and within the image size limit, then try again.".to_string(),
-        Ok(bytes) => match vision_client.extract_text(bytes).await {
+        Ok(bytes) => match vision_client.extract_text_source_only(bytes).await {
             Ok(text) => vision::render_ocr(&text),
             Err(e) => {
                 tracing::warn!(failure = ?e.provider_failure(), "vision OCR failed");

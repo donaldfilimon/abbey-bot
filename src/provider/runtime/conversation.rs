@@ -42,6 +42,7 @@ impl ProviderConversation<'_> {
             } else {
                 self.runtime.queue_secs
             });
+        let mut queued_grant: Option<(ProviderId, tokio::sync::OwnedSemaphorePermit)> = None;
         loop {
             let selected = lock(&self.effects.0)
                 .selected()
@@ -66,18 +67,30 @@ impl ProviderConversation<'_> {
                         self.local,
                         !state.blocks.failed(),
                     );
+                    let admission = RouteAdmission {
+                        capacity_available: admission.capacity_available
+                            || queued_grant
+                                .as_ref()
+                                .is_some_and(|(grant_id, _)| grant_id == id),
+                        policy_allowed: admission.policy_allowed
+                            && self.runtime.permits_locality(entry)
+                            && (!self.same_host_only
+                                || entry.locality == ExecutionLocality::SameHost),
+                        ..admission
+                    };
                     let capacity = admission.capacity_available;
                     let allowed = admission.capability_allowed;
                     state.router.set_admission(id, admission);
                     if !capacity
                         && allowed
+                        && admission.policy_allowed
                         && descriptor.eligibility.is_routable()
                         && (!self.local || entry.local_voice)
                         && selected.as_ref().is_none_or(|pin| pin == id)
                         && !excluded.contains(id)
                         && waiting.is_none()
                     {
-                        waiting = Some(entry.slots.clone());
+                        waiting = Some((id.clone(), entry.slots.clone()));
                     }
                 }
                 let mut chosen = None;
@@ -119,7 +132,16 @@ impl ProviderConversation<'_> {
                         started: self.runtime.clock.now_ms(),
                         permit: None,
                     };
-                    match entry.slots.clone().try_acquire_owned() {
+                    let permit = if queued_grant
+                        .as_ref()
+                        .is_some_and(|(grant_id, _)| grant_id == &lease.id)
+                    {
+                        Ok(queued_grant.take().expect("matched queued grant").1)
+                    } else {
+                        entry.slots.clone().try_acquire_owned()
+                    };
+                    drop(queued_grant.take());
+                    match permit {
                         Ok(permit) => {
                             lease.permit = Some(permit);
                             self.lease = Some(lease);
@@ -138,14 +160,15 @@ impl ProviderConversation<'_> {
                     }
                 }
             }
+            drop(queued_grant.take());
             if reason != RouteUnavailableReason::Busy {
                 return Err(LlmError::route_unavailable(reason));
             }
-            let Some(slots) = waiting else {
+            let Some((id, slots)) = waiting else {
                 return Err(LlmError::route_unavailable(reason));
             };
             match tokio::time::timeout_at(deadline, slots.acquire_owned()).await {
-                Ok(Ok(permit)) => drop(permit),
+                Ok(Ok(permit)) => queued_grant = Some((id, permit)),
                 _ => return Err(LlmError::route_unavailable(RouteUnavailableReason::Busy)),
             }
         }
@@ -201,7 +224,12 @@ impl ProviderConversation<'_> {
         self.reserve().await?;
         let mut lease = self.lease.take().expect("reserved attempt");
         let entry = &self.runtime.entries[&lease.id];
-        let result = if !tools.is_empty() && !self.tools_available() {
+        let result = if self.same_host_only && entry.locality != ExecutionLocality::SameHost {
+            Err(LlmError::classified(
+                "source-only generation requires a same-host provider",
+                ProviderFailureKind::InvalidRequest,
+            ))
+        } else if !tools.is_empty() && !self.tools_available() {
             Err(LlmError::classified(
                 "tools are forbidden for this conversation",
                 ProviderFailureKind::InvalidRequest,
@@ -308,24 +336,50 @@ impl Drop for AttemptLease<'_> {
 
 impl ImageUnderstanding for ProviderRuntime {
     async fn describe(&self, bytes: Vec<u8>) -> Result<String, VisionError> {
-        self.image(false, bytes).await
+        self.image(false, bytes, false).await
     }
     async fn extract_text(&self, bytes: Vec<u8>) -> Result<String, VisionError> {
-        self.image(true, bytes).await
+        self.image(true, bytes, false).await
     }
 }
 impl ProviderRuntime {
-    async fn image(&self, ocr: bool, bytes: Vec<u8>) -> Result<String, VisionError> {
+    pub async fn describe_source_only(&self, bytes: Vec<u8>) -> Result<String, VisionError> {
+        self.image(false, bytes, true).await
+    }
+    pub async fn extract_text_source_only(&self, bytes: Vec<u8>) -> Result<String, VisionError> {
+        self.image(true, bytes, true).await
+    }
+    async fn image(
+        &self,
+        ocr: bool,
+        bytes: Vec<u8>,
+        same_host_only: bool,
+    ) -> Result<String, VisionError> {
         let mut conversation = self.conversation(RequestClass::image(ocr), false, false, None);
+        conversation.same_host_only = same_host_only;
         conversation
             .reserve()
             .await
             .map_err(|_| VisionError::internal("vision route unavailable"))?;
-        let mut lease = conversation.lease.take().expect("image attempt reserved");
-        let Some(adapter) = &self.entries[&lease.id].image else {
+        conversation.execute_image(ocr, bytes).await
+    }
+}
+impl ProviderConversation<'_> {
+    pub(super) async fn execute_image(
+        &mut self,
+        ocr: bool,
+        bytes: Vec<u8>,
+    ) -> Result<String, VisionError> {
+        let mut lease = self.lease.take().expect("image attempt reserved");
+        if self.same_host_only
+            && self.runtime.entries[&lease.id].locality != ExecutionLocality::SameHost
+        {
+            return Err(VisionError::internal("image requires a same-host route"));
+        }
+        let Some(adapter) = &self.runtime.entries[&lease.id].image else {
             return Err(VisionError::internal("no image adapter"));
         };
-        conversation.effects.mark_image_submitted();
+        self.effects.mark_image_submitted();
         let result = adapter.image(ocr, bytes).await;
         let error = result.as_ref().err().map(|error| {
             LlmError::classified("image provider failed", error.provider_failure())

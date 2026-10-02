@@ -4,6 +4,7 @@ use super::*;
 #[derive(Default, Deserialize)]
 #[serde(remote = "WorkStore", default)]
 struct LoadedWorkStore {
+    engagement: crate::engagement::EngagementStore,
     recall: recall::WorkRecallState,
     recall_policies: recall_policy::RecallPolicies,
     sequence: u64,

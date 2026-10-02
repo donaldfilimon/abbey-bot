@@ -1,9 +1,8 @@
 # MLAI community server plan.
 #
-# Transcribed from the redesign proposal of 2026-09-04 (sections 2.2 channel
-# tree, 2.3 role hierarchy, 2.6 permission overwrites, 2.8 naming decisions).
-# `abbey-bot --server-plan blueprints/mlai-community.toml --guild <id>` reads
-# this file; a unit test parses and validates it on every gate run.
+# Updated 2026-10-02 from the observed MLAI Community layout.
+# Retains reviewed role and private-channel policy; live overwrite changes
+# still require a separate stage review. This is not a full guild snapshot.
 #
 # What this file can and cannot express, on purpose:
 # - Roles here are CREATED with zero permissions (proposal stage 1). The
@@ -17,7 +16,7 @@
 #   ("Manage Guild", not "Manage Server"); a typo fails the gate.
 
 name = "MLAI"
-source = "~/Archive/2026-09-04-desktop-recovery/mlai-discord-redesign-proposal.md"
+source = "MLAI Community layout observed 2026-10-02; retained 2026-09-04 permission design"
 
 [everyone]
 # "Read most things, write in the commons, no mention-everyone, no manage
@@ -120,8 +119,8 @@ note = "Interest role."
 
 # The proposal named this interest role "Abbey". The live guild's bot is
 # named Abbey too, and its integration-managed role carries that name, so the
-# engine refused the plan on the first dry run (2026-09-06). Renamed to match
-# the #personas channel (Abbey, Aviva, Abi); the product colour stays. Donald
+# engine refused the plan on the first dry run (2026-09-06). The Personas
+# interest role covers Abbey, Aviva, Abi; the product colour stays. Donald
 # may flip the name, but it cannot be "Abbey" while the bot's role is.
 [[roles]]
 name = "Personas"
@@ -140,12 +139,10 @@ note = "Interest role."
 name = "Announcements"
 note = "Ping opt-in only."
 
-# ----------------------------------------------------------- categories ----
-# A channel with no `overwrites` inherits its category's; a channel with its
-# own list stands alone (the engine never syncs, 3.B.6).
+# Channel organization follows the current server; unlisted channels are untouched.
 
 [[categories]]
-name = "START HERE"
+name = "ENTER MLAI"
 
 [[categories.channels]]
 name = "welcome"
@@ -196,6 +193,24 @@ overwrites = [
 ]
 
 [[categories.channels]]
+name = "learning"
+kind = "forum"
+topic = "Questions, tutorials, and learning notes; one topic per post."
+
+[[categories.channels]]
+name = "discoveries"
+kind = "text"
+topic = "Share useful tools, papers, and findings with source links."
+
+[[categories]]
+name = "BUILDER GUILD"
+
+[[categories.channels]]
+name = "build-in-public"
+kind = "text"
+topic = "Optional project progress, experiments, and requests for feedback."
+
+[[categories.channels]]
 name = "showcase"
 kind = "forum"
 topic = "What people built on the stack, one thread each."
@@ -205,27 +220,14 @@ overwrites = [
 ]
 
 [[categories.channels]]
-name = "off-topic"
+name = "code-and-compilers"
 kind = "text"
-topic = "Pressure valve, so the technical channels stay technical."
-
-[[categories]]
-name = "THE STACK"
-
-[[categories.channels]]
-name = "wdbx"
-kind = "text"
-topic = "The Rust retrieval and memory substrate: HNSW, MVCC, durability, provenance, the audit chain."
+topic = "Language design, compilers, runtimes, and implementation questions."
 
 [[categories.channels]]
 name = "abi-runtime"
 kind = "text"
 topic = "The Rust orchestration runtime: CLI, MCP tools, accelerator contracts, capability reporting."
-
-[[categories.channels]]
-name = "personas"
-kind = "text"
-topic = "Abbey, Aviva, Abi: routing, the blend coefficient, the claims ledger, persona behaviour."
 
 [[categories.channels]]
 name = "apple-silicon"
@@ -238,15 +240,7 @@ kind = "text"
 topic = "PRs, issues, repository gates, Apache-2.0 questions."
 
 [[categories]]
-name = "BUILD LOG"
-
-[[categories.channels]]
-name = "releases"
-kind = "text"
-topic = "GitHub releases and tags across the public repos. Bot writes, humans read."
-overwrites = [
-  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
-]
+name = "RESEARCH GUILD"
 
 [[categories.channels]]
 name = "research"
@@ -258,17 +252,17 @@ overwrites = [
 ]
 
 [[categories.channels]]
-name = "ci-and-deploys"
+name = "wdbx"
 kind = "text"
-topic = "Actions, Pages, and Cloud Run signal. Staff and Contributors only."
-overwrites = [
-  { role = "@everyone", deny = ["View Channel"] },
-  { role = "Contributor", allow = ["View Channel"] },
-  { role = "Team", allow = ["View Channel"] },
-]
+topic = "The Rust retrieval and memory substrate: HNSW, MVCC, durability, provenance, the audit chain."
 
 [[categories]]
-name = "PRODUCTS"
+name = "ABBEY & APPS"
+
+[[categories.channels]]
+name = "abbey-lab"
+kind = "text"
+topic = "Abbey, Aviva, Abi: routing, the blend coefficient, the claims ledger, persona behaviour."
 
 [[categories.channels]]
 name = "ops-console"
@@ -291,7 +285,28 @@ kind = "text"
 topic = "The Expo companion and the CloudKit Vault. Pre-release; not on the App Store."
 
 [[categories]]
-name = "VOICE"
+name = "SHIP ROOM"
+
+[[categories.channels]]
+name = "releases"
+kind = "text"
+topic = "GitHub releases and tags across the public repos. Bot writes, humans read."
+overwrites = [
+  { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
+]
+
+[[categories.channels]]
+name = "ci-and-deploys"
+kind = "text"
+topic = "Actions, Pages, and Cloud Run signal. Staff and Contributors only."
+overwrites = [
+  { role = "@everyone", deny = ["View Channel"] },
+  { role = "Contributor", allow = ["View Channel"] },
+  { role = "Team", allow = ["View Channel"] },
+]
+
+[[categories]]
+name = "LIVE ROOMS"
 
 [[categories.channels]]
 name = "Lounge"
@@ -303,15 +318,43 @@ kind = "voice"
 
 [[categories.channels]]
 name = "Office Hours"
+kind = "voice"
+
+[[categories.channels]]
+name = "Office Hours Overflow"
 kind = "stage"
 overwrites = [
   { role = "@everyone", allow = ["View Channel", "Connect", "Request to Speak"], deny = ["Speak"] },
   { role = "Team", allow = ["Speak", "Move Members", "Mute Members"] },
 ]
 
+[[categories.channels]]
+name = "Town Hall"
+kind = "voice"
+
+[[categories.channels]]
+name = "Chill / AFK"
+kind = "voice"
+
+[[categories]]
+name = "SOCIAL"
+
+[[categories.channels]]
+name = "off-topic"
+kind = "text"
+topic = "Pressure valve, so the technical channels stay technical."
+
+[[categories.channels]]
+name = "commands"
+kind = "text"
+topic = "Use Abbey and other app commands here; see pinned command guidance."
+
+[[categories.channels]]
+name = "Gaming"
+kind = "voice"
+
 [[categories]]
 name = "STAFF"
-# The one category where sync is left on deliberately: children inherit.
 overwrites = [
   { role = "@everyone", deny = ["View Channel"] },
   { role = "Moderator", allow = ["View Channel"] },
@@ -340,8 +383,6 @@ topic = "The Community public-updates channel where Discord posts administrative
 
 [[categories]]
 name = "ARCHIVE"
-# Created at rollout and filled by a human (stage 10): superseded channels are
-# moved here, renamed with a z- prefix, and made read-only. Nothing is deleted.
 overwrites = [
   { role = "@everyone", deny = ["Send Messages", "Create Public Threads", "Create Private Threads", "Send Messages in Threads"] },
 ]

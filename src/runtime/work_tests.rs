@@ -55,8 +55,9 @@ async fn framework_abort_retains_publication_and_final_snapshot() {
         release: (Mutex::new(false), Condvar::new()),
     });
     let release = Release(sink.clone());
+    let directory = TestDirectory::new();
     let state = Arc::new(AppState::in_memory_with_persistence(
-        Some(std::env::temp_dir().join("injected-work")),
+        Some(directory.0.clone()),
         sink.clone(),
     ));
     let mut supervisor = ServiceSupervisor::new();
@@ -71,7 +72,9 @@ async fn framework_abort_retains_publication_and_final_snapshot() {
                 .await
         })
         .unwrap();
-    sink.entered.notified().await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), sink.entered.notified())
+        .await
+        .expect("canonical publication must begin");
     supervisor.begin_draining(ShutdownReason::Signal, tokio::time::Instant::now());
     supervisor.request_abort();
     supervisor.next_completion().await;
@@ -116,8 +119,9 @@ async fn canonical_failure_does_not_publish_but_projection_failure_does() {
                 PersistErrorCategory::SyncTemporary,
             )
         };
+        let directory = TestDirectory::new();
         let state = Arc::new(AppState::in_memory_with_persistence(
-            Some(std::env::temp_dir().join("injected-work")),
+            Some(directory.0.clone()),
             Arc::new(sink),
         ));
         let mut supervisor = ServiceSupervisor::new();
@@ -146,8 +150,9 @@ async fn dropped_waiter_keeps_serialization_through_publication() {
         release: (Mutex::new(false), Condvar::new()),
     });
     let release = Release(sink.clone());
+    let directory = TestDirectory::new();
     let state = Arc::new(AppState::in_memory_with_persistence(
-        Some(std::env::temp_dir().join("injected-work")),
+        Some(directory.0.clone()),
         sink.clone(),
     ));
     let mut supervisor = ServiceSupervisor::new();
@@ -159,7 +164,9 @@ async fn dropped_waiter_keeps_serialization_through_publication() {
             .commit_work(|store| store.create_project(access(), "First", "one"))
             .await
     });
-    sink.entered.notified().await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), sink.entered.notified())
+        .await
+        .expect("canonical publication must begin");
     waiter.abort();
     assert!(waiter.await.is_err());
     let owned = state.clone();
@@ -195,10 +202,9 @@ async fn native_commit_preserves_admitted_memory_without_proposing_during_gate_o
             entered: tokio::sync::Notify::new(),
             release: (Mutex::new(true), Condvar::new()),
         });
-        let mut state = AppState::in_memory_with_persistence(
-            Some(std::env::temp_dir().join("injected-work-gated")),
-            sink.clone(),
-        );
+        let directory = TestDirectory::new();
+        let mut state =
+            AppState::in_memory_with_persistence(Some(directory.0.clone()), sink.clone());
         let config = serde_json::json!({
             "abi_cli": std::env::temp_dir().join("abi-that-does-not-exist"),
             "endpoint": "http://127.0.0.1:50051",
@@ -285,10 +291,8 @@ async fn recall_policy_dropped_waiter_keeps_durable_enablement_and_no_proposals(
         release: (Mutex::new(false), Condvar::new()),
     });
     let release = Release(sink.clone());
-    let mut state = AppState::in_memory_with_persistence(
-        Some(std::env::temp_dir().join("injected-recall-policy")),
-        sink.clone(),
-    );
+    let directory = TestDirectory::new();
+    let mut state = AppState::in_memory_with_persistence(Some(directory.0.clone()), sink.clone());
     Arc::get_mut(&mut state).unwrap().work_recall_rollout =
         crate::work::recall_policy::RecallRollout::parse(Some(r#"[{"Personal":{"owner":1}}]"#))
             .unwrap();
@@ -301,7 +305,9 @@ async fn recall_policy_dropped_waiter_keeps_durable_enablement_and_no_proposals(
     let mut writer = state.attach_service(supervisor.operations());
     let owned = state.clone();
     let waiter = tokio::spawn(async move { owned.configure_work_recall(access(), true, 0).await });
-    sink.entered.notified().await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), sink.entered.notified())
+        .await
+        .expect("canonical publication must begin");
     waiter.abort();
     assert!(waiter.await.is_err());
     assert!(!state.work_recall_policy(access()).unwrap().policy.enabled);
@@ -315,4 +321,137 @@ async fn recall_policy_dropped_waiter_keeps_durable_enablement_and_no_proposals(
     writer.close_admission();
     writer.stop();
     writer.joined().await.unwrap();
+}
+
+#[tokio::test]
+async fn engage_abort_retains_canonical_publication_and_final_snapshot() {
+    let sink = Arc::new(HeldWorkSink {
+        writes: Mutex::new(Vec::new()),
+        entered: tokio::sync::Notify::new(),
+        release: (Mutex::new(false), Condvar::new()),
+    });
+    let release = Release(sink.clone());
+    let directory = TestDirectory::new();
+    let state = Arc::new(AppState::in_memory_with_persistence(
+        Some(directory.0.clone()),
+        sink.clone(),
+    ));
+    let mut supervisor = ServiceSupervisor::new();
+    supervisor.finish_startup();
+    let registry = supervisor.operations();
+    let mut writer = state.attach_service(registry.clone());
+    let owned = state.clone();
+    let result = registry
+        .spawn_result(OperationKind::FrameworkDispatch, async move {
+            owned
+                .commit_engagement(|store| {
+                    store.member_policies.insert(
+                        1,
+                        crate::engagement::MemberPolicy {
+                            global_stop: true,
+                            ..Default::default()
+                        },
+                    );
+                    Ok(())
+                })
+                .await
+        })
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), sink.entered.notified())
+        .await
+        .expect("canonical publication must begin");
+    supervisor.begin_draining(ShutdownReason::Signal, tokio::time::Instant::now());
+    supervisor.request_abort();
+    supervisor.next_completion().await;
+    assert!(result.await.is_err());
+    assert!(supervisor.try_freeze(writer.idle()).is_err());
+    assert_eq!(
+        state.commit_engagement(|_| Ok(())).await,
+        Err(WorkError::Persistence)
+    );
+    drop(release);
+    supervisor.next_completion().await;
+    assert_eq!(
+        AppState::lock(&state.stores)
+            .work
+            .engagement
+            .member_policies
+            .len(),
+        1
+    );
+    assert_eq!(
+        state
+            .final_snapshot()
+            .stores
+            .work
+            .engagement
+            .member_policies
+            .len(),
+        1
+    );
+    assert!(writer.idle());
+    supervisor.try_freeze(writer.idle()).unwrap();
+    writer.close_admission();
+    writer
+        .final_snapshot(
+            state.final_snapshot(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    writer.stop();
+    writer.joined().await.unwrap();
+    let writes = sink.writes.lock().unwrap();
+    let final_stores: Stores = serde_json::from_slice(&writes[2]).unwrap();
+    assert_eq!(final_stores.work.engagement.member_policies.len(), 1);
+}
+
+#[tokio::test]
+async fn engage_canonical_failure_does_not_publish_but_projection_failure_does() {
+    for canonical_failure in [true, false] {
+        let sink = if canonical_failure {
+            crate::persist::tests::RuntimeRecordingSink::fail_canonical(
+                PersistErrorCategory::SyncTemporary,
+            )
+        } else {
+            crate::persist::tests::RuntimeRecordingSink::fail_projection(
+                PersistErrorCategory::SyncTemporary,
+            )
+        };
+        let directory = TestDirectory::new();
+        let state = Arc::new(AppState::in_memory_with_persistence(
+            Some(directory.0.clone()),
+            Arc::new(sink),
+        ));
+        let mut supervisor = ServiceSupervisor::new();
+        supervisor.finish_startup();
+        let mut writer = state.attach_service(supervisor.operations());
+        let result = state
+            .commit_engagement(|store| {
+                store.member_policies.insert(
+                    1,
+                    crate::engagement::MemberPolicy {
+                        global_stop: true,
+                        ..Default::default()
+                    },
+                );
+                Ok(())
+            })
+            .await;
+        assert_eq!(result.is_err(), canonical_failure);
+        assert_eq!(
+            AppState::lock(&state.stores)
+                .work
+                .engagement
+                .member_policies
+                .len(),
+            usize::from(!canonical_failure)
+        );
+        supervisor.next_completion().await;
+        writer.close_admission();
+        writer.stop();
+        writer.joined().await.unwrap();
+    }
 }

@@ -1,7 +1,6 @@
 use super::*;
 
 fn queued_command_state(memory: &crate::memory_gate::MemoryTurn) -> std::sync::Arc<AppState> {
-    use crate::tools::ToolHost as _;
     let mut state = AppState::in_memory();
     let missing = std::env::temp_dir().join(format!(
         "abbey-command-drain-{}-missing-abi",
@@ -22,20 +21,18 @@ fn queued_command_state(memory: &crate::memory_gate::MemoryTurn) -> std::sync::A
         Some(std::sync::Arc::new(crate::episode_gate::EpisodeGate::new(
             crate::episode_gate::EpisodeGateConfig::from_json(&config.to_string()).unwrap(),
         )));
-    let mut host = runtime::ToolScope {
-        memory_turn: Some(memory),
-        state: &state,
-        network: crate::platform::SocialNetwork::Discord,
-        scoped_guild: "discord:123".into(),
-        scoped_user: "discord:42".into(),
-        scoped_channel: "discord:channel".into(),
-        now: 10,
-        persona: Persona::Abbey,
-    };
-    assert!(
-        host.remember_fact("likes compilers", None)
-            .starts_with("Queued")
-    );
+    // Recovery fixture: seed a legacy queued request explicitly. Model tools
+    // cannot create durable personal writes under the member-consent policy.
+    crate::memory_gate::enqueue(
+        &state,
+        "discord:123",
+        "discord:42",
+        "likes compilers",
+        None,
+        10,
+        Some(memory),
+    )
+    .expect("legacy recovery fixture queues");
     state
 }
 

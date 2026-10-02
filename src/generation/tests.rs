@@ -19,6 +19,8 @@ impl llm::StreamTransport for FakeStream {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             full.push_str(d);
             let _ = on_delta.send((*d).to_string());
+            // Let the receiver observe the delta before synthetic completion.
+            tokio::task::yield_now().await;
         }
         if self.fail_at_end {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -51,7 +53,7 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
     }];
     let mut disabled = ToolAccess::Disabled(Persona::Abbey);
     let error = disabled
-        .dispatch(&[], &calls, &ConversationEffects::default())
+        .dispatch(&[], &calls, &ConversationEffects::default(), false)
         .unwrap_err();
     assert_eq!(error.detail(), "backend returned unrequested tool calls");
 
@@ -68,15 +70,18 @@ fn unsolicited_tool_calls_cannot_reach_the_host() {
     };
     let offered = crate::tools::production_tools();
     let results = ToolAccess::Enabled(&mut host)
-        .dispatch(&offered, &calls, &ConversationEffects::default())
+        .dispatch(&offered, &calls, &ConversationEffects::default(), false)
         .unwrap();
     assert_eq!(results.len(), 1);
-    assert!(results[0].content.starts_with("Stored:"), "{results:?}");
+    assert!(
+        results[0].content.contains("not stored or queued"),
+        "{results:?}"
+    );
     assert_eq!(
         AppState::lock(&state.stores)
             .memory
             .facts("discord:1", "discord:2"),
-        ["private voice statement"]
+        Vec::<String>::new()
     );
 }
 
@@ -111,6 +116,7 @@ fn a_registered_but_unoffered_tool_cannot_reach_the_host() {
             &crate::tools::abbey_tools(),
             &calls,
             &ConversationEffects::default(),
+            false,
         )
         .unwrap_err();
     assert_eq!(
@@ -496,6 +502,7 @@ fn ephemeral_preparation_preserves_shared_persona_history_and_idle_time() {
     AppState::lock(&state.engine).prepare("channel", Persona::Abbey, &context, "public", 1);
     AppState::lock(&state.engine).commit("channel", "public", "answer", 1);
     let prepared = Ask {
+        subject: None,
         session_mode: SessionMode::Ephemeral,
         scope: "channel",
         context: &context,
@@ -506,11 +513,7 @@ fn ephemeral_preparation_preserves_shared_persona_history_and_idle_time() {
     assert!(prepared.system_prompt.starts_with("You are Aviva. "));
     assert_eq!(
         prepared.turns,
-        vec![
-            llm::ChatTurn::user("public"),
-            llm::ChatTurn::assistant("answer"),
-            llm::ChatTurn::user("private question"),
-        ]
+        vec![llm::ChatTurn::user("private question")]
     );
     let mut engine = AppState::lock(&state.engine);
     assert_eq!(engine.session_persona("channel"), Some(Persona::Abbey));
@@ -527,6 +530,7 @@ fn ephemeral_preparation_does_not_create_a_shared_session() {
     let state = AppState::in_memory();
     let context = PersonaContext::empty();
     let prepared = Ask {
+        subject: None,
         session_mode: SessionMode::Ephemeral,
         scope: "new-channel",
         context: &context,
@@ -587,8 +591,9 @@ impl crate::provider::TurnAdapter for BudgetFake {
 #[tokio::test]
 async fn budget_reapplied_after_fallback_to_small_window() {
     let mut state = AppState::in_memory();
-    let context = PersonaContext::empty();
+    let context = consent::tests::authorized_context(&state);
     let ask = Ask {
+        subject: Some(("discord:g", "discord:u")),
         session_mode: SessionMode::Shared,
         scope: "discord:budget",
         context: &context,
@@ -606,8 +611,7 @@ async fn budget_reapplied_after_fallback_to_small_window() {
             );
         }
     }
-    // The small window fits the persona, guidance and latest turn but not the
-    // history, computed from the same parts production renders.
+    // The small window fits the latest request but trims sealed personal facts.
     let prepared = ask.prepare(&state, Persona::Abbey);
     let parts = PromptParts::new(
         prepared.persona_core.clone(),
@@ -616,7 +620,7 @@ async fn budget_reapplied_after_fallback_to_small_window() {
         prepared.turns.clone(),
     );
     let latest_only = PromptParts {
-        turns: vec![llm::ChatTurn::user("latest question")],
+        facts: Vec::new(),
         ..parts.clone()
     };
     let budget = crate::prompt_budget::Budget {
@@ -650,8 +654,7 @@ async fn budget_reapplied_after_fallback_to_small_window() {
     let small_seen = small.seen.lock().unwrap().clone();
     assert_eq!(wide_seen.len(), 1);
     assert_eq!(small_seen.len(), 1);
-    // The unbudgeted provider got the whole history and the byte-identical
-    // historical prompt; the fallback re-fit to the small window.
+    // Both providers omit legacy history; fallback re-fits eligible facts.
     assert_eq!(wide_seen[0].1, prepared.turns);
     assert_eq!(
         wide_seen[0].0,
@@ -667,4 +670,269 @@ async fn budget_reapplied_after_fallback_to_small_window() {
     );
     assert!(small_seen[0].0.starts_with(&prepared.persona_core));
     assert!(small_seen[0].0.contains(crate::memory::STANDING_PREFIX));
+}
+
+/// Record delivery times without involving a gateway or provider.
+struct TimedOut {
+    send_delay: std::time::Duration,
+    sent_at: std::sync::Mutex<Option<tokio::time::Instant>>,
+    edited_at: std::sync::Mutex<Vec<tokio::time::Instant>>,
+}
+
+impl Outbound for TimedOut {
+    async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
+        tokio::time::sleep(self.send_delay).await;
+        *self.sent_at.lock().unwrap() = Some(tokio::time::Instant::now());
+        Ok("timed-message".into())
+    }
+    async fn typing(&self, _: &str) {}
+    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
+        unreachable!("streaming does not fetch attachments")
+    }
+    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        self.edited_at
+            .lock()
+            .unwrap()
+            .push(tokio::time::Instant::now());
+        Ok(())
+    }
+}
+
+async fn assert_progressive_edit_pacing(send_delay: std::time::Duration) {
+    use std::time::Duration;
+    let out = TimedOut {
+        send_delay,
+        sent_at: std::sync::Mutex::new(None),
+        edited_at: std::sync::Mutex::new(Vec::new()),
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let work = async move {
+        // First delivery is just before the original two-second timer tick.
+        tokio::time::sleep(Duration::from_millis(1900)).await;
+        let first = "This answer has enough characters to cross the first posting threshold. ";
+        tx.send(first.into()).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send("More detail arrives before the next edit is due.".into())
+            .unwrap();
+        // Leave time for one intermediate edit, then complete between ticks.
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        Ok(llm::ModelTurn {
+            text: format!("{first}More detail arrives before the next edit is due. Complete."),
+            calls: Vec::new(),
+        })
+    };
+    let end = stream_received(
+        work,
+        rx,
+        &Delivery {
+            out: &out,
+            native_channel_id: "c1",
+            reply_to: None,
+        },
+        "local",
+        Persona::Abbey,
+        &Grounding::new(),
+        &ConversationEffects::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(end, StreamEnd::Text(_, Some(_))));
+    let sent = out.sent_at.lock().unwrap().unwrap();
+    let edited = out.edited_at.lock().unwrap();
+    assert_eq!(
+        edited.len(),
+        2,
+        "one paced intermediate edit and the immediate final edit"
+    );
+    assert!(
+        edited[0].duration_since(sent) >= Duration::from_secs(STREAM_EDIT_EVERY_SECS),
+        "intermediate edit followed successful send by {:?}",
+        edited[0].duration_since(sent),
+    );
+    assert!(
+        edited[1].duration_since(edited[0]) < Duration::from_secs(STREAM_EDIT_EVERY_SECS),
+        "completion must publish the final answer immediately rather than wait for pacing",
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn progressive_edits_wait_after_a_first_post_between_timer_ticks() {
+    assert_progressive_edit_pacing(std::time::Duration::ZERO).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn progressive_edits_wait_after_a_slow_outbound_send() {
+    assert_progressive_edit_pacing(std::time::Duration::from_secs(3)).await;
+}
+
+#[tokio::test]
+async fn canonical_timing_measures_nonempty_text_before_confirmed_post_and_failure() {
+    use crate::llm::StreamTransport;
+    use crate::observability::EventCode;
+    for fail in [false, true] {
+        let state = AppState::in_memory();
+        let timing = super::timing::Timing::new(&state, true);
+        let out = FakeOut::default();
+        let delivery = Delivery {
+            out: &out,
+            native_channel_id: "channel",
+            reply_to: None,
+        };
+        let stream = FakeStream {
+            deltas: vec![
+                " ",
+                "A visible generated answer that exceeds sixty characters for the actual streaming post.",
+            ],
+            fail_at_end: fail,
+            calls: vec![],
+        };
+        let backend = local_backend();
+        let request = llm::build_stream_request(&backend, "system", &[], &[]);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        timing.admitted(std::time::Duration::ZERO, &Ok(()));
+        let result = super::stream_received_timed(
+            stream.post_stream(&request, tx),
+            rx,
+            &delivery,
+            "local",
+            Persona::Abbey,
+            &Grounding::default(),
+            &ConversationEffects::default(),
+            None,
+            Some(&timing),
+        )
+        .await;
+        let mapped = result.map(|end| match end {
+            StreamEnd::Text(text, id) => (text, id, Persona::Abbey, "local"),
+            StreamEnd::Calls(_) => unreachable!(),
+        });
+        timing.finish(&mapped);
+        let phases = timing.observed.lock().unwrap();
+        assert_eq!(
+            phases.iter().map(|p| p.0).collect::<Vec<_>>(),
+            vec![
+                EventCode::GenerationQueue,
+                EventCode::GenerationFirstText,
+                EventCode::DiscordFirstPost,
+                if fail {
+                    EventCode::GenerationFailure
+                } else {
+                    EventCode::GenerationCompleted
+                }
+            ]
+        );
+        assert!(phases.windows(2).all(|p| p[0].1 <= p[1].1));
+        assert!(phases[1].1 >= 5);
+    }
+}
+
+#[tokio::test]
+async fn canonical_timing_failure_without_text_never_claims_text_or_post() {
+    use crate::llm::StreamTransport;
+    use crate::observability::EventCode;
+    let state = AppState::in_memory();
+    let timing = super::timing::Timing::new(&state, true);
+    let out = FakeOut::default();
+    let stream = FakeStream {
+        deltas: vec!["   "],
+        fail_at_end: true,
+        calls: vec![],
+    };
+    let request = llm::build_stream_request(&local_backend(), "system", &[], &[]);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let result = super::stream_received_timed(
+        stream.post_stream(&request, tx),
+        rx,
+        &Delivery {
+            out: &out,
+            native_channel_id: "channel",
+            reply_to: None,
+        },
+        "local",
+        Persona::Abbey,
+        &Grounding::default(),
+        &ConversationEffects::default(),
+        None,
+        Some(&timing),
+    )
+    .await;
+    assert!(result.is_err());
+    timing.finish(&Err(result.unwrap_err()));
+    assert_eq!(
+        timing
+            .observed
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|p| p.0)
+            .collect::<Vec<_>>(),
+        vec![EventCode::GenerationFailure]
+    );
+}
+
+#[tokio::test]
+async fn canonical_timing_failed_send_does_not_claim_confirmed_post() {
+    use crate::observability::EventCode;
+    struct Failed;
+    impl Outbound for Failed {
+        async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
+            Err("synthetic uncertainty".into())
+        }
+        async fn typing(&self, _: &str) {}
+        async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+        async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
+            unreachable!()
+        }
+        async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+    }
+    let state = AppState::in_memory();
+    let timing = super::timing::Timing::new(&state, true);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let work = async move {
+        tx.send(
+            "Generated source text that is long enough to trigger a progressive Discord post."
+                .into(),
+        )
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        Ok(llm::ModelTurn {
+            text: String::new(),
+            calls: vec![],
+        })
+    };
+    let result = super::stream_received_timed(
+        work,
+        rx,
+        &Delivery {
+            out: &Failed,
+            native_channel_id: "channel",
+            reply_to: None,
+        },
+        "local",
+        Persona::Abbey,
+        &Grounding::default(),
+        &ConversationEffects::default(),
+        None,
+        Some(&timing),
+    )
+    .await;
+    assert!(result.is_err());
+    timing.finish(&Err(result.unwrap_err()));
+    let phases = timing.observed.lock().unwrap();
+    assert_eq!(
+        phases.iter().map(|p| p.0).collect::<Vec<_>>(),
+        vec![
+            EventCode::GenerationFirstText,
+            EventCode::DiscordPostFailure,
+            EventCode::GenerationFailure
+        ]
+    );
 }

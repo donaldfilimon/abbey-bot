@@ -38,6 +38,19 @@ pub struct DiscordOutbound {
 }
 
 impl Outbound for DiscordOutbound {
+    async fn completed_exchange(&self, state: &AppState, event: &SocialEvent, response: &str) {
+        if let (Some(state), Ok(source), Ok(response)) = (
+            state.owned_state(),
+            crate::runtime::engagement_candidates::event_source(event),
+            response.parse::<u64>(),
+        ) {
+            let transport = Arc::new(super::engagement_delivery::DiscordEngagementDelivery(
+                self.http.clone(),
+            ));
+            let _ = state.complete_engagement(source, response, transport).await;
+        }
+    }
+
     async fn send(
         &self,
         native_channel_id: &str,
@@ -245,6 +258,27 @@ pub async fn on_discord_event(
             if mentions_bot && let EventKind::Message { text, .. } = &mut event.kind {
                 *text = translated_text;
             }
+            let source = crate::runtime::engagement_candidates::event_source(&event).ok();
+            // Metadata from authorized public origins does not grant member eligibility.
+            let observe = mentions_bot
+                || event.native_guild_id.is_none()
+                || source.as_ref().is_some_and(|s| {
+                    state.community_observation_allowed(&s.scope) || {
+                        let stores = AppState::lock(&state.stores);
+                        stores
+                            .work
+                            .engagement
+                            .observations
+                            .get(&s.scope)
+                            .is_some_and(|rows| rows.contains_key(&s.author))
+                    }
+                });
+            if observe
+                && let Some(source) = source
+                && state.observe_engagement(source).await.is_err()
+            {
+                tracing::warn!("engagement source invalidation could not be persisted");
+            }
             let channel = new_message.channel_id.get();
             let guild = new_message.guild_id.map(|g| g.get());
             let outcome =
@@ -264,9 +298,19 @@ pub async fn on_discord_event(
             let event = discord_reaction_event(removed_reaction, false);
             pipeline::handle(state, &out, event, false, None).await;
         }
+        FullEvent::MessageUpdate { event, .. } => {
+            let _ = state
+                .delete_engagement_source(event.channel_id.get(), event.id.get())
+                .await;
+        }
         FullEvent::MessageDelete {
-            deleted_message_id, ..
+            deleted_message_id,
+            channel_id,
+            ..
         } => {
+            let _ = state
+                .delete_engagement_source(channel_id.get(), deleted_message_id.get())
+                .await;
             AppState::lock(&state.rewards)
                 .abbey_message_deleted(&deleted_message_id.get().to_string());
         }
@@ -282,6 +326,22 @@ pub async fn on_discord_event(
             AppState::lock(&state.brains).persist_and_evict(&scoped, &mut *stores);
         }
         FullEvent::GuildMemberAddition { new_member } => {
+            if state
+                .community_join(
+                    new_member.guild_id.get(),
+                    new_member.user.id.get(),
+                    new_member
+                        .joined_at
+                        .and_then(|t| u64::try_from(t.unix_timestamp()).ok())
+                        .unwrap_or(0),
+                    new_member.user.bot,
+                )
+                .await
+                .unwrap_or(true)
+            {
+                return;
+            }
+
             let Some(channel) = ctx
                 .cache
                 .guild(new_member.guild_id)

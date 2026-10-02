@@ -60,8 +60,8 @@ fn the_shipped_mlai_plan_parses_and_validates() {
     assert_eq!(plan.name, "MLAI");
     assert_eq!(
         plan.categories.len(),
-        8,
-        "START HERE, COMMONS, THE STACK, BUILD LOG, PRODUCTS, VOICE, STAFF, ARCHIVE"
+        10,
+        "Current public guild layout plus STAFF and ARCHIVE"
     );
     assert_eq!(plan.roles.len(), 12);
     assert!(
@@ -81,8 +81,8 @@ fn mlai_hides_exactly_the_channels_the_proposal_hides() {
     assert_eq!(
         hidden,
         [
-            "ci-and-deploys",
             "ops-console",
+            "ci-and-deploys",
             "mod-chat",
             "mod-log",
             "staging",
@@ -143,7 +143,7 @@ fn mlai_console_and_stage_overwrites_match_the_proposal() {
 
     let (category, stage) = plan
         .channels()
-        .find(|(_, ch)| ch.name == "Office Hours")
+        .find(|(_, ch)| ch.name == "Office Hours Overflow")
         .unwrap();
     assert_eq!(stage.kind, ChannelKind::Stage);
     let overwrites = plan.effective_overwrites(category, stage);
@@ -365,5 +365,32 @@ fn permission_names_collect_every_mention() {
             names.contains(expected),
             "{expected} missing from {names:?}"
         );
+    }
+}
+
+#[test]
+fn mlai_preserves_the_live_voice_room_and_does_not_recreate_retired_categories() {
+    let plan = mlai();
+    for retired in ["START HERE", "THE STACK", "BUILD LOG", "PRODUCTS", "VOICE"] {
+        assert!(
+            plan.category(retired).is_none(),
+            "retired category {retired}"
+        );
+    }
+    let (category, office_hours) = plan
+        .channels()
+        .find(|(_, ch)| ch.name == "Office Hours")
+        .unwrap();
+    assert_eq!(category.name, "LIVE ROOMS");
+    assert_eq!(office_hours.kind, ChannelKind::Voice);
+    assert!(office_hours.overwrites.is_empty());
+    for (name, parent) in [
+        ("showcase", "BUILDER GUILD"),
+        ("wdbx", "RESEARCH GUILD"),
+        ("off-topic", "SOCIAL"),
+        ("ops-console", "ABBEY & APPS"),
+    ] {
+        let (category, _) = plan.channels().find(|(_, ch)| ch.name == name).unwrap();
+        assert_eq!(category.name, parent);
     }
 }

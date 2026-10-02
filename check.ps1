@@ -35,6 +35,7 @@ Invoke-Checked -Executable "python" -Arguments @("deploy/test-check-activity-url
 Invoke-Checked -Executable "python" -Arguments @("deploy/check-activity-url-map.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-protocol.py", "ProtocolTests")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-environment.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-community-operations-control.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-qualified-install.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-smoke-mlx-vlm-tool-deltas.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-patch-mlx-vlm-tool-encoding.py")

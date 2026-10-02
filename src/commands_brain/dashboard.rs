@@ -1,5 +1,7 @@
 //! Focused dashboard command adapters.
 use super::*;
+mod channel_controls;
+mod operations;
 
 /// Open the owner- and guild-bound classic administration dashboard.
 #[poise::command(slash_command, guild_only, ephemeral, rename = "dashboard")]
@@ -15,7 +17,7 @@ pub async fn admin_dashboard(ctx: Context<'_>) -> Result<(), Error> {
         expiry: runtime::now().saturating_add(crate::admin_dashboard::SESSION_SECONDS),
         page: crate::admin_dashboard::AdminPage::Overview,
     };
-    let input = dashboard_input(ctx.data(), guild.get(), ctx.channel_id().get(), None);
+    let input = dashboard_input(ctx.data(), guild.get(), ctx.channel_id().get(), None).await;
     ctx.send(
         poise::CreateReply::default()
             .content(clamp_message(crate::admin_dashboard::render(
@@ -47,7 +49,7 @@ pub(crate) async fn open_dashboard_component(
         expiry: runtime::now().saturating_add(crate::admin_dashboard::SESSION_SECONDS),
         page: crate::admin_dashboard::AdminPage::Overview,
     };
-    let input = dashboard_input(data, guild.get(), interaction.channel_id.get(), None);
+    let input = dashboard_input(data, guild.get(), interaction.channel_id.get(), None).await;
     interaction
         .edit_response(
             &ctx.http,
@@ -69,12 +71,13 @@ fn dashboard_settings(state: &AppState, guild_id: u64) -> GuildSettings {
     AppState::lock(&state.guilds).refresh(&scoped, &mut *stores)
 }
 
-fn dashboard_input(
+async fn dashboard_input(
     data: &crate::Data,
     guild_id: u64,
     channel_id: u64,
     result: Option<String>,
 ) -> crate::admin_dashboard::AdminViewInput {
+    let autonomous_status = operations::status(data, guild_id).await;
     let scoped = guild::scoped_guild_id(PLATFORM, Some(&guild_id.to_string()));
     let settings = dashboard_settings(&data.state, guild_id);
     let (epsilon, brain_summary) = {
@@ -184,11 +187,27 @@ fn dashboard_input(
                 "channel cooldown active"
             }
         ),
-        settings,
         epsilon,
         brain_summary,
-        capabilities,
         operation_result: result,
+        media_status: format!(
+            "{}\nVoice: {}. Connection and media admission do not establish audible playback or individual listening consent.",
+            crate::admin_dashboard::vision_status(settings.vision_enabled, description, ocr),
+            capabilities
+                .iter()
+                .find(|label| label.starts_with("voice"))
+                .copied()
+                .unwrap_or("not configured for this guild")
+        ),
+        models_status: format!(
+            "Local-only requested: {}. Effective routes honor this locality restriction.\n{}",
+            data.state.providers.local_only(),
+            crate::inspect::render_provider(&data.state.providers.inspect_snapshot())
+        ),
+        autonomous_status,
+        channel_status: channel_controls::status(&settings, &channel),
+        settings,
+        capabilities,
     }
 }
 
@@ -223,19 +242,16 @@ pub(super) fn dashboard_rows(
     let action_rows = match session.page {
         P::Conversation => vec![
             vec![
-                CreateButton::new(session.custom_id(A::SetVision(true)))
-                    .label("Vision on")
-                    .style(ButtonStyle::Success),
-                CreateButton::new(session.custom_id(A::SetVision(false)))
-                    .label("Vision off")
-                    .style(ButtonStyle::Secondary),
                 CreateButton::new(session.custom_id(A::SetUnsolicited(true)))
                     .label("Act on")
                     .style(ButtonStyle::Success),
                 CreateButton::new(session.custom_id(A::SetUnsolicited(false)))
                     .label("Act off")
                     .style(ButtonStyle::Secondary),
-            ],
+            ]
+            .into_iter()
+            .chain(channel_controls::buttons(session))
+            .collect(),
             vec![
                 CreateButton::new(session.custom_id(A::SetPersona(crate::persona::Persona::Abbey)))
                     .label("Persona Abbey")
@@ -257,15 +273,8 @@ pub(super) fn dashboard_rows(
                 CreateButton::new(session.custom_id(A::SetCooldown(60)))
                     .label("Cooldown 60s")
                     .style(ButtonStyle::Secondary),
-            ],
-        ],
-        P::Learning => vec![
-            vec![
-                CreateButton::new(session.custom_id(A::SetLearning(true)))
-                    .label("Learning on")
-                    .style(ButtonStyle::Success),
-                CreateButton::new(session.custom_id(A::SetLearning(false)))
-                    .label("Learning off")
+                CreateButton::new(session.custom_id(A::SetCooldown(120)))
+                    .label("Cooldown 120s")
                     .style(ButtonStyle::Secondary),
             ],
             vec![
@@ -277,6 +286,24 @@ pub(super) fn dashboard_rows(
                     .style(ButtonStyle::Secondary),
                 CreateButton::new(session.custom_id(A::SetBudget(60)))
                     .label("Budget 60/h")
+                    .style(ButtonStyle::Secondary),
+            ],
+        ],
+        P::Media => vec![vec![
+            CreateButton::new(session.custom_id(A::SetVision(true)))
+                .label("Vision on")
+                .style(ButtonStyle::Success),
+            CreateButton::new(session.custom_id(A::SetVision(false)))
+                .label("Vision off")
+                .style(ButtonStyle::Secondary),
+        ]],
+        P::Learning => vec![
+            vec![
+                CreateButton::new(session.custom_id(A::SetLearning(true)))
+                    .label("Learning on")
+                    .style(ButtonStyle::Success),
+                CreateButton::new(session.custom_id(A::SetLearning(false)))
+                    .label("Learning off")
                     .style(ButtonStyle::Secondary),
             ],
             vec![
@@ -310,7 +337,7 @@ pub(super) fn dashboard_rows(
                 .label("Cancel")
                 .style(ButtonStyle::Secondary),
         ]],
-        P::Overview => Vec::new(),
+        P::Overview | P::Moderation | P::AutonomousOperations | P::Models => Vec::new(),
     };
     let mut rows = vec![page_select_row(session)];
     for actions in action_rows {
@@ -371,6 +398,9 @@ pub async fn dispatch_admin_component(
     interaction: &ComponentInteraction,
     data: &crate::Data,
 ) -> bool {
+    if operations::dispatch(ctx, interaction, data).await {
+        return true;
+    }
     if !interaction.data.custom_id.starts_with("abbey:admin:") {
         return false;
     }
@@ -470,6 +500,22 @@ pub async fn dispatch_admin_component(
     use crate::admin_dashboard::AdminEffect;
     match effect {
         AdminEffect::View(page) => session.page = page,
+        AdminEffect::ReviewProposals => {
+            session.page = crate::admin_dashboard::AdminPage::AutonomousOperations;
+        }
+        AdminEffect::SetChannelParticipation(allow) => {
+            result = Some(
+                channel_controls::apply(data, guild_id.get(), interaction.channel_id.get(), allow)
+                    .await,
+            );
+        }
+        AdminEffect::SetCommunityMode(mode) => {
+            result = Some(
+                operations::apply_community_mode(&ctx.http, &data.state, &session, mode)
+                    .await
+                    .unwrap_or_else(str::to_owned),
+            );
+        }
         AdminEffect::SetLearning(value) => {
             update_dashboard_setting(data, guild_id.get(), |s| s.learning_enabled = value);
             result = Some(format!(
@@ -585,13 +631,19 @@ pub async fn dispatch_admin_component(
         }
         AdminEffect::None => result = Some("That setting already has the requested value.".into()),
     }
-    let input = dashboard_input(data, guild_id.get(), interaction.channel_id.get(), result);
+    if session.page == crate::admin_dashboard::AdminPage::AutonomousOperations {
+        operations::show(ctx, interaction, data, &session, 0, result).await;
+        return true;
+    }
+    let input = dashboard_input(data, guild_id.get(), interaction.channel_id.get(), result).await;
+    let current_owner =
+        operations::mode_controls_authorized(&ctx.http, &data.state, &session).await;
     edit_admin(
         ctx,
         interaction,
         data,
         &crate::admin_dashboard::render(session.page, &input),
-        dashboard_rows(&session),
+        operations::dashboard_rows_with_mode_controls(&session, current_owner),
     )
     .await;
     true
@@ -620,6 +672,8 @@ async fn edit_admin(
             EditInteractionResponse::new()
                 .content(clamp_message(content.to_owned()))
                 .components(rows)
+                .embeds(Vec::new())
+                .attachments(serenity::all::EditAttachments::new())
                 .allowed_mentions(crate::gateway::no_mentions()),
         )
         .await;
@@ -629,99 +683,4 @@ async fn edit_admin(
 }
 
 #[cfg(test)]
-mod outcome_tests {
-    use super::*;
-
-    #[test]
-    fn unsolicited_dashboard_uses_streaming_read_only_route_without_tool_capability() {
-        use crate::provider::{
-            FmConfig, FmMode, FoundationModels, ProviderCapabilities, ProviderRuntime,
-            RequestClass, VerifiedFmCapabilities,
-        };
-        let fm = FoundationModels::new_qualified(
-            FmConfig {
-                mode: FmMode::System,
-                endpoint: Some("http://127.0.0.1:9".into()),
-                cli: std::path::PathBuf::from("synthetic-dashboard-cli-not-executed"),
-                fallback: true,
-                primary: false,
-                timeout_secs: 1,
-            },
-            None,
-            true,
-            VerifiedFmCapabilities {
-                server: Some(ProviderCapabilities {
-                    text: true,
-                    streaming: true,
-                    ..ProviderCapabilities::default()
-                }),
-                cli: ProviderCapabilities::default(),
-            },
-        );
-        let mut state = AppState::in_memory();
-        std::sync::Arc::get_mut(&mut state).unwrap().providers =
-            ProviderRuntime::legacy(None, None, vec![fm], None, true, 1, 1);
-        let data = crate::Data { state, voice: None };
-        assert!(data.state.providers.tools_enabled());
-        assert!(
-            data.state
-                .providers
-                .request_readiness(RequestClass::TextReadOnly)
-                .is_err()
-        );
-        assert_eq!(
-            data.state
-                .providers
-                .request_readiness_for(RequestClass::TextReadOnly, true),
-            Ok(())
-        );
-        assert!(
-            data.state
-                .providers
-                .request_readiness(RequestClass::TextWithTools)
-                .is_err()
-        );
-        update_dashboard_setting(&data, 7, |settings| {
-            settings.unsolicited = true;
-            settings.learning_enabled = true;
-        });
-        let view = dashboard_input(&data, 7, 8, None);
-        assert!(
-            view.effective_policy
-                .contains("eligible for policy selection"),
-            "{}",
-            view.effective_policy
-        );
-        assert!(
-            view.effective_policy
-                .contains("Apple FM modes: system qualified."),
-            "{}",
-            view.effective_policy
-        );
-        assert!(
-            !view.capabilities.contains(&"generation"),
-            "interactive tool conversation must remain unavailable"
-        );
-    }
-
-    #[test]
-    fn failed_delivery_keeps_the_setting_change_and_the_original_failure() {
-        let state = AppState::in_memory();
-        let data = crate::Data { state, voice: None };
-        let mut mutations = 0;
-        update_dashboard_setting(&data, 7, |settings| {
-            settings.unsolicited = true;
-            mutations += 1;
-        });
-        let failure = Err::<(), _>("transport");
-        if failure.is_err() {
-            crate::gateway::interaction_outcomes::delivery_failed(&data.state);
-        }
-        assert_eq!(failure, Err("transport"));
-        assert_eq!(mutations, 1);
-        assert!(dashboard_settings(&data.state, 7).unsolicited);
-        let view = dashboard_input(&data, 7, 8, Some("Unsolicited action is now on.".into()));
-        assert!(view.effective_policy.contains("learning is off"));
-        assert!(view.operation_result.unwrap().contains("now on"));
-    }
-}
+mod outcome_tests;

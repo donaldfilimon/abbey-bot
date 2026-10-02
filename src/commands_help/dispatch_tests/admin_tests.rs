@@ -337,7 +337,7 @@ async fn actual_admin_page_select_opens_dashboard_page_fail_closed() {
     assert!(requests.iter().any(|request| {
         request.body["content"]
             .as_str()
-            .is_some_and(|body| body.contains("Administration · Learning"))
+            .is_some_and(|body| body.contains("Administration · Memory"))
     }));
     assert!(requests.iter().any(|request| {
         let rendered = request.body["components"].to_string();

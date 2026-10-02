@@ -344,8 +344,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(access_valid(spec.eligibility.access.rule(), 0));
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
-    assert_eq!(keys.len(), 90);
-    assert_eq!(registered_commands().len(), 90);
+    assert_eq!(keys.len(), 105);
+    assert_eq!(registered_commands().len(), 105);
     assert!(planned_commands().is_empty());
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
@@ -728,5 +728,167 @@ fn registered_invocation_and_discovery_match_independent_requirement_tables() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn voice_help_explains_scope_and_member_control_without_granting_access() {
+    for manager in [false, true] {
+        let mut input = member();
+        if manager {
+            input.permissions.push(DiscordPermission::ManageServer);
+        }
+        let rendered = crate::commands::clamp_message(render_help(HelpSection::Voice, &input));
+        assert!(rendered.contains("group DM calls unsupported"));
+        assert!(rendered.contains("Save your own `/voice consent` before listening"));
+        assert!(rendered.contains("Music grants no listening consent"));
+        assert!(rendered.contains("present participant or server manager"));
+        assert!(rendered.contains("`/voice leave`"));
+        if !manager {
+            assert!(!rendered.contains("`/voice diagnostics`"));
+        }
+        assert!(!render_help(HelpSection::Conversation, &input).contains("group DM calls"));
+    }
+}
+
+#[test]
+fn owner_voice_help_preserves_every_command_and_footer_without_clamping() {
+    for bits in 0..8 {
+        let mut input = member();
+        input.application_owner = true;
+        input.permissions = vec![DiscordPermission::Administrator];
+        input.caller_present_in_voice = Some(true);
+        input.selected_voice_mode = SelectedVoiceMode::Local;
+        input.readiness = [
+            Capability::VoiceConfigured,
+            Capability::VoiceLocal,
+            Capability::VoiceOpenAi,
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, cap)| {
+            (bits & (1 << index) != 0).then_some((cap, CapabilityReadiness::Ready))
+        })
+        .collect();
+        let rendered = render_help(HelpSection::Voice, &input);
+        assert!(
+            rendered.chars().count() <= 2000,
+            "{}: {rendered}",
+            rendered.chars().count()
+        );
+        assert_eq!(crate::commands::clamp_message(rendered.clone()), rendered);
+        for spec in registered_commands().iter().filter(|spec| {
+            spec.section == HelpSection::Voice
+                && eligible(spec, &input, EvaluationMode::Discoverability)
+        }) {
+            assert!(
+                rendered.contains(&format!("`/{}` (", spec.name)),
+                "{}",
+                spec.name
+            );
+        }
+        assert!(rendered.ends_with("`/help` starts a new private session."));
+        if bits == 7 {
+            println!("{rendered}");
+        }
+    }
+}
+
+#[test]
+fn engage_catalog_manager_switches_are_guild_private_and_member_controls_self_only() {
+    for key in [
+        CommandKey::EngageCommunityFeature,
+        CommandKey::EngageCommunityStatus,
+    ] {
+        let spec = command(key);
+        assert!(spec.private);
+        assert!(!eligible(spec, &member(), EvaluationMode::Invocation));
+        let mut manager = member();
+        manager.permissions.push(DiscordPermission::ManageServer);
+        assert!(eligible(spec, &manager, EvaluationMode::Invocation));
+        manager.context = InteractionContext::BotDm;
+        assert!(!eligible(spec, &manager, EvaluationMode::Invocation));
+    }
+    let commands = crate::application_commands();
+    let engage = commands.iter().find(|c| c.name == "engage").unwrap();
+    for leaf in engage
+        .subcommands
+        .iter()
+        .filter(|c| !c.name.starts_with("community") && c.name != "introduce")
+    {
+        assert!(
+            !leaf
+                .parameters
+                .iter()
+                .any(|p| ["member", "user", "actor"].contains(&p.name.as_str()))
+        );
+    }
+}
+
+#[test]
+fn invitation_catalog_is_private_self_scoped_and_bound_to_acknowledged_guard() {
+    let spec = command(CommandKey::EngageInvite);
+    assert!(spec.private);
+    assert!(eligible(spec, &member(), EvaluationMode::Invocation));
+    let commands = crate::application_commands();
+    let leaf = commands
+        .iter()
+        .find(|c| c.name == "engage")
+        .unwrap()
+        .subcommands
+        .iter()
+        .find(|c| c.name == "invite")
+        .unwrap();
+    assert_eq!(leaf.checks.len(), 1);
+    assert_eq!(
+        leaf.custom_data
+            .downcast_ref::<crate::commands_help::CatalogBinding>()
+            .unwrap()
+            .key,
+        CommandKey::EngageInvite
+    );
+    assert_eq!(leaf.parameters.len(), 1);
+    assert_eq!(leaf.parameters[0].name, "kind");
+}
+
+#[test]
+fn introduction_catalog_is_guild_private_and_bound_to_self_service_guard() {
+    let commands = crate::application_commands();
+    let engage = commands.iter().find(|c| c.name == "engage").unwrap();
+    for (key, name, parameters) in [
+        (
+            CommandKey::EngageIntroduce,
+            "introduce",
+            vec!["member", "destination", "self_description"],
+        ),
+        (
+            CommandKey::EngageIntroduction,
+            "introduction",
+            vec!["proposal", "self_description", "destination"],
+        ),
+    ] {
+        let spec = command(key);
+        assert!(spec.private);
+        assert_eq!(spec.eligibility.access, AccessId::A0);
+        assert!(eligible(spec, &member(), EvaluationMode::Invocation));
+        let mut dm = member();
+        dm.context = InteractionContext::BotDm;
+        assert!(!eligible(spec, &dm, EvaluationMode::Invocation));
+        let leaf = engage.subcommands.iter().find(|c| c.name == name).unwrap();
+        assert_eq!(leaf.checks.len(), 1);
+        assert_eq!(
+            leaf.custom_data
+                .downcast_ref::<crate::commands_help::CatalogBinding>()
+                .unwrap()
+                .key,
+            key
+        );
+        assert_eq!(
+            leaf.parameters
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            parameters
+        );
     }
 }

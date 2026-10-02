@@ -2,6 +2,11 @@
 use super::*;
 
 impl ProviderRuntime {
+    /// Requested locality policy, independent of current route admission.
+    pub fn local_only(&self) -> bool {
+        self.local_only
+    }
+
     pub fn inspect_snapshot(&self) -> Vec<crate::inspect::ProviderRouteInspect> {
         use super::domain::TemporaryUnavailableReason as T;
         use crate::inspect::{ProviderProvenance as P, ProviderRouteInspect, ProviderRouteLabel};
@@ -20,7 +25,13 @@ impl ProviderRuntime {
                     _ => ProviderRouteLabel::Vision,
                 };
                 let snapshot = circuits.iter().find(|snapshot| &snapshot.provider_id == id);
-                let eligibility = if !descriptor.eligibility.is_routable() {
+                let eligibility = if self
+                    .entries
+                    .get(id)
+                    .is_some_and(|entry| !self.permits_locality(entry))
+                {
+                    Eligibility::Blocked(BlockedReason::OperatorDisabled)
+                } else if !descriptor.eligibility.is_routable() {
                     descriptor.eligibility
                 } else if state.blocks.failed() {
                     Eligibility::TemporarilyUnavailable(T::BudgetExhausted)

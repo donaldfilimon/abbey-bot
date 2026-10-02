@@ -126,12 +126,12 @@ fn core_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "remember_fact",
-            description: "Store one durable fact about the person you are talking to, in third person, for future conversations in this server.",
+            description: "Compatibility tool: model-generated personal memory writes are refused. Nothing is stored or queued. Ask the member to use /remember themselves for a self-authored durable fact.",
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "fact": { "type": "string", "description": "A single concise fact", "maxLength": crate::memory::MAX_FACT_CHARS },
-                    "supersedes": { "type": "string", "description": "An existing fact this probably replaces. This only PROPOSES the replacement — the old fact is kept until the person confirms it themselves. Never assume it was removed.", "maxLength": crate::memory::MAX_FACT_CHARS }
+                    "supersedes": { "type": "string", "description": "Compatibility argument only. The production host refuses model-generated replacements and preserves existing facts.", "maxLength": crate::memory::MAX_FACT_CHARS }
                 },
                 "required": ["fact"]
             }),
@@ -273,10 +273,9 @@ fn parse_anthropic_tool_use(content: &Value) -> Vec<ToolCall> {
 /// plain text the model will read; the host owns scoping (guild/user) and
 /// any locking.
 pub trait ToolHost {
-    /// `supersedes` is a PROPOSAL, never an instruction. The host stores the
-    /// new fact and queues the proposal; the named old fact survives until a
-    /// human explicitly confirms. A model must never be able to delete a
-    /// remembered fact.
+    /// Compatibility seam. The production host refuses model-generated durable
+    /// personal writes and directs the member to `/remember`. Neither `fact`
+    /// nor `supersedes` grants consent to store, queue, replace, or delete.
     fn remember_fact(&mut self, fact: &str, supersedes: Option<&str>) -> String;
     fn lookup_reputation(&mut self, user_id: Option<&str>) -> String;
     fn recall(&mut self, query: &str) -> String;
@@ -416,6 +415,18 @@ mod tests {
             self.log.push("list_facts".into());
             "Nothing on record.".into()
         }
+    }
+
+    #[test]
+    fn memory_tool_metadata_discloses_member_authored_consent() {
+        let tools = production_tools();
+        let memory = tools
+            .iter()
+            .find(|tool| tool.name == "remember_fact")
+            .unwrap();
+        assert!(memory.description.contains("writes are refused"));
+        assert!(memory.description.contains("/remember themselves"));
+        assert!(!memory.description.starts_with("Store"));
     }
 
     #[test]
@@ -581,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn original_five_tool_corpus_remains_byte_compatible() {
+    fn five_tool_contract_changes_only_personal_memory_consent_copy() {
         #[derive(serde::Serialize)]
         struct ToolContract<'a> {
             name: &'a str,
@@ -605,6 +616,30 @@ mod tests {
             .collect::<String>();
         assert_eq!(
             digest,
+            "d1368fae1c5317f0f9618d05733d10230d323590e37429f6e97363f8a8b31c58"
+        );
+        // The approved consent change deliberately revises two explanatory
+        // strings. Restore only those strings to prove all original names,
+        // parameter shapes and other tool contracts remain byte-compatible.
+        let mut legacy_tools = tools;
+        legacy_tools[0].description = "Store one durable fact about the person you are talking to, in third person, for future conversations in this server.";
+        legacy_tools[0].parameters["properties"]["supersedes"]["description"] = json!(
+            "An existing fact this probably replaces. This only PROPOSES the replacement — the old fact is kept until the person confirms it themselves. Never assume it was removed."
+        );
+        let legacy: Vec<_> = legacy_tools
+            .iter()
+            .map(|tool| ToolContract {
+                name: tool.name,
+                description: tool.description,
+                parameters: &tool.parameters,
+            })
+            .collect();
+        let legacy_digest = Sha256::digest(serde_json::to_vec(&legacy).unwrap())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            legacy_digest,
             "d770fa1a209ea8f55699b6411a33a43f0f746faf54522962693ce083f598c415"
         );
     }

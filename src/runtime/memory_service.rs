@@ -37,18 +37,63 @@ pub(super) fn reconcile_loaded(
     }
     stores.memory.migrate_legacy_user_keys();
     if stores.memory_projection_version < MEMORY_PROJECTION_VERSION {
+        let before = stores.memory.fact_records();
         for (guild, fact) in recall.all_memory_facts() {
             stores
                 .memory
                 .remember(&guild, &fact.user, &fact.text, fact.at);
         }
+        if stores.memory.fact_records() != before {
+            stores.personal_memory_exposure.epoch = stores
+                .personal_memory_exposure
+                .epoch
+                .checked_add(1)
+                .ok_or("Personal memory exposure epoch exhausted")?;
+        }
         stores.memory_projection_version = MEMORY_PROJECTION_VERSION;
     }
-    reconcile_projection(&stores, &mut recall);
+    reconcile_projection(&mut stores, &mut recall);
     Ok((stores, recall))
 }
 
-fn reconcile_projection(stores: &Stores, recall: &mut Recall) {
+fn invalidate_subject(
+    stores: &mut Stores,
+    guild: &str,
+    user: &str,
+    blocked: &std::sync::atomic::AtomicBool,
+) {
+    if let Some(subject) = stores
+        .personal_memory
+        .get_mut(&crate::personal_memory::subject_key(guild, user))
+        && subject.advance().is_err()
+    {
+        subject.choice = crate::personal_memory::UseChoice::Off;
+        blocked.store(true, std::sync::atomic::Ordering::Release);
+    }
+    if let Some(next) = stores.personal_memory_exposure.epoch.checked_add(1) {
+        stores.personal_memory_exposure.epoch = next;
+    } else {
+        blocked.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+fn reconcile_projection(stores: &mut Stores, recall: &mut Recall) {
+    let keys: std::collections::BTreeSet<String> = stores
+        .memory
+        .fact_records()
+        .into_iter()
+        .map(|f| crate::personal_memory::fact_key(&f.guild, &f.user, &f.text))
+        .collect();
+    for subject in stores.personal_memory.values_mut() {
+        let before = subject.proofs.len();
+        subject.proofs.retain(|key, _| keys.contains(key));
+        if subject.proofs.len() != before {
+            if subject.advance().is_err() {
+                subject.choice = crate::personal_memory::UseChoice::Off;
+            }
+            stores.personal_memory_exposure.epoch =
+                stores.personal_memory_exposure.epoch.saturating_add(1);
+        }
+    }
     recall.reconcile_memory_facts(
         stores
             .memory
@@ -98,11 +143,23 @@ pub enum SupersessionOutcome {
 pub struct MemoryService<'a> {
     stores: &'a Mutex<Stores>,
     recall: &'a Mutex<Recall>,
+    blocked: &'a std::sync::atomic::AtomicBool,
+    mutation: &'a Mutex<()>,
 }
 
 impl<'a> MemoryService<'a> {
-    pub(super) const fn new(stores: &'a Mutex<Stores>, recall: &'a Mutex<Recall>) -> Self {
-        Self { stores, recall }
+    pub(super) const fn new(
+        stores: &'a Mutex<Stores>,
+        recall: &'a Mutex<Recall>,
+        blocked: &'a std::sync::atomic::AtomicBool,
+        mutation: &'a Mutex<()>,
+    ) -> Self {
+        Self {
+            stores,
+            recall,
+            blocked,
+            mutation,
+        }
     }
 
     /// Validate and write canonical JSON memory, then reconcile the semantic
@@ -114,13 +171,15 @@ impl<'a> MemoryService<'a> {
         fact: &str,
         now: u64,
     ) -> Result<RememberOutcome, &'static str> {
+        let _mutation = AppState::lock(self.mutation);
         let fact = memory::validated_fact(fact)?;
         let mut stores = AppState::lock(self.stores);
         if !stores.memory.remember(guild, user, &fact, now) {
             return Ok(RememberOutcome::Unchanged);
         }
+        invalidate_subject(&mut stores, guild, user, self.blocked);
         let mut recall = AppState::lock(self.recall);
-        reconcile_projection(&stores, &mut recall);
+        reconcile_projection(&mut stores, &mut recall);
         Ok(RememberOutcome::Stored(fact))
     }
 
@@ -140,6 +199,7 @@ impl<'a> MemoryService<'a> {
         replaces: &str,
         now: u64,
     ) -> Result<RememberOutcome, &'static str> {
+        let _mutation = AppState::lock(self.mutation);
         let fact = memory::validated_fact(fact)?;
         let mut stores = AppState::lock(self.stores);
         let Some(selected) = fact_for_deletion(stores.memory.facts(guild, user), replaces) else {
@@ -169,13 +229,14 @@ impl<'a> MemoryService<'a> {
             // path in this module reconciles before returning; this one is not
             // an exception.
             let mut recall = AppState::lock(self.recall);
-            reconcile_projection(&stores, &mut recall);
+            reconcile_projection(&mut stores, &mut recall);
             return Ok(RememberOutcome::Unchanged);
         }
         // Any queued proposal naming the now-removed fact is moot.
         stores.memory.drop_supersession(guild, user, &selected);
+        invalidate_subject(&mut stores, guild, user, self.blocked);
         let mut recall = AppState::lock(self.recall);
-        reconcile_projection(&stores, &mut recall);
+        reconcile_projection(&mut stores, &mut recall);
         Ok(RememberOutcome::Superseded {
             stored: fact,
             removed: selected,
@@ -211,6 +272,7 @@ impl<'a> MemoryService<'a> {
         now: u64,
         receipt: Option<&str>,
     ) -> Result<RememberOutcome, &'static str> {
+        let _mutation = AppState::lock(self.mutation);
         let fact = memory::validated_fact(fact)?;
         let mut stores = AppState::lock(self.stores);
         if !stores.memory.remember(guild, user, &fact, now) {
@@ -236,8 +298,9 @@ impl<'a> MemoryService<'a> {
                 .memory_receipts
                 .insert(Self::receipt_key(guild, user, &fact), receipt.to_owned());
         }
+        invalidate_subject(&mut stores, guild, user, self.blocked);
         let mut recall = AppState::lock(self.recall);
-        reconcile_projection(&stores, &mut recall);
+        reconcile_projection(&mut stores, &mut recall);
         Ok(outcome)
     }
 
@@ -252,6 +315,7 @@ impl<'a> MemoryService<'a> {
         user: &str,
         old_fact: &str,
     ) -> SupersessionOutcome {
+        let _mutation = AppState::lock(self.mutation);
         let mut stores = AppState::lock(self.stores);
         let pending = stores
             .memory
@@ -280,7 +344,7 @@ impl<'a> MemoryService<'a> {
                 .memory
                 .drop_supersession(guild, user, &pending.old_fact);
             let mut recall = AppState::lock(self.recall);
-            reconcile_projection(&stores, &mut recall);
+            reconcile_projection(&mut stores, &mut recall);
             return SupersessionOutcome::PremiseGone {
                 old_fact: pending.old_fact,
                 new_fact: pending.new_fact,
@@ -290,8 +354,9 @@ impl<'a> MemoryService<'a> {
         stores
             .memory
             .drop_supersession(guild, user, &pending.old_fact);
+        invalidate_subject(&mut stores, guild, user, self.blocked);
         let mut recall = AppState::lock(self.recall);
-        reconcile_projection(&stores, &mut recall);
+        reconcile_projection(&mut stores, &mut recall);
         if removed {
             SupersessionOutcome::Confirmed(pending.old_fact)
         } else {
@@ -301,6 +366,7 @@ impl<'a> MemoryService<'a> {
 
     /// Drop one queued proposal without touching either fact.
     pub fn dismiss_supersession(&self, guild: &str, user: &str, old_fact: &str) -> bool {
+        let _mutation = AppState::lock(self.mutation);
         let mut stores = AppState::lock(self.stores);
         stores.memory.drop_supersession(guild, user, old_fact)
     }
@@ -394,19 +460,24 @@ impl<'a> MemoryService<'a> {
             .cloned()
     }
 
+    /// Inject a receipt for legacy acceptance and malformed-receipt test fixtures.
+    #[cfg(test)]
     pub fn record_receipt(&self, guild: &str, user: &str, fact: &str, digest_hex: &str) {
+        let _mutation = AppState::lock(self.mutation);
         AppState::lock(self.stores)
             .memory_receipts
             .insert(Self::receipt_key(guild, user, fact), digest_hex.to_owned());
     }
 
     pub fn take_receipt(&self, guild: &str, user: &str, fact: &str) -> Option<String> {
+        let _mutation = AppState::lock(self.mutation);
         AppState::lock(self.stores)
             .memory_receipts
             .remove(&Self::receipt_key(guild, user, fact))
     }
 
     pub fn forget(&self, guild: &str, user: &str, requested: &str) -> bool {
+        let _mutation = AppState::lock(self.mutation);
         let mut stores = AppState::lock(self.stores);
         let Some(selected) = fact_for_deletion(stores.memory.facts(guild, user), requested) else {
             return false;
@@ -414,15 +485,31 @@ impl<'a> MemoryService<'a> {
         if !stores.memory.forget(guild, user, &selected) {
             return false;
         }
+        invalidate_subject(&mut stores, guild, user, self.blocked);
         let mut recall = AppState::lock(self.recall);
-        reconcile_projection(&stores, &mut recall);
+        reconcile_projection(&mut stores, &mut recall);
         true
     }
 
     /// Semantic lookup for one person. Keeping this behind the service makes
     /// ToolScope use the same subject boundary as slash commands.
     pub fn recall(&self, guild: &str, user: &str, query: &str, limit: usize) -> Vec<RecalledFact> {
-        AppState::lock(self.recall).recall_for_user(guild, user, query, limit)
+        let stores = AppState::lock(self.stores);
+        let subject = (!self.blocked.load(std::sync::atomic::Ordering::Acquire))
+            .then(|| {
+                stores
+                    .personal_memory
+                    .get(&crate::personal_memory::subject_key(guild, user))
+            })
+            .flatten();
+        AppState::lock(self.recall)
+            .recall_for_user(guild, user, query, limit)
+            .into_iter()
+            .filter(|f| {
+                stores.memory.facts(guild, user).contains(&f.text)
+                    && subject.is_some_and(|s| s.eligible(guild, user, &f.text))
+            })
+            .collect()
     }
 
     /// Assemble plain channel context and semantic matches from one consistent
@@ -439,15 +526,39 @@ impl<'a> MemoryService<'a> {
         let stores = AppState::lock(self.stores);
         let recall = AppState::lock(self.recall);
         let mut context = stores.memory.context_for(guild, user, channel);
+        context.channel_summary.clear();
+        let subject = (!self.blocked.load(std::sync::atomic::Ordering::Acquire))
+            .then(|| {
+                stores
+                    .personal_memory
+                    .get(&crate::personal_memory::subject_key(guild, user))
+            })
+            .flatten();
+        context
+            .user_facts
+            .retain(|f| subject.is_some_and(|s| s.eligible(guild, user, f)));
         // SocialBrain is the live standing authority. MemoryBank's legacy
         // field may be stale, so the caller supplies its already-consistent
         // social snapshot rather than taking another lock here.
         context.reputation = reputation;
         for fact in recall.recall_for_user(guild, user, query, recall_limit) {
-            if !context.user_facts.contains(&fact.text) {
+            if stores.memory.facts(guild, user).contains(&fact.text)
+                && subject.is_some_and(|s| s.eligible(guild, user, &fact.text))
+                && !context.user_facts.contains(&fact.text)
+            {
                 context.user_facts.push(fact.text);
             }
         }
+        let fallback = crate::personal_memory::PersonalMemorySubject::default();
+        context.personal_memory_permits = crate::personal_memory::MemoryUsePermitSet::for_subject(
+            guild,
+            user,
+            subject.unwrap_or(&fallback),
+            stores.personal_memory_exposure.epoch,
+        );
+        context
+            .personal_memory_permits
+            .bind_context(&context.user_facts);
         context
     }
 
@@ -459,11 +570,12 @@ impl<'a> MemoryService<'a> {
         &self,
         update_stores: impl FnOnce(&mut Stores),
     ) -> (Stores, Recall) {
+        let _mutation = AppState::lock(self.mutation);
         let mut stores = AppState::lock(self.stores);
         update_stores(&mut stores);
         stores.memory_projection_version = MEMORY_PROJECTION_VERSION;
         let mut recall = AppState::lock(self.recall);
-        reconcile_projection(&stores, &mut recall);
+        reconcile_projection(&mut stores, &mut recall);
         (stores.clone(), recall.clone())
     }
 }

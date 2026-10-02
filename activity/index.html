@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Abbey</title>
+    <title>Abbey’s Bad Idea Court</title>
     <style>
       :root {
         color-scheme: dark;
@@ -23,7 +23,7 @@
         font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
       }
       main {
-        max-width: 28rem;
+        max-width: 42rem;
         margin: 0 auto;
         padding: 2rem 1.25rem 2.5rem;
       }
@@ -65,6 +65,12 @@
         font-size: 0.85rem;
         line-height: 1.4;
       }
+      button { background: #c4b5a0; color: #0b0d10; border: 2px solid transparent; border-radius: .5rem; padding: .8rem 1rem; margin: .3rem; font: inherit; cursor: pointer; }
+      button[aria-pressed="true"] { border-color: #7dcea0; background: #7dcea0; }
+      button:focus-visible { outline: 3px solid #e6c07b; outline-offset: 3px; }
+      button:disabled { opacity: .5; cursor: wait; }
+      #proposal { font-size: 1.5rem; line-height: 1.4; }
+      details { margin-top: 2rem; }
       ul.participants {
         margin: 0;
         padding-left: 1.1rem;
@@ -75,7 +81,19 @@
   <body>
     <main>
       <h1>Abbey</h1>
-      <p class="tagline">Intelligence Without Limits</p>
+      <p class="tagline">Intelligence Without Limits · Judgment With Questionable Limits</p>
+      <section class="card" id="court" aria-labelledby="court-title">
+        <span class="label" id="round">CASE 1</span>
+        <h2 id="court-title">Bad Idea Court</h2>
+        <p id="proposal"></p>
+        <button type="button" data-vote="yes" aria-pressed="false">Approve this nonsense</button>
+        <button type="button" data-vote="no" aria-pressed="false">Objection, your honour</button>
+        <p id="tally" aria-live="polite"></p>
+        <button type="button" id="next-case">Next ridiculous case</button>
+        <button type="button" id="court-invite">Invite the jury</button>
+        <p class="hint" id="court-connection" role="status">Connecting the court…</p>
+      </section>
+      <details><summary>Discord connection details</summary>
 
       <section class="card" aria-live="polite">
         <span class="label">Status</span>
@@ -111,7 +129,9 @@
         Launch Abbey from the Discord rocket in a voice channel. Conversational
         voice still needs /voice join consent:true — this Activity never fakes Go Live.
       </p>
+      </details>
     </main>
     <script src="./app.js"></script>
+    <script type="module" src="./court.js"></script>
   </body>
 </html>

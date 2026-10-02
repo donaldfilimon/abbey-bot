@@ -467,10 +467,11 @@ async fn run_modal(
         crate::commands::Commit::No,
     )
     .await;
+    let text = answer.delivery_text(&data.state);
     let (_, memory) = crate::commands::deliver_generated_reply(
         &data.state,
         answer.memory,
-        interaction.edit_response(&ctx.http, edit(answer.text)),
+        interaction.edit_response(&ctx.http, edit(text)),
     )
     .await?;
     crate::memory_gate::deliver_notices(

@@ -20,7 +20,6 @@ use serenity::all::{
 use crate::ask;
 use crate::brain::telemetry::BrainView;
 use crate::commands::{PersonaChoice, clamp_message};
-use crate::engine;
 use crate::episode_gate::LearningToggleRequest;
 use crate::guild::{self, GuildSettings};
 use crate::llm;
@@ -28,7 +27,7 @@ use crate::memory;
 use crate::memory_gate;
 use crate::persist::{PersistReport, render_component_outcome};
 use crate::runtime::{self, AppState};
-use crate::vision::{self, ImageUnderstanding};
+use crate::vision;
 use crate::{Context, Error};
 
 mod addenda;
@@ -36,6 +35,8 @@ mod dashboard;
 mod media;
 mod memory_commands;
 mod memory_review;
+mod personal_memory_commands;
+pub use personal_memory_commands::memory_use;
 
 use addenda::admin_addenda;
 pub(crate) use dashboard::open_dashboard_component;

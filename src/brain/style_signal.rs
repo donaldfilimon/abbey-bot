@@ -6,6 +6,8 @@
 //! long") never counts, a message that asks for both directions of one knob
 //! is ambiguous and yields nothing, and anything longer than
 //! [`MAX_CLASSIFIED_CHARS`] is ignored as conversation rather than feedback.
+//! Quoted or code-formatted messages are also ignored: pasted feedback is
+//! not evidence of the member's own preference, even in a short message.
 //!
 //! The signal is the only thing that leaves this module. The member's words
 //! never reach [`crate::brain::addenda`], so they can never reach a prompt.
@@ -27,16 +29,18 @@ pub enum StyleSignal {
     NoEmoji,
     MoreEmoji,
     PreferCode,
+    FewerFollowUps,
 }
 
-/// The four adjustable dimensions. Their order is the render order and the
-/// priority order: when bytes run out, the last knob is dropped first.
+/// The closed adjustable dimensions; FollowUp can only reduce contact. Their
+/// order is the render order and the priority order: when bytes run out, the last knob is dropped first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum StyleKnob {
     Length,
     Formality,
     Emoji,
     Code,
+    FollowUp,
 }
 
 impl StyleSignal {
@@ -46,6 +50,7 @@ impl StyleSignal {
             Self::TooFormal | Self::TooCasual => StyleKnob::Formality,
             Self::NoEmoji | Self::MoreEmoji => StyleKnob::Emoji,
             Self::PreferCode => StyleKnob::Code,
+            Self::FewerFollowUps => StyleKnob::FollowUp,
         }
     }
 
@@ -58,7 +63,7 @@ impl StyleSignal {
             Self::TooCasual => Some(Self::TooFormal),
             Self::NoEmoji => Some(Self::MoreEmoji),
             Self::MoreEmoji => Some(Self::NoEmoji),
-            Self::PreferCode => None,
+            Self::PreferCode | Self::FewerFollowUps => None,
         }
     }
 }
@@ -66,6 +71,8 @@ impl StyleSignal {
 /// The whole vocabulary, in priority order: the first phrase that matches
 /// decides the signal. Every phrase is lowercase ASCII.
 pub const LEXICON: &[(&str, StyleSignal)] = &[
+    ("fewer follow-ups", StyleSignal::FewerFollowUps),
+    ("less follow-up", StyleSignal::FewerFollowUps),
     ("too long", StyleSignal::TooLong),
     ("too wordy", StyleSignal::TooLong),
     ("tl;dr", StyleSignal::TooLong),
@@ -109,7 +116,7 @@ const NEGATIONS: &[&str] = &["not", "never", "isn't", "wasn't", "aren't", "don't
 
 /// Map one message to at most one style signal. See the module docs.
 pub fn classify(text: &str) -> Option<StyleSignal> {
-    if text.chars().count() > MAX_CLASSIFIED_CHARS {
+    if text.chars().count() > MAX_CLASSIFIED_CHARS || contains_quotation(text) {
         return None;
     }
     let lowered = text.to_lowercase();
@@ -123,6 +130,30 @@ pub fn classify(text: &str) -> Option<StyleSignal> {
             .any(|&(phrase, other)| other == opposite && matches_phrase(&lowered, phrase))
     });
     (!contradicted).then_some(signal)
+}
+
+/// Conservatively reject quotation/code markup rather than attributing pasted
+/// words to the member. Apostrophes inside words remain ordinary feedback.
+fn contains_quotation(text: &str) -> bool {
+    if text.contains(['`', '"', '“', '”', '‘'])
+        || text
+            .lines()
+            .any(|line| line.trim_start().starts_with('>') || line.trim_start().starts_with("~~~"))
+    {
+        return true;
+    }
+    let mut previous = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\''
+            && !previous.is_some_and(char::is_alphanumeric)
+            && chars.peek().is_some_and(|next| next.is_alphanumeric())
+        {
+            return true;
+        }
+        previous = Some(c);
+    }
+    false
 }
 
 /// Whether `phrase` occurs in `hay` as whole words, not negated.
@@ -211,6 +242,34 @@ mod tests {
     }
 
     #[test]
+    fn pasted_style_phrases_are_not_member_feedback() {
+        for text in [
+            "\"too long\"",
+            "she said 'too long'",
+            "“no emoji”",
+            "‘more casual’",
+            "`too long`",
+            "```text\ntoo long\n```",
+            "~~~text\ntoo long\n~~~",
+            "> too long",
+            "  > no emoji",
+            "quoted feedback:\n>>> more detail",
+            "too long\n> too short",
+            "```\ntoo long",
+        ] {
+            assert_eq!(classify(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn direct_feedback_with_contractions_still_counts() {
+        for text in ["Abbey, you're too formal", "Abbey, you’re too formal"] {
+            assert_eq!(classify(text), Some(StyleSignal::TooFormal), "{text}");
+        }
+        assert_eq!(classify("that's too long"), Some(StyleSignal::TooLong));
+    }
+
+    #[test]
     fn first_match_in_priority_order_wins_across_knobs() {
         assert_eq!(
             classify("no emoji and too long"),
@@ -225,6 +284,28 @@ mod tests {
                 assert_eq!(opposite.knob(), signal.knob());
                 assert_eq!(opposite.opposite(), Some(*signal));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use super::*;
+    #[test]
+    fn follow_up_feedback_rejects_quoted_code_and_negated_examples() {
+        assert_eq!(
+            classify("fewer follow-ups please"),
+            Some(StyleSignal::FewerFollowUps)
+        );
+        for text in [
+            "\"fewer follow-ups\"",
+            "`fewer follow-ups`",
+            "> fewer follow-ups",
+            "~~~\nfewer follow-ups\n~~~",
+            "not fewer follow-ups",
+            "she said 'fewer follow-ups'",
+        ] {
+            assert_eq!(classify(text), None, "{text}");
         }
     }
 }

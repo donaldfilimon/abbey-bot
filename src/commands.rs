@@ -28,6 +28,7 @@ use crate::generation;
 #[cfg(test)]
 use crate::llm;
 use crate::moderation::{self, History, Severity};
+mod contextual_moderation;
 use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::Persona;
 use crate::pipeline;
@@ -40,6 +41,7 @@ use crate::server;
 use crate::server::Archetype;
 use crate::webhook;
 use crate::{Context, Error};
+pub use contextual_moderation::ContextAssessmentChoice;
 
 // ---------------------------------------------------------------------------
 // Choice mirrors
@@ -259,10 +261,11 @@ pub async fn ask(
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
     let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
+    let text = reply.delivery_text(&ctx.data().state);
     let delivery = deliver_generated_reply(
         &ctx.data().state,
         reply.memory,
-        ctx.say(clamp_message(reply.text)),
+        ctx.say(clamp_message(text)),
     )
     .await;
     if let Err(error) = &delivery {
@@ -337,10 +340,11 @@ pub async fn roleplay(
     };
 
     let reply = answer_question(ctx, &prompt, Some(persona), Commit::Yes).await;
+    let text = reply.delivery_text(&ctx.data().state);
     let delivery = deliver_generated_reply(
         &ctx.data().state,
         reply.memory,
-        ctx.say(clamp_message(reply.text)),
+        ctx.say(clamp_message(text)),
     )
     .await;
     if let Err(error) = &delivery {
@@ -440,16 +444,35 @@ pub(crate) async fn answer_question_in_scope(
     commit: Commit,
 ) -> GeneratedReply {
     let memory = crate::memory_gate::MemoryTurn::default();
-    let text = answer_question_with_memory(
+    let (text, guard) = answer_question_with_memory(
         state, guild, channel, user, question, forced, commit, &memory,
     )
     .await;
-    GeneratedReply { text, memory }
+    GeneratedReply {
+        text,
+        memory,
+        guard,
+    }
 }
 
 pub(crate) struct GeneratedReply {
     pub text: String,
     pub memory: crate::memory_gate::MemoryTurn,
+    guard: Option<generation::consent::GenerationGuard>,
+}
+
+impl GeneratedReply {
+    pub(crate) fn delivery_text(&self, state: &AppState) -> String {
+        if self
+            .guard
+            .as_ref()
+            .is_some_and(|guard| guard.check(state).is_err())
+        {
+            generation::consent::WITHDRAWN_REPLY.into()
+        } else {
+            self.text.clone()
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -462,7 +485,7 @@ pub(crate) async fn answer_question_with_memory(
     forced: Option<Persona>,
     commit: Commit,
     memory: &crate::memory_gate::MemoryTurn,
-) -> String {
+) -> (String, Option<generation::consent::GenerationGuard>) {
     let scope = format!("discord:{channel}");
     // Same composition the message pipeline uses, so `/persona ask` and an
     // ordinary message never disagree about identical text. Session stickiness
@@ -482,10 +505,10 @@ pub(crate) async fn answer_question_with_memory(
     let scoped_user = format!("discord:{user}");
     let now = runtime::now();
     if !reserve_ask(state, &scoped_user, now) {
-        return ASK_COOLDOWN_REPLY.to_string();
+        return (ASK_COOLDOWN_REPLY.to_string(), None);
     }
     match state.generation_label() {
-        None => ask::degraded_reply(routed),
+        None => (ask::degraded_reply(routed), None),
         Some(backend_label) => {
             // Same per-channel transcript, memory context, and tool loop the
             // pipeline uses, so a slash-command question and a DM continue
@@ -499,6 +522,20 @@ pub(crate) async fn answer_question_with_memory(
                 question,
                 reputation,
             );
+            let guard = match generation::consent::GenerationGuard::capture(
+                state,
+                &generation::Ask {
+                    subject: Some((&scoped_guild, &scoped_user)),
+                    session_mode: generation::SessionMode::SourceOnly,
+                    scope: &scope,
+                    context: &context,
+                    user_input: question,
+                    now,
+                },
+            ) {
+                Ok(guard) => guard,
+                Err(error) => return (ask::render_failure(routed, backend_label, &error), None),
+            };
             let mut host = runtime::ToolScope {
                 memory_turn: Some(memory),
                 state,
@@ -514,6 +551,7 @@ pub(crate) async fn answer_question_with_memory(
                     state,
                     &mut host,
                     &generation::Ask {
+                        subject: Some((&scoped_guild, &scoped_user)),
                         session_mode: if commit == Commit::Yes {
                             generation::SessionMode::Shared
                         } else {
@@ -529,14 +567,20 @@ pub(crate) async fn answer_question_with_memory(
             };
             match outcome {
                 Ok((answer, persona, provider_label)) => {
+                    if let Err(error) = guard.check(state) {
+                        return (ask::render_failure(routed, backend_label, &error), None);
+                    }
                     if commit == Commit::Yes {
                         AppState::lock(&state.engine).commit(&scope, question, &answer, now);
                     }
-                    ask::render_answer(persona, provider_label, &answer)
+                    (
+                        ask::render_answer(persona, provider_label, &answer),
+                        Some(guard),
+                    )
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, backend = backend_label, "slash-command generation failed");
-                    ask::render_failure(routed, backend_label, &error)
+                    (ask::render_failure(routed, backend_label, &error), None)
                 }
             }
         }
@@ -618,15 +662,8 @@ pub async fn profile_context_menu(ctx: Context<'_>, user: User) -> Result<(), Er
 
 /// Right-click a message -> Apps -> "Ask Abbey".
 ///
-/// Routes the message's own text through the same path `/persona ask` uses, so
-/// a question someone already typed does not have to be retyped. Three limits
-/// are deliberate and reported rather than papered over: only text is read (an
-/// image needs `/see`); if Abbey holds no message-content access to that
-/// message the resolved content arrives empty, which this says plainly instead
-/// of answering a blank question; and the exchange is [`Commit::No`], so a
-/// third party's words never join the channel transcript through a right-click.
-/// Ephemeral, because a right-click is a private lookup and should not put
-/// words in the original author's thread.
+/// Selected historical material requires a typed source authorization boundary.
+/// Until that producer is available, return private guidance before generation.
 #[poise::command(context_menu_command = "Ask Abbey", ephemeral)]
 pub async fn ask_context_menu(
     ctx: Context<'_>,
@@ -634,33 +671,12 @@ pub async fn ask_context_menu(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
-    let question = message.content.trim();
-    if question.is_empty() {
-        ctx.say(
-            "That message carries no text Abbey can read. Attachments, embeds, and stickers are not part of this path — use `/see` for an image, or `/persona ask` to type the question.",
-        )
+    let _ = message;
+    ctx.send(poise::CreateReply::default()
+        .content("Selected messages are historical source material and are unavailable for generation until their source authorization is supported. Use `/persona ask` to type a fresh request; its answer is visible in the channel. For a private conversation, send Abbey a DM.")
+        .ephemeral(true)
+        .allowed_mentions(crate::gateway::no_mentions()))
         .await?;
-        return Ok(());
-    }
-
-    let reply = answer_question(ctx, question, None, Commit::No).await;
-    let delivery = deliver_generated_reply(
-        &ctx.data().state,
-        reply.memory,
-        ctx.say(clamp_message(reply.text)),
-    )
-    .await;
-    if let Err(error) = &delivery {
-        crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, error);
-    }
-    let (_, memory) = delivery?;
-    crate::memory_gate::deliver_notices(
-        &ctx.data().state,
-        crate::observability::EventComponent::Discord,
-        memory,
-        |decision| async move { ctx.say(decision.message()).await.map(|_| ()) },
-    )
-    .await;
     Ok(())
 }
 
@@ -791,6 +807,10 @@ pub async fn modcall(
     #[description = "How bad it is"] severity: SeverityChoice,
     #[description = "Prior warnings on record (default 0)"] warnings: Option<u8>,
     #[description = "Prior timeouts on record (default 0)"] timeouts: Option<u8>,
+    #[description = "Optional source message ID in this channel for the bounded contextual pilot"]
+    source_message: Option<String>,
+    #[description = "Your human assessment of the linked message in its surrounding context"]
+    context: Option<ContextAssessmentChoice>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
@@ -805,6 +825,18 @@ pub async fn modcall(
         ctx.say("Discord must currently grant you Moderate Members to use this command.")
             .await?;
         return Ok(());
+    }
+    if let Some(source) = source_message {
+        return contextual_moderation::propose(
+            ctx,
+            &guild,
+            &moderator,
+            &user,
+            severity.into(),
+            &source,
+            context,
+        )
+        .await;
     }
     let history = History {
         warnings: warnings.unwrap_or(0),
@@ -916,3 +948,7 @@ pub async fn webhook(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "commands/generation_consent_tests.rs"]
+mod generation_consent_tests;

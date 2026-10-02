@@ -36,6 +36,26 @@ async fn acknowledgement_failure_and_permission_revocation_construct_no_gate_or_
     .unwrap();
     assert!(denied.is_none());
     assert_eq!(snapshots_and_gates.get(), 0);
+    let staff_denied = authorized_pending_effect(
+        async { Ok(()) },
+        &session,
+        || Some((PendingButtonAction::Confirm, 0)),
+        || async {
+            Ok(vec![
+                crate::command_catalog::DiscordPermission::ManageMessages,
+            ])
+        },
+        |_, _| async { panic!("staff authority cannot construct a personal-memory gate") },
+    )
+    .await
+    .unwrap();
+    assert!(staff_denied.is_none());
+    // Staff permission cannot override personal consent, even when fresh.
+    // The positive ordering contract belongs to the member's own session.
+    let session = PendingComponentSession {
+        subject: session.owner,
+        ..session
+    };
     let order = std::cell::RefCell::new(Vec::new());
     authorized_pending_effect(
         async {

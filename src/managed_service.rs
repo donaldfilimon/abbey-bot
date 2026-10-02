@@ -126,7 +126,18 @@ fn rewrite_privacy(
         .map_err(|_| ManagedStartupFailure::State)?
     {
         Some(bytes) => {
-            serde_json::from_slice::<Stores>(&bytes).map_err(|_| ManagedStartupFailure::State)?
+            let stores = serde_json::from_slice::<Stores>(&bytes)
+                .map_err(|_| ManagedStartupFailure::State)?;
+            // The secure reader's exact source bytes establish publication lineage.
+            // Re-encoding here would lose the legacy image that the rewrite owns.
+            use sha2::Digest;
+            stores.canonical_base.set(Some(
+                sha2::Sha256::digest(&bytes)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+            ));
+            stores
         }
         None => Stores::default(),
     };

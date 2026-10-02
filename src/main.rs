@@ -57,6 +57,7 @@ mod ask;
 mod audio_tap;
 mod bootstrap;
 mod brain;
+mod calendar;
 mod checkpoint_gate;
 mod command_catalog;
 #[cfg(test)]
@@ -64,6 +65,7 @@ mod command_registration_tests;
 mod commands;
 mod commands_brain;
 mod commands_context;
+mod commands_engage;
 mod commands_forum;
 mod commands_help;
 mod commands_memory_browser;
@@ -73,6 +75,7 @@ mod commands_work;
 #[cfg(test)]
 mod contracts;
 mod embedding;
+mod engagement;
 mod engine;
 mod episode_gate;
 mod forum;
@@ -103,6 +106,7 @@ mod permission_mirror;
 mod perms;
 mod persist;
 mod persona;
+mod personal_memory;
 mod pipeline;
 mod platform;
 mod player_control;
@@ -634,8 +638,10 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands::webhook(),
         commands_forum::forum(),
         commands_work::work(),
+        commands_engage::engage(),
         commands_brain::remember(),
         commands_brain::forget(),
+        commands_brain::memory_use(),
         commands_brain::pending(),
         commands_brain::recall(),
         commands_brain::reputation(),
@@ -811,3 +817,5 @@ mod fm_identity_cli_tests {
         }
     }
 }
+
+mod community_ops;
