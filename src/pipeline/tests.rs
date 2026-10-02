@@ -588,6 +588,52 @@ async fn a_guild_that_has_not_opted_in_is_ignored_before_the_policy() {
 }
 
 #[tokio::test]
+async fn learning_opt_in_alone_does_not_admit_unsolicited_messages() {
+    let state = AppState::in_memory();
+    let out = FakeOut::default();
+    {
+        let mut stores = AppState::lock(&state.stores);
+        AppState::lock(&state.guilds).update("discord:g", &mut *stores, |s| {
+            s.learning_enabled = true;
+        });
+    }
+    assert_eq!(
+        handle(
+            &state,
+            &out,
+            message("lol nice", Some("g"), "u1"),
+            false,
+            None
+        )
+        .await,
+        Outcome::Ignored("act off")
+    );
+    assert!(out.sent.lock().unwrap().is_empty());
+    assert!(out.reacted.lock().unwrap().is_empty());
+    assert!(AppState::lock(&state.brains).loaded_guilds().is_empty());
+}
+
+#[tokio::test]
+async fn a_dm_still_replies_with_learning_and_unsolicited_off() {
+    let state = AppState::in_memory();
+    let out = FakeOut::default();
+    let event = message("hi", None, "u1");
+    assert_eq!(
+        handle(&state, &out, event.clone(), false, None).await,
+        Outcome::Replied
+    );
+    let stores = AppState::lock(&state.stores);
+    let settings = AppState::lock(&state.guilds)
+        .lookup(&event.scoped_guild_id(), &*stores)
+        .expect("DM settings provisioned");
+    assert!(!settings.unsolicited);
+    assert!(!settings.learning_enabled);
+    let sent = out.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].1.text.contains("no generation backend"));
+}
+
+#[tokio::test]
 async fn an_opted_in_guild_consults_the_policy_and_records_the_decision() {
     let state = AppState::in_memory();
     opt_in(&state, "discord:g", 6);

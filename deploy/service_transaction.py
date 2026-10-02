@@ -7,6 +7,8 @@ Production effects are injected explicitly by the offline fixture, never by env.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import re
 import json
 import os
 from pathlib import Path
@@ -21,8 +23,8 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from service_installation import binary_digest, validate_managed_plist
-    from service_environment import EnvironmentError, validate_environment
-    from service_protocol import ProtocolError, read_optional_private
+    from service_environment import EnvironmentError, validate_environment, environment_values
+    from service_protocol import ProtocolError, identity, read_optional_private, validate_ready
     from service_readiness import (BUDGET_NS, TransactionContext, ReadinessError,
                                    launchd_pid, make_context, wait_ready, parse_pid_record, cleanup_incomplete)
 except Exception:
@@ -490,7 +492,7 @@ def bootstrap(home, state):
         if SYSTEM.exit78(context.deadline_monotonic_ns):
             raise TransactionError('bootstrap_exit78')
         return read_optional_private(home)
-    wait_ready(context, pid, digest, entry_ns=context.deadline_monotonic_ns - BUDGET_NS,
+    return wait_ready(context, pid, digest, entry_ns=context.deadline_monotonic_ns - BUDGET_NS,
                monotonic=SYSTEM.monotonic, wall_ms=SYSTEM.wall, sleep=SYSTEM.sleep,
                current_pid=SYSTEM.pid, alive=SYSTEM.alive,
                read_document=current_document)
@@ -516,7 +518,95 @@ def acquire(tree):
             os.close(parent)
         raise
     return {'lock': token, 'rollback': secrets.token_hex(16), 'excluded': [],
-            'baseline': None, 'bootstrap_baseline': None, 'had_bin': False, 'had_plist': False, 'prepared': False}
+            'baseline': None, 'bootstrap_baseline': None, 'had_bin': False, 'had_plist': False, 'prepared': False, 'qualification': None}
+
+
+def qualification_validator():
+    spec = importlib.util.spec_from_file_location('fm_qualification', Path(__file__).with_name('configure-fm-primary.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def verify_head(checkout, head):
+    result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=checkout,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=5, check=False)
+    if result.returncode or result.stdout.strip() != head.encode():
+        raise TransactionError('head')
+    clean = subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], cwd=checkout,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=5, check=False)
+    if clean.returncode:
+        raise TransactionError('dirty_source')
+    untracked = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=checkout,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, timeout=5, check=False)
+    if untracked.returncode or untracked.stdout:
+        raise TransactionError('dirty_source')
+
+
+def qualified_prepare(tree, state, backup, env, checkout):
+    q = state['qualification']
+    values = environment_values(env)
+    target = Path(values.get('ABBEY_FM_CAPABILITY_MANIFEST') or str(tree.home / '.config/abbey-bot/fm-capability-manifest.json'))
+    cli = Path(values.get('ABBEY_FM_CLI') or '/usr/bin/fm')
+    if not target.is_absolute() or not cli.is_absolute():
+        raise TransactionError('qualification_path')
+    try:
+        relative = target.relative_to(tree.home).as_posix()
+    except ValueError:
+        raise TransactionError('qualification_path') from None
+    # Only owner-private, descriptor-checked targets beneath the managed home.
+    descriptor = tree.directory(relative.rsplit('/', 1)[0], exact=True)
+    os.close(descriptor)
+    q['target'] = relative
+    previous = tree.read(relative, optional=True, cap=256 * 1024)
+    q['had_manifest'] = previous is not None
+    if previous is not None:
+        tree.write(backup + '/manifest', previous, absent=True)
+    verify_head(checkout, q['head'])
+    binary = read_build_artifact(q['binary'])
+    if binary != read_build_artifact(build_artifact(checkout)):
+        raise TransactionError('candidate_source')
+    verify_head(checkout, q['head'])
+    tree.write(backup + '/candidate-binary', binary, 0o700, absent=True)
+    # Read with the existing owner/symlink/change guards before staging.
+    manifest = read_build_artifact(q['manifest'])
+    if len(manifest) > 256 * 1024:
+        raise TransactionError('qualification')
+    tree.write(backup + '/candidate-manifest', manifest, absent=True)
+    validator = qualification_validator()
+    try:
+        info = cli.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid())
+                or info.st_mode & 0o022 or not os.access(cli, os.X_OK)):
+            raise TransactionError('qualification_cli')
+        for parent in cli.parents:
+            parent_info = parent.lstat()
+            if (not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid not in (0, os.getuid())
+                    or parent_info.st_mode & 0o022):
+                raise TransactionError('qualification_cli')
+    except OSError:
+        raise TransactionError('qualification_cli') from None
+    try:
+        validator.validate_manifest(tree.home / (backup + '/candidate-manifest'),
+                                    tree.home / (backup + '/candidate-binary'), cli,
+                                    system_streaming_required=bool(values.get('ABBEY_FM_ENDPOINT')))
+    except SystemExit:
+        raise TransactionError('qualification') from None
+    q['binary_sha256'] = hashlib.sha256(binary).hexdigest()
+    q['manifest_sha256'] = hashlib.sha256(manifest).hexdigest()
+    tree.write(backup + '/transaction.json',
+               (json.dumps({'phase': 'prepared', 'qualification': q}, sort_keys=True) + '\n').encode())
+
+
+def qualification_journal(tree, state, backup, phase_name, readiness=None):
+    if state['qualification'] is not None:
+        value = {'phase': phase_name, 'qualification': state['qualification']}
+        if readiness is not None:
+            value['readiness'] = readiness
+        tree.write(backup + '/transaction.json', (json.dumps(value, sort_keys=True) + '\n').encode())
 
 
 def phase(operation, home, state, checkout):
@@ -551,14 +641,20 @@ def phase(operation, home, state, checkout):
                 if raw is not None:
                     tree.write(backup + '/' + name, raw, mode, absent=True)
             state['had_bin'], state['had_plist'] = old_bin is not None, old_plist is not None
-            candidate = read_build_artifact(build_artifact(checkout))
-            tree.write(backup + '/candidate-binary', candidate, 0o700, absent=True)
+            if state['qualification'] is None:
+                candidate = read_build_artifact(build_artifact(checkout))
+                tree.write(backup + '/candidate-binary', candidate, 0o700, absent=True)
+            else:
+                qualified_prepare(tree, state, backup, env, checkout)
             model = plistlib.loads((checkout / 'deploy' / (LABEL + '.plist')).read_bytes())
             model['ProgramArguments'] = [str(home / BIN), '--managed-service']
             model['WorkingDirectory'] = str(home / STATE)
             raw = plistlib.dumps(model)
             validate_managed_plist(raw, home)
             tree.write(backup + '/candidate-plist', raw, absent=True)
+            # Reserve space for the bounded nonce/baseline capture phases.
+            if len(json.dumps(state, separators=(',', ':')).encode()) > 3072:
+                raise TransactionError('protocol')
             state['prepared'] = True
         elif operation == 'publish':
             if not state['prepared']:
@@ -566,8 +662,23 @@ def phase(operation, home, state, checkout):
             candidate = tree.read(backup + '/candidate-binary', 0o700)
             raw = tree.read(backup + '/candidate-plist', cap=65536)
             validate_managed_plist(raw, home)
+            q = state['qualification']
+            if q is not None:
+                if (hashlib.sha256(candidate).hexdigest() != q['binary_sha256']
+                        or hashlib.sha256(tree.read(backup + '/candidate-manifest', cap=256 * 1024)).hexdigest() != q['manifest_sha256']):
+                    raise TransactionError('candidate_changed')
+                verify_head(checkout, q['head'])
+            if q is not None and tree.read(ENV, cap=65536) != tree.read(backup + '/env', cap=65536):
+                raise TransactionError('environment_changed')
+            qualification_journal(tree, state, backup, 'publishing')
             tree.write(BIN, candidate, 0o700)
             tree.write(PLIST, raw)
+            q = state['qualification']
+            if q is not None:
+                manifest = tree.read(backup + '/candidate-manifest', cap=256 * 1024)
+                tree.write(q['target'], manifest)
+                if tree.read(q['target'], cap=256 * 1024) != manifest:
+                    raise TransactionError('qualification')
             if binary_digest(home, SYSTEM.monotonic() + 5_000_000_000, monotonic=SYSTEM.monotonic) != hashlib.sha256(candidate).hexdigest():
                 raise TransactionError('artifact')
         elif operation == 'capture':
@@ -578,7 +689,32 @@ def phase(operation, home, state, checkout):
             stop(home)
         elif operation == 'start':
             validate_managed_plist(tree.read(PLIST, cap=65536), home)
-            bootstrap(home, state)
+            ready = bootstrap(home, state)
+            if state['qualification'] is not None:
+                tree.write(backup + '/verified-ready.json', (json.dumps(ready, sort_keys=True) + '\n').encode())
+        elif operation == 'commit':
+            if state['qualification'] is not None:
+                q = state['qualification']
+                ready = read_optional_private(home)
+                verified = json.loads(tree.read(backup + '/verified-ready.json', cap=4096))
+                if ready is None:
+                    raise TransactionError('receipt')
+                # Heartbeats can change publication time and connector state; pin
+                # the validated run identity and require a fresh, ready sample.
+                try:
+                    current_identity = validate_ready(
+                        ready, transaction_start_ms=verified['published_at_unix_ms'],
+                        now_ms=SYSTEM.wall(),
+                        launchd_pid=SYSTEM.pid(SYSTEM.monotonic() + 2_000_000_000),
+                        expected_sha256=q['binary_sha256'], alive=SYSTEM.alive)
+                except ProtocolError:
+                    raise TransactionError('receipt') from None
+                if (current_identity != identity(verified)
+                        or binary_digest(home, SYSTEM.monotonic() + 5_000_000_000, monotonic=SYSTEM.monotonic) != q['binary_sha256']
+                        or hashlib.sha256(tree.read(q['target'], cap=256 * 1024)).hexdigest() != q['manifest_sha256']
+                        or tree.read(ENV, cap=65536) != tree.read(backup + '/env', cap=65536)):
+                    raise TransactionError('receipt')
+                qualification_journal(tree, state, backup, 'committed', ready)
         elif operation == 'restore':
             for target, name, present, mode in ((BIN, 'binary', state['had_bin'], 0o700),
                                                (PLIST, 'plist', state['had_plist'], 0o600)):
@@ -586,6 +722,13 @@ def phase(operation, home, state, checkout):
                     tree.write(target, tree.read(backup + '/' + name, mode), mode)
                 else:
                     tree.remove(target, mode)
+            q = state['qualification']
+            if q is not None:
+                if q['had_manifest']:
+                    tree.write(q['target'], tree.read(backup + '/manifest', cap=256 * 1024))
+                else:
+                    tree.remove(q['target'])
+                qualification_journal(tree, state, backup, 'restored')
         elif operation == 'uninstall_prepare':
             state['baseline'] = capture(home)
             # Reject unsafe fixed targets before stopping the service.
@@ -621,7 +764,7 @@ def phase(operation, home, state, checkout):
 
 def main(args):
     try:
-        if len(args) != 1:
+        if not args or (len(args) != 1 and not (args[0] == 'acquire' and len(args) == 4)):
             raise TransactionError('usage')
         home = Path(os.environ['HOME'])
         if not home.is_absolute():
@@ -639,7 +782,7 @@ def main(args):
                     value[key] = item
                 return value
             state = json.loads(raw, object_pairs_hook=unique_pairs)
-            if (type(state) is not dict or set(state) != {'lock', 'rollback', 'excluded', 'baseline', 'bootstrap_baseline', 'had_bin', 'had_plist', 'prepared'}
+            if (type(state) is not dict or set(state) != {'lock', 'rollback', 'excluded', 'baseline', 'bootstrap_baseline', 'had_bin', 'had_plist', 'prepared', 'qualification'}
                     or type(state['lock']) is not str or len(state['lock']) != 64
                     or any(c not in '0123456789abcdef' for c in state['lock'])
                     or type(state['rollback']) is not str or len(state['rollback']) != 32
@@ -657,7 +800,26 @@ def main(args):
                             or type(value['pid']) is not int or not 1 <= value['pid'] <= 2147483647):
                         raise TransactionError('protocol')
                     make_context((value['run_nonce'],), wall_ms=lambda: 0, monotonic=lambda: 0)
+            q = state['qualification']
+            if q is not None:
+                base = {'binary', 'manifest', 'head'}
+                extra = {'target', 'had_manifest', 'binary_sha256', 'manifest_sha256'}
+                if (type(q) is not dict or not base.issubset(q) or set(q) - base - extra
+                        or any(type(q[k]) is not str or len(q[k]) > 4096 or '\x00' in q[k] for k in base)
+                        or re.fullmatch(r'[0-9a-f]{40}', q['head']) is None):
+                    raise TransactionError('protocol')
+                if state['prepared'] and (set(q) != base | extra or type(q['had_manifest']) is not bool
+                        or any(type(q[k]) is not str for k in ('target', 'binary_sha256', 'manifest_sha256'))):
+                    raise TransactionError('protocol')
+        if args[0] == 'acquire' and len(args) == 4:
+            if any(len(value) > 4096 or '\x00' in value for value in args[1:]) or re.fullmatch(r'[0-9a-f]{40}', args[3]) is None:
+                raise TransactionError('protocol')
+            # Acquisition must never admit a state that later phases cannot read.
+            if len(json.dumps(dict(zip(('binary', 'manifest', 'head'), args[1:])), separators=(',', ':')).encode()) > 1536:
+                raise TransactionError('protocol')
         result = phase(args[0], home, state, Path(__file__).resolve().parent.parent)
+        if args[0] == 'acquire' and len(args) == 4:
+            result['qualification'] = dict(zip(('binary', 'manifest', 'head'), args[1:]))
         if _CHILDREN or cleanup_incomplete():
             raise TransactionError('cleanup')
         print(json.dumps(result, separators=(',', ':')))

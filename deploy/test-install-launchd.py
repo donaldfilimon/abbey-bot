@@ -176,7 +176,7 @@ class Harness:
         self.home = self.root / 'home'; self.home.mkdir(mode=0o700)
         self.repo = self.root / 'bundle'; (self.repo / 'deploy').mkdir(parents=True)
         source = Path(__file__).resolve().parent
-        for name in ('install-launchd.sh', 'service_transaction.py', 'service_installation.py', 'service_environment.py',
+        for name in ('install-launchd.sh', 'configure-fm-primary.py', 'configure-mlx-primary.py', 'service_transaction.py', 'service_installation.py', 'service_environment.py',
                      'service_readiness.py', 'service_protocol.py', 'service-protocol-v1.json',
                      'check-service-readiness.py', 'check-launchd-env.sh', LABEL + '.plist'):
             shutil.copyfile(source / name, self.repo / 'deploy' / name)

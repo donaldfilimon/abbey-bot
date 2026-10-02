@@ -35,6 +35,7 @@ Invoke-Checked -Executable "python" -Arguments @("deploy/test-check-activity-url
 Invoke-Checked -Executable "python" -Arguments @("deploy/check-activity-url-map.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-protocol.py", "ProtocolTests")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-environment.py")
+Invoke-Checked -Executable "python" -Arguments @("deploy/test-qualified-install.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-smoke-mlx-vlm-tool-deltas.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-patch-mlx-vlm-tool-encoding.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-privacy.py")
@@ -54,6 +55,8 @@ Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-wdbx-confor
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-wdbx-conformance.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-rust-release.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-rust-release.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-deployment-proposal.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/check-deployment-proposal.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-check-systemd-unit.py")
 Invoke-Checked -Executable "python" -Arguments @("scripts/check-systemd-unit.py")
 

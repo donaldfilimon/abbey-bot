@@ -9,7 +9,8 @@ MODE=install
 case "$#:${1:-}" in
   0:) ;;
   1:--uninstall) MODE=uninstall ;;
-  *) echo 'usage: install-launchd.sh [--uninstall]' >&2; exit 2 ;;
+  4:--qualified-candidate) MODE=qualified ;;
+  *) echo 'usage: install-launchd.sh [--uninstall | --qualified-candidate BINARY MANIFEST HEAD]' >&2; exit 2 ;;
 esac
 STATE=
 LOCKED=0
@@ -75,7 +76,11 @@ cleanup() {
 trap cleanup EXIT
 # The acquisition and transfer of private lock ownership are one signal-masked step.
 trap '' HUP INT TERM
-STATE=$(python3 -I deploy/service_transaction.py acquire) || exit 1
+if [ "$MODE" = qualified ]; then
+  STATE=$(python3 -I deploy/service_transaction.py acquire "$2" "$3" "$4") || exit 1
+else
+  STATE=$(python3 -I deploy/service_transaction.py acquire) || exit 1
+fi
 LOCKED=1
 trap on_interrupt HUP INT TERM
 if [ "$MODE" = uninstall ]; then
@@ -100,5 +105,6 @@ run_phase stop
 ROLLBACK=1
 run_phase publish
 run_phase start
+run_phase commit
 ROLLBACK=0
 echo 'installation: ready'

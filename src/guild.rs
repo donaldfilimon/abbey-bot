@@ -439,9 +439,32 @@ mod tests {
         let mut reg = GuildRegistry::new();
         assert!(store.load(G).is_none());
         let s = reg.config(G, &mut store);
+        assert!(!s.unsolicited, "first contact must not opt a guild in");
         assert_eq!(s, GuildSettings::default());
         assert_eq!(store.load(G), Some(GuildSettings::default()));
         assert!(reg.is_cached(G));
+    }
+
+    #[test]
+    fn saved_unsolicited_choices_survive_serialization_and_registry_reload() {
+        for unsolicited in [true, false] {
+            let saved = GuildSettings {
+                unsolicited,
+                learning_enabled: true,
+                ..GuildSettings::default()
+            };
+            let json = serde_json::to_string(&saved).unwrap();
+            let restored: GuildSettings = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, saved);
+            let mut store = InMemoryGuildConfigStore::new();
+            store.save(G, &restored);
+            let mut reg = GuildRegistry::new();
+            assert_eq!(reg.config(G, &mut store), saved);
+            reg.evict(G);
+            assert_eq!(reg.config(G, &mut store), saved);
+            assert_eq!(reg.refresh(G, &mut store), saved);
+            assert_eq!(store.load(G), Some(saved));
+        }
     }
 
     #[test]
