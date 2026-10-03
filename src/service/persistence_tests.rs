@@ -3,6 +3,17 @@ use crate::persist::{PersistErrorCategory, PersistenceSink, Stores};
 use crate::wdbx::Recall;
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
+fn scratch_directory() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "abbey-persistence-writer-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    dir
+}
 struct HeldSink {
     events: Mutex<Vec<Vec<u8>>>,
     entered: tokio::sync::Notify,
@@ -47,7 +58,8 @@ async fn canceled_waiter_cannot_release_actual_writer_or_reuse_earlier_report() 
         release: (Mutex::new(false), Condvar::new()),
     });
     let _release_on_panic = ReleaseOnDrop(sink.clone());
-    let mut writer = PersistenceWriter::start(Some("test-only-injected-sink".into()), sink.clone());
+    let dir = scratch_directory();
+    let mut writer = PersistenceWriter::start(Some(dir.clone()), sink.clone());
     let requests = writer.requests();
     let first = tokio::spawn(async move { requests.submit(snapshot()).await });
     sink.entered.notified().await;
@@ -94,6 +106,7 @@ async fn canceled_waiter_cannot_release_actual_writer_or_reuse_earlier_report() 
     writer.stop();
     writer.joined().await.unwrap();
     assert_eq!(sink.events.lock().unwrap().len(), 6);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[tokio::test]
@@ -104,7 +117,8 @@ async fn sink_panic_wakes_root_without_another_request_or_waiter() {
             panic!("controlled sink panic");
         }
     }
-    let mut writer = PersistenceWriter::start(Some("injected".into()), Arc::new(PanicSink));
+    let dir = scratch_directory();
+    let mut writer = PersistenceWriter::start(Some(dir.clone()), Arc::new(PanicSink));
     let requests = writer.requests();
     let _waiter = tokio::spawn(async move {
         let _ = requests.submit(snapshot()).await;
@@ -121,6 +135,7 @@ async fn sink_panic_wakes_root_without_another_request_or_waiter() {
     );
     writer.stop();
     assert!(writer.joined().await.is_err());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -147,8 +162,9 @@ fn expired_final_request_never_starts_io_when_blocking_worker_wakes_late() {
         });
         started.await.unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
+        let dir = scratch_directory();
         let mut writer =
-            PersistenceWriter::start(Some("injected".into()), Arc::new(CountSink(calls.clone())));
+            PersistenceWriter::start(Some(dir.clone()), Arc::new(CountSink(calls.clone())));
         writer.close_admission();
         let receipt = writer
             .final_snapshot(
@@ -164,5 +180,6 @@ fn expired_final_request_never_starts_io_when_blocking_worker_wakes_late() {
         assert!(writer.last_completed().is_none());
         writer.stop();
         writer.joined().await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     });
 }

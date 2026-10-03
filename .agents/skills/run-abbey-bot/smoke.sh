@@ -76,9 +76,11 @@ _env_key_allowed() {
     ABBEY_VISION_ENDPOINT|\
     ABBEY_VISION_MODEL|\
     ABBEY_FM_MODE|\
+    ABBEY_FM_ROLE|\
     ABBEY_FM_ENDPOINT|\
     ABBEY_FM_CLI|\
     ABBEY_FM_FALLBACK|\
+    ABBEY_FM_PCC_TIMEOUT_SECS|\
     ABBEY_FM_CAPABILITY_MANIFEST|\
     ABBEY_VOICE_LOCAL_ENDPOINT|\
     ABBEY_VOICE_LOCAL_STT_MODEL|\
@@ -243,9 +245,11 @@ clean_env() {
     ABBEY_VISION_ENDPOINT="${ABBEY_VISION_ENDPOINT:-}" \
     ABBEY_VISION_MODEL="${ABBEY_VISION_MODEL:-}" \
     ABBEY_FM_MODE="${ABBEY_FM_MODE:-}" \
+    ABBEY_FM_ROLE="${ABBEY_FM_ROLE:-}" \
     ABBEY_FM_ENDPOINT="${ABBEY_FM_ENDPOINT:-}" \
     ABBEY_FM_CLI="${ABBEY_FM_CLI:-}" \
     ABBEY_FM_FALLBACK="${ABBEY_FM_FALLBACK:-}" \
+    ABBEY_FM_PCC_TIMEOUT_SECS="${ABBEY_FM_PCC_TIMEOUT_SECS:-}" \
     ABBEY_FM_CAPABILITY_MANIFEST="${ABBEY_FM_CAPABILITY_MANIFEST:-}" \
     ABBEY_VOICE_LOCAL_ENDPOINT="${ABBEY_VOICE_LOCAL_ENDPOINT:-}" \
     ABBEY_VOICE_LOCAL_STT_MODEL="${ABBEY_VOICE_LOCAL_STT_MODEL:-}" \
@@ -324,8 +328,8 @@ do_args() {
 }
 
 # Qualify the configured reasoning/vision route with synthetic fixtures.
-# No Discord, no state. `all` also probes the Apple FM lanes and exits 2 on a
-# machine where ABBEY_FM_MODE is off, because fm_cli.text fails there.
+# No Discord, no state. `all` also probes every configured Apple FM mode.
+# CLI exits: 0 success, 1 probe failure, 2 configuration failure.
 do_provider() {
   target=${1:-primary}
   say "provider self-test ($target)"
@@ -335,15 +339,34 @@ do_provider() {
     > "$OUT/provider-$target.json" 2> "$OUT/provider-$target.stderr" && rc=0 || rc=$?
   echo "exit $rc in $(( $(date +%s) - start ))s -> $OUT/provider-$target.json"
   [ -s "$OUT/provider-$target.stderr" ] && clean_env cat "$OUT/provider-$target.stderr" >&2
-  clean_env python3 - "$OUT/provider-$target.json" <<'PY'
+  if clean_env python3 - "$OUT/provider-$target.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-print("overall_pass:", d["overall_pass"], "| binary sha256:", d["primary"]["identity"]["abbey_binary_sha256"][:16])
+identity = d["primary"].get("identity") or {}
+binary_sha = identity.get("abbey_binary_sha256")
+print("overall_pass:", d["overall_pass"], "| binary sha256:", binary_sha[:16] if binary_sha else "unavailable")
+fm_modes = d.get("fm_cli_modes") or []
+
+def summarize(lane, body):
+    caps = " ".join(f"{k}={v['status']}" for k, v in body["capabilities"].items())
+    print(f"  {lane:10} configured={body['configured']!s:5} {caps}")
+
 for lane, body in d.items():
+    if lane == "fm_cli" and fm_modes:
+        continue
     if isinstance(body, dict) and "capabilities" in body:
-        caps = " ".join(f"{k}={v['status']}" for k, v in body["capabilities"].items())
-        print(f"  {lane:10} configured={body['configured']!s:5} {caps}")
+        summarize(lane, body)
+for index, body in enumerate(fm_modes, 1):
+    mode = (body.get("identity") or {}).get("mode") or str(index)
+    summarize(f"fm_cli[{mode}]", body)
 PY
+  then
+    summary_rc=0
+  else
+    summary_rc=$?
+  fi
+  # A failed report must not replace the probe's original nonzero exit.
+  [ "$rc" -ne 0 ] || rc=$summary_rc
   return "$rc"
 }
 

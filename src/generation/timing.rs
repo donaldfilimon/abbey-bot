@@ -2,6 +2,7 @@
 use crate::{
     observability::{
         EventCode, EventComponent, EventOutcome, OperationalErrorCategory, OperationalEvent,
+        TextStage,
     },
     runtime::AppState,
 };
@@ -10,36 +11,52 @@ use std::{
     time::Duration,
 };
 
-pub(super) struct Timing<'a> {
-    state: &'a AppState,
+pub(super) struct Timing {
+    observer: std::sync::Arc<ProducerTiming>,
+    terminal: AtomicBool,
+}
+impl std::ops::Deref for Timing {
+    type Target = ProducerTiming;
+    fn deref(&self) -> &Self::Target {
+        &self.observer
+    }
+}
+pub(super) struct ProducerTiming {
     discord: bool,
     started: tokio::time::Instant,
     generation: std::sync::Mutex<GenerationTime>,
     first_text: AtomicBool,
-    first_post: AtomicBool,
-    terminal: AtomicBool,
+    delivery_failed: AtomicBool,
+    pub(super) delivery: super::delivery_timing::DeliveryTiming,
     #[cfg(test)]
-    pub(super) observed: std::sync::Mutex<Vec<(EventCode, u64)>>,
+    pub(super) observed: std::sync::Arc<std::sync::Mutex<Vec<(EventCode, u64)>>>,
 }
 #[derive(Default)]
 struct GenerationTime {
     started: Option<tokio::time::Instant>,
-    later_waits: Duration,
 }
-impl<'a> Timing<'a> {
-    pub(super) fn new(state: &'a AppState, discord: bool) -> Self {
+impl Timing {
+    pub(super) fn new(state: &AppState, discord: bool) -> Self {
+        let delivery = super::delivery_timing::DeliveryTiming::new(state, discord);
         Self {
-            state,
-            discord,
-            started: tokio::time::Instant::now(),
-            generation: std::sync::Mutex::new(GenerationTime::default()),
-            first_text: AtomicBool::new(false),
-            first_post: AtomicBool::new(false),
+            observer: std::sync::Arc::new(ProducerTiming {
+                discord,
+                started: tokio::time::Instant::now(),
+                generation: std::sync::Mutex::new(GenerationTime::default()),
+                first_text: AtomicBool::new(false),
+                delivery_failed: AtomicBool::new(false),
+                delivery: delivery.clone(),
+                #[cfg(test)]
+                observed: delivery.observed(),
+            }),
             terminal: AtomicBool::new(false),
-            #[cfg(test)]
-            observed: std::sync::Mutex::new(Vec::new()),
         }
     }
+    pub(super) fn observer(&self) -> std::sync::Arc<ProducerTiming> {
+        self.observer.clone()
+    }
+}
+impl ProducerTiming {
     fn emit(
         &self,
         code: EventCode,
@@ -48,10 +65,9 @@ impl<'a> Timing<'a> {
     ) {
         let duration = if code == EventCode::GenerationFirstText {
             let generation = AppState::lock(&self.generation);
-            generation.started.map_or_else(
-                || self.started.elapsed(),
-                |start| start.elapsed().saturating_sub(generation.later_waits),
-            )
+            generation
+                .started
+                .map_or_else(|| self.started.elapsed(), |start| start.elapsed())
         } else {
             self.started.elapsed()
         };
@@ -64,56 +80,57 @@ impl<'a> Timing<'a> {
         error: Option<OperationalErrorCategory>,
         duration: Duration,
     ) {
-        #[cfg(test)]
-        AppState::lock(&self.observed).push((code, duration.as_millis() as u64));
-        record(self.state, code, outcome, duration, error);
+        self.delivery.emit(code, outcome, error, duration);
     }
     pub(super) fn admitted(&self, wait: Duration, result: &Result<(), crate::llm::LlmError>) {
-        {
-            let mut generation = AppState::lock(&self.generation);
-            if generation.started.is_some() {
-                generation.later_waits += wait;
-            } else {
-                generation.started = Some(tokio::time::Instant::now());
-            }
-        }
         self.emit_duration(
-            EventCode::GenerationQueue,
+            TextStage::QueueWait.code(),
             if result.is_ok() {
                 EventOutcome::Succeeded
+            } else if result.as_ref().is_err_and(|error| {
+                error.provider_failure() == crate::provider::ProviderFailureKind::Cancelled
+            }) {
+                EventOutcome::Cancelled
             } else {
                 EventOutcome::Failed
             },
             result
                 .as_ref()
                 .err()
+                .filter(|error| {
+                    error.provider_failure() != crate::provider::ProviderFailureKind::Cancelled
+                })
                 .map(|error| failure_category(error.provider_failure())),
             wait,
         );
     }
+    pub(super) fn provider_started(&self) {
+        AppState::lock(&self.generation).started = Some(tokio::time::Instant::now());
+    }
     pub(super) fn text(&self, text: &str) {
         if !text.trim().is_empty() && !self.first_text.swap(true, Ordering::Relaxed) {
             self.emit(
-                EventCode::GenerationFirstText,
+                TextStage::ProviderFirstText.code(),
                 EventOutcome::Succeeded,
                 None,
             );
         }
     }
     pub(super) fn posted(&self) {
-        if self.discord && !self.first_post.swap(true, Ordering::Relaxed) {
-            self.emit(EventCode::DiscordFirstPost, EventOutcome::Succeeded, None);
-        }
+        self.delivery.posted();
     }
-    pub(super) fn post_failed(&self) {
+    pub(super) fn post_failed(&self, failure: &crate::outbound_failure::OutboundFailure) {
+        self.delivery_failed.store(true, Ordering::Relaxed);
         if self.discord {
             self.emit(
-                EventCode::DiscordPostFailure,
+                TextStage::DeliveryFailed.code(),
                 EventOutcome::Failed,
-                Some(OperationalErrorCategory::Unavailable),
+                Some(delivery_category(failure)),
             );
         }
     }
+}
+impl Timing {
     pub(super) fn finish(
         &self,
         result: &Result<
@@ -126,7 +143,34 @@ impl<'a> Timing<'a> {
             crate::llm::LlmError,
         >,
     ) {
-        self.terminal.store(true, Ordering::Relaxed);
+        if self.terminal.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        // Actual outbound faults were recorded at the network boundary.
+        // Local producer capacity is replay-forbidden too, but it never made
+        // a Discord request. Only this request owner emits its terminal event.
+        if let Some(failure) = result
+            .as_ref()
+            .err()
+            .and_then(|error| error.outbound_failure())
+        {
+            if failure.category() == crate::outbound_failure::OutboundFailureCategory::Capacity
+                && !self.delivery_failed.load(Ordering::Relaxed)
+            {
+                self.emit(
+                    EventCode::GenerationFailure,
+                    EventOutcome::Failed,
+                    Some(OperationalErrorCategory::Capacity),
+                );
+            }
+            return;
+        }
+        if result.as_ref().is_err_and(|error| {
+            error.provider_failure() == crate::provider::ProviderFailureKind::Cancelled
+        }) {
+            self.emit(TextStage::Cancelled.code(), EventOutcome::Cancelled, None);
+            return;
+        }
         self.emit(
             if result.is_ok() {
                 EventCode::GenerationCompleted
@@ -145,22 +189,28 @@ impl<'a> Timing<'a> {
         );
     }
 }
-impl Drop for Timing<'_> {
+impl Drop for Timing {
     fn drop(&mut self) {
         if !self.terminal.load(Ordering::Relaxed) {
-            self.emit(EventCode::GenerationFailure, EventOutcome::Cancelled, None);
+            self.emit(TextStage::Cancelled.code(), EventOutcome::Cancelled, None);
         }
     }
 }
 pub(super) async fn observe(
     stream: impl std::future::Future<Output = Result<crate::llm::ModelTurn, crate::llm::LlmError>>,
-    mut deltas: tokio::sync::mpsc::UnboundedReceiver<String>,
-    timing: Option<&Timing<'_>>,
+    mut deltas: crate::generation::stream_owner::DeltaReceiver,
+    timing: Option<&Timing>,
 ) -> Result<crate::llm::ModelTurn, crate::llm::LlmError> {
     let mut stream = std::pin::pin!(stream);
+    let overflow = deltas.cancellation();
     loop {
         tokio::select! {
             biased;
+            _ = overflow.cancelled() => {
+                let result = if deltas.retained { (&mut stream).await }
+                    else { Err(super::stream_owner::capacity()) };
+                return if deltas.failed() { Err(super::stream_owner::capacity()) } else { result };
+            }
             Some(delta) = deltas.recv() => {
                 if let Some(timing) = timing { timing.text(&delta); }
             }
@@ -168,7 +218,7 @@ pub(super) async fn observe(
                 while let Ok(delta) = deltas.try_recv() {
                     if let Some(timing) = timing { timing.text(&delta); }
                 }
-                return result;
+                return if deltas.failed() { Err(super::stream_owner::capacity()) } else { result.and_then(super::stream_owner::validate) };
             }
         }
     }
@@ -182,26 +232,26 @@ pub(crate) fn record(
     error: Option<OperationalErrorCategory>,
 ) {
     if let Some(events) = state.operational_events()
-        && let Ok(mut event) = OperationalEvent::new(
-            crate::runtime::now_millis(),
-            match code {
-                EventCode::DiscordFirstPost | EventCode::DiscordPostFailure => {
-                    EventComponent::Discord
-                }
-                EventCode::EngagementQueue
-                | EventCode::EngagementCompleted
-                | EventCode::EngagementFailure => EventComponent::Scheduler,
-                _ => EventComponent::Provider,
-            },
-            code,
-            outcome,
-        )
+        && let Ok(mut event) =
+            OperationalEvent::new(crate::runtime::now_millis(), component(code), code, outcome)
     {
         event = event.with_duration(duration);
         if let Some(error) = error {
             event = event.with_error(error);
         }
         let _ = events.event(event);
+    }
+}
+
+pub(super) fn component(code: EventCode) -> EventComponent {
+    match code {
+        EventCode::DiscordFirstPost
+        | EventCode::DiscordFinalDelivered
+        | EventCode::DiscordPostFailure => EventComponent::Discord,
+        EventCode::EngagementQueue
+        | EventCode::EngagementCompleted
+        | EventCode::EngagementFailure => EventComponent::Scheduler,
+        _ => EventComponent::Provider,
     }
 }
 
@@ -219,6 +269,18 @@ fn failure_category(failure: crate::provider::ProviderFailureKind) -> Operationa
         }
         F::RateLimited | F::Busy => OperationalErrorCategory::Capacity,
         F::Success | F::TransportUnavailable | F::Http5xx => OperationalErrorCategory::Unavailable,
+    }
+}
+
+pub(crate) fn delivery_category(
+    failure: &crate::outbound_failure::OutboundFailure,
+) -> OperationalErrorCategory {
+    use crate::outbound_failure::OutboundFailureCategory as F;
+    match failure.category() {
+        F::Permission => OperationalErrorCategory::Authorization,
+        F::RateLimited | F::Capacity => OperationalErrorCategory::Capacity,
+        F::Transport => OperationalErrorCategory::Unavailable,
+        F::Internal => OperationalErrorCategory::Internal,
     }
 }
 

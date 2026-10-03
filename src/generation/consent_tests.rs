@@ -212,7 +212,7 @@ async fn personal_memory_adapter_stream_withdrawal_blocks_first_delivery() {
     let context = authorized_context(&state);
     let guard = GenerationGuard::capture(&state, &request(&context)).unwrap();
     let out = crate::pipeline::testing::FakeOut::default();
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = crate::generation::stream_owner::channel();
     let work = async {
         revoke(&state);
         tx.send("PRIVATE_MEMBER_FACT ".repeat(10)).unwrap();

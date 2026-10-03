@@ -166,6 +166,7 @@ impl FoundationModels {
         &self,
         invocation: CliInvocation,
         file: T,
+        attempt_cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<String, LlmError> {
         let timeout = self.config.timeout_secs;
         if let Some(registry) = self.service.get() {
@@ -184,7 +185,9 @@ impl FoundationModels {
                             ProviderFailureKind::ExecutableIdentity,
                         ));
                     }
-                    invocation.run_with_cancel(timeout, Some(cancel)).await
+                    invocation
+                        .run_with_cancellations(timeout, Some(cancel), attempt_cancel)
+                        .await
                 })
                 .map_err(|_| {
                     LlmError::classified("service is shutting down", ProviderFailureKind::Cancelled)
@@ -196,7 +199,9 @@ impl FoundationModels {
                 )
             })?
         } else {
-            invocation.run(timeout).await
+            invocation
+                .run_with_cancellations(timeout, None, attempt_cancel)
+                .await
         }
     }
 
@@ -207,7 +212,7 @@ impl FoundationModels {
         tools: &[crate::tools::ToolSpec],
         call_id: &str,
     ) -> Result<ModelTurn, LlmError> {
-        self.cli_turn_with_instructions(None, system_prompt, turns, tools, call_id)
+        self.cli_turn_with_instructions(None, system_prompt, turns, tools, call_id, None)
             .await
     }
 
@@ -221,6 +226,7 @@ impl FoundationModels {
         turns: &[ChatTurn],
         tools: &[crate::tools::ToolSpec],
         call_id: &str,
+        cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<ModelTurn, LlmError> {
         let schema = decision_schema(tools)?;
         let transcript = render_transcript(system_prompt, turns)?;
@@ -229,7 +235,7 @@ impl FoundationModels {
         })?;
         let invocation = CliInvocation::new(&self.config, instructions, &transcript, file.path());
         self.verify_cli_identity()?;
-        let output = self.run_owned(invocation, file).await?;
+        let output = self.run_owned(invocation, file, cancel).await?;
         parse_cli_output(&output, tools, call_id)
     }
 
@@ -249,7 +255,7 @@ impl FoundationModels {
         })?;
         let invocation = CliInvocation::for_image(&self.config, task, file.path());
         self.verify_cli_identity()?;
-        let output = self.run_owned(invocation, file).await?;
+        let output = self.run_owned(invocation, file, None).await?;
         let output = output.trim();
         if output.is_empty()
             && !matches!(
@@ -328,13 +334,24 @@ impl CliInvocation {
         }
     }
 
+    #[cfg(test)]
     pub(super) async fn run(self, timeout_secs: u64) -> Result<String, LlmError> {
         self.run_with_cancel(timeout_secs, None).await
     }
+    #[cfg(test)]
     pub(super) async fn run_with_cancel(
         self,
         timeout_secs: u64,
         cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<String, LlmError> {
+        self.run_with_cancellations(timeout_secs, cancel, None)
+            .await
+    }
+    async fn run_with_cancellations(
+        self,
+        timeout_secs: u64,
+        cancel: Option<tokio_util::sync::CancellationToken>,
+        attempt_cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<String, LlmError> {
         let mut command = tokio::process::Command::new(&self.program);
         command
@@ -345,7 +362,11 @@ impl CliInvocation {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
+        if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled())
+            || attempt_cancel
+                .as_ref()
+                .is_some_and(|cancel| cancel.is_cancelled())
+        {
             return Err(LlmError::classified(
                 "the FM CLI cancelled",
                 ProviderFailureKind::Cancelled,
@@ -394,9 +415,13 @@ impl CliInvocation {
         };
         let completed = crate::service::cancellation::complete_or_cancelled(
             cancel,
-            tokio::time::timeout(Duration::from_secs(timeout_secs), operation),
+            crate::service::cancellation::complete_or_cancelled(
+                attempt_cancel,
+                tokio::time::timeout(Duration::from_secs(timeout_secs), operation),
+            ),
         )
-        .await;
+        .await
+        .flatten();
         match completed {
             Some(Ok(Ok(output))) => Ok(output),
             Some(Ok(Err(error))) => {
@@ -772,3 +797,7 @@ fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, LlmErro
             LlmError::backend(format!("the FM {field} value was not a non-empty string"))
         })
 }
+
+#[cfg(all(test, unix))]
+#[path = "foundation_models_cancellation_tests.rs"]
+mod cancellation_tests;

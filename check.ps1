@@ -73,4 +73,9 @@ Invoke-Checked -Executable "cargo" -Arguments @("test", "--locked")
 Write-Host "== release build =="
 Invoke-Checked -Executable "cargo" -Arguments @("build", "--release", "--locked")
 
+Write-Host "== offline text benchmark startup =="
+$benchmarkTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "target" }
+$benchmarkBinary = Join-Path $benchmarkTarget "release/abbey-bot.exe"
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-text-benchmark-startup.py", "--binary", $benchmarkBinary)
+
 Write-Host "== ok =="

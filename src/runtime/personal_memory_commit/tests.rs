@@ -917,4 +917,5 @@ async fn sequential_real_filesystem_fifo_and_runtime_flushes_keep_lineage() {
     writer.joined().await.unwrap();
 }
 
+mod publication_failures;
 mod round4;

@@ -1,8 +1,9 @@
-//! Discord adapters for `#help` forum helpers (`/forum draft|post|perms`).
+//! Discord adapters for `#help` forum helpers (`/forum draft|post|resolve|perms`).
 //!
-//! Pure policy lives in [`crate::forum`]. Defer before REST; ChannelId in, never
-//! GuildChannel before acknowledgement. Gap-fill never wipes unrelated overwrite
-//! bits. Brand: Abbey / Intelligence Without Limits — never Quesar.
+//! Pure policy lives in [`crate::forum`] and [`crate::forum_resolution`]. Defer
+//! before REST; ChannelId in, never GuildChannel before acknowledgement. Gap-fill
+//! never wipes unrelated overwrite bits. Brand: Abbey / Intelligence Without
+//! Limits — never Quesar.
 
 use serenity::all::{
     ChannelId, ChannelType, CreateForumPost, CreateMessage, GuildChannel, GuildId,
@@ -11,7 +12,26 @@ use serenity::all::{
 
 use crate::commands::clamp_message;
 use crate::forum::{self, HELP_TAG_NAMES, Template};
+use crate::forum_resolution::ResolutionState;
 use crate::{Context, Error};
+
+mod resolution;
+
+/// An explicit member choice; title or reply text never chooses resolution.
+#[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
+pub enum ResolutionChoice {
+    Solved,
+    Unresolved,
+}
+
+impl From<ResolutionChoice> for ResolutionState {
+    fn from(value: ResolutionChoice) -> Self {
+        match value {
+            ResolutionChoice::Solved => Self::Solved,
+            ResolutionChoice::Unresolved => Self::Unresolved,
+        }
+    }
+}
 
 /// Discord-facing mirror of [`forum::Template`].
 #[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
@@ -34,8 +54,32 @@ impl From<TemplateChoice> for Template {
 }
 
 /// Parent — Discord forces a subcommand; this body is unreachable wiring.
-#[poise::command(slash_command, guild_only, subcommands("draft", "post", "perms"))]
+#[poise::command(
+    slash_command,
+    guild_only,
+    subcommands("draft", "post", "resolve", "perms")
+)]
 pub async fn forum(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+/// Choose Solved or Unresolved for your own forum post, or one you manage.
+#[poise::command(slash_command, guild_only, ephemeral)]
+pub async fn resolve(
+    ctx: Context<'_>,
+    #[description = "Explicit resolution status"] status: ResolutionChoice,
+    #[description = "Forum post (defaults to this thread)"] thread: Option<ChannelId>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let guild = ctx
+        .guild_id()
+        .ok_or("This one only works inside a server.")?;
+    let thread = thread.unwrap_or_else(|| ctx.channel_id());
+    let state = ResolutionState::from(status);
+    let result =
+        resolution::resolve_thread(ctx.http(), guild, thread, ctx.author().id, state).await;
+    let reply = resolution::reply(result, state);
+    ctx.say(clamp_message(reply.to_string())).await?;
     Ok(())
 }
 

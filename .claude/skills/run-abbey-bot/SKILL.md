@@ -18,11 +18,13 @@ All paths are relative to the repo root.
 ## Prerequisites
 
 Rust 1.98.0 stable comes from `rust-toolchain.toml` via rustup. The
-self-tests need the loopback services that are already live on this Mac:
-Ollama on `127.0.0.1:11434` serving `gemma4:12b` (reasoner + vision) and the
-MLX-Audio sidecar on `127.0.0.1:8181` (Whisper + Kokoro). Their endpoints are
+self-tests require the configured loopback services. This setup expects
+Ollama on `127.0.0.1:11434` with `gemma4:12b` available (reasoner + vision) and
+the MLX-Audio sidecar on `127.0.0.1:8181` (Whisper + Kokoro). Their endpoints are
 read from the owner-only `~/.config/abbey-bot/env` file as literal data; the
-driver never evaluates that file as shell code or prints its values.
+driver never evaluates that file as shell code or prints its values. Recheck
+model availability before each run; a reachable endpoint alone does not prove
+the configured model is available.
 
 ```bash
 curl -s -m 5 http://127.0.0.1:11434/api/tags | python3 -c 'import sys,json; print([m["name"] for m in json.load(sys.stdin)["models"]])'
@@ -46,16 +48,18 @@ prove the report came from the binary you built.
 ```
 
 That runs `build`, `args`, `provider primary`, `voice`, `status` in order and
-prints the output directory (`$TMPDIR/run-abbey-bot-<timestamp>/`). Verified
-run on 2026-09-08: exit 0, provider `overall_pass: True` in 44 s, WAV written
+stops at the first nonzero step. Run individual modes to collect the remaining
+diagnostics after a failure. On success it prints the output directory
+(`$TMPDIR/run-abbey-bot-<timestamp>/`). Historical 2026-09-08 result:
+exit 0, provider `overall_pass: True` in 44 s, WAV written
 in 11 s with 100% round-trip word recall, live service reported `ready`.
 
-| command | what it does | verified exit |
+| command | what it does | result/exit contract |
 |---|---|---|
 | `smoke.sh build` | `cargo build --locked --release`, prints binary sha256 | 0 |
 | `smoke.sh args` | proves `--bogus`, a `--provider-self-test` without `--json`, and a bare `--voice-self-test` all exit 2 with usage text | 0 |
-| `smoke.sh provider [primary\|all]` | `--provider-self-test … --json` against the loopback reasoner with synthetic fixtures; writes `provider-<target>.json` and summarises pass/fail per capability | `primary` 0; `all` 2 (see Gotchas) |
-| `smoke.sh voice` | `--voice-self-test <fresh>.wav`: Kokoro TTS → Whisper STT → Abbey generation → Kokoro; writes `audition-<timestamp>.wav` | 0 |
+| `smoke.sh provider [primary\|all]` | `--provider-self-test … --json` with synthetic fixtures; writes `provider-<target>.json` and summarises each lane/mode | CLI: 0 required probes pass; 1 required probe fails; 2 invalid/missing configuration or arguments. Wrapper timeout/parser failures can return other statuses. |
+| `smoke.sh voice` | `--voice-self-test <fresh>.wav`: Kokoro TTS → Whisper STT → Abbey generation → Kokoro; writes `audition-<timestamp>.wav` on success | 0 on success; nonzero on failure |
 | `smoke.sh status` | read-only evidence about the live service: `deploy/service-status.py`, `deploy/check-launchd-env.sh` (names only), `launchctl list` | 0 |
 | `smoke.sh plan GUILD_ID [--stage S] [--category C]` | dry-run diff of `blueprints/mlai-community.toml` against a live guild over REST; refuses `--apply` | 0 |
 | `smoke.sh test FILTER` | `cargo test --locked FILTER`; **fails if the filter selects zero tests** | 0 / 1 |
@@ -111,10 +115,13 @@ clippy, locked tests, locked release build):
 
 ```bash
 gate_log="$(mktemp "${TMPDIR:-/tmp}/abbey-bot-gate.XXXXXX")"
-./check.sh > "$gate_log" 2>&1
-gate_exit=$?
+if ./check.sh > "$gate_log" 2>&1; then
+    gate_exit=0
+else
+    gate_exit=$?
+fi
 printf 'EXIT: %s; log: %s\n' "$gate_exit" "$gate_log"
-test "$gate_exit" -eq 0
+(exit "$gate_exit")
 ```
 
 Verified 2026-09-08: exit 0 in 163 s, `1277 passed; 0 failed; 5 ignored`.
@@ -127,31 +134,36 @@ after Rust edits; Codex sessions must invoke the gate explicitly.
 - **The release binary in `target/` and the deployed one in
   `~/.local/libexec/abbey-bot/` are separate files.** Rebuilding `target/`
   never touches the live service; `smoke.sh status` reads the live one.
-- **`provider all` exits 2 on this machine and that is expected.** With
-  `ABBEY_FM_MODE=off`, `fm_server` is skipped but `fm_cli.text` reports
-  `fail`, so `overall_pass` is false. Use `primary` for a green/red signal
-  about the configured route; use `all` only when qualifying Apple
-  Foundation Models.
+- **`provider all` has no fixed expected exit.** Read `overall_pass` and every
+  `fm_cli_modes` entry in `provider-all.json`. `fm_cli` records only the first
+  mode; the driver's console summary labels each available mode. A passing
+  capability in one mode does not qualify all capabilities or publish/admit a
+  route. Use `primary` for its primary probe and `all` to include the FM lanes;
+  check the report's exact identities and the runtime's admitted route separately.
+- **Self-test scope differs from gateway routing.** The primary probe uses
+  the legacy endpoint backend directly; FM modes are separate probes. The voice
+  self-test uses only the local LLM backend and does not select FM. Its
+  `NoConfiguredProvider` result does not diagnose FM admission.
 - **`sh -x smoke.sh …` is safe for the owner env path.** The driver reads
   `~/.config/abbey-bot/env` as literal data, keeps tracing disabled while
   parsing it, and restores tracing only after the sanitized child environment
   is built. The separate `~/.config/abbey-bot/load.sh` helper has no such
   guard, so never trace a shell that sources it.
-- **`GET /v1/models` on 8181 returned `{"data":[]}` and the voice self-test
-  still passed** (observed 2026-09-08). An empty model list from MLX-Audio is
-  not a readiness failure for this mode.
+- **Historical observation, 2026-09-08:** `GET /v1/models` on 8181 returned
+  `{"data":[]}` and that voice self-test passed. Recheck the selected models
+  and run the actual voice self-test; inventory alone does not qualify voice.
 - **The voice mode refuses to overwrite.** Against an existing WAV it exits 1
   in about a second with `StartupError("the voice self-test refuses to
   overwrite <path>")`, so the driver timestamps the path.
 - **`$TMPDIR` ends in `/` on macOS.** The driver strips it; if you build
   paths by hand you get `//` in output, harmless but confusing in logs.
 - **A filtered `cargo test` that matches nothing exits 0** (measured:
-  `running 0 tests … ok`). Per the project `AGENTS.md`, `--lib`, `-p`, and
-  `--workspace` behave the same way in this single binary crate. Read the
-  `running N tests` line, or use `smoke.sh test`, which does.
-- **`ABBEY_EPISODE_GATE_CONFIG` is set in the live env.** Any local run that
-  inherits it and writes memory needs the WDBX gateway up or fails closed;
-  the driver blanks it, so nothing here ever proposes to the ledger.
+  `running 0 tests … ok`). This is a single binary crate; use
+  `cargo test --locked FILTER` and read the `running N tests` line, or use
+  `smoke.sh test`, which rejects an empty selection.
+- **An inherited `ABBEY_EPISODE_GATE_CONFIG` can enable ledger writes.**
+  Covered memory writes need the configured WDBX gateway or fail closed;
+  the driver blanks the config, so its self-tests never propose to the ledger.
 
 ## Troubleshooting
 

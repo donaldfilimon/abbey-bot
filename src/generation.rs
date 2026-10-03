@@ -13,6 +13,7 @@ use crate::ask;
 use crate::grounding::{self, Grounding};
 use crate::llm;
 use crate::memory::PersonaContext;
+use crate::outbound_failure::{DeliveryCertainty, OutboundFailure, OutboundFailureCategory};
 use crate::persona::Persona;
 use crate::pipeline::Outbound;
 use crate::platform::OutboundMessage;
@@ -22,7 +23,15 @@ use crate::runtime::AppState;
 
 mod capability_guidance;
 pub(crate) mod consent;
+mod delivery_timing;
+mod retained;
+mod stream_delivery;
+use stream_delivery::stream_received_timed;
+#[cfg(test)]
+use stream_delivery::{stream_received, stream_reply};
+pub(crate) mod stream_owner;
 pub(crate) mod timing;
+pub use delivery_timing::DeliveryTiming;
 
 /// Progressive-reply pacing: post once this many characters have arrived…
 pub const STREAM_FIRST_POST_CHARS: usize = 60;
@@ -42,247 +51,11 @@ pub enum StreamEnd {
     Calls(Vec<crate::tools::ToolCall>),
 }
 
-/// Generate through a streaming transport, posting the reply as soon as
-/// [`STREAM_FIRST_POST_CHARS`] have arrived or [`STREAM_FIRST_POST_SECS`]
-/// have passed, then editing the message every [`STREAM_EDIT_EVERY_SECS`]
-/// until the stream ends; the final edit carries the tidied full text.
-///
-/// If the stream ends with tool calls and no text was produced or posted,
-/// returns [`StreamEnd::Calls`] so the caller can run the tools and stream
-/// again. A mixed text-and-tool turn is rejected: dispatching its calls would
-/// let an already-visible claim get ahead of the actual side effect, while
-/// ignoring them would make streaming disagree with completed generation. If
-/// the stream fails after a partial message went out, that message is edited
-/// to the honest failure line so a half-answer never stands as if whole.
-#[cfg(test)]
-pub async fn stream_reply<T: llm::StreamTransport + Sync, O: Outbound + Sync>(
-    transport: &T,
-    delivery: &Delivery<'_, O>,
-    round: &Round<'_>,
-) -> Result<StreamEnd, llm::LlmError> {
-    let request =
-        llm::build_stream_request(round.backend, round.system_prompt, round.turns, round.tools);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    stream_received(
-        transport.post_stream(&request, tx),
-        rx,
-        delivery,
-        round.backend.label(),
-        round.persona,
-        round.grounding,
-        &ConversationEffects::default(),
-        None,
-    )
-    .await
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "preserve existing stream regression seam"
-)]
-async fn stream_received<O: Outbound + Sync>(
-    stream: impl Future<Output = Result<llm::ModelTurn, llm::LlmError>>,
-    rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    delivery: &Delivery<'_, O>,
-    provider_label: &'static str,
-    persona: Persona,
-    grounding: &Grounding,
-    effects: &ConversationEffects,
-    guard: Option<(&AppState, &consent::GenerationGuard)>,
-) -> Result<StreamEnd, llm::LlmError> {
-    stream_received_timed(
-        stream,
-        rx,
-        delivery,
-        provider_label,
-        persona,
-        grounding,
-        effects,
-        guard,
-        None,
-    )
-    .await
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one stream boundary carries its immutable authorization guard"
-)]
-async fn stream_received_timed<O: Outbound + Sync>(
-    stream: impl Future<Output = Result<llm::ModelTurn, llm::LlmError>>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    delivery: &Delivery<'_, O>,
-    provider_label: &'static str,
-    persona: Persona,
-    grounding: &Grounding,
-    effects: &ConversationEffects,
-    guard: Option<(&AppState, &consent::GenerationGuard)>,
-    timing: Option<&timing::Timing<'_>>,
-) -> Result<StreamEnd, llm::LlmError> {
-    let Delivery {
-        out,
-        native_channel_id,
-        reply_to: _,
-    } = *delivery;
-    let mut stream = std::pin::pin!(stream);
-    let started = tokio::time::Instant::now();
-    let mut tick = tokio::time::interval(std::time::Duration::from_secs(STREAM_EDIT_EVERY_SECS));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    tick.tick().await;
-    let mut text = String::new();
-    let mut posted: Option<String> = None;
-    let mut last_edited_len = 0usize;
-    let mut finished: Option<Result<llm::ModelTurn, llm::LlmError>> = None;
-
-    // Post-or-edit with whatever has arrived, honouring the pacing rules.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "stream flush preserves its authorization and timing observers"
-    )]
-    async fn flush<O: Outbound + Sync>(
-        delivery: &Delivery<'_, O>,
-        text: &str,
-        grounding: &Grounding,
-        posted: &mut Option<String>,
-        last_edited_len: &mut usize,
-        effects: &ConversationEffects,
-        guard: Option<(&AppState, &consent::GenerationGuard)>,
-        timing: Option<&timing::Timing<'_>>,
-    ) -> Result<bool, String> {
-        let Delivery {
-            out,
-            native_channel_id: channel,
-            reply_to,
-        } = *delivery;
-        if text.trim().is_empty() || text.chars().count() == *last_edited_len {
-            return Ok(false);
-        }
-        if let Some((state, guard)) = guard {
-            guard.check(state).map_err(|error| error.to_string())?;
-        }
-        let visible = apply_grounding(text, grounding);
-        // Delivery may be accepted remotely even if awaiting its result fails.
-        // Close replay before handing provider output to the outbound adapter.
-        effects.mark_visible_output();
-        match posted {
-            None => {
-                let message = OutboundMessage {
-                    text: visible,
-                    reply_to_native_message_id: reply_to.map(str::to_string),
-                    ..OutboundMessage::default()
-                };
-                let id = match out.send(channel, &message).await {
-                    Ok(id) if !id.trim().is_empty() => id,
-                    Ok(_) => {
-                        if let Some(timing) = timing {
-                            timing.post_failed();
-                        }
-                        return Err("delivery returned no receipt".into());
-                    }
-                    Err(error) => {
-                        if let Some(timing) = timing {
-                            timing.post_failed();
-                        }
-                        return Err(error);
-                    }
-                };
-                *posted = Some(id);
-                if let Some(timing) = timing {
-                    timing.posted();
-                }
-            }
-            Some(id) => out.edit(channel, id, &visible).await?,
-        }
-        *last_edited_len = text.chars().count();
-        Ok(true)
+fn delivery_error(error: OutboundFailure, timing: Option<&timing::Timing>) -> llm::LlmError {
+    if let Some(timing) = timing {
+        timing.post_failed(&error);
     }
-
-    while finished.is_none() {
-        if let Some((state, guard)) = guard {
-            guard.check(state)?;
-        }
-        tokio::select! {
-            // Deltas first: a chunk that arrived just before completion must
-            // be posted/edited before the final state is decided.
-            biased;
-            Some(delta) = rx.recv() => {
-                text.push_str(&delta);
-                if let Some(timing) = timing { timing.text(&text); }
-                let due = posted.is_none()
-                    && (text.chars().count() >= STREAM_FIRST_POST_CHARS
-                        || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS);
-                if due
-                    && flush(delivery, &text, grounding, &mut posted, &mut last_edited_len, effects, guard, timing)
-                        .await
-                        .map_err(llm::LlmError::backend)?
-                {
-                    // Pace from successful delivery, including time spent
-                    // awaiting the outbound adapter; do not replay old ticks.
-                    tick.reset();
-                }
-            }
-            _ = tick.tick() => {
-                if (posted.is_some() || started.elapsed().as_secs() >= STREAM_FIRST_POST_SECS)
-                    && flush(delivery, &text, grounding, &mut posted, &mut last_edited_len, effects, guard, timing)
-                        .await
-                        .map_err(llm::LlmError::backend)?
-                {
-                    // Pace from successful delivery, including time spent
-                    // awaiting the outbound adapter; do not replay old ticks.
-                    tick.reset();
-                }
-            }
-            result = &mut stream => finished = Some(result),
-        }
-    }
-    // Drain anything that arrived between the last recv and completion.
-    while let Ok(delta) = rx.try_recv() {
-        text.push_str(&delta);
-        if let Some(timing) = timing {
-            timing.text(&text);
-        }
-    }
-    if let Some((state, guard)) = guard {
-        guard.check(state)?;
-    }
-    match finished.expect("loop exits only when finished is set") {
-        Ok(turn) => {
-            if !turn.calls.is_empty() {
-                if posted.is_none() && text.trim().is_empty() && turn.text.trim().is_empty() {
-                    return Ok(StreamEnd::Calls(turn.calls));
-                }
-                let error = llm::LlmError::backend(
-                    "backend returned text and tool calls in one streamed turn".into(),
-                );
-                if let Some(id) = &posted {
-                    let failure = ask::render_failure(persona, provider_label, &error);
-                    let _ = out.edit(native_channel_id, id, &failure).await;
-                }
-                return Err(error);
-            }
-            let full = if turn.text.len() >= text.len() {
-                turn.text
-            } else {
-                text
-            };
-            let tidy = finalize_reply(persona, &full, grounding);
-            if let Some(id) = &posted {
-                effects.mark_visible_output();
-                out.edit(native_channel_id, id, &tidy)
-                    .await
-                    .map_err(llm::LlmError::backend)?;
-            }
-            Ok(StreamEnd::Text(tidy, posted))
-        }
-        Err(e) => {
-            if let Some(id) = &posted {
-                let failure = ask::render_failure(persona, provider_label, &e);
-                let _ = out.edit(native_channel_id, id, &failure).await;
-            }
-            Err(e)
-        }
-    }
+    llm::LlmError::delivery(error)
 }
 
 /// Internal outbound type for generation that intentionally has no delivery
@@ -291,19 +64,19 @@ async fn stream_received_timed<O: Outbound + Sync>(
 enum NoDelivery {}
 
 impl Outbound for NoDelivery {
-    async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
+    async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, OutboundFailure> {
         match *self {}
     }
     async fn typing(&self, _: &str) {
         match *self {}
     }
-    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
         match *self {}
     }
     async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
         match *self {}
     }
-    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
         match *self {}
     }
 }
@@ -467,7 +240,16 @@ pub async fn generate_with_tools<O: Outbound + Sync>(
     host: &mut crate::runtime::ToolScope<'_>,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
-) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
+) -> Result<
+    (
+        String,
+        Option<String>,
+        Persona,
+        &'static str,
+        Option<DeliveryTiming>,
+    ),
+    llm::LlmError,
+> {
     let mut conversation = state.providers.begin_source_only(true, true);
     generate_conversation(
         state,
@@ -484,17 +266,26 @@ pub async fn generate_with_tools_without_delivery(
     state: &AppState,
     host: &mut crate::runtime::ToolScope<'_>,
     ask: &Ask<'_>,
-) -> Result<(String, Persona, &'static str), llm::LlmError> {
-    let (text, _, persona, label) =
+) -> Result<(String, Persona, &'static str, Option<DeliveryTiming>), llm::LlmError> {
+    let (text, _, persona, label, timing) =
         generate_with_tools::<NoDelivery>(state, host, ask, None).await?;
-    Ok((text, persona, label))
+    Ok((text, persona, label, timing))
 }
 pub async fn generate_read_only<O: Outbound + Sync>(
     state: &AppState,
     persona: Persona,
     ask: &Ask<'_>,
     delivery: Option<Delivery<'_, O>>,
-) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
+) -> Result<
+    (
+        String,
+        Option<String>,
+        Persona,
+        &'static str,
+        Option<DeliveryTiming>,
+    ),
+    llm::LlmError,
+> {
     let mut conversation = state.providers.begin_source_only(false, true);
     generate_conversation(
         state,
@@ -515,7 +306,7 @@ pub async fn generate_without_delivery(
     system_suffix: Option<&str>,
 ) -> Result<(String, Persona), llm::LlmError> {
     let mut conversation = state.providers.voice(provider);
-    let (text, _, persona, _) = generate_conversation::<NoDelivery>(
+    let (text, _, persona, _, _) = generate_conversation::<NoDelivery>(
         state,
         &mut conversation,
         ToolAccess::Disabled(persona),
@@ -535,7 +326,16 @@ async fn generate_conversation<O: Outbound + Sync>(
     delivery: Option<Delivery<'_, O>>,
     system_suffix: Option<&str>,
     response_style: llm::ResponseStyle,
-) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
+) -> Result<
+    (
+        String,
+        Option<String>,
+        Persona,
+        &'static str,
+        Option<DeliveryTiming>,
+    ),
+    llm::LlmError,
+> {
     let timing = (response_style != llm::ResponseStyle::Spoken)
         .then(|| timing::Timing::new(state, ask.scope.starts_with("discord:")));
     let result = generate_conversation_timed(
@@ -552,7 +352,15 @@ async fn generate_conversation<O: Outbound + Sync>(
     if let Some(timing) = &timing {
         timing.finish(&result);
     }
-    result
+    result.map(|(text, posted, persona, label)| {
+        (
+            text,
+            posted,
+            persona,
+            label,
+            timing.map(|timing| timing.delivery.clone()),
+        )
+    })
 }
 #[expect(
     clippy::too_many_arguments,
@@ -566,7 +374,7 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
     delivery: Option<Delivery<'_, O>>,
     system_suffix: Option<&str>,
     response_style: llm::ResponseStyle,
-    timing: Option<&timing::Timing<'_>>,
+    timing: Option<&timing::Timing>,
 ) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
     let guard = consent::GenerationGuard::capture(state, ask)?;
     if let ToolAccess::Enabled(host) = &access
@@ -619,9 +427,67 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
         };
         let (text, posted, calls) = loop {
             guard.check(state)?;
+            if response_style != llm::ResponseStyle::Spoken
+                && let Some(owned) = state.owned_state()
+            {
+                let retained::Round {
+                    work,
+                    deltas: rx,
+                    selected,
+                } = retained::start(retained::Request {
+                    state: owned,
+                    seed: conversation.seed(),
+                    parts: parts.clone(),
+                    tools: tools.to_vec(),
+                    style: response_style,
+                    guard: guard.clone(),
+                    timing: timing.map(timing::Timing::observer),
+                })?;
+                let streaming = selected.await.unwrap_or(false);
+                let result: RoundOutcome = if streaming && let Some(ref delivery) = delivery {
+                    stream_received_timed(
+                        work,
+                        rx,
+                        delivery,
+                        conversation.label(),
+                        persona,
+                        &grounding,
+                        &effects,
+                        Some((state, &guard)),
+                        timing,
+                    )
+                    .await
+                    .map(|end| match end {
+                        StreamEnd::Text(text, posted) => (Some(text), posted, vec![]),
+                        StreamEnd::Calls(calls) => (None, None, calls),
+                    })
+                } else {
+                    timing::observe(work, rx, timing).await.map(|turn| {
+                        let text = (!turn.text.trim().is_empty()).then(|| {
+                            if turn.calls.is_empty() {
+                                finalize_reply(persona, &turn.text, &grounding)
+                            } else {
+                                ask::tidy_reply(persona, &turn.text)
+                            }
+                        });
+                        (text, None, turn.calls)
+                    })
+                };
+                let result = match result {
+                    Err(error) if error.outbound_failure().is_some() => return Err(error),
+                    result => result,
+                };
+                guard.check(state)?;
+                match result {
+                    Ok(turn) => break turn,
+                    Err(error) if conversation.fallback(&error) => continue,
+                    Err(error) => return Err(error),
+                }
+            }
             let queued = tokio::time::Instant::now();
             let admission = conversation.reserve().await;
             if let Some(timing) = timing {
+                timing.delivery.provider(conversation.selected_provider());
                 timing.admitted(queued.elapsed(), &admission);
             }
             match admission {
@@ -634,11 +500,22 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
             guard.check(state)?;
             let fitted = prompt_budget::fitted(&parts, conversation.prompt_budget());
             let label = conversation.label();
+            let started = || {
+                if let Some(timing) = timing {
+                    timing.provider_started();
+                }
+            };
             let result: RoundOutcome = if let Some(ref delivery) = delivery
                 && conversation.streams()
             {
-                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                let work = conversation.execute_parts(&fitted, tools, response_style, Some(tx));
+                let (tx, rx) = crate::generation::stream_owner::channel();
+                let work = conversation.execute_parts(
+                    &fitted,
+                    tools,
+                    response_style,
+                    Some(tx),
+                    Some(&started),
+                );
                 stream_received_timed(
                     work,
                     rx,
@@ -659,13 +536,14 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
                 guard
                     .while_current(state, async {
                         if conversation.streams() {
-                            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                            let (tx, rx) = crate::generation::stream_owner::channel();
                             timing::observe(
                                 conversation.execute_parts(
                                     &fitted,
                                     tools,
                                     response_style,
                                     Some(tx),
+                                    Some(&started),
                                 ),
                                 rx,
                                 timing,
@@ -673,7 +551,7 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
                             .await
                         } else {
                             conversation
-                                .execute_parts(&fitted, tools, response_style, None)
+                                .execute_parts(&fitted, tools, response_style, None, Some(&started))
                                 .await
                         }
                     })
@@ -688,6 +566,12 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
                         });
                         (text, None, turn.calls)
                     })
+            };
+            let result = match result {
+                // A lost acknowledgement remains a delivery fault even if
+                // consent changed while the outbound await was pending.
+                Err(error) if error.outbound_failure().is_some() => return Err(error),
+                result => result,
             };
             guard.check(state)?;
             match result {
@@ -795,3 +679,13 @@ mod tests;
 #[cfg(test)]
 #[path = "generation/timing_tests.rs"]
 mod timing_tests;
+
+#[cfg(test)]
+#[path = "generation/outbound_tests.rs"]
+mod outbound_tests;
+
+#[cfg(test)]
+mod stream_owner_tests;
+
+#[cfg(test)]
+mod retained_tests;

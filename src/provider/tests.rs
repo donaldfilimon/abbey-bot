@@ -477,6 +477,34 @@ fn schema_and_parser_yield_one_typed_decision() {
 }
 
 #[test]
+fn fm_probe_adapter_preserves_the_qualification_nonce_contract() {
+    let tools = [crate::provider_self_test::probe_tool()];
+    let nonce = "abbey-provider-probe-v1";
+    assert_eq!(
+        tools[0].parameters["properties"]["nonce"]["enum"],
+        json!([nonce])
+    );
+    let schema = decision_schema(&tools).unwrap();
+    assert_eq!(
+        schema["$defs"]["ProbeStatus"]["properties"]["probe_status"]["enum"],
+        json!([nonce])
+    );
+
+    let raw = json!({"probe_status": nonce}).to_string();
+    let turn = parse_cli_output(&raw, &tools, "fm-probe").unwrap();
+    assert!(turn.text.is_empty());
+    assert_eq!(turn.calls.len(), 1);
+    assert_eq!(turn.calls[0].name, "probe_status");
+    assert_eq!(turn.calls[0].arguments, json!({"nonce": nonce}));
+    assert_eq!(turn.calls[0].id, "fm-probe");
+
+    for ordinal in [0, 1, 42] {
+        let raw = json!({"probe_status": format!("abbey-benchmark-{ordinal}")}).to_string();
+        assert!(parse_cli_output(&raw, &tools, "fm-probe").is_err(), "{raw}");
+    }
+}
+
+#[test]
 fn core_plus_inspect_schema_and_adapters_cover_exactly_seven_tools() {
     let tools = crate::tools::production_tools();
     assert_eq!(

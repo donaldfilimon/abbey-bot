@@ -64,6 +64,7 @@ fn text_phase_events_never_contain_sensitive_or_dynamic_fields() {
         EventCode::GenerationQueue,
         EventCode::GenerationFirstText,
         EventCode::DiscordFirstPost,
+        EventCode::DiscordFinalDelivered,
         EventCode::GenerationCompleted,
         EventCode::GenerationFailure,
         EventCode::DiscordPostFailure,
@@ -74,7 +75,8 @@ fn text_phase_events_never_contain_sensitive_or_dynamic_fields() {
         let event = OperationalEvent::new(1, EventComponent::Provider, code, EventOutcome::Failed)
             .unwrap()
             .with_duration(std::time::Duration::from_millis(10))
-            .with_error(OperationalErrorCategory::Unavailable);
+            .with_error(OperationalErrorCategory::Unavailable)
+            .with_provider(crate::provider::ProviderId::parse("primary").unwrap());
         let doc: serde_json::Value = serde_json::from_slice(&event.encode().unwrap()).unwrap();
         for key in doc.as_object().unwrap().keys() {
             assert!(
@@ -85,11 +87,22 @@ fn text_phase_events_never_contain_sensitive_or_dynamic_fields() {
                     "code",
                     "outcome",
                     "error_category",
-                    "duration_ms"
+                    "duration_ms",
+                    "provider_id"
                 ]
                 .contains(&key.as_str()),
                 "{key}"
             );
         }
     }
+}
+
+#[test]
+fn final_delivered_is_a_closed_event_code() {
+    let code: EventCode = serde_json::from_str("\"discord_final_delivered\"")
+        .expect("actual final delivery has a distinct closed stage");
+    assert_eq!(
+        serde_json::to_value(code).unwrap(),
+        "discord_final_delivered"
+    );
 }

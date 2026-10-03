@@ -306,3 +306,6 @@ async fn introductions_half_approved_never_contacts_and_uncertain_never_rearms()
         h.finish().await;
     }
 }
+
+#[path = "introductions/preflight.rs"]
+mod preflight;

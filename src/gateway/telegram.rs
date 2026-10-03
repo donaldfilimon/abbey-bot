@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::gateway::shared::{PollLoop, SecretString, TELEGRAM_MESSAGE_CAP, clamp, fetch_capped};
+use crate::outbound_failure::{DeliveryCertainty, OutboundFailure, OutboundFailureCategory};
 use crate::pipeline::{self, Outbound};
 use crate::platform::{self, OutboundMessage, TelegramPoller, TgFile, TgResponse, TgUpdate};
 use crate::runtime::AppState;
@@ -13,6 +14,57 @@ use crate::runtime::AppState;
 /// safe for user-facing errors or logs.
 fn render_reqwest_error(error: reqwest::Error) -> String {
     error.without_url().to_string()
+}
+
+fn reqwest_delivery_failure(error: reqwest::Error) -> OutboundFailure {
+    if error.is_builder() {
+        OutboundFailure::new(
+            OutboundFailureCategory::Internal,
+            DeliveryCertainty::NotSent,
+            None,
+        )
+    } else if error.is_decode() {
+        OutboundFailure::new(
+            OutboundFailureCategory::Internal,
+            DeliveryCertainty::PossiblySent,
+            None,
+        )
+    } else {
+        OutboundFailure::new(
+            OutboundFailureCategory::Transport,
+            DeliveryCertainty::PossiblySent,
+            None,
+        )
+    }
+}
+
+fn telegram_response_failure(status: u16, value: &serde_json::Value) -> OutboundFailure {
+    let retry = value
+        .pointer("/parameters/retry_after")
+        .and_then(serde_json::Value::as_u64);
+    if (400..=599).contains(&status) {
+        return OutboundFailure::http(Some(status), retry);
+    }
+    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+        if let Some(code) = value
+            .get("error_code")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|code| u16::try_from(code).ok())
+            .filter(|code| (400..=599).contains(code))
+        {
+            return OutboundFailure::http(Some(code), retry);
+        }
+        return OutboundFailure::new(
+            OutboundFailureCategory::Internal,
+            DeliveryCertainty::NotSent,
+            retry,
+        );
+    }
+    OutboundFailure::new(
+        OutboundFailureCategory::Internal,
+        DeliveryCertainty::PossiblySent,
+        None,
+    )
 }
 
 /// Telegram Bot API delivery. Token is held as `SecretString` so `Debug`
@@ -45,20 +97,26 @@ impl TelegramOutbound {
         &self,
         method: &str,
         body: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, OutboundFailure> {
         let response = self
             .client
             .post(format!("{}/{method}", self.base()))
             .json(body)
             .send()
             .await
-            .map_err(render_reqwest_error)?;
+            .map_err(reqwest_delivery_failure)?;
         let status = response.status();
-        let value: serde_json::Value = response.json().await.map_err(render_reqwest_error)?;
+        let value: serde_json::Value = response.json().await.map_err(|error| {
+            if !status.is_success() {
+                OutboundFailure::http(Some(status.as_u16()), None)
+            } else {
+                reqwest_delivery_failure(error)
+            }
+        })?;
         if !status.is_success()
             || value.get("ok").and_then(serde_json::Value::as_bool) != Some(true)
         {
-            return Err(format!("telegram {method} failed: HTTP {status}"));
+            return Err(telegram_response_failure(status.as_u16(), &value));
         }
         Ok(value)
     }
@@ -78,18 +136,25 @@ impl Outbound for TelegramOutbound {
         &self,
         native_channel_id: &str,
         message: &OutboundMessage,
-    ) -> Result<String, String> {
+    ) -> Result<String, OutboundFailure> {
         let clamped = OutboundMessage {
             text: clamp(&message.text, TELEGRAM_MESSAGE_CAP),
             ..message.clone()
         };
         let payload = platform::telegram_send_payload(&clamped, native_channel_id);
         let value = self.post_json("sendMessage", &payload).await?;
-        Ok(value
+        value
             .pointer("/result/message_id")
             .and_then(serde_json::Value::as_i64)
+            .filter(|id| *id > 0)
             .map(|id| id.to_string())
-            .unwrap_or_default())
+            .ok_or_else(|| {
+                OutboundFailure::new(
+                    OutboundFailureCategory::Internal,
+                    DeliveryCertainty::PossiblySent,
+                    None,
+                )
+            })
     }
 
     async fn typing(&self, native_channel_id: &str) {
@@ -106,12 +171,12 @@ impl Outbound for TelegramOutbound {
         native_channel_id: &str,
         native_message_id: &str,
         emoji: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutboundFailure> {
         self.post_json(
             "setMessageReaction",
             &serde_json::json!({
                 "chat_id": native_channel_id,
-                "message_id": native_message_id.parse::<i64>().map_err(|e| e.to_string())?,
+                "message_id": native_message_id.parse::<i64>().map_err(|_| OutboundFailure::new(OutboundFailureCategory::Internal, DeliveryCertainty::NotSent, None))?,
                 "reaction": [{ "type": "emoji", "emoji": emoji }],
             }),
         )
@@ -148,12 +213,12 @@ impl Outbound for TelegramOutbound {
         native_channel_id: &str,
         native_message_id: &str,
         text: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutboundFailure> {
         self.post_json(
             "editMessageText",
             &serde_json::json!({
                 "chat_id": native_channel_id,
-                "message_id": native_message_id.parse::<i64>().map_err(|e| e.to_string())?,
+                "message_id": native_message_id.parse::<i64>().map_err(|_| OutboundFailure::new(OutboundFailureCategory::Internal, DeliveryCertainty::NotSent, None))?,
                 "text": clamp(text, TELEGRAM_MESSAGE_CAP),
             }),
         )
@@ -259,6 +324,48 @@ fn telegram_observed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telegram_refusals_and_lost_ack_are_closed_and_redacted() {
+        use crate::outbound_failure::{DeliveryCertainty, OutboundFailureCategory};
+        let value = serde_json::json!({
+            "ok": false,
+            "error_code": 429,
+            "description": "private-url-and-bot-token",
+            "parameters": {"retry_after": u64::MAX},
+        });
+        let failure = telegram_response_failure(200, &value);
+        assert_eq!(failure.category(), OutboundFailureCategory::RateLimited);
+        assert_eq!(failure.certainty(), DeliveryCertainty::NotSent);
+        assert_eq!(failure.retry_after_secs(), Some(300));
+        assert!(!format!("{failure:?} {failure}").contains("private-url-and-bot-token"));
+        assert_eq!(
+            telegram_response_failure(403, &value).category(),
+            OutboundFailureCategory::Permission
+        );
+        let malformed = telegram_response_failure(200, &serde_json::json!({"result": {}}));
+        assert_eq!(malformed.category(), OutboundFailureCategory::Internal);
+        assert_eq!(malformed.certainty(), DeliveryCertainty::PossiblySent);
+    }
+
+    #[test]
+    fn telegram_delivery_builder_errors_never_render_token_urls() {
+        let secret = "synthetic-secret-token";
+        let url = format!("https://api.telegram.org/bot{secret}/sendMessage");
+        let error = reqwest::Client::new()
+            .post(&url)
+            .header("x-invalid", "invalid\nheader")
+            .build()
+            .unwrap_err()
+            .with_url(url.parse().unwrap());
+        let failure = reqwest_delivery_failure(error);
+        assert_eq!(
+            failure.certainty(),
+            crate::outbound_failure::DeliveryCertainty::NotSent
+        );
+        assert!(!format!("{failure:?} {failure}").contains(secret));
+        assert!(!format!("{failure:?} {failure}").contains("api.telegram.org"));
+    }
 
     #[test]
     fn telegram_secret_is_redacted() {

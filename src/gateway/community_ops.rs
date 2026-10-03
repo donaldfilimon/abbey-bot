@@ -21,7 +21,7 @@ async fn watched_mutation<
     cancel: &CancellationToken,
     mut load: impl FnMut() -> P,
 ) -> Result<T, &'static str> {
-    // Check synchronously before the mutation future is ever polled. Tokio's
+    // Observe policy before the mutation future is ever polled. Tokio's
     // first interval tick can be pending on its initial poll, allowing the
     // HTTP future to begin before a stop is observed if this check is omitted.
     if cancel.is_cancelled() {

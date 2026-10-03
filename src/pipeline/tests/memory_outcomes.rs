@@ -101,7 +101,11 @@ struct Out {
     attempts: Mutex<Vec<String>>,
 }
 impl Outbound for Out {
-    async fn send(&self, _: &str, message: &OutboundMessage) -> Result<String, String> {
+    async fn send(
+        &self,
+        _: &str,
+        message: &OutboundMessage,
+    ) -> Result<String, crate::outbound_failure::OutboundFailure> {
         let mut attempts = self.attempts.lock().unwrap();
         if attempts.is_empty() {
             assert_eq!(
@@ -113,19 +117,33 @@ impl Outbound for Out {
         }
         attempts.push(message.text.clone());
         if self.fail_at.is_some_and(|index| attempts.len() >= index) {
-            Err("synthetic delivery failure".into())
+            Err(crate::outbound_failure::OutboundFailure::new(
+                crate::outbound_failure::OutboundFailureCategory::Transport,
+                crate::outbound_failure::DeliveryCertainty::PossiblySent,
+                None,
+            ))
         } else {
             Ok(format!("sent-{}", attempts.len()))
         }
     }
     async fn typing(&self, _: &str) {}
-    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn react(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<(), crate::outbound_failure::OutboundFailure> {
         Ok(())
     }
     async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
         Err("unused".into())
     }
-    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn edit(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<(), crate::outbound_failure::OutboundFailure> {
         Ok(())
     }
 }

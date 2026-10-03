@@ -282,21 +282,27 @@ pub(super) async fn on_voice_state_update(
     // PresenceOnly muted autojoin: upgrade to Local listening when consent already
     // covers the room (including this joiner). Spawn so model prep cannot block
     // gateway handling or the active-session revoke path below.
+    let operation = runtime.start_operation_token();
     let phase = runtime.snapshot().await.phase;
     if phase == VoicePhase::PresenceOnly {
         let upgrade_runtime = Arc::clone(&runtime);
         let upgrade_state = Arc::clone(&data.state);
         let upgrade_ctx = ctx.clone();
-        let admitted = retain_presence_upgrade(&runtime, async move {
-            match super::try_auto_listen_while_present(&upgrade_ctx, upgrade_runtime, upgrade_state)
-                .await
+        let admitted = retain_presence_upgrade(&runtime, operation, move |operation| async move {
+            match super::try_auto_listen_while_present(
+                &upgrade_ctx,
+                upgrade_runtime,
+                upgrade_state,
+                operation,
+            )
+            .await
             {
                 Ok(outcome) => {
                     tracing::info!(?outcome, "PresenceOnly auto-listen join hook finished")
                 }
                 Err(error) => tracing::warn!(
                     %error,
-                    "PresenceOnly auto-listen join hook failed; muted presence kept"
+                    "PresenceOnly auto-listen join hook failed"
                 ),
             }
         });
@@ -533,11 +539,16 @@ pub(super) async fn on_voice_permissions_changed(
 
 // Keep this admission seam separate from the Discord facts so shutdown ownership
 // can be exercised without opening a gateway or preparing a real model.
-fn retain_presence_upgrade<F>(runtime: &VoiceRuntime, preparation: F) -> Result<(), &'static str>
+pub(super) fn retain_presence_upgrade<F, W>(
+    runtime: &VoiceRuntime,
+    operation: u64,
+    preparation: W,
+) -> Result<(), &'static str>
 where
+    W: FnOnce(u64) -> F,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    runtime.spawn_owned(preparation)
+    runtime.spawn_owned(preparation(operation))
 }
 
 #[cfg(test)]
@@ -569,13 +580,17 @@ mod tests {
         let (entered, started) = oneshot::channel();
         let (cancelled, cancellation_seen) = oneshot::channel();
         let (release, cleanup) = oneshot::channel();
-        retain_presence_upgrade(&runtime, async move {
-            let _ = entered.send(());
-            preparing.wait_for_start_cancellation(generation).await;
-            assert!(!preparing.start_is_current(generation));
-            let _ = cancelled.send(());
-            let _ = cleanup.await;
-        })
+        retain_presence_upgrade(
+            &runtime,
+            runtime.start_operation_token(),
+            move |_| async move {
+                let _ = entered.send(());
+                preparing.wait_for_start_cancellation(generation).await;
+                assert!(!preparing.start_is_current(generation));
+                let _ = cancelled.send(());
+                let _ = cleanup.await;
+            },
+        )
         .unwrap();
         started.await.unwrap();
         supervisor.begin_draining(ShutdownReason::Signal, Instant::now());
@@ -600,7 +615,10 @@ mod tests {
         let completed = supervisor.next_completion().await;
         assert_eq!(completed.exit, TaskExit::Returned);
         assert_eq!(supervisor.try_freeze(true), Ok(()));
-        assert!(retain_presence_upgrade(&runtime, async {}).is_err());
+        assert!(
+            retain_presence_upgrade(&runtime, runtime.start_operation_token(), |_| async {})
+                .is_err()
+        );
     }
 
     fn healthy() -> BotVoiceFacts {

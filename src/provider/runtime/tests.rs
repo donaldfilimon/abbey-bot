@@ -1,4 +1,5 @@
 use super::*;
+use crate::outbound_failure::{DeliveryCertainty, OutboundFailure, OutboundFailureCategory};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -506,17 +507,21 @@ impl crate::pipeline::Outbound for UncertainDelivery {
         &self,
         channel: &str,
         message: &crate::platform::OutboundMessage,
-    ) -> Result<String, String> {
+    ) -> Result<String, OutboundFailure> {
         self.recorded.send(channel, message).await?;
         self.accepted.notify_one();
         self.release.notified().await;
-        Err("synthetic delivery result lost after acceptance".into())
+        Err(OutboundFailure::new(
+            OutboundFailureCategory::Transport,
+            DeliveryCertainty::PossiblySent,
+            None,
+        ))
     }
-    async fn edit(&self, channel: &str, id: &str, text: &str) -> Result<(), String> {
+    async fn edit(&self, channel: &str, id: &str, text: &str) -> Result<(), OutboundFailure> {
         self.recorded.edit(channel, id, text).await
     }
     async fn typing(&self, _: &str) {}
-    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
         Ok(())
     }
     async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
@@ -560,7 +565,12 @@ async fn accepted_delivery_with_lost_result_cannot_replay_on_another_provider() 
     assert_eq!(out.recorded.sent.lock().unwrap().len(), 1);
     assert_eq!(second.calls.load(Ordering::Relaxed), 0);
     out.release.notify_one();
-    assert!(generation.await.is_err());
+    let error = generation.await.unwrap_err();
+    assert_eq!(
+        error.outbound_failure().unwrap().certainty(),
+        DeliveryCertainty::PossiblySent
+    );
+    assert_eq!(error.provider_failure(), ProviderFailureKind::Cancelled);
     assert_eq!(
         first.calls.load(Ordering::Relaxed),
         0,
@@ -936,3 +946,4 @@ fn declared_text_without_executable_adapter_is_not_ready() {
 }
 
 mod fm_route;
+mod outbound_failures;

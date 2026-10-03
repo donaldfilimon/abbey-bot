@@ -14,6 +14,7 @@ use crate::vision::{
 
 use serde_json::json;
 
+pub(crate) mod benchmark;
 mod fm;
 
 const TEXT_MARKER: &str = "ABBEY_PROVIDER_TEXT_V1";
@@ -110,7 +111,7 @@ fn unavailable(category: &'static str) -> ProviderEvidence {
     }
 }
 
-fn probe_tool() -> ToolSpec {
+pub(crate) fn probe_tool() -> ToolSpec {
     ToolSpec {
         name: "probe_status",
         description: "Return the exact synthetic qualification nonce. This probe has no side effects.",
@@ -151,10 +152,9 @@ async fn probe_stream(backend: &Backend, expected: &str) -> bool {
         &[ChatTurn::user(format!("Return exactly {expected}"))],
         &[],
     );
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _) = crate::generation::stream_owner::channel();
     let transport = HttpTransport::default();
     let response = transport.post_stream(&request, sender).await;
-    while receiver.recv().await.is_some() {}
     response.is_ok_and(|turn| turn.calls.is_empty() && exact(&turn.text, expected))
 }
 

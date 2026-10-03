@@ -32,6 +32,7 @@ done
 echo "shell syntax: ${shell_checked} script(s)"
 sh -n .claude/skills/run-abbey-bot/smoke.sh
 echo "smoke driver: shell syntax passed"
+python3 scripts/test-run-abbey-bot-smoke.py
 python3 scripts/check-python-syntax.py
 python3 deploy/test-check-python-locks.py
 python3 deploy/check-python-locks.py \
@@ -105,5 +106,8 @@ cargo test --locked
 
 echo "== release build =="
 cargo build --release --locked
+
+echo "== offline text benchmark startup =="
+python3 scripts/test-text-benchmark-startup.py --binary "${CARGO_TARGET_DIR:-target}/release/abbey-bot"
 
 echo "== ok =="

@@ -8,6 +8,7 @@ use serenity::all::{
 };
 
 use crate::gateway::shared::{Snowflake, clamp, fetch_capped};
+use crate::outbound_failure::{DeliveryCertainty, OutboundFailure, OutboundFailureCategory};
 use crate::pipeline::{self, Outbound};
 use crate::platform::{EventKind, OutboundMessage, RemoteAttachment, SocialEvent, SocialNetwork};
 use crate::runtime::AppState;
@@ -37,6 +38,57 @@ pub struct DiscordOutbound {
     pub fetcher: reqwest::Client,
 }
 
+fn local_delivery_failure() -> OutboundFailure {
+    OutboundFailure::new(
+        OutboundFailureCategory::Internal,
+        DeliveryCertainty::NotSent,
+        None,
+    )
+}
+
+fn discord_delivery_failure(error: serenity::Error) -> OutboundFailure {
+    use DeliveryCertainty::{NotSent, PossiblySent};
+    use OutboundFailureCategory::{Capacity, Internal, Permission, Transport};
+    match error {
+        serenity::Error::Http(http) => match http {
+            serenity::http::HttpError::UnsuccessfulRequest(response) => {
+                OutboundFailure::http(Some(response.status_code.as_u16()), None)
+            }
+            serenity::http::HttpError::Url(_)
+            | serenity::http::HttpError::InvalidWebhook
+            | serenity::http::HttpError::InvalidHeader(_)
+            | serenity::http::HttpError::InvalidScheme
+            | serenity::http::HttpError::InvalidPort
+            | serenity::http::HttpError::ApplicationIdMissing => local_delivery_failure(),
+            serenity::http::HttpError::Request(error) if error.is_builder() => {
+                local_delivery_failure()
+            }
+            serenity::http::HttpError::Request(_) => {
+                OutboundFailure::new(Transport, PossiblySent, None)
+            }
+            _ => OutboundFailure::new(Internal, PossiblySent, None),
+        },
+        serenity::Error::Model(model) => match model {
+            serenity::model::ModelError::InvalidPermissions { .. }
+            | serenity::model::ModelError::Hierarchy
+            | serenity::model::ModelError::InvalidUser
+            | serenity::model::ModelError::NotAuthor => {
+                OutboundFailure::new(Permission, NotSent, None)
+            }
+            serenity::model::ModelError::EmbedAmount
+            | serenity::model::ModelError::EmbedTooLarge(_)
+            | serenity::model::ModelError::MessageTooLong(_) => {
+                OutboundFailure::new(Capacity, NotSent, None)
+            }
+            _ => local_delivery_failure(),
+        },
+        serenity::Error::Io(_) | serenity::Error::Gateway(_) | serenity::Error::Tungstenite(_) => {
+            OutboundFailure::new(Transport, PossiblySent, None)
+        }
+        _ => OutboundFailure::new(Internal, PossiblySent, None),
+    }
+}
+
 impl Outbound for DiscordOutbound {
     async fn completed_exchange(&self, state: &AppState, event: &SocialEvent, response: &str) {
         if let (Some(state), Ok(source), Ok(response)) = (
@@ -55,16 +107,27 @@ impl Outbound for DiscordOutbound {
         &self,
         native_channel_id: &str,
         message: &OutboundMessage,
-    ) -> Result<String, String> {
-        let channel = ChannelId::new(Snowflake::parse(native_channel_id)?.get());
+    ) -> Result<String, OutboundFailure> {
+        let channel = ChannelId::new(
+            Snowflake::parse(native_channel_id)
+                .map_err(|_| local_delivery_failure())?
+                .get(),
+        );
         let body = clamp(&message.text, DISCORD_EMBED_DESCRIPTION_CAP);
         // Compact Abbey embed only — empty content avoids double text in clients.
         let mut builder = CreateMessage::new()
             .embed(abbey_reply_embed(&body))
             .allowed_mentions(no_mentions());
         if let Some(reply) = &message.reply_to_native_message_id {
-            let mut reference: MessageReference =
-                (channel, MessageId::new(Snowflake::parse(reply)?.get())).into();
+            let mut reference: MessageReference = (
+                channel,
+                MessageId::new(
+                    Snowflake::parse(reply)
+                        .map_err(|_| local_delivery_failure())?
+                        .get(),
+                ),
+            )
+                .into();
             reference.fail_if_not_exists = Some(false);
             builder = builder.reference_message(reference);
         }
@@ -72,7 +135,7 @@ impl Outbound for DiscordOutbound {
             .send_message(&self.http, builder)
             .await
             .map(|m| m.id.get().to_string())
-            .map_err(|e| e.to_string())
+            .map_err(discord_delivery_failure)
     }
 
     async fn typing(&self, native_channel_id: &str) {
@@ -86,15 +149,23 @@ impl Outbound for DiscordOutbound {
         native_channel_id: &str,
         native_message_id: &str,
         emoji: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutboundFailure> {
         self.http
             .create_reaction(
-                ChannelId::new(Snowflake::parse(native_channel_id)?.get()),
-                MessageId::new(Snowflake::parse(native_message_id)?.get()),
+                ChannelId::new(
+                    Snowflake::parse(native_channel_id)
+                        .map_err(|_| local_delivery_failure())?
+                        .get(),
+                ),
+                MessageId::new(
+                    Snowflake::parse(native_message_id)
+                        .map_err(|_| local_delivery_failure())?
+                        .get(),
+                ),
                 &ReactionType::Unicode(emoji.to_string()),
             )
             .await
-            .map_err(|e| e.to_string())
+            .map_err(discord_delivery_failure)
     }
 
     async fn fetch(&self, url: &str, max: usize) -> Result<Vec<u8>, String> {
@@ -106,11 +177,19 @@ impl Outbound for DiscordOutbound {
         native_channel_id: &str,
         native_message_id: &str,
         text: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutboundFailure> {
         self.http
             .edit_message(
-                ChannelId::new(Snowflake::parse(native_channel_id)?.get()),
-                MessageId::new(Snowflake::parse(native_message_id)?.get()),
+                ChannelId::new(
+                    Snowflake::parse(native_channel_id)
+                        .map_err(|_| local_delivery_failure())?
+                        .get(),
+                ),
+                MessageId::new(
+                    Snowflake::parse(native_message_id)
+                        .map_err(|_| local_delivery_failure())?
+                        .get(),
+                ),
                 &EditMessage::new()
                     .content("")
                     .embed(abbey_reply_embed(&clamp(
@@ -122,7 +201,7 @@ impl Outbound for DiscordOutbound {
             )
             .await
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(discord_delivery_failure)
     }
 }
 

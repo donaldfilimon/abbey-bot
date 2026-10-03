@@ -1,5 +1,7 @@
 use super::*;
 
+mod forum_resolution;
+
 #[test]
 fn guided_sections_preserve_every_eligible_entry_and_visibility_before_clamping() {
     for context in [InteractionContext::Guild, InteractionContext::BotDm] {
@@ -344,8 +346,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(access_valid(spec.eligibility.access.rule(), 0));
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
-    assert_eq!(keys.len(), 105);
-    assert_eq!(registered_commands().len(), 105);
+    assert_eq!(keys.len(), 106);
+    assert_eq!(registered_commands().len(), 106);
     assert!(planned_commands().is_empty());
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {

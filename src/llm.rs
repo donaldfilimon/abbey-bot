@@ -346,6 +346,7 @@ pub struct LlmError {
     retry_after: crate::provider::RetryAfter,
     unavailable: Option<crate::provider::RouteUnavailableReason>,
     http_request_rejected: bool,
+    outbound_failure: Option<crate::outbound_failure::OutboundFailure>,
 }
 
 /// Stable public category for an [`LlmError`]. Provider-controlled detail is
@@ -355,6 +356,7 @@ pub enum LlmErrorKind {
     Busy,
     ResponseBudget,
     Backend,
+    Delivery,
 }
 
 impl LlmError {
@@ -368,6 +370,7 @@ impl LlmError {
             retry_after: crate::provider::RetryAfter::Absent,
             unavailable: None,
             http_request_rejected: false,
+            outbound_failure: None,
         }
     }
 
@@ -380,6 +383,7 @@ impl LlmError {
             retry_after: crate::provider::RetryAfter::Absent,
             unavailable: None,
             http_request_rejected: false,
+            outbound_failure: None,
         }
     }
 
@@ -392,6 +396,7 @@ impl LlmError {
             retry_after: crate::provider::RetryAfter::Absent,
             unavailable: None,
             http_request_rejected: false,
+            outbound_failure: None,
         }
     }
 
@@ -403,6 +408,25 @@ impl LlmError {
             failure,
             ..Self::backend(detail.into())
         }
+    }
+
+    /// A delivery fault is separate from provider execution and cannot charge
+    /// the provider circuit or supply a reason to replay generation.
+    pub(crate) fn delivery(failure: crate::outbound_failure::OutboundFailure) -> Self {
+        Self {
+            kind: LlmErrorKind::Delivery,
+            outbound_failure: Some(failure),
+            ..Self::classified(
+                failure.to_string(),
+                crate::provider::ProviderFailureKind::Cancelled,
+            )
+        }
+    }
+
+    pub(crate) const fn outbound_failure(
+        &self,
+    ) -> Option<crate::outbound_failure::OutboundFailure> {
+        self.outbound_failure
     }
 
     pub(crate) fn body_read(error: crate::http_body::BodyReadError) -> Self {

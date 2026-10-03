@@ -15,7 +15,7 @@ use crate::llm::Backend;
 
 mod adapters;
 mod runtime;
-pub(crate) use runtime::BlockWriter;
+pub(crate) use runtime::{BlockWriter, ConversationSeed};
 pub use runtime::{ConversationEffects, ProviderConversation, ProviderRuntime};
 mod catalog;
 mod circuit;

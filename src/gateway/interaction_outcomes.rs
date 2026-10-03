@@ -69,6 +69,12 @@ impl DeliveryFailure for crate::Error {
     }
 }
 
+impl DeliveryFailure for crate::outbound_failure::OutboundFailure {
+    fn delivery_category(&self) -> OperationalErrorCategory {
+        crate::generation::timing::delivery_category(self)
+    }
+}
+
 /// Classify a boxed command error by its *type*, never by message text: the operational
 /// record is a closed vocabulary and must not depend on user-facing copy. An error whose
 /// type carries no cause is `Internal` — claiming `Unavailable` for an unclassified
@@ -76,6 +82,9 @@ impl DeliveryFailure for crate::Error {
 ///
 /// Callers with their own typed refusal check it first and fall back to this.
 pub(crate) fn category_of(error: &crate::Error) -> OperationalErrorCategory {
+    if let Some(error) = error.downcast_ref::<crate::outbound_failure::OutboundFailure>() {
+        return error.delivery_category();
+    }
     error
         .downcast_ref::<serenity::Error>()
         .map_or(OperationalErrorCategory::Internal, serenity_category)

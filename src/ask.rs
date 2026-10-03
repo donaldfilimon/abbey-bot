@@ -189,6 +189,29 @@ pub fn render_failure(
     backend_label: &str,
     error: &crate::llm::LlmError,
 ) -> String {
+    if let Some(failure) = error.outbound_failure() {
+        use crate::outbound_failure::{DeliveryCertainty, OutboundFailureCategory};
+        let reason = if failure.certainty() == DeliveryCertainty::PossiblySent {
+            "delivery could not be confirmed; the reply may have reached the chat. I won’t resend it automatically."
+        } else {
+            match failure.category() {
+                OutboundFailureCategory::Permission => {
+                    "the reply could not be delivered because the chat refused permission."
+                }
+                OutboundFailureCategory::RateLimited => {
+                    "the chat rate-limited delivery; the reply was not sent."
+                }
+                OutboundFailureCategory::Transport => {
+                    "delivery is unavailable; the reply was not sent."
+                }
+                OutboundFailureCategory::Capacity => {
+                    "the reply exceeded delivery capacity and could not be completed."
+                }
+                OutboundFailureCategory::Internal => "delivery failed before the reply was sent.",
+            }
+        };
+        return format!("**{persona}** — {reason}");
+    }
     let public_reason = match error.kind() {
         crate::llm::LlmErrorKind::Busy => BUSY_REASON,
         crate::llm::LlmErrorKind::ResponseBudget => {
@@ -197,6 +220,7 @@ pub fn render_failure(
         crate::llm::LlmErrorKind::Backend => {
             "the backend returned an error; try again or check the bot logs"
         }
+        crate::llm::LlmErrorKind::Delivery => "delivery failed",
     };
     format!(
         "**{persona}** — the {backend_label} call failed, so there is no answer: {public_reason}"
@@ -481,5 +505,43 @@ mod tests {
         );
         assert!(reply.contains("response budget"), "{reply}");
         assert!(!reply.contains("validated empty response"), "{reply}");
+    }
+
+    #[test]
+    fn delivery_faults_do_not_claim_a_provider_outage_or_offer_uncertain_replay() {
+        use crate::outbound_failure::{
+            DeliveryCertainty, OutboundFailure, OutboundFailureCategory,
+        };
+        for (category, certainty) in [
+            (
+                OutboundFailureCategory::Capacity,
+                DeliveryCertainty::NotSent,
+            ),
+            (
+                OutboundFailureCategory::Permission,
+                DeliveryCertainty::NotSent,
+            ),
+            (
+                OutboundFailureCategory::RateLimited,
+                DeliveryCertainty::NotSent,
+            ),
+            (
+                OutboundFailureCategory::Transport,
+                DeliveryCertainty::PossiblySent,
+            ),
+        ] {
+            let error =
+                crate::llm::LlmError::delivery(OutboundFailure::new(category, certainty, None));
+            let reply = render_failure(Persona::Abbey, "provider-label", &error);
+            println!("{reply}");
+            assert!(!reply.contains("provider-label"), "{reply}");
+            assert!(!reply.contains("backend"), "{reply}");
+            assert!(!reply.contains("call failed"), "{reply}");
+            assert!(!reply.contains("try again"), "{reply}");
+            if certainty == DeliveryCertainty::PossiblySent {
+                assert!(reply.contains("may have reached the chat"), "{reply}");
+                assert!(reply.contains("won’t resend"), "{reply}");
+            }
+        }
     }
 }

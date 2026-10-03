@@ -12,7 +12,7 @@ impl llm::StreamTransport for FakeStream {
     async fn post_stream(
         &self,
         _request: &llm::LlmRequest,
-        on_delta: tokio::sync::mpsc::UnboundedSender<String>,
+        on_delta: crate::generation::stream_owner::DeltaSender,
     ) -> Result<llm::ModelTurn, llm::LlmError> {
         let mut full = String::new();
         for d in &self.deltas {
@@ -645,7 +645,7 @@ async fn budget_reapplied_after_fallback_to_small_window() {
     runtime.register_test_adapter(small.clone());
     std::sync::Arc::get_mut(&mut state).unwrap().providers = runtime;
 
-    let (text, _, _, _) = generate_read_only::<NoDelivery>(&state, Persona::Abbey, &ask, None)
+    let (text, _, _, _, _) = generate_read_only::<NoDelivery>(&state, Persona::Abbey, &ask, None)
         .await
         .unwrap();
     assert_eq!(text, "fitted answer");
@@ -680,19 +680,19 @@ struct TimedOut {
 }
 
 impl Outbound for TimedOut {
-    async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
+    async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, OutboundFailure> {
         tokio::time::sleep(self.send_delay).await;
         *self.sent_at.lock().unwrap() = Some(tokio::time::Instant::now());
         Ok("timed-message".into())
     }
     async fn typing(&self, _: &str) {}
-    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
         Ok(())
     }
     async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
         unreachable!("streaming does not fetch attachments")
     }
-    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+    async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
         self.edited_at
             .lock()
             .unwrap()
@@ -708,7 +708,7 @@ async fn assert_progressive_edit_pacing(send_delay: std::time::Duration) {
         sent_at: std::sync::Mutex::new(None),
         edited_at: std::sync::Mutex::new(Vec::new()),
     };
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = crate::generation::stream_owner::channel();
     let work = async move {
         // First delivery is just before the original two-second timer tick.
         tokio::time::sleep(Duration::from_millis(1900)).await;
@@ -718,7 +718,8 @@ async fn assert_progressive_edit_pacing(send_delay: std::time::Duration) {
         tx.send("More detail arrives before the next edit is due.".into())
             .unwrap();
         // Leave time for one intermediate edit, then complete between ticks.
-        tokio::time::sleep(Duration::from_millis(2500)).await;
+        // Production now progresses during the outbound delay as well.
+        tokio::time::sleep(send_delay + Duration::from_millis(2500)).await;
         Ok(llm::ModelTurn {
             text: format!("{first}More detail arrives before the next edit is due. Complete."),
             calls: Vec::new(),
@@ -792,7 +793,7 @@ async fn canonical_timing_measures_nonempty_text_before_confirmed_post_and_failu
         };
         let backend = local_backend();
         let request = llm::build_stream_request(&backend, "system", &[], &[]);
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = crate::generation::stream_owner::channel();
         timing.admitted(std::time::Duration::ZERO, &Ok(()));
         let result = super::stream_received_timed(
             stream.post_stream(&request, tx),
@@ -821,9 +822,20 @@ async fn canonical_timing_measures_nonempty_text_before_confirmed_post_and_failu
                 if fail {
                     EventCode::GenerationFailure
                 } else {
-                    EventCode::GenerationCompleted
-                }
+                    EventCode::DiscordFinalDelivered
+                },
             ]
+            .into_iter()
+            .chain((!fail).then_some(EventCode::GenerationCompleted))
+            .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            phases
+                .iter()
+                .filter(|p| serde_json::to_value(p.0).unwrap() == "discord_final_delivered")
+                .count(),
+            usize::from(!fail),
+            "only an acknowledged final edit completes delivery"
         );
         assert!(phases.windows(2).all(|p| p[0].1 <= p[1].1));
         assert!(phases[1].1 >= 5);
@@ -843,7 +855,7 @@ async fn canonical_timing_failure_without_text_never_claims_text_or_post() {
         calls: vec![],
     };
     let request = llm::build_stream_request(&local_backend(), "system", &[], &[]);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = crate::generation::stream_owner::channel();
     let result = super::stream_received_timed(
         stream.post_stream(&request, tx),
         rx,
@@ -879,23 +891,27 @@ async fn canonical_timing_failed_send_does_not_claim_confirmed_post() {
     use crate::observability::EventCode;
     struct Failed;
     impl Outbound for Failed {
-        async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, String> {
-            Err("synthetic uncertainty".into())
+        async fn send(&self, _: &str, _: &OutboundMessage) -> Result<String, OutboundFailure> {
+            Err(OutboundFailure::new(
+                OutboundFailureCategory::Transport,
+                DeliveryCertainty::PossiblySent,
+                None,
+            ))
         }
         async fn typing(&self, _: &str) {}
-        async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        async fn react(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
             unreachable!()
         }
         async fn fetch(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
             unreachable!()
         }
-        async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
+        async fn edit(&self, _: &str, _: &str, _: &str) -> Result<(), OutboundFailure> {
             unreachable!()
         }
     }
     let state = AppState::in_memory();
     let timing = super::timing::Timing::new(&state, true);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = crate::generation::stream_owner::channel();
     let work = async move {
         tx.send(
             "Generated source text that is long enough to trigger a progressive Discord post."
@@ -924,15 +940,22 @@ async fn canonical_timing_failed_send_does_not_claim_confirmed_post() {
         Some(&timing),
     )
     .await;
-    assert!(result.is_err());
-    timing.finish(&Err(result.unwrap_err()));
+    let error = result.unwrap_err();
+    assert_eq!(
+        error.provider_failure(),
+        crate::provider::ProviderFailureKind::Cancelled
+    );
+    assert_eq!(
+        error.outbound_failure().unwrap().certainty(),
+        DeliveryCertainty::PossiblySent
+    );
+    timing.finish(&Err(error));
     let phases = timing.observed.lock().unwrap();
     assert_eq!(
         phases.iter().map(|p| p.0).collect::<Vec<_>>(),
         vec![
             EventCode::GenerationFirstText,
             EventCode::DiscordPostFailure,
-            EventCode::GenerationFailure
         ]
     );
 }

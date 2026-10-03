@@ -70,6 +70,31 @@ impl Sink for ManagedSink {
     }
 }
 impl TelemetryWriter {
+    #[cfg(test)]
+    pub(crate) fn recording_for_test() -> (Self, Arc<Mutex<Vec<serde_json::Value>>>) {
+        struct Recording(Arc<Mutex<Vec<serde_json::Value>>>);
+        impl Sink for Recording {
+            fn event(&self, event: &OperationalEvent) -> Result<(), ManagedFailure> {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_slice(&event.encode()?).unwrap());
+                Ok(())
+            }
+            fn readiness(&self, _: &ReadinessDocument) -> Result<(), ManagedFailure> {
+                Ok(())
+            }
+            fn remove(&self) -> Result<(), ManagedFailure> {
+                Ok(())
+            }
+        }
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let writer = Self::start_sink(
+            Recording(observed.clone()),
+            Arc::new(|| panic!("synthetic telemetry failure")),
+        );
+        (writer, observed)
+    }
     pub fn start(
         log: Arc<ManagedLog>,
         publisher: ReadinessPublisher,

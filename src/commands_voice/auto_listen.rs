@@ -12,6 +12,8 @@ use serenity::all::{ChannelId, GuildId};
 use tokio::sync::{Mutex, mpsc, watch};
 
 use super::auto_listen_gate::{AutoListenDecision, decide_auto_listen};
+
+mod preparation;
 use super::discord::*;
 use super::receive::{ReceiveHandlerInstall, install_receive_handlers};
 use super::{INPUT_QUEUE_FRAMES, LOCAL_HEALTH_TIMEOUT, StartAttempt, configure_disconnected_call};
@@ -21,6 +23,7 @@ use crate::voice_local::LocalSession;
 use crate::voice_session::{
     SessionControl, SharedPlayback, VerificationActivation, VoicePhase, VoiceRuntime,
 };
+use preparation::{PresencePreparation, prepare_presence_upgrade, reserve_auto_listen};
 
 fn auto_listen_enabled() -> bool {
     std::env::var("ABBEY_VOICE_AUTO_LISTEN")
@@ -49,18 +52,42 @@ pub enum AutoListenWhilePresent {
 /// Upgrade muted PresenceOnly autojoin to Local listening when consent covers
 /// everyone currently present. Returns Ok without changing presence unless
 /// `runtime` is `VoicePhase::PresenceOnly` and the decision is Ready.
+/// `operation` must be captured by the join hook before its first await and
+/// retained dispatch, so a delayed first poll cannot adopt a newer lifecycle.
 pub async fn try_auto_listen_while_present(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
     state: Arc<crate::runtime::AppState>,
+    operation: u64,
 ) -> Result<AutoListenWhilePresent, String> {
-    if runtime.snapshot().await.phase != VoicePhase::PresenceOnly {
-        return Ok(AutoListenWhilePresent::NotPresenceOnly);
-    }
-    match evaluate_auto_listen(ctx, runtime, state).await? {
-        AutoListenStartup::Listening => Ok(AutoListenWhilePresent::Listening),
-        AutoListenStartup::MutedPresence => Ok(AutoListenWhilePresent::RemainedPresent),
-    }
+    let guild_id = GuildId::new(runtime.config.guild_id);
+    let channel_id = ChannelId::new(runtime.config.channel_id);
+    let participants =
+        cached_participants_from_serenity(ctx, guild_id, channel_id).unwrap_or_default();
+    let prepared = prepare_presence_upgrade(
+        &runtime,
+        operation,
+        || {
+            decide_auto_listen(
+                auto_listen_enabled(),
+                runtime.effective_mode(),
+                &participants,
+                runtime.consent.coverage(&participants, VoiceMode::Local),
+            )
+        },
+        || async {
+            verify_required_voice_permissions_live(ctx, guild_id, channel_id)
+                .await
+                .map_err(String::from)
+        },
+    )
+    .await?;
+    let reservation = match prepared {
+        PresencePreparation::Unchanged(outcome) => return Ok(outcome),
+        PresencePreparation::Reserved(reservation) => *reservation,
+    };
+    activate_local_auto_listen(ctx, runtime, state, participants, reservation).await?;
+    Ok(AutoListenWhilePresent::Listening)
 }
 
 /// Startup entry for `ABBEY_VOICE_AUTOJOIN` + optional `ABBEY_VOICE_AUTO_LISTEN`.
@@ -80,6 +107,7 @@ async fn evaluate_auto_listen(
     runtime: Arc<VoiceRuntime>,
     state: Arc<crate::runtime::AppState>,
 ) -> Result<AutoListenStartup, String> {
+    let operation = runtime.start_operation_token();
     let enabled = auto_listen_enabled();
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
@@ -133,7 +161,13 @@ async fn evaluate_auto_listen(
                 present = participants.len(),
                 "ABBEY_VOICE_AUTO_LISTEN=1: unanimous Local consent present; starting consented listening"
             );
-            activate_local_auto_listen(ctx, runtime, state, participants).await?;
+            let reservation = reserve_auto_listen(&runtime, operation, async {
+                verify_required_voice_permissions_live(ctx, guild_id, channel_id)
+                    .await
+                    .map_err(String::from)
+            })
+            .await?;
+            activate_local_auto_listen(ctx, runtime, state, participants, reservation).await?;
             Ok(AutoListenStartup::Listening)
         }
     }
@@ -144,20 +178,12 @@ async fn activate_local_auto_listen(
     runtime: Arc<VoiceRuntime>,
     state: Arc<crate::runtime::AppState>,
     participants: HashSet<u64>,
+    reservation: (u64, Option<VoiceBackendConfig>),
 ) -> Result<(), String> {
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
 
-    verify_required_voice_permissions_live(ctx, guild_id, channel_id).await?;
-
-    let operation = runtime.start_operation_token();
-    let Some((start_generation, effective_backend)) = runtime.reserve_start_with_backend(operation)
-    else {
-        return Err(
-            "auto-listen start reservation was cancelled before activation; muted presence kept"
-                .into(),
-        );
-    };
+    let (start_generation, effective_backend) = reservation;
     let _start_attempt = StartAttempt {
         runtime: Arc::clone(&runtime),
         generation: start_generation,

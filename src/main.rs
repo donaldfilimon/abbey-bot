@@ -40,6 +40,8 @@
 //!   diff a server plan against a live guild; dry run unless `--apply`
 //! - `--provider-self-test primary|fm|all --json` — qualify configured routes
 //!   with synthetic, non-persistent fixtures before reading Discord or state.
+//! - `--text-benchmark` — explicit synthetic provider measurement or offline
+//!   receipt comparison, separate from capability qualification and Discord.
 //! - `RUST_LOG` (optional) — tracing filter, defaults to `info`.
 //!
 //! Intents default to `non_privileged()` — which, since the adaptive loop
@@ -79,6 +81,7 @@ mod engagement;
 mod engine;
 mod episode_gate;
 mod forum;
+mod forum_resolution;
 mod gateway;
 mod generation;
 mod grounding;
@@ -102,6 +105,7 @@ mod music;
 mod observability;
 mod offline_voice;
 mod operator_guidance;
+mod outbound_failure;
 mod permission_mirror;
 mod perms;
 mod persist;
@@ -545,6 +549,7 @@ enum StartupAction {
     ManagedDiscord,
     VoiceSelfTest(std::path::PathBuf),
     ProviderSelfTest(provider::QualificationTarget),
+    TextBenchmark(provider_self_test::benchmark::Options),
     FmManifestIdentity(std::path::PathBuf),
     ServerPlan(server::run::Options),
 }
@@ -610,6 +615,9 @@ fn parse_startup_arguments(
             return Err(provider_self_test_usage());
         }
         return Ok(StartupAction::ProviderSelfTest(target));
+    }
+    if mode == std::ffi::OsStr::new("--text-benchmark") {
+        return provider_self_test::benchmark::parse(arguments).map(StartupAction::TextBenchmark);
     }
     Err(format!(
         "unknown argument {mode:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav | --provider-self-test primary|fm|all --json | --server-plan PLAN.toml --guild ID [--stage additive|reveal|overwrites] [--category NAME] [--apply]]"
@@ -819,3 +827,35 @@ mod fm_identity_cli_tests {
 }
 
 mod community_ops;
+
+#[cfg(test)]
+mod text_benchmark_cli_tests {
+    use super::*;
+    #[test]
+    fn text_benchmark_is_an_explicit_non_discord_startup_action() {
+        let args = [
+            "--text-benchmark",
+            "compare",
+            "baseline.json",
+            "candidate.json",
+            "--json",
+        ]
+        .into_iter()
+        .map(std::ffi::OsString::from);
+        assert!(matches!(
+            parse_startup_arguments(args).unwrap(),
+            StartupAction::TextBenchmark(_)
+        ));
+        let invalid = [
+            "--text-benchmark",
+            "compare",
+            "baseline.json",
+            "candidate.json",
+            "--json",
+            "--managed-service",
+        ]
+        .into_iter()
+        .map(std::ffi::OsString::from);
+        assert!(parse_startup_arguments(invalid).is_err());
+    }
+}

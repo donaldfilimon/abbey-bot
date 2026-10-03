@@ -10,6 +10,9 @@ pub(crate) trait CommunityMaintenance: Send + Sync {
     ) -> impl std::future::Future<Output = Result<(), &'static str>> + Send;
 }
 
+#[cfg(test)]
+mod tests;
+
 impl AppState {
     /// Rolling channel summaries — the spec's "rolling 2k-token summary
     /// compressed via ABI". For every channel whose count is

@@ -38,24 +38,27 @@ pub(crate) fn decide_auto_listen(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // decision helper for the live oh-autolisten watcher; not yet wired
-pub(crate) enum WhilePresentGate {
-    Skip,
-    RemainPresent,
-    Activate,
+pub(crate) enum UpgradeDecision {
+    Noop,
+    Eligible,
 }
 
-#[allow(dead_code)] // see WhilePresentGate
-pub(crate) fn while_present_gate(
-    phase: VoicePhase,
-    decision: &AutoListenDecision,
-) -> WhilePresentGate {
-    if phase != VoicePhase::PresenceOnly {
-        return WhilePresentGate::Skip;
-    }
-    match decision {
-        AutoListenDecision::Ready => WhilePresentGate::Activate,
-        _ => WhilePresentGate::RemainPresent,
+/// The existing auto-listen decision owns opt-in, Local mode, roster and receipt
+/// coverage. Upgrade adds the current phase and independently refreshed permissions.
+pub(crate) struct UpgradeFacts<'a> {
+    pub phase: VoicePhase,
+    pub auto_listen: &'a AutoListenDecision,
+    pub current_permissions: bool,
+}
+
+pub(crate) fn decide_upgrade(facts: UpgradeFacts<'_>) -> UpgradeDecision {
+    if facts.phase == VoicePhase::PresenceOnly
+        && facts.current_permissions
+        && *facts.auto_listen == AutoListenDecision::Ready
+    {
+        UpgradeDecision::Eligible
+    } else {
+        UpgradeDecision::Noop
     }
 }
 
@@ -92,29 +95,63 @@ mod tests {
         );
     }
 
+    fn upgrade(
+        phase: VoicePhase,
+        decision: &AutoListenDecision,
+        permissions: bool,
+    ) -> UpgradeDecision {
+        decide_upgrade(UpgradeFacts {
+            phase,
+            auto_listen: decision,
+            current_permissions: permissions,
+        })
+    }
+
     #[test]
-    fn presence_only_ready_decision_is_the_only_activate_gate() {
-        let ready = AutoListenDecision::Ready;
-        let incomplete = AutoListenDecision::ConsentIncomplete(vec![1]);
+    fn auto_listen_current_permissions_are_required_for_presence_upgrade() {
         assert_eq!(
-            while_present_gate(VoicePhase::PresenceOnly, &ready),
-            WhilePresentGate::Activate
+            upgrade(VoicePhase::PresenceOnly, &AutoListenDecision::Ready, false),
+            UpgradeDecision::Noop
         );
         assert_eq!(
-            while_present_gate(VoicePhase::PresenceOnly, &incomplete),
-            WhilePresentGate::RemainPresent
+            upgrade(VoicePhase::PresenceOnly, &AutoListenDecision::Ready, true),
+            UpgradeDecision::Eligible
         );
-        assert_eq!(
-            while_present_gate(VoicePhase::Listening, &ready),
-            WhilePresentGate::Skip
-        );
-        assert_eq!(
-            while_present_gate(VoicePhase::Connecting, &ready),
-            WhilePresentGate::Skip
-        );
-        assert_eq!(
-            while_present_gate(VoicePhase::Disconnected, &ready),
-            WhilePresentGate::Skip
-        );
+    }
+
+    #[test]
+    fn auto_listen_phase_matrix_only_upgrades_presence() {
+        for phase in [
+            VoicePhase::Disconnected,
+            VoicePhase::Connecting,
+            VoicePhase::Listening,
+            VoicePhase::Thinking,
+            VoicePhase::Speaking,
+            VoicePhase::AwaitingConsent,
+            VoicePhase::Failed,
+        ] {
+            assert_eq!(
+                upgrade(phase, &AutoListenDecision::Ready, true),
+                UpgradeDecision::Noop,
+                "{phase:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_listen_upgrade_requires_every_existing_admission_fact() {
+        for decision in [
+            AutoListenDecision::Disabled,
+            AutoListenDecision::WrongMode(VoiceMode::Disabled),
+            AutoListenDecision::WrongMode(VoiceMode::OpenAi),
+            AutoListenDecision::EmptyChannel,
+            AutoListenDecision::ConsentUnavailable("unavailable"),
+            AutoListenDecision::ConsentIncomplete(vec![1]),
+        ] {
+            assert_eq!(
+                upgrade(VoicePhase::PresenceOnly, &decision, true),
+                UpgradeDecision::Noop
+            );
+        }
     }
 }

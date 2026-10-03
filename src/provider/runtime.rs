@@ -11,6 +11,7 @@ use crate::vision::{ConfiguredVision, ImageUnderstanding, VisionError};
 
 mod blocks;
 mod conversation;
+pub(crate) use conversation::ConversationSeed;
 mod fm_routes;
 mod identity;
 mod inspection;

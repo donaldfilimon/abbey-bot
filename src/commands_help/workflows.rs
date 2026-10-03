@@ -468,11 +468,21 @@ async fn run_modal(
     )
     .await;
     let text = answer.delivery_text(&data.state);
-    let (_, memory) = crate::commands::deliver_generated_reply(
-        &data.state,
-        answer.memory,
-        interaction.edit_response(&ctx.http, edit(text)),
-    )
+    let timing = answer.timing_for_delivery(&data.state);
+    let (_, memory) = crate::commands::deliver_generated_reply(&data.state, answer.memory, async {
+        let receipt = interaction
+            .edit_response(&ctx.http, edit(text))
+            .await
+            .inspect_err(|error| {
+                if let Some(timing) = &timing {
+                    timing.failed(crate::gateway::interaction_outcomes::serenity_category(
+                        error,
+                    ));
+                }
+            })?;
+        crate::commands::observe_generated_receipt(timing.as_ref(), receipt.id.get())?;
+        Ok::<_, crate::Error>(receipt)
+    })
     .await?;
     crate::memory_gate::deliver_notices(
         &data.state,

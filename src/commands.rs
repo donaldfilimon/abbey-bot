@@ -262,13 +262,18 @@ pub async fn ask(
     // answer, which is backwards.
     let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
     let text = reply.delivery_text(&ctx.data().state);
-    let delivery = deliver_generated_reply(
-        &ctx.data().state,
-        reply.memory,
-        ctx.say(clamp_message(text)),
-    )
+    let timing = reply.timing_for_delivery(&ctx.data().state);
+    let delivery = deliver_generated_reply(&ctx.data().state, reply.memory, async {
+        let receipt = ctx.say(clamp_message(text)).await?;
+        let message = receipt.message().await?;
+        observe_generated_receipt(timing.as_ref(), message.id.get())?;
+        Ok::<_, Error>(receipt)
+    })
     .await;
     if let Err(error) = &delivery {
+        if let Some(timing) = &timing {
+            timing.failed(crate::gateway::interaction_outcomes::category_of(error));
+        }
         crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, error);
     }
     let (_, memory) = delivery?;
@@ -341,13 +346,18 @@ pub async fn roleplay(
 
     let reply = answer_question(ctx, &prompt, Some(persona), Commit::Yes).await;
     let text = reply.delivery_text(&ctx.data().state);
-    let delivery = deliver_generated_reply(
-        &ctx.data().state,
-        reply.memory,
-        ctx.say(clamp_message(text)),
-    )
+    let timing = reply.timing_for_delivery(&ctx.data().state);
+    let delivery = deliver_generated_reply(&ctx.data().state, reply.memory, async {
+        let receipt = ctx.say(clamp_message(text)).await?;
+        let message = receipt.message().await?;
+        observe_generated_receipt(timing.as_ref(), message.id.get())?;
+        Ok::<_, Error>(receipt)
+    })
     .await;
     if let Err(error) = &delivery {
+        if let Some(timing) = &timing {
+            timing.failed(crate::gateway::interaction_outcomes::category_of(error));
+        }
         crate::gateway::interaction_outcomes::delivery_failed_from(&ctx.data().state, error);
     }
     let (_, memory) = delivery?;
@@ -361,33 +371,8 @@ pub async fn roleplay(
     Ok(())
 }
 
-/// Finish delivery before admitting queued model writes. Failed delivery
-/// cancels only this turn's still-queued writes and waits for any drain that
-/// already owns one; neither path can replay an effect. Both interactive
-/// generation surfaces use this boundary, while the pipeline owns its
-/// corresponding outbound boundary.
-pub(crate) async fn deliver_generated_reply<T, E>(
-    state: &AppState,
-    memory: crate::memory_gate::MemoryTurn,
-    delivery: impl std::future::Future<Output = Result<T, E>>,
-) -> Result<(T, crate::memory_gate::MemoryTurn), E> {
-    match delivery.await {
-        Ok(delivered) => {
-            if state.episode_gate.is_some() {
-                crate::memory_gate::drain(state).await;
-            }
-            Ok((delivered, memory))
-        }
-        Err(error) => {
-            crate::memory_gate::cancel_pending(state, &memory);
-            // An already-running drain is absent from the queue and remains
-            // authoritative. Wait for its bounded terminal result before this
-            // turn owner exits; the failed response leaves nowhere to post it.
-            let _ = memory.decisions().await;
-            Err(error)
-        }
-    }
-}
+mod generation_delivery;
+pub(crate) use generation_delivery::{deliver_generated_reply, observe_generated_receipt};
 
 /// Whether an answered question joins the channel's running transcript.
 ///
@@ -444,7 +429,7 @@ pub(crate) async fn answer_question_in_scope(
     commit: Commit,
 ) -> GeneratedReply {
     let memory = crate::memory_gate::MemoryTurn::default();
-    let (text, guard) = answer_question_with_memory(
+    let (text, guard, timing) = answer_question_with_memory(
         state, guild, channel, user, question, forced, commit, &memory,
     )
     .await;
@@ -452,6 +437,7 @@ pub(crate) async fn answer_question_in_scope(
         text,
         memory,
         guard,
+        timing,
     }
 }
 
@@ -459,9 +445,20 @@ pub(crate) struct GeneratedReply {
     pub text: String,
     pub memory: crate::memory_gate::MemoryTurn,
     guard: Option<generation::consent::GenerationGuard>,
+    timing: Option<generation::DeliveryTiming>,
 }
 
 impl GeneratedReply {
+    pub(crate) fn timing_for_delivery(
+        &self,
+        state: &AppState,
+    ) -> Option<generation::DeliveryTiming> {
+        self.guard
+            .as_ref()
+            .filter(|guard| guard.check(state).is_ok())
+            .and(self.timing.as_ref())
+            .cloned()
+    }
     pub(crate) fn delivery_text(&self, state: &AppState) -> String {
         if self
             .guard
@@ -485,7 +482,11 @@ pub(crate) async fn answer_question_with_memory(
     forced: Option<Persona>,
     commit: Commit,
     memory: &crate::memory_gate::MemoryTurn,
-) -> (String, Option<generation::consent::GenerationGuard>) {
+) -> (
+    String,
+    Option<generation::consent::GenerationGuard>,
+    Option<generation::DeliveryTiming>,
+) {
     let scope = format!("discord:{channel}");
     // Same composition the message pipeline uses, so `/persona ask` and an
     // ordinary message never disagree about identical text. Session stickiness
@@ -505,10 +506,10 @@ pub(crate) async fn answer_question_with_memory(
     let scoped_user = format!("discord:{user}");
     let now = runtime::now();
     if !reserve_ask(state, &scoped_user, now) {
-        return (ASK_COOLDOWN_REPLY.to_string(), None);
+        return (ASK_COOLDOWN_REPLY.to_string(), None, None);
     }
     match state.generation_label() {
-        None => (ask::degraded_reply(routed), None),
+        None => (ask::degraded_reply(routed), None, None),
         Some(backend_label) => {
             // Same per-channel transcript, memory context, and tool loop the
             // pipeline uses, so a slash-command question and a DM continue
@@ -534,7 +535,13 @@ pub(crate) async fn answer_question_with_memory(
                 },
             ) {
                 Ok(guard) => guard,
-                Err(error) => return (ask::render_failure(routed, backend_label, &error), None),
+                Err(error) => {
+                    return (
+                        ask::render_failure(routed, backend_label, &error),
+                        None,
+                        None,
+                    );
+                }
             };
             let mut host = runtime::ToolScope {
                 memory_turn: Some(memory),
@@ -566,9 +573,13 @@ pub(crate) async fn answer_question_with_memory(
                 .await
             };
             match outcome {
-                Ok((answer, persona, provider_label)) => {
+                Ok((answer, persona, provider_label, timing)) => {
                     if let Err(error) = guard.check(state) {
-                        return (ask::render_failure(routed, backend_label, &error), None);
+                        return (
+                            ask::render_failure(routed, backend_label, &error),
+                            None,
+                            None,
+                        );
                     }
                     if commit == Commit::Yes {
                         AppState::lock(&state.engine).commit(&scope, question, &answer, now);
@@ -576,11 +587,16 @@ pub(crate) async fn answer_question_with_memory(
                     (
                         ask::render_answer(persona, provider_label, &answer),
                         Some(guard),
+                        timing,
                     )
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, backend = backend_label, "slash-command generation failed");
-                    (ask::render_failure(routed, backend_label, &error), None)
+                    (
+                        ask::render_failure(routed, backend_label, &error),
+                        None,
+                        None,
+                    )
                 }
             }
         }

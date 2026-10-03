@@ -216,7 +216,7 @@ mod runtime_failure_tests {
                 let request = crate::llm::build_stream_request(&backend, "", &[], &[]);
                 let transport = HttpTransport::default();
                 let error = if streaming {
-                    let (sender, _) = tokio::sync::mpsc::unbounded_channel();
+                    let (sender, _) = crate::generation::stream_owner::channel();
                     transport.post_stream(&request, sender).await.unwrap_err()
                 } else {
                     transport.post(&request).await.unwrap_err()

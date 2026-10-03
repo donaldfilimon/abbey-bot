@@ -18,6 +18,20 @@ fn origin(scope: &EngagementScope) -> u64 {
         EngagementScope::Guild { channel, .. } | EngagementScope::Dm { channel, .. } => *channel,
     }
 }
+/// Missing remote proof is not an affirmative permission decision. Only an
+/// explicit access refusal or missing subject retires preflight admission.
+fn authorization_failure(error: serenity::Error) -> WorkError {
+    match error {
+        serenity::Error::Http(ref http)
+            if http
+                .status_code()
+                .is_some_and(|status| matches!(status.as_u16(), 403 | 404)) =>
+        {
+            WorkError::Denied
+        }
+        _ => WorkError::Missing,
+    }
+}
 impl DiscordEngagementDelivery {
     pub(super) async fn source(&self, source: &SourceRef) -> Result<String, WorkError> {
         if source.message == 0 || source.author == 0 || origin(&source.scope) == 0 {
@@ -71,7 +85,7 @@ impl DiscordEngagementDelivery {
                 self.0
                     .get_current_user()
                     .await
-                    .map_err(|_| WorkError::Denied)?
+                    .map_err(authorization_failure)?
                     .id
                     .get()
             }
@@ -89,7 +103,7 @@ impl DiscordEngagementDelivery {
                 let dm = UserId::new(member)
                     .create_dm_channel(&self.0)
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(authorization_failure)?;
                 if dm.id.get() != channel || dm.recipient.id.get() != member {
                     return Err(WorkError::Denied);
                 }
@@ -102,11 +116,11 @@ impl DiscordEngagementDelivery {
                 let guild = GuildId::new(guild)
                     .to_partial_guild(&self.0)
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(authorization_failure)?;
                 let native = ChannelId::new(channel)
                     .to_channel(&self.0)
                     .await
-                    .map_err(|_| WorkError::Denied)?
+                    .map_err(authorization_failure)?
                     .guild()
                     .ok_or(WorkError::Denied)?;
                 if native.guild_id != guild.id {
@@ -116,16 +130,16 @@ impl DiscordEngagementDelivery {
                     .0
                     .get_current_user()
                     .await
-                    .map_err(|_| WorkError::Denied)?
+                    .map_err(authorization_failure)?
                     .id;
                 let actor = guild
                     .member(&self.0, UserId::new(member))
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(authorization_failure)?;
                 let bot_member = guild
                     .member(&self.0, bot)
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(authorization_failure)?;
                 let thread = matches!(
                     native.kind,
                     ChannelType::PublicThread
@@ -142,7 +156,7 @@ impl DiscordEngagementDelivery {
                         .ok_or(WorkError::Denied)?
                         .to_channel(&self.0)
                         .await
-                        .map_err(|_| WorkError::Denied)?
+                        .map_err(authorization_failure)?
                         .guild()
                         .ok_or(WorkError::Denied)?;
                     if parent.guild_id != guild.id {
@@ -155,7 +169,7 @@ impl DiscordEngagementDelivery {
                                 .id
                                 .get_thread_member(&self.0, user, true)
                                 .await
-                                .map_err(|_| WorkError::Denied)?;
+                                .map_err(authorization_failure)?;
                             membership[index] = proof.user_id == user;
                         }
                     }
@@ -196,7 +210,7 @@ impl DiscordEngagementDelivery {
                     let dm = UserId::new(member)
                         .create_dm_channel(&self.0)
                         .await
-                        .map_err(|_| WorkError::Denied)?;
+                        .map_err(authorization_failure)?;
                     if dm.recipient.id.get() != member || dm.id.get() == channel {
                         return Err(WorkError::Denied);
                     }
@@ -437,7 +451,7 @@ impl EngagementTransport for DiscordEngagementDelivery {
             None,
         )
         .await
-        .map(|(text, _, _, _)| text)
+        .map(|(text, _, _, _, _)| text)
         .map_err(|_| WorkError::Denied)
     }
     async fn send(&self, channel: u64, body: &str) -> Result<u64, SendFailure> {

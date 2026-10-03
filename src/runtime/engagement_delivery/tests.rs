@@ -847,3 +847,5 @@ mod feedback_tests;
 
 #[path = "tests/admission_outcomes.rs"]
 mod admission_outcomes;
+
+mod plans;

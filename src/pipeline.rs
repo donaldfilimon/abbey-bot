@@ -24,6 +24,7 @@ use crate::generation::{Ask, Delivery, generate_read_only, generate_with_tools, 
 use crate::guild::{GuildSettings, ReplyCooldown};
 use crate::llm;
 use crate::memory::PersonaContext;
+use crate::outbound_failure::OutboundFailure;
 use crate::persona::Persona;
 use crate::platform::{OutboundMessage, RemoteAttachment, RouteDecision, SocialEvent, triage};
 use crate::routing_signals;
@@ -53,14 +54,14 @@ pub trait Outbound {
         &self,
         native_channel_id: &str,
         message: &OutboundMessage,
-    ) -> impl Future<Output = Result<String, String>> + Send;
+    ) -> impl Future<Output = Result<String, OutboundFailure>> + Send;
     fn typing(&self, native_channel_id: &str) -> impl Future<Output = ()> + Send;
     fn react(
         &self,
         native_channel_id: &str,
         native_message_id: &str,
         emoji: &str,
-    ) -> impl Future<Output = Result<(), String>> + Send;
+    ) -> impl Future<Output = Result<(), OutboundFailure>> + Send;
     /// Fetch an attachment's bytes (capped by the caller's `max`).
     fn fetch(&self, url: &str, max: usize) -> impl Future<Output = Result<Vec<u8>, String>> + Send;
     /// Replace the text of a message this bot sent (progressive replies).
@@ -69,7 +70,7 @@ pub trait Outbound {
         native_channel_id: &str,
         native_message_id: &str,
         text: &str,
-    ) -> impl Future<Output = Result<(), String>> + Send;
+    ) -> impl Future<Output = Result<(), OutboundFailure>> + Send;
 }
 
 /// What the pipeline did with an event — for logs and tests.
@@ -433,7 +434,7 @@ pub async fn handle<O: Outbound + Sync>(
             )
             .await
         {
-            return Outcome::ReplyFailed(e);
+            return Outcome::ReplyFailed(e.to_string());
         }
         // Learning-off participation does not enqueue training experiences.
         if settings.learning_enabled {
@@ -468,7 +469,7 @@ pub async fn handle<O: Outbound + Sync>(
         };
         return match out.send(&event.native_channel_id, &reply).await {
             Ok(_) => Outcome::Replied,
-            Err(e) => Outcome::ReplyFailed(e),
+            Err(e) => Outcome::ReplyFailed(e.to_string()),
         };
     };
 
@@ -509,7 +510,6 @@ pub async fn handle<O: Outbound + Sync>(
     };
     let reply_to = Some(event.native_message_id.clone());
     let memory_turn = crate::memory_gate::MemoryTurn::default();
-    let text_started = tokio::time::Instant::now();
     let generated = with_typing(out, &event.native_channel_id, async {
         // One local generation at a time; the typing indicator keeps going
         // while this turn waits for its slot. Tools are offered only when
@@ -544,11 +544,15 @@ pub async fn handle<O: Outbound + Sync>(
         }
     })
     .await;
-    let (answer, already_sent, persona, _provider_label) = match generated {
+    let (answer, already_sent, persona, _provider_label, delivery_timing) = match generated {
         Ok(triple) => triple,
         Err(e) => {
-            tracing::warn!(error = %e, backend = backend_label, "reply generation failed");
-            if forced {
+            if e.outbound_failure().is_some() {
+                tracing::warn!(error = %e, "reply delivery failed");
+            } else {
+                tracing::warn!(error = %e, backend = backend_label, "reply generation failed");
+            }
+            if forced && e.outbound_failure().is_none() {
                 // Someone addressed Abbey and waited; dead air is worse than
                 // the same honest failure line `/persona ask` already posts.
                 let failure = OutboundMessage {
@@ -558,6 +562,9 @@ pub async fn handle<O: Outbound + Sync>(
                 };
                 let delivered = out.send(&event.native_channel_id, &failure).await.is_ok();
                 finish_memory_turn(state, out, &event, memory_turn, delivered).await;
+            } else if forced {
+                // Finalize failed delivery ownership without a new send.
+                finish_memory_turn(state, out, &event, memory_turn, false).await;
             }
             return Outcome::ReplyFailed(e.to_string());
         }
@@ -583,31 +590,33 @@ pub async fn handle<O: Outbound + Sync>(
             if let Err(error) = guard.check(state) {
                 return Outcome::ReplyFailed(error.to_string());
             }
-            match out.send(&event.native_channel_id, &reply).await {
-                Ok(id) => {
-                    if event.network == crate::platform::SocialNetwork::Discord {
-                        crate::generation::timing::record(
-                            state,
-                            crate::observability::EventCode::DiscordFirstPost,
-                            crate::observability::EventOutcome::Succeeded,
-                            text_started.elapsed(),
+            let receipt = out
+                .send(&event.native_channel_id, &reply)
+                .await
+                .and_then(|id| {
+                    if id.trim().is_empty() {
+                        Err(OutboundFailure::new(
+                            crate::outbound_failure::OutboundFailureCategory::Internal,
+                            crate::outbound_failure::DeliveryCertainty::PossiblySent,
                             None,
-                        );
+                        ))
+                    } else {
+                        Ok(id)
+                    }
+                });
+            match receipt {
+                Ok(id) => {
+                    if let Some(timing) = &delivery_timing {
+                        timing.delivered();
                     }
                     id
                 }
                 Err(e) => {
-                    if event.network == crate::platform::SocialNetwork::Discord {
-                        crate::generation::timing::record(
-                            state,
-                            crate::observability::EventCode::DiscordPostFailure,
-                            crate::observability::EventOutcome::Failed,
-                            text_started.elapsed(),
-                            Some(crate::observability::OperationalErrorCategory::Unavailable),
-                        );
+                    if let Some(timing) = &delivery_timing {
+                        timing.failed(crate::generation::timing::delivery_category(&e));
                     }
                     finish_memory_turn(state, out, &event, memory_turn, false).await;
-                    return Outcome::ReplyFailed(e);
+                    return Outcome::ReplyFailed(e.to_string());
                 }
             }
         }
@@ -790,7 +799,7 @@ async fn welcome<O: Outbound + Sync>(
         .await
     {
         Ok(_) => Outcome::Welcomed,
-        Err(e) => Outcome::ReplyFailed(e),
+        Err(e) => Outcome::ReplyFailed(e.to_string()),
     }
 }
 
@@ -809,12 +818,12 @@ pub(crate) mod testing {
     }
 
     impl Outbound for FakeOut {
-        async fn send(&self, ch: &str, m: &OutboundMessage) -> Result<String, String> {
+        async fn send(&self, ch: &str, m: &OutboundMessage) -> Result<String, OutboundFailure> {
             self.sent.lock().unwrap().push((ch.to_string(), m.clone()));
             Ok(format!("sent-{}", self.sent.lock().unwrap().len()))
         }
         async fn typing(&self, _ch: &str) {}
-        async fn react(&self, ch: &str, id: &str, emoji: &str) -> Result<(), String> {
+        async fn react(&self, ch: &str, id: &str, emoji: &str) -> Result<(), OutboundFailure> {
             self.reacted
                 .lock()
                 .unwrap()
@@ -824,7 +833,7 @@ pub(crate) mod testing {
         async fn fetch(&self, _url: &str, _max: usize) -> Result<Vec<u8>, String> {
             Err("no network in tests".into())
         }
-        async fn edit(&self, ch: &str, id: &str, text: &str) -> Result<(), String> {
+        async fn edit(&self, ch: &str, id: &str, text: &str) -> Result<(), OutboundFailure> {
             self.edited
                 .lock()
                 .unwrap()

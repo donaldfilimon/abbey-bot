@@ -32,6 +32,7 @@ pub enum CommandKey {
     Webhook,
     ForumDraft,
     ForumPost,
+    ForumResolve,
     ForumPerms,
     EngageInvite,
     EngageIntroduce,
@@ -413,7 +414,7 @@ pub fn eligible(spec: &CommandSpec, input: &EligibilityInput, mode: EvaluationMo
 }
 pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
     let mut text = format!(
-        "**Abbey · {}**\nChoose a section. Commands below are permitted here; execution rechecks readiness.\n\n",
+        "**Abbey · {}**\nCommands permitted here recheck readiness on use.\n\n",
         section.label()
     );
     if section == HelpSection::Voice {
@@ -462,7 +463,7 @@ pub fn render_help(section: HelpSection, input: &EligibilityInput) -> String {
         }
         (false, false) => {}
     }
-    text.push_str("\nProvider health is checked when you run a command. Controls expire 15 minutes after opening; `/help` starts a new private session.");
+    text.push_str("\nProvider health is checked on use. Controls expire in 15 minutes; `/help` starts a new private session.");
     text
 }
 #[cfg(test)]

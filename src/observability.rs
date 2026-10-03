@@ -40,6 +40,7 @@ closed!(EventCode {
     GenerationQueue,
     GenerationFirstText,
     DiscordFirstPost,
+    DiscordFinalDelivered,
     DiscordPostFailure,
     GenerationCompleted,
     GenerationFailure,
@@ -52,6 +53,28 @@ closed!(EventCode {
     ShutdownCompleted,
     ShutdownFinalizing
 });
+/// Closed request stages; clocks and provider selection belong to infrastructure.
+#[derive(Clone, Copy)]
+pub(crate) enum TextStage {
+    QueueWait,
+    ProviderFirstText,
+    FirstVisible,
+    FinalDelivered,
+    Cancelled,
+    DeliveryFailed,
+}
+impl TextStage {
+    pub(crate) const fn code(self) -> EventCode {
+        match self {
+            Self::QueueWait => EventCode::GenerationQueue,
+            Self::ProviderFirstText => EventCode::GenerationFirstText,
+            Self::FirstVisible => EventCode::DiscordFirstPost,
+            Self::FinalDelivered => EventCode::DiscordFinalDelivered,
+            Self::Cancelled => EventCode::GenerationFailure,
+            Self::DeliveryFailed => EventCode::DiscordPostFailure,
+        }
+    }
+}
 closed!(EventOutcome {
     Started,
     Succeeded,

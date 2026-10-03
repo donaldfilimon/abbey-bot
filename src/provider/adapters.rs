@@ -115,6 +115,13 @@ impl TurnAdapter for FmCliAdapter {
         }
     }
     fn execute<'a>(&'a self, request: super::domain::AdapterRequest<'a>) -> TurnFuture<'a> {
+        self.execute_cancellable(request, tokio_util::sync::CancellationToken::new())
+    }
+    fn execute_cancellable<'a>(
+        &'a self,
+        request: super::domain::AdapterRequest<'a>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> TurnFuture<'a> {
         let (instructions, policy) = match request.split {
             Some(split) => (Some(split.instructions), split.policy),
             None => (None, request.system),
@@ -125,6 +132,7 @@ impl TurnAdapter for FmCliAdapter {
             request.turns,
             request.tools,
             request.call_id,
+            Some(cancel),
         ))
     }
 }
@@ -155,7 +163,7 @@ mod tests {
         async fn post_stream(
             &self,
             _: &llm::LlmRequest,
-            _: tokio::sync::mpsc::UnboundedSender<String>,
+            _: crate::generation::stream_owner::DeltaSender,
         ) -> Result<llm::ModelTurn, llm::LlmError> {
             panic!("nonstreaming regression must not stream")
         }

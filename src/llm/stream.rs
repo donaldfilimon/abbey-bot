@@ -313,7 +313,7 @@ pub trait StreamTransport {
     fn post_stream(
         &self,
         request: &LlmRequest,
-        on_delta: tokio::sync::mpsc::UnboundedSender<String>,
+        on_delta: crate::generation::stream_owner::DeltaSender,
     ) -> impl Future<Output = Result<ModelTurn, LlmError>> + Send;
 }
 
@@ -321,7 +321,7 @@ impl StreamTransport for HttpTransport {
     fn post_stream(
         &self,
         request: &LlmRequest,
-        on_delta: tokio::sync::mpsc::UnboundedSender<String>,
+        on_delta: crate::generation::stream_owner::DeltaSender,
     ) -> impl Future<Output = Result<ModelTurn, LlmError>> + Send {
         let mut builder = self
             .client_for(&request.url)
@@ -354,7 +354,7 @@ impl StreamTransport for HttpTransport {
 
             let mut stream = response.bytes_stream();
             let mut accumulator = SseAccumulator::default();
-            let mut full = String::new();
+
             let mut received = 0usize;
             while let Some(chunk) = stream.next().await {
                 let bytes = chunk.map_err(LlmError::transport)?;
@@ -367,8 +367,7 @@ impl StreamTransport for HttpTransport {
                     )));
                 }
                 for delta in accumulator.feed(&bytes)? {
-                    full.push_str(&delta);
-                    let _ = on_delta.send(delta);
+                    on_delta.send(delta)?;
                 }
                 if accumulator.is_done() {
                     break;
@@ -376,6 +375,7 @@ impl StreamTransport for HttpTransport {
             }
             accumulator.finish()?;
             let calls = accumulator.tool_calls()?;
+            let full = on_delta.snapshot()?;
             if full.trim().is_empty() && calls.is_empty() {
                 return Err(LlmError::backend(
                     "the stream carried no answer text".into(),

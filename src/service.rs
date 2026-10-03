@@ -71,6 +71,7 @@ pub enum OperationKind {
     ConsentPersistence,
     ProviderPersistence,
     ProviderProcess,
+    ProviderStream,
     MemoryDrain,
     WorkRecall,
     WorkDelivery,
@@ -306,6 +307,7 @@ impl ServiceSupervisor {
                 task.kind,
                 OwnedTaskKind::Operation(
                     OperationKind::ProviderProcess
+                        | OperationKind::ProviderStream
                         | OperationKind::MemoryDrain
                         | OperationKind::WorkRecall
                         | OperationKind::WorkDelivery

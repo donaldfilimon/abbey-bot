@@ -62,6 +62,7 @@ mod tests {
         waiter.abort();
         assert!(waiter.await.unwrap_err().is_cancelled());
         supervisor.begin_draining(ShutdownReason::Signal, Instant::now());
+        supervisor.request_cancellation();
         assert!(supervisor.operations().cancellation().is_cancelled());
         assert_eq!(supervisor.outstanding().len(), 1);
         assert_eq!(
@@ -80,7 +81,7 @@ mod tests {
             OwnedTaskKind::Operation(OperationKind::CommunityFilesystem)
         );
         assert_eq!(joined.exit, TaskExit::Returned);
-        assert!(joined.abort_requested);
+        assert!(!joined.abort_requested);
         assert!(supervisor.outstanding().is_empty());
         assert_eq!(supervisor.try_freeze(true), Ok(()));
         assert_eq!(

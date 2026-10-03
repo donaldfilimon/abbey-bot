@@ -9,6 +9,9 @@ struct Network {
 }
 impl Network {
     async fn new(deny_second: bool, cross_guild: bool) -> Self {
+        Self::with_member_failure(deny_second.then_some("403 Forbidden"), cross_guild).await
+    }
+    async fn with_member_failure(failure: Option<&'static str>, cross_guild: bool) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -61,8 +64,8 @@ impl Network {
                     serde_json::to_vec(&user).unwrap()
                 } else if route.contains("/members/") {
                     let id = route.rsplit('/').next().unwrap().parse::<u64>().unwrap();
-                    if deny_second && id == 5 {
-                        status = "403 Forbidden";
+                    if let Some(failure) = failure.filter(|_| id == 5) {
+                        status = failure;
                         serde_json::to_vec(
                             &serde_json::json!({"code":50013,"message":"fixture denied"}),
                         )
@@ -126,6 +129,28 @@ impl Network {
     async fn finish(self) {
         self.server.abort();
         assert!(self.server.await.unwrap_err().is_cancelled());
+    }
+}
+#[tokio::test]
+async fn introductions_discord_unavailable_proof_is_distinct_from_explicit_denial() {
+    for (status, expected) in [
+        ("403 Forbidden", WorkError::Denied),
+        ("404 Not Found", WorkError::Denied),
+        ("401 Unauthorized", WorkError::Missing),
+        ("429 Too Many Requests", WorkError::Missing),
+        ("503 Service Unavailable", WorkError::Missing),
+    ] {
+        let fixture = Network::with_member_failure(Some(status), false).await;
+        assert_eq!(
+            fixture.adapter.authorize(&reservation()).await,
+            Err(expected)
+        );
+        assert!(!fixture.requests.lock().unwrap().iter().any(|(route, _)| {
+            route.ends_with("/messages")
+                || route.contains("/users/2/channels")
+                || route.contains("/users/5/channels")
+        }));
+        fixture.finish().await;
     }
 }
 fn reservation() -> EngagementReservation {

@@ -169,6 +169,7 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/webhook` | guild | private | Show a safe incoming-webhook setup guide. |
 | `/forum draft` | guild | private | Suggest #help tags and preview a first-post template. |
 | `/forum post` | guild | private | Create a #help forum thread with a first-post template. |
+| `/forum resolve` | guild | private | Choose Solved/Unresolved for a forum post you own or manage. |
 | `/forum perms` | guild | private | Snapshot and gap-fill Abbey's #help forum overwrite bits. |
 | `/memory_use` | guild, bot DM | private | Privately review or change your generated-use consent; confirm an exact stored fact. |
 | `/remember` | guild, bot DM | private | Store a fact about yourself; generated-use consent is a separate choice. |
@@ -402,6 +403,74 @@ global updates propagate (up to an hour). It does not restrict conversations or
 memory to that guild. Each interaction uses its actual guild and user, and
 current permissions still govern server actions. Application ownership is
 resolved from Discord rather than a hardcoded account. See `.env.example`.
+
+### Synthetic text benchmark (operator only)
+
+`--text-benchmark` is an explicit measurement mode before Discord or canonical
+state startup. It attempts 24 deterministic short answers, 12 coding fixtures
+and 12 synthetic tool conversations. Its only tool result is a local fixture;
+it executes no production tools. It neither publishes capability qualification
+nor starts another gateway. Actual provider execution is an operator acceptance
+action, separate from source tests and deployment.
+
+After separately authorizing the run, select `primary` for the configured
+loopback OpenAI endpoint, or `fm-system` for the configured, already qualified
+on-device FM CLI. FM keeps its existing exact manifest admission and executable
+checks; the benchmark disables its server route and never falls back. PCC and
+cloud targets are excluded. Existing tools, queue, timeout and concurrency
+settings remain in force. Run the exact artifact being measured:
+
+```sh
+"$HOME/.local/libexec/abbey-bot/abbey-bot" --text-benchmark primary \
+  --installed-artifact "$HOME/.local/libexec/abbey-bot/abbey-bot" \
+  --model-sha256 MODEL_SHA256 --hardware-sha256 HARDWARE_SHA256 --json
+```
+
+The hashes are 64 lowercase hexadecimal characters. Model and hardware hashes
+are operator-declared identities for a fixed served model and hardware profile;
+the runner cannot attest them or prove which artifact the managed service is
+running. It verifies the named installed artifact bytes against the running
+executable and emits those remaining qualification gaps explicitly. Keep each
+baseline/candidate JSON receipt separately. Exit 0 means all 48 synthetic
+fixtures succeeded; exit 1 includes a failed or interrupted workload. Ctrl-C
+requests cancellation, awaits actual adapter cleanup (including FM child exit),
+and reports only the attempted probes against the planned 48.
+
+Each attempt is success, failure or incomplete; no-text is an additional count
+inside the full attempted denominator. Queue wait measures initial reservation
+to admission. Provider first-text measures the first nonempty streamed delta
+from the start of the adapter round that emitted it, including a tool
+continuation round. FM CLI has no streamed first-text observation. Provider
+completion measures first adapter start to the validated conversation result,
+including synthetic tool continuation and its later admission overhead. These
+origins are serialized in the receipt. Observed zero milliseconds is valid;
+missing measurements are null with closed reasons. No synthetic measurement
+is Discord first-visible or final-delivered, and this isolated runtime does
+not measure production contention or voice contention.
+
+Offline comparison performs no provider or gateway execution:
+
+```sh
+./target/release/abbey-bot --text-benchmark compare baseline.json candidate.json --json
+```
+
+Comparison recomputes bounded receipts, requires the complete matching
+workload/provider/model/hardware/OS population and each receipt's own artifact
+binding, and records deliberate baseline/candidate artifact changes. Failures,
+incomplete and no-text counts must each not increase; observed stage coverage
+must not decrease; each available stage's nearest-rank p95 must be at most
+1.10 times baseline. Each successful attempt must observe every applicable
+required stage, even when both receipts are equally sparse. The explicit
+measurement mode binds streaming applicability to the provider on both sides;
+a nonstreaming label cannot exempt an unobserved streaming stage. Inconsistent
+no-text successes refuse comparison. Failed or interrupted attempts may retain
+reasoned missing stages. Benchmark diagnostics remain off regardless of
+`RUST_LOG`, so stdout contains exactly one content-free JSON report.
+The separate six-case Discord witness population uses the same receipt schema;
+its six-observation p95 is the maximum, labeled a small-sample witness. It must
+come from separately authorized delivery observation. Synthetic comparisons
+qualify only their observed provider stages. Full text reliability acceptance
+still needs the six real Discord witnesses and separate contention evidence.
 
 Build a server from a plan file, from the operator's shell, never from a slash
 command:

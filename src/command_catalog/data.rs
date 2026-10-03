@@ -248,6 +248,17 @@ pub(super) const REGISTERED: &[CommandSpec] = work_catalog![
         "Create a #help forum thread with a first-post template."
     ),
     spec!(
+        ForumResolve,
+        Slash,
+        "forum resolve",
+        GUILD,
+        A0,
+        C0,
+        Server,
+        true,
+        "Choose Solved/Unresolved for a forum post you own or manage."
+    ),
+    spec!(
         ForumPerms,
         Slash,
         "forum perms",

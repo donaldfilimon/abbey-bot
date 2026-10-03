@@ -650,3 +650,23 @@ Discord and human voice acceptance remain separate.
 - [x] Task 5 source/publication verified: `deploy/configure-fm-primary.py`; `publish-provider-qualification.py --target fm` committed at `4fe623bfbdf2cefe6e3a03e88b9d6855129091f7`; exact-head [Gate (macOS)](https://github.com/donaldfilimon/abbey-bot/actions/runs/36644384359/job/109663833122) completed/success (2026-09-30 receipt). Current provider qualification and installed/live acceptance remain separate.
 - [ ] Task 6: CI `deploy-macos` job (qualify, install, SHA match, status)
 - [ ] Task 7: live switch to FM primary; Donald's Discord acceptance
+
+
+## 2026-10-02 chat-owned completion verification
+
+- [x] Reproduce and fix transient Discord introduction authorization proof handling; independently review typed engagement plans.
+- [x] Verify actual scheduler ownership/progress and fresh/replay publication failure/retry/restart regressions in the full Rust test suite (1,899 passed; eight live/operator exclusions).
+- [x] Fix the tracked Pages inventory regression and verify all 21 selector tests; verify Activity's 20 Node tests.
+- [x] Complete and independently review typed outbound failure plumbing and permission-checked forum resolution.
+- [x] Pass the recovered-candidate strict bot gate against a stable source snapshot and record source/installed identity separately (1,930 passed; eight exclusions; candidate differs from installed).
+- [ ] Finish WDBX, ABI and Abbey active source verification using each repository's full gate and independent review.
+- [ ] Obtain the separate required operator/provider/Discord/human acceptance receipts; do not infer these from source tests.
+
+## Completion program execution continuation
+
+- [x] Text Task1 closed actual-stage instrumentation, real cancellation and selected-provider attribution; independent review and strict gate1,935 passed/eight exclusions.
+- [x] Text Task3 retained/coalesced bounded producer, actual nonstream process cleanup and cancellation telemetry; independent review and strict gate1,944passed/eight exclusions.
+- [x] Text Task4 source deterministic48+6 reporting/comparison; independent review and strict gate1,960passed/eight exclusions. Installed/live baselines, witnesses and performance acceptance remain open.
+- [x] Voice Task1 pure production phase/permission upgrade and durable consent policy; independent review and stable combined strict gate1,966passed/eight exclusions.
+- [ ] Voice Tasks2–4, Learning, Continuity, Initiative and separate Community/Training-foundation gaps; installed/live/human evidence remains open.
+- [ ] All required installed/provider/Discord/platform/public Activity/human acceptance receipts.

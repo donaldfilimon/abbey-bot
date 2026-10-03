@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::ProviderCapabilities;
+use super::{ProviderCapabilities, ProviderFailureKind};
 use crate::llm::{ChatTurn, LlmError, ModelTurn};
 use crate::tools::ToolSpec;
 
@@ -281,7 +281,7 @@ pub struct AdapterRequest<'a> {
     pub tools: &'a [ToolSpec],
     pub call_id: &'a str,
     pub style: crate::llm::ResponseStyle,
-    pub deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    pub deltas: Option<crate::generation::stream_owner::DeltaSender>,
     /// `system` split for adapters that carry the persona out of band.
     pub split: Option<SplitPrompt<'a>>,
 }
@@ -309,6 +309,22 @@ pub trait TurnAdapter: Send + Sync {
     /// prompt is sent untrimmed.
     fn prompt_budget(&self) -> Option<crate::prompt_budget::Budget> {
         None
+    }
+
+    /// Cancellation ends ordinary async I/O. Process adapters override this
+    /// boundary to request termination and observe the actual child completion.
+    fn execute_cancellable<'a>(
+        &'a self,
+        request: AdapterRequest<'a>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> TurnFuture<'a> {
+        Box::pin(async move {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(LlmError::classified("provider attempt cancelled", ProviderFailureKind::Cancelled)),
+                result = self.execute(request) => result,
+            }
+        })
     }
 
     fn execute<'a>(&'a self, request: AdapterRequest<'a>) -> TurnFuture<'a> {

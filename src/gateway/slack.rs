@@ -5,6 +5,7 @@ use std::time::Duration;
 
 pub use crate::gateway::shared::PollLoop;
 use crate::gateway::shared::{SecretString, fetch_capped};
+use crate::outbound_failure::{DeliveryCertainty, OutboundFailure, OutboundFailureCategory};
 use crate::pipeline::{self, Outbound};
 use crate::platform::{self, OutboundMessage, SlackEnvelope};
 use crate::runtime::AppState;
@@ -14,6 +15,59 @@ use crate::runtime::AppState;
 pub struct SlackOutbound {
     bot_token: SecretString,
     client: reqwest::Client,
+}
+
+fn reqwest_delivery_failure(error: reqwest::Error) -> OutboundFailure {
+    if error.is_builder() {
+        OutboundFailure::new(
+            OutboundFailureCategory::Internal,
+            DeliveryCertainty::NotSent,
+            None,
+        )
+    } else if error.is_decode() {
+        OutboundFailure::new(
+            OutboundFailureCategory::Internal,
+            DeliveryCertainty::PossiblySent,
+            None,
+        )
+    } else {
+        OutboundFailure::new(
+            OutboundFailureCategory::Transport,
+            DeliveryCertainty::PossiblySent,
+            None,
+        )
+    }
+}
+
+fn slack_response_failure(
+    status: u16,
+    value: &serde_json::Value,
+    retry: Option<u64>,
+) -> OutboundFailure {
+    use DeliveryCertainty::{NotSent, PossiblySent};
+    use OutboundFailureCategory::{Capacity, Internal, Permission, RateLimited, Transport};
+    if (400..=599).contains(&status) {
+        return OutboundFailure::http(Some(status), retry);
+    }
+    let (category, certainty) =
+        if value.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+            match value.get("error").and_then(serde_json::Value::as_str) {
+                Some(
+                    "missing_scope" | "not_authed" | "invalid_auth" | "token_revoked"
+                    | "account_inactive" | "no_permission" | "restricted_action" | "not_in_channel"
+                    | "channel_not_found" | "is_archived",
+                ) => (Permission, NotSent),
+                Some("ratelimited" | "rate_limited") => (RateLimited, NotSent),
+                Some("msg_too_long") => (Capacity, NotSent),
+                Some(
+                    "internal_error" | "fatal_error" | "service_unavailable" | "request_timeout",
+                ) => (Transport, PossiblySent),
+                _ => (Internal, NotSent),
+            }
+        } else {
+            (Internal, PossiblySent)
+        };
+    OutboundFailure::new(category, certainty, retry)
 }
 
 impl SlackOutbound {
@@ -31,7 +85,7 @@ impl SlackOutbound {
         &self,
         method: &str,
         body: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, OutboundFailure> {
         let response = self
             .client
             .post(format!("https://slack.com/api/{method}"))
@@ -39,14 +93,24 @@ impl SlackOutbound {
             .json(body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        let value: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-        if value.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-            let err = value
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown");
-            return Err(format!("slack {method} failed: {err}"));
+            .map_err(reqwest_delivery_failure)?;
+        let status = response.status();
+        let retry = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        let value: serde_json::Value = response.json().await.map_err(|error| {
+            if !status.is_success() {
+                OutboundFailure::http(Some(status.as_u16()), retry)
+            } else {
+                reqwest_delivery_failure(error)
+            }
+        })?;
+        if !status.is_success()
+            || value.get("ok").and_then(serde_json::Value::as_bool) != Some(true)
+        {
+            return Err(slack_response_failure(status.as_u16(), &value, retry));
         }
         Ok(value)
     }
@@ -66,14 +130,21 @@ impl Outbound for SlackOutbound {
         &self,
         native_channel_id: &str,
         message: &OutboundMessage,
-    ) -> Result<String, String> {
+    ) -> Result<String, OutboundFailure> {
         let payload = platform::slack_post_message_payload(message, native_channel_id);
         let value = self.call("chat.postMessage", &payload).await?;
-        Ok(value
+        value
             .get("ts")
             .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string())
+            .filter(|id| !id.trim().is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                OutboundFailure::new(
+                    OutboundFailureCategory::Internal,
+                    DeliveryCertainty::PossiblySent,
+                    None,
+                )
+            })
     }
 
     async fn typing(&self, _native_channel_id: &str) {}
@@ -83,7 +154,7 @@ impl Outbound for SlackOutbound {
         native_channel_id: &str,
         native_message_id: &str,
         emoji: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutboundFailure> {
         let name = match emoji {
             "👍" => "+1",
             "❤️" | "❤" => "heart",
@@ -110,7 +181,7 @@ impl Outbound for SlackOutbound {
         native_channel_id: &str,
         native_message_id: &str,
         text: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), OutboundFailure> {
         self.call(
             "chat.update",
             &serde_json::json!({ "channel": native_channel_id, "ts": native_message_id, "text": text }),
@@ -287,6 +358,44 @@ fn slack_observed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slack_api_refusals_are_not_transport_outages() {
+        use crate::outbound_failure::{DeliveryCertainty, OutboundFailureCategory};
+        for (value, category, certainty) in [
+            (
+                serde_json::json!({"ok": false, "error": "missing_scope"}),
+                OutboundFailureCategory::Permission,
+                DeliveryCertainty::NotSent,
+            ),
+            (
+                serde_json::json!({"ok": false, "error": "ratelimited"}),
+                OutboundFailureCategory::RateLimited,
+                DeliveryCertainty::NotSent,
+            ),
+            (
+                serde_json::json!({"ok": false, "error": "internal_error"}),
+                OutboundFailureCategory::Transport,
+                DeliveryCertainty::PossiblySent,
+            ),
+            (
+                serde_json::json!({"ok": false, "error": "private-token-url"}),
+                OutboundFailureCategory::Internal,
+                DeliveryCertainty::NotSent,
+            ),
+            (
+                serde_json::json!({}),
+                OutboundFailureCategory::Internal,
+                DeliveryCertainty::PossiblySent,
+            ),
+        ] {
+            let failure = slack_response_failure(200, &value, Some(900));
+            assert_eq!(failure.category(), category);
+            assert_eq!(failure.certainty(), certainty);
+            assert_eq!(failure.retry_after_secs(), Some(300));
+            assert!(!format!("{failure:?} {failure}").contains("private-token-url"));
+        }
+    }
 
     #[test]
     fn poll_loop_durations_are_distinct() {

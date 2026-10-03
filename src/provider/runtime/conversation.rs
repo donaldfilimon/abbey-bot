@@ -1,9 +1,50 @@
 //! Conversation execution and effect-bound attempt ownership.
 use super::*;
 
+/// Owned route/effect descriptor. No permit or execution authority is cloned.
+pub(crate) struct ConversationSeed {
+    effects: ConversationEffects,
+    class: RequestClass,
+    streaming: bool,
+    local: bool,
+    same_host_only: bool,
+    initial: Option<ProviderId>,
+}
+impl ConversationSeed {
+    pub(crate) fn resume(self, runtime: &ProviderRuntime) -> ProviderConversation<'_> {
+        ProviderConversation {
+            runtime,
+            effects: self.effects,
+            class: self.class,
+            streaming: self.streaming,
+            local: self.local,
+            same_host_only: self.same_host_only,
+            initial: self.initial,
+            lease: None,
+        }
+    }
+}
 impl ProviderConversation<'_> {
+    pub(crate) fn seed(&self) -> ConversationSeed {
+        assert!(
+            self.lease.is_none(),
+            "retained producer alone reserves its attempt"
+        );
+        ConversationSeed {
+            effects: self.effects.clone(),
+            class: self.class,
+            streaming: self.streaming,
+            local: self.local,
+            same_host_only: self.same_host_only,
+            initial: self.initial.clone(),
+        }
+    }
+
     pub fn effects(&self) -> ConversationEffects {
         self.effects.clone()
+    }
+    pub fn selected_provider(&self) -> Option<ProviderId> {
+        lock(&self.effects.0).selected().cloned()
     }
     pub fn label(&self) -> &'static str {
         lock(&self.effects.0)
@@ -187,14 +228,17 @@ impl ProviderConversation<'_> {
         turns: &[ChatTurn],
         tools: &[crate::tools::ToolSpec],
         style: ResponseStyle,
-        deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        deltas: Option<crate::generation::stream_owner::DeltaSender>,
     ) -> Result<ModelTurn, LlmError> {
-        self.execute_request(system, turns, None, tools, style, deltas)
+        self.execute_request(system, turns, None, tools, style, deltas, None, None)
             .await
     }
     /// Execute split prompt parts: single-prompt adapters receive
     /// [`PromptParts::system`], and adapters that carry the persona out of
     /// band also receive its static instructions and per-request policy.
+    ///
+    /// `started` observes actual selected adapter execution after local prompt
+    /// construction. It does not run on a refused attempt.
     ///
     /// [`PromptParts::system`]: crate::prompt_budget::PromptParts::system
     pub async fn execute_parts(
@@ -202,16 +246,42 @@ impl ProviderConversation<'_> {
         parts: &crate::prompt_budget::PromptParts,
         tools: &[crate::tools::ToolSpec],
         style: ResponseStyle,
-        deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        deltas: Option<crate::generation::stream_owner::DeltaSender>,
+        started: Option<&(dyn Fn() + Send + Sync)>,
+    ) -> Result<ModelTurn, LlmError> {
+        self.execute_parts_cancellable(parts, tools, style, deltas, started, None)
+            .await
+    }
+    pub async fn execute_parts_cancellable(
+        &mut self,
+        parts: &crate::prompt_budget::PromptParts,
+        tools: &[crate::tools::ToolSpec],
+        style: ResponseStyle,
+        deltas: Option<crate::generation::stream_owner::DeltaSender>,
+        started: Option<&(dyn Fn() + Send + Sync)>,
+        cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<ModelTurn, LlmError> {
         let (system, instructions, policy) = (parts.system(), parts.instructions(), parts.policy());
         let split = super::super::domain::SplitPrompt {
             instructions: &instructions,
             policy: &policy,
         };
-        self.execute_request(&system, &parts.turns, Some(split), tools, style, deltas)
-            .await
+        self.execute_request(
+            &system,
+            &parts.turns,
+            Some(split),
+            tools,
+            style,
+            deltas,
+            started,
+            cancel,
+        )
+        .await
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "execution owns the start observer after local prompt construction"
+    )]
     async fn execute_request(
         &mut self,
         system: &str,
@@ -219,7 +289,9 @@ impl ProviderConversation<'_> {
         split: Option<super::super::domain::SplitPrompt<'_>>,
         tools: &[crate::tools::ToolSpec],
         style: ResponseStyle,
-        deltas: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        deltas: Option<crate::generation::stream_owner::DeltaSender>,
+        started: Option<&(dyn Fn() + Send + Sync)>,
+        cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<ModelTurn, LlmError> {
         self.reserve().await?;
         let mut lease = self.lease.take().expect("reserved attempt");
@@ -235,17 +307,32 @@ impl ProviderConversation<'_> {
                 ProviderFailureKind::InvalidRequest,
             ))
         } else if let Some(adapter) = &entry.adapter {
-            adapter
-                .execute(AdapterRequest {
-                    system,
-                    turns,
-                    tools,
-                    call_id: "runtime-turn",
-                    style,
-                    deltas,
-                    split,
-                })
-                .await
+            // Reservation, fitting and split-prompt construction precede this
+            // selected execution boundary. Notify once per actual adapter call.
+            if let Some(started) = started {
+                started();
+            }
+            let publisher = deltas.clone();
+            let request = AdapterRequest {
+                system,
+                turns,
+                tools,
+                call_id: "runtime-turn",
+                style,
+                deltas,
+                split,
+            };
+            let executed = match cancel {
+                Some(cancel) => adapter.execute_cancellable(request, cancel).await,
+                None => adapter.execute(request).await,
+            };
+            // Publication refusal is irreversible, even if an adapter ignores
+            // its send error and returns a schema-invalid or successful turn.
+            publisher
+                .as_ref()
+                .map_or(Ok(()), |sender| sender.check_capacity())
+                .and(executed)
+                .and_then(crate::generation::stream_owner::validate)
                 .and_then(|turn| {
                     if turn.text.trim().is_empty() && turn.calls.is_empty() {
                         Err(LlmError::backend(

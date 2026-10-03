@@ -9,6 +9,10 @@ use crate::{
 };
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
+mod plan;
+mod preflight;
+use plan::{DeliveryPlan, PlanAdmission};
+use preflight::PreflightOutcome;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthorizedDestination {
@@ -267,63 +271,32 @@ impl AppState {
                     .get(&id)
                     .cloned()
                     .ok_or(WorkError::Missing)?;
-                store
-                    .reserve(id, candidate.revision, now())
-                    .map(|r| (candidate, r))
-            };
-            let Ok((candidate, preview)) = preview else {
-                continue;
-            };
-            if candidate.kind == crate::engagement::EngagementKind::FollowUp
-                && self.follow_up_reduced(&candidate.scope, now())
-            {
-                continue;
-            }
-            if candidate.kind == crate::engagement::EngagementKind::VoiceInvite
-                && !self.voice_invitation_available(&candidate.scope)
-            {
-                self.commit_work_owned(|s| {
-                    let c = s
-                        .engagement
-                        .candidates
-                        .get_mut(&id)
-                        .ok_or(WorkError::Missing)?;
-                    if c.state == CandidateState::Pending && c.revision == candidate.revision {
-                        c.state = CandidateState::Rejected;
-                    }
-                    Ok(())
+                store.reserve(id, candidate.revision, now()).and_then(|r| {
+                    DeliveryPlan::resolve(&store, &candidate, &r).map(|plan| (candidate, r, plan))
                 })
-                .await?;
+            };
+            let Ok((candidate, preview, plan)) = preview else {
                 continue;
+            };
+            match plan.admission(&self, &candidate, now()) {
+                PlanAdmission::Ready => {}
+                PlanAdmission::Deferred => continue,
+                PlanAdmission::Rejected => {
+                    self.commit_work_owned(|s| plan.reject_pending(&mut s.engagement, &candidate))
+                        .await?;
+                    continue;
+                }
             }
-            let destination = match final_bounded(&cancel, transport.authorize(&preview)).await {
-                Ok(d) if matches(&preview, &d) => d,
-                Err(FinalCheckFailure::Cancelled | FinalCheckFailure::Timeout)
-                | Err(FinalCheckFailure::Failed(
-                    WorkError::Missing | WorkError::Persistence | WorkError::Full,
-                )) => continue,
-                _ => {
-                    self.commit_work_owned(|s| {
-                        let c = s
-                            .engagement
-                            .candidates
-                            .get_mut(&id)
-                            .ok_or(WorkError::Missing)?;
-                        if c.state == CandidateState::Pending && c.revision == candidate.revision {
-                            c.state = CandidateState::Rejected;
-                            if let Some(intro) = c.introduction_id {
-                                let i = s
-                                    .engagement
-                                    .introductions
-                                    .get_mut(&intro)
-                                    .ok_or(WorkError::Missing)?;
-                                i.state = crate::engagement::IntroductionState::Cancelled;
-                                i.approvals = [None; 2];
-                            }
-                        }
-                        Ok(())
-                    })
-                    .await?;
+            let destination = match preflight::authorize(transport, &preview, &cancel).await {
+                PreflightOutcome::Authorized(destination) => destination,
+                // No attempt exists: temporary missing proof, cancellation and
+                // deadline leave the candidate and any mutual approvals intact.
+                PreflightOutcome::Unavailable
+                | PreflightOutcome::Cancelled
+                | PreflightOutcome::Timeout => continue,
+                PreflightOutcome::Rejected => {
+                    self.commit_work_owned(|s| plan.reject_pending(&mut s.engagement, &candidate))
+                        .await?;
                     continue;
                 }
             };
@@ -334,8 +307,8 @@ impl AppState {
             let reservation = match self
                 .commit_work_owned(|s| {
                     if cancel.is_cancelled()
-                        || (candidate.kind == crate::engagement::EngagementKind::FollowUp
-                            && self.follow_up_reduced(&candidate.scope, now()))
+                        || plan.reduced(&self, &candidate, now())
+                        || !plan.evidence_current(&s.engagement, &candidate)
                     {
                         return Err(WorkError::Denied);
                     }
@@ -359,35 +332,9 @@ impl AppState {
                 crate::observability::EventCode::EngagementQueue,
                 Duration::from_secs(now().saturating_sub(candidate.due_at)),
             );
-            let response = candidate.source.as_ref().and_then(|s| {
-                Self::lock(&self.stores)
-                    .work
-                    .engagement
-                    .responses
-                    .get(&s.message)
-                    .copied()
-            });
-            let community = crate::engagement::community::feature(candidate.kind).is_some();
-            let introduction = reservation.introduction.as_ref();
-            let hydrated = if let Some(snapshot) = introduction {
-                crate::engagement::introductions::publication(&snapshot.introduction)
-            } else if community {
-                bounded(&cancel, transport.hydrate_community(&self, &candidate)).await
-            } else if let Some(response) = response {
-                bounded(&cancel, transport.hydrate_exchange(&candidate, response)).await
-            } else {
-                bounded(&cancel, transport.hydrate(&candidate)).await
-            };
-            let body = match hydrated {
-                Ok(text) if !text.trim().is_empty() => {
-                    if introduction.is_some() {
-                        Ok(text)
-                    } else {
-                        tokio::select! { biased; () = cancel.cancelled() => Err(WorkError::Denied), body = transport.generate(&self,&candidate,&text,now()) => body }
-                    }
-                }
-                _ => Err(WorkError::Denied),
-            };
+            let body = plan
+                .body(&self, transport, &candidate, &cancel, now())
+                .await;
             let mut error = body.as_ref().err().and_then(|error| work_failure(*error));
             let malformed_body = body
                 .as_ref()
@@ -396,77 +343,26 @@ impl AppState {
                 && !body.trim().is_empty()
                 && body.chars().count() <= 1900
             {
-                let source_check = if let Some(source) = &candidate.source {
-                    final_bounded(&cancel, transport.source_exists(source))
-                        .await
-                        .and_then(verified)
-                } else {
-                    let stores = Self::lock(&self.stores);
-                    verified(
-                        stores
-                            .work
-                            .engagement
-                            .introduction_receipt_current(&stores.work.engagement.candidates[&id])
-                            || stores
-                                .work
-                                .engagement
-                                .invitation_receipt_current(&candidate)
-                            || (community
-                                && stores.work.engagement.community_receipt_current(&candidate)),
-                    )
-                };
-                let exchange_check = if introduction.is_some() {
-                    Ok(())
-                } else if community {
-                    final_bounded(&cancel, transport.community_current(&self, &candidate))
-                        .await
-                        .and_then(verified)
-                } else {
-                    final_bounded(&cancel, transport.candidate_current(&candidate, response))
-                        .await
-                        .and_then(verified)
-                };
-                let activity_check =
-                    if candidate.kind == crate::engagement::EngagementKind::ActivityInvite {
-                        final_bounded(
-                            &cancel,
-                            super::activity_readiness::candidate_activity(&self, &candidate, now()),
-                        )
-                        .await
-                        .map(|_| ())
-                    } else {
-                        Ok(())
-                    };
+                let proof = plan
+                    .prove(&self, transport, &candidate, &cancel, now())
+                    .await;
                 // Recipient access must be fresher than every external source proof.
                 let fresh = final_bounded(&cancel, transport.authorize(&reservation))
                     .await
                     .and_then(|d| verified(d == destination && matches(&reservation, &d)));
-                let checked = source_check
-                    .and(exchange_check)
-                    .and(activity_check)
-                    .and(fresh)
-                    .and_then(|()| {
-                        if cancel.is_cancelled() {
-                            return Err(FinalCheckFailure::Cancelled);
-                        }
-                        if candidate.kind == crate::engagement::EngagementKind::VoiceInvite
-                            && !self.voice_invitation_available(&candidate.scope)
-                        {
-                            // This readiness boolean does not retain a specific failure cause.
-                            return Err(FinalCheckFailure::Failed(WorkError::Denied));
-                        }
-                        verified(
-                            candidate.kind != crate::engagement::EngagementKind::FollowUp
-                                || !self.follow_up_reduced(&candidate.scope, now()),
-                        )?;
-                        self.engagement_guild_check(&candidate.scope, now(), false)
-                            .map_err(FinalCheckFailure::policy)?;
-                        Self::lock(&self.stores)
-                            .work
-                            .engagement
-                            .validate_reserved(&reservation, now())
-                            .map_err(FinalCheckFailure::policy)
-                    });
+                let checked = proof.and(fresh).and_then(|()| {
+                    if cancel.is_cancelled() {
+                        return Err(FinalCheckFailure::Cancelled);
+                    }
+                    plan.ready_after_proofs(&self, &candidate, now())?;
+                    self.engagement_guild_check(&candidate.scope, now(), false)
+                        .map_err(FinalCheckFailure::policy)?;
+                    Self::lock(&self.stores)
+                        .work
+                        .engagement
+                        .validate_reserved(&reservation, now())
+                        .map_err(FinalCheckFailure::policy)
+                });
                 if checked.is_ok() {
                     let send = tokio::select! {
                         biased;

@@ -197,11 +197,110 @@ async fn blocked_initial_policy_proof_times_out_before_generation_dispatch() {
             &CancellationToken::new(),
             &policy,
             "digest",
-            || std::future::pending::<Result<(Policy, String), &'static str>>(),
+            std::future::pending::<Result<(Policy, String), &'static str>>,
         ),
     )
     .await
     .unwrap();
     assert_eq!(result, Err(AssessmentOutcome::Cancelled));
     assert_eq!(fake.calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn stalled_periodic_policy_proof_cancels_one_inflight_generation_without_drafts() {
+    struct Pending(AtomicUsize);
+    impl LocalGenerator for Pending {
+        fn ready(&self) -> bool {
+            true
+        }
+        async fn generate(&self, _: &str) -> Result<String, &'static str> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            std::future::pending().await
+        }
+    }
+    let (policy, _, _, _) = fixture();
+    let generator = Pending(AtomicUsize::new(0));
+    let checks = std::cell::Cell::new(0);
+    let (entered, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+    let operation = generate(
+        &generator,
+        "public metadata",
+        &cancel,
+        &policy,
+        "digest",
+        || {
+            checks.set(checks.get() + 1);
+            let block = checks.get() >= 3;
+            let policy = policy.clone();
+            let entered = entered.clone();
+            async move {
+                if block {
+                    entered.send(()).unwrap();
+                    std::future::pending::<()>().await;
+                }
+                Ok((policy, "digest".into()))
+            }
+        },
+    );
+    tokio::pin!(operation);
+    tokio::select! {
+        result = &mut operation => panic!("generation ended before stalled periodic proof: {result:?}"),
+        result = observed.recv() => assert_eq!(result, Some(())),
+        () = tokio::time::sleep(Duration::from_secs(2)) => panic!("periodic proof was never attempted"),
+    }
+    assert_eq!(generator.0.load(Ordering::Relaxed), 1);
+    cancel.cancel();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(750), operation)
+            .await
+            .unwrap(),
+        Err(AssessmentOutcome::Cancelled)
+    );
+    assert_eq!(generator.0.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn stalled_final_policy_proof_discards_completed_valid_generation() {
+    struct Complete(AtomicUsize);
+    impl LocalGenerator for Complete {
+        fn ready(&self) -> bool {
+            true
+        }
+        async fn generate(&self, _: &str) -> Result<String, &'static str> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok(r#"{"version":1,"proposals":[]}"#.into())
+        }
+    }
+    let (policy, _, _, _) = fixture();
+    let generator = Complete(AtomicUsize::new(0));
+    let final_checks = std::cell::Cell::new(0);
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        generate(
+            &generator,
+            "public metadata",
+            &CancellationToken::new(),
+            &policy,
+            "digest",
+            || {
+                let completed = generator.0.load(Ordering::Relaxed) == 1;
+                if completed {
+                    final_checks.set(final_checks.get() + 1);
+                }
+                let policy = policy.clone();
+                async move {
+                    if completed {
+                        std::future::pending::<()>().await;
+                    }
+                    Ok((policy, "digest".into()))
+                }
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, Err(AssessmentOutcome::Cancelled));
+    assert_eq!(final_checks.get(), 1);
+    assert_eq!(generator.0.load(Ordering::Relaxed), 1);
 }

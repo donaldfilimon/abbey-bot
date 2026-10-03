@@ -8,19 +8,23 @@ pub(super) async fn run(
     terminal: &mut service::shutdown::TerminalBoundary,
 ) -> Result<(), Error> {
     tracing_subscriber::fmt()
-        .with_env_filter(if managed.is_some() {
-            // Managed (launchd) runs emit no tracing at all: the closed
-            // operational events in `observability` are the sole record, and
-            // the agent routes stdout/stderr to /dev/null anyway. `RUST_LOG`
-            // in deploy/com.donaldfilimon.abbey-bot.plist is therefore inert
-            // for this path — raising it will not produce diagnostics, so a
-            // managed failure must carry its cause as an
-            // `OperationalErrorCategory` on the event instead.
-            tracing_subscriber::EnvFilter::new("off")
-        } else {
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-        })
+        .with_env_filter(
+            if managed.is_some() || matches!(&startup, StartupAction::TextBenchmark(_)) {
+                // Managed (launchd) runs emit no tracing at all: the closed
+                // operational events in `observability` are the sole record, and
+                // the agent routes stdout/stderr to /dev/null anyway. `RUST_LOG`
+                // in deploy/com.donaldfilimon.abbey-bot.plist is therefore inert
+                // for this path — raising it will not produce diagnostics, so a
+                // managed failure must carry its cause as an
+                // `OperationalErrorCategory` on the event instead.
+                // Benchmark stdout is one content-free JSON report. Ambient
+                // RUST_LOG must not enable endpoint/request-bearing adapter logs.
+                tracing_subscriber::EnvFilter::new("off")
+            } else {
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+            },
+        )
         .init();
 
     match startup {
@@ -71,8 +75,14 @@ pub(super) async fn run(
             }
             return Ok(());
         }
+        StartupAction::TextBenchmark(options) => {
+            let code = provider_self_test::benchmark::run(options).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            return Ok(());
+        }
     }
-
     let mut supervisor = service::ServiceSupervisor::new();
     let signal = shutdown_signal();
     tokio::pin!(signal);

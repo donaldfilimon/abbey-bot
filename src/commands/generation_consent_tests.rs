@@ -27,6 +27,7 @@ fn personal_memory_adapter_slash_delivery_rechecks_captured_exposure() {
         text: "PREPARED_PRIVATE_ANSWER".into(),
         memory: Default::default(),
         guard: Some(guard),
+        timing: None,
     };
     assert_eq!(reply.delivery_text(&state), "PREPARED_PRIVATE_ANSWER");
     state
