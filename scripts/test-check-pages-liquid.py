@@ -473,6 +473,19 @@ class MarkdownFilesTests(unittest.TestCase):
             "docs/superpowers/specs/2026-10-01-mlai-release-qualification-design.md",
             "docs/superpowers/specs/2026-10-01-mlai-text-reliability-design.md",
             "docs/superpowers/specs/2026-10-01-mlai-voice-completion-design.md",
+            "docs/superpowers/plans/2026-10-03-community-shadow-source.md",
+            "docs/superpowers/plans/2026-10-03-full-source-review.md",
+            "docs/superpowers/plans/2026-10-03-mlai-activity-source-package.md",
+            "docs/superpowers/specs/2026-10-03-community-shadow-source.md",
+            "docs/superpowers/specs/2026-10-03-initiative-native-admission.md",
+            "docs/superpowers/specs/2026-10-03-mlai-activity-source-package-design.md",
+            "docs/superpowers/specs/2026-10-03-native-authorization-proof-design.md",
+            "docs/verification/2026-10-03-community-activity-source.md",
+            "docs/verification/2026-10-03-continuity-domain.md",
+            "docs/verification/2026-10-03-continuity-integration.md",
+            "docs/verification/2026-10-03-full-source-review.md",
+            "docs/verification/2026-10-03-initiative-source.md",
+            "docs/verification/2026-10-03-learning-quality-v1.md",
         }
         self.assertEqual(selected, expected)
 
