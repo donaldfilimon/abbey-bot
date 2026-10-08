@@ -264,6 +264,7 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
             // so a pre-addenda document loads with no ledgers.
             "addenda",
             "brains",
+            "continuity",
             "events",
             "guilds",
             "memory",
@@ -274,6 +275,7 @@ fn canonical_and_wdbx_file_contracts_remain_compatible() {
             // and no `deny_unknown_fields`, so files cross both ways between builds.
             "memory_receipts",
             "pending_rewards",
+            "reward_recovery",
             "reputations",
             // Chief-of-staff records are canonical; older state files load an
             // empty work store through the field default.
@@ -727,3 +729,6 @@ fn owning_save_advances_lineage_but_stale_clone_does_not() {
     );
     fs::remove_dir_all(dir).unwrap();
 }
+
+mod continuity;
+mod reward_recovery;

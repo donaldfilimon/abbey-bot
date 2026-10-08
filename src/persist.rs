@@ -258,7 +258,12 @@ pub fn persist_canonical(
     )
     .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
     let encoded = serde_json::to_vec(stores).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
-    serde_json::from_slice::<Stores>(&encoded).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    let checked = serde_json::from_slice::<Stores>(&encoded)
+        .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    checked
+        .reward_recovery
+        .validate(&checked.pending_rewards)
+        .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
     let owner =
         personal_memory::lease(directory).map_err(|_| PersistErrorCategory::CreateTemporary)?;
     let marker =
@@ -275,7 +280,7 @@ pub(crate) fn persist_canonical_owned(
     directory: &Path,
     stores: &Stores,
 ) -> Result<(), PersistErrorCategory> {
-    if !owner.owns(directory) {
+    if stores.canonical_preparation_failed || !owner.owns(directory) {
         return Err(PersistErrorCategory::SnapshotEncode);
     }
     crate::personal_memory::validate_metadata(
@@ -288,7 +293,12 @@ pub(crate) fn persist_canonical_owned(
         return Err(PersistErrorCategory::SnapshotEncode);
     }
     let bytes = serde_json::to_vec(stores).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
-    serde_json::from_slice::<Stores>(&bytes).map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    let checked = serde_json::from_slice::<Stores>(&bytes)
+        .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
+    checked
+        .reward_recovery
+        .validate(&checked.pending_rewards)
+        .map_err(|_| PersistErrorCategory::SnapshotEncode)?;
     sink.publish(directory, &Stores::state_path(directory), &bytes)?;
     // Update only this snapshot's lineage. Clone performs a deep copy of this cell.
     if std::fs::read(Stores::state_path(directory)).is_ok_and(|actual| actual == bytes) {
@@ -524,6 +534,9 @@ pub struct Stores {
     /// Exact canonical bytes this in-memory image descends from; never serialized.
     #[serde(skip)]
     pub(crate) canonical_base: CanonicalBase,
+    /// Snapshot-only preparation failure; never durable data or a live-state flag.
+    #[serde(skip)]
+    pub(crate) canonical_preparation_failed: bool,
     #[serde(default)]
     pub personal_memory: BTreeMap<String, crate::personal_memory::PersonalMemorySubject>,
     #[serde(default)]
@@ -531,6 +544,9 @@ pub struct Stores {
     /// Canonical chief-of-staff work state. A pre-feature document loads empty.
     #[serde(default)]
     pub work: crate::work::WorkStore,
+    /// Confirmed cards only; the proposal registry is process-local shell state.
+    #[serde(default)]
+    pub continuity: crate::work::continuity::ContinuityStore,
     #[serde(default)]
     pub guilds: BTreeMap<String, GuildSettings>,
     #[serde(default)]
@@ -544,8 +560,10 @@ pub struct Stores {
     pub events: Vec<ReputationEvent>,
     /// Replies still inside their 150 s settlement window at the last
     /// persist, so a restart does not drop their rewards.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::brain::reward::pending_rows")]
     pub pending_rewards: Vec<(String, crate::brain::reward::Pending)>,
+    #[serde(default)]
+    pub reward_recovery: crate::brain::reward::RewardRecovery,
     #[serde(default)]
     pub memory: MemoryBank,
     /// `0` is the historical two-authority layout. Version `1` means
@@ -580,11 +598,13 @@ impl Stores {
         self.personal_memory == other.personal_memory
             && self.personal_memory_exposure == other.personal_memory_exposure
             && self.work == other.work
+            && self.continuity == other.continuity
             && self.guilds == other.guilds
             && self.brains == other.brains
             && self.reputations == other.reputations
             && self.events == other.events
             && self.pending_rewards == other.pending_rewards
+            && self.reward_recovery == other.reward_recovery
             && self.memory == other.memory
             && self.memory_projection_version == other.memory_projection_version
             && self.memory_receipts == other.memory_receipts
@@ -663,6 +683,14 @@ impl Stores {
             path: Self::state_path(dir),
             source: io::Error::other("unsupported or invalid personal memory metadata"),
         })?;
+        stores
+            .reward_recovery
+            .validate(&stores.pending_rewards)
+            .map_err(|_| PersistError::Io {
+                op: "invalid-reward-recovery",
+                path: Self::state_path(dir),
+                source: io::Error::other("invalid reward recovery metadata"),
+            })?;
         use sha2::Digest;
         stores.canonical_base.set(Some(
             sha2::Sha256::digest(text.as_bytes())
@@ -672,6 +700,9 @@ impl Stores {
         ));
         stores.work.actions.mark_interrupted();
         stores.work.mark_interrupted_deliveries();
+        stores
+            .continuity
+            .prune_current(&stores.work, crate::runtime::now());
         Ok(stores)
     }
 
@@ -753,6 +784,7 @@ pub(crate) mod tests;
 
 pub(crate) mod community_ops;
 pub(crate) mod community_proposals;
+pub(crate) mod moderation_shadow;
 mod owned_file;
 
 pub(crate) mod personal_memory;

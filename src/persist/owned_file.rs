@@ -33,6 +33,11 @@ impl OwnedFile {
         inject(Some(path), Fault::DirectorySync)?;
         File::open(path)?.sync_all()
     }
+    pub(super) fn read_back(path: &Path) -> io::Result<Vec<u8>> {
+        #[cfg(test)]
+        inject(Some(path), Fault::Readback)?;
+        fs::read(path)
+    }
     pub(super) fn published(&mut self) {
         self.0 = None;
     }
@@ -51,6 +56,7 @@ pub(super) enum Fault {
     Write,
     Sync,
     DirectorySync,
+    Readback,
 }
 #[cfg(test)]
 thread_local! {

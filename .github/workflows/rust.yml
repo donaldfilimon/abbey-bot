@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: donaldfilimon/wdbx
-          ref: 9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae
+          ref: 7ddeb3d1389ec0e9fab5ac5397acf0da91a01174
           path: wdbx
           persist-credentials: false
       - name: Choose this run's build directory

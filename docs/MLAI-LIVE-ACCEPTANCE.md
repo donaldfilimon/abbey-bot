@@ -633,3 +633,256 @@ Stable combined source gate executed by the nonce owner and verified by this con
 Complete source identity: HEAD a48379ba3e60535d4141ab84958b1e54a03630c6,773inputs,SHA2569d6e4bb7d0e22f05d06f2db8bbedcfed6aaaacbfba267d62334383da19434ee9, stable. Owner captured767regular inputs before/after; controller reconstructed the complete pre manifest with6excluded instruction/skill inputs from its exact prior manifest, verifying every excluded hash/mode unchanged and modification before the owner pre-gate receipt. This complete773-input pre matches the controller in-gate observation and complete post byte/hash/mode manifest. Reconstruction provenance preserved in the Voice plan workspace; no claim that the owner’s partial manifest was complete.
 
 Release candidate SHA256598a02a58cb8cc75a7a272a3f36e5a03d68222c6836f5af70989b979ad78f629 differs installedb965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9. Source/offline qualification does not establish installed identity, actual FM/provider qualification, six Discord delivery witnesses, human voice8cases, measured performance, watcher service readiness or Windows runtime. No deployment/restart/live server/provider action/commit occurred here. Overall program remains Partial. These completion-record edits follow the frozen gate; they do not certify a new complete-input fingerprint.
+
+
+### 2026-10-02 Voice Task2 source qualification
+
+Current source: original activation token now survives both live permission lookups, retained dispatch before first poll, and startup output-only fallback. Stale attempts cannot reserve or publish Presence after leave, withdrawal, replacement or draining; an old fallback error cannot cancel a newer start. Existing retained owner joins, final persistence at most once, consent policy and Pass/self-deaf behavior remain. Independent spec and quality review approved the eight-file implementation and reviewed the 985-line lifecycle boundary.
+
+Verification: genuine held-future RED failures followed by auto-listen11/fallback4/voice-session65/service62/actual retained-owner1 GREEN. First strict run exited1 on the Pages inventory after the completion audit was externally staged; source remained stable. One expected inventory entry was added,21 selector tests and scoped rereview passed. Corrected strict command `CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=1 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0:1,977Rust passed/0failed/8ignored,334printed Python cases,Swift12+16,Clippy,required pinned WDBX fixture,locked release4m12 and actual offline benchmark startup1passed (48successful synthetic probes/60localhost calls). Rust suite254.40s. Accepted security debt remains five vulnerabilities; audit is not clean. Full gate log/result and complete per-file before/after manifests preserved in Voice task2-qualified-evidence.
+
+Complete stable snapshot:776inputs,SHA256c398557d35ae0bb23495bcaf0527fdf7a764afe18f18664453bc599996ef1aa2,HEADe742375ff9b3d20b97df09c7fad10c1225ae957c. The HEAD/index changed externally during implementation; this controller performed no Git mutation, preserved that state, and reconciled complete source manifests. Only eight reviewed Voice files, four completion records and the reviewed inventory fix changed since the preceding qualified source snapshot.
+
+Built candidate SHA2569a077724b0de609547e803c30f472455263f363218a3d732ac35ef30cec4d2c7 differs from installedb965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9. No deployment/restart/live provider/server/human voice action occurred here. Voice timing/matrix Task3, operator/witness Task4, Learning/Continuity/Initiative and separate Community/Training-foundation source gaps remain open. Installed/provider/Discord/platform/public Activity/human acceptance is separate. These completion-record edits follow the frozen gate and do not certify a new complete-source fingerprint.
+
+
+### 2026-10-02 Voice Task3 source qualification
+
+Current source: closed content-free recognition, generation and synthesis timing events now report observed success, failure, cancellation and timeout through the existing retained telemetry owner. Generation measures the full attempt, including preparation, guards, queueing and finalization; its event is not proof that a provider ran. Fixed operational replies produce synthesis events without inventing a generation operation. Existing consent/media epochs, Pass/self-deaf reconnect, immediate withdrawal and observed owner joins are preserved. Independent spec and quality review passed; its nonblocking inaccurate header comment was corrected and a fresh scoped rereview closed V3-1.
+
+Genuine RED coverage: eight actual actor/timing fixtures failed for absent terminal events and two production-used timer fixtures failed for typed timeout/cancellation classification; GREEN followed. Final focused voice_local42 and observability6 passed, warnings-denied Clippy and static checks passed. No synthetic fixture qualifies a human conversation.
+
+Strict command `CARGO_BUILD_JOBS=2 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0 with the default test concurrency:1,989Rust passed/0failed/8intentionally ignored,99.41s;334 printed Python unittest cases,Swift12+16,Clippy,required pinned WDBX fixture,locked release1m25s and actual offline benchmark startup1passed (48successful synthetic probes/60localhost calls). Accepted RustSec debt remains five vulnerabilities and four informational advisories; audit is not clean. Complete before/after manifests and terminal gate/result/reviews are preserved in the ignored Voice task3-qualified-evidence directory.
+
+Stable source:777inputs,SHA256e936af8713d4158f7de1bd20334ddfb845d984e4058c289ebd32d6ae0950bdd9,HEADe742375ff9b3d20b97df09c7fad10c1225ae957c. Candidate SHA256a4eed42b5c606f40c2ac6dd762ff9c3f484e3bf6b8b42f6e21ce48561e173e0f differs installedb965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9. No deployment/restart/live provider/server/human voice action or Git mutation occurred here. Task4 watcher/operator decision and eight witnessed human cases remain open, as do later Learning/Continuity/Initiative and Community/Training-foundation source work. These completion-record edits follow the frozen gate and do not certify a new complete-source fingerprint.
+
+
+### 2026-10-02 Voice Task4 operator checklist and OPEN witness ledger
+
+Current record preparation; Partial Task4 acceptance. Voice Tasks1–3 source qualification is the preceding stable 777-input SHA256 `e936af8713d4158f7de1bd20334ddfb845d984e4058c289ebd32d6ae0950bdd9`, HEAD `e742375ff9b3d20b97df09c7fad10c1225ae957c`: `CARGO_BUILD_JOBS=2 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0, 1,989 Rust passed/0failed/8ignored at default concurrency. This record-only slice reuses that evidence; it does not claim a new full-source fingerprint or installed qualification.
+
+Current read-only observation on 2026-10-02: `python3 -I deploy/service-status.py` exited0 and reported service/Discord ready, scheduler running, Telegram/Slack disabled and last completed persistence complete. SHA256 comparison reconfirmed candidate `a4eed42b5c606f40c2ac6dd762ff9c3f484e3bf6b8b42f6e21ce48561e173e0f` differs from installed `b965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9`. `launchctl list` enumerated the bot and Office Hours autolisten labels with running PIDs. That establishes loaded-agent presence only; no watcher restart behavior, consent coverage, voice readiness or installed candidate equivalence was witnessed.
+
+Each row requires its own exact installed SHA256, date/time, willing witness role, current personal receipt/roster/permission check, observed content-free behavior and PASS/FAIL verdict. Record those fields in the Result column when actually witnessed; `OPEN` is neither PASS nor a fabricated failed experiment. Use role labels rather than member/channel IDs. Retain no raw human audio, utterances, transcripts or responses. Historical receipts and source fake PCM do not fill witness fields.
+
+| Case | Required operator action and witness assertion | Result: installed SHA; date; witness role; checks; observation; verdict |
+|---|---|---|
+| V1 Personal choice | Each willing participant personally reviews and agrees via `/voice consent`; verify current Local policy-1 coverage. Saved valid choices survive restart; membership, silence and manager assertion never substitute. | OPEN — all witness fields absent |
+| V2 Current admission | In-channel Manage Server operator runs `/voice join consent:true` or `/voice resume consent:true` as required; check the full current nonempty roster, receipts and permissions before Decode/unmute. | OPEN — all witness fields absent |
+| V3 Audible conversation | Willing participant wakes Abbey and witnesses an audible reply; pair the human hearing assertion with the process-memory verification milestones. | OPEN — all witness fields absent |
+| V4 Interruption | Willing participant interrupts active playback; witness playback stopping and a current safe continuation. | OPEN — all witness fields absent |
+| V5 Unattested arrival | Controlled willing arrival without current receipt pauses/closes processing before later frames; obtain personal choice before current manager resume. | OPEN — all witness fields absent |
+| V6 Withdrawal | Participant personally withdraws via `/voice consent`; witness media/processing closes without later processing. | OPEN — all witness fields absent |
+| V7 Reconnect | Operator conducts an authorized controlled reconnect; witness current receipt/roster/permission and media epoch checks, safe Pass/self-deafen when output-only, and no retired-session revocation of the new epoch. | OPEN — all witness fields absent |
+| V8 Leave and cleanup | Operator runs `/voice leave`; witness call closure and observed retained-owner completion, not merely cancellation requested. | OPEN — all witness fields absent |
+
+Operator sequence, for a separately authorized run:
+
+1. Identify the exact reviewed/gated artifact intended for installation. Any deployment/restart requires explicit operator direction through the documented transaction; compare installed hash afterward. Confirm current service and qualified provider/model/OS identity. The mismatching installed artifact above does not qualify Tasks1–3.
+2. Arrange willing participants, an in-channel Manage Server operator for join/resume, and an application owner or Administrator for verification start/report. These are distinct authorization requirements; Manage Server alone does not grant verification access. Inspect current member choices privately. Do not copy identity-bearing consent storage or raw service logs into this ledger. Establish a safe controlled reconnect/arrival scenario before starting.
+3. Have the application owner or Administrator arm `/voice verify start` before the consented join. It disables conversational commits and retains only process-memory milestones. Run V1–V8 on one identity-bound run with current checks at every transition, then have that authorized verification actor obtain `/voice verify report` after leave. A process restart clears the report; use a separate identity-bound run/record for restart coverage rather than treating a cleared report as continuity proof.
+4. Record the content-free milestone report and each actual human/operator assertion with exact installed hash and date. Missing witness, current receipt checks, actual audible behavior or observed cleanup leaves the corresponding case OPEN. A synthetic audition qualifies only its synthetic provider chain, never V3 or the eight-case human run.
+5. Decide watcher retention/retirement only after the installed join path and failure/reconnect matrix pass. Record the operator, date, evidence references, exact target and authorized action. If behavior proves a change necessary, prepare a narrow separately reviewed shell/fake-launchctl-tested change wired into the gate; apply it only on explicit service direction.
+
+Watcher decision: unchanged; retain/retire acceptance OPEN. Source inspection of `deploy/watch-office-hours-auto-listen.sh` found its debounced restart condition is designated participant presence plus Abbey self-mute or self-deafen; it does not consult durable receipt coverage. This is a source observation, not proof of a consent-triggered restart in the running agent. Do not use MissingConsent as a restart reason or add a second consent ledger/controller. Source-qualified while-present activation does not alone justify retiring a loaded fallback watcher. No applied watcher patch is warranted by the available witnessed evidence.
+
+Installed candidate identity, actual provider qualification/performance, Discord/platform runtime and all eight human/operator cases remain OPEN. No installer, restart, watcher invocation, gateway, live Discord REST, provider/voice probe, participant consent creation or human audio capture occurred in this record slice. The available checklist/record work can be reviewed while independent Learning source work proceeds; these proof obligations remain required.
+
+
+### 2026-10-02 Learning Task1 source qualification
+
+Current source: typed exact/unique/duplicate/ambiguous/expired/unsupported attribution now rejects competing turns, unsupported reactions and unidentified/bot reactors; the actual gateway resolves current reactor identity within its retained framework owner. Scoped active reaction contributions survive canonical save/reopen, duplicate adds and removals are inert, removals reverse only their own recorded contribution, and settled turns cannot reopen through ledger eviction. The existing strictly-older-than-150-second settlement, reward blending and ±3 clamp remain unchanged. Active keys are bounded at4,096; closed markers retire into a compact creation-time floor within300seconds. This does not promise arbitrary event-order correction or fabricated fresh-time replay deduplication after all identity markers retire.
+
+Independent review found LQ1-001 P1: a new pending-row limit rejected valid legacy canonical state. The reviewed compatibility repair preserves all4,097 distinct legacy fixture rows and unrelated settings/facts/reputation through actual load, publication, partial settlement and reopen; it drains each reward exactly once without expanding per-row markers. New tracking is temporarily refused while legacy carryover exists. Missing historical reaction provenance is never invented; legacy reaction additions remain inert. Fresh scoped spec and quality rereview approved the fix and closed LQ1-001. Original recovered and review packages remain preserved.
+
+Verification: meaningful duplicate/removal/competing-turn RED tests, plus actual4,097-row canonical-load RED, followed by43reward/35pipeline+one existing ignored/27persist/one runtime/one native GREEN; warnings-denied Clippy and static checks passed. Strict command `CARGO_BUILD_JOBS=2 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0 with default concurrency:2,015Rust passed/0failed/8existing ignored in108.64s,334 printed Python cases,Swift12+16,required pinned WDBX fixture,Clippy,locked release1m35s and actual offline text-benchmark startup one test passed (48successful synthetic probes/60localhost calls). Accepted RustSec debt remains five vulnerabilities and four informational advisories; audit is not clean.
+
+Complete before/after stable snapshot:782inputs,SHA2560ab9c7551c2068bc633e6ee3eeb3c12468304ebd15230db345ceb2bf251f1c84,HEADe742375ff9b3d20b97df09c7fad10c1225ae957c. Terminal gate result, complete manifests, logs and independent reports are preserved in ignored Learning task1-qualified-evidence. Candidate SHA256cab941e3a260308ae7b6f83283d4f87528e3efefe71f6b55c4482f790c292c8f differs installedb965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9. Installed/provider/Discord/platform/human acceptance remains OPEN. No commit/deployment/service/live provider/server action occurred. Learning Tasks2–5 and downstream source work remain open. These record edits follow the frozen gate and do not certify a new fingerprint.
+
+
+### 2026-10-02 Learning Task2 source qualification
+
+Current source: canonical Pending stores bounded AskSignature instead of raw original ask. Legacy strings deserialize once into at most32 distinct domain-separated normalized lexical hashes and closed markers; raw asks are absent from subsequent publication. Canonical load/save/reopen, default migration, negative-zero no-feedback settlement and the4,097-row legacy carryover fixture pass. Normalization, marker precedence, overlap thresholds,150-second settlement and reward/reaction behavior remain. The first32distinct tokens are retained; overlap outside that bound can differ from historical unbounded text. This is a bounded lexical representation, not cryptographic anonymity or semantic truth inference.
+
+Production LearningAudit records six saturating aggregate attribution counters without loading DQN, refreshing policy idle state or spending budget. Counters survive policy eviction and reset with process start. Fresh native authorization precedes private /admin brain snapshots and epsilon changes; the registered command fixture verifies denial after prior catalog approval and permission revocation. Diagnostics retain sources/refusal reasons, pending age, guard reason and action-values labeling, with no member/channel/turn identifiers or raw feedback. Actual printed empty/current/maximum copies are517/567/1083characters. Future scoped reset must explicitly include the aggregate audit map; this slice does not implement member erasure or individual aggregate unlearning.
+
+Independent spec/quality review approved all16owned changes and explicitly reviewed pipeline870/runtime869lines. Optional P3 first32selection coverage was added as a test-only follow-up; fresh scoped rereview closed it. Meaningful migration/label RED tests and a caught eager-policy-load admission regression preceded final GREEN. Focused final outcome19/signature3/audit5/registry10/reward43/persist29/commands36/pipeline36+one existing ignored/fresh-authorization1/rendered1 passed; rendered test overlaps the command suite and is not an extra unique test. Clippy/static checks passed.
+
+Strict command `CARGO_BUILD_JOBS=2 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0 with default concurrency:2,025Rust passed/0failed/8existing ignored in67.93s;334 printed Python cases,Swift12+16,Clippy,required pinned WDBX fixture,locked release1m23s and actual offline benchmark startup one test passed (48successful synthetic probes/60localhost calls). Accepted RustSec debt remains five vulnerabilities and four informational advisories; audit is not clean.
+
+Complete stable before/after:783inputs,SHA2561f27de4f6f13ed33aa87a610058b0a61b799c19c91b8bf26fdba5806989a0ea4,HEADe742375ff9b3d20b97df09c7fad10c1225ae957c. Original/fix source packages, complete manifests, terminal gate result/log and independent reports remain preserved in ignored Learning evidence directories. Candidate SHA25601281e876ab6b854e46eb788b6ae2e80a3b7cc8cb714bf416c40e72d83245748 differs installedb965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9. Installed/provider/Discord/platform/human acceptance remains OPEN. No Git mutation, deployment/service change or live provider/server action occurred. Learning Tasks3–5 and dependent source work remain open. These completion-record edits follow the frozen gate and do not qualify a new fingerprint.
+
+
+### 2026-10-03 Learning Task3 source qualification
+
+Current source: exactly/uniquely attributed explicit nonquoted corrections bind the current native prior reply, scope, guild, asker, creation time and minimized signature. Expired, competing, cross-scope, unidentified, quoted/code/example and bare-no inputs cannot acquire repair authority. The selected production repair and provider fallback use disabled tools and current authorized SourceOnly evidence; correction text and historical assistant output are not factual evidence. Empty evidence gives a fixed honest uncertainty reply without a text-provider call. Native source/settings and existing personal-memory authority are rechecked before evidence capture and through retained generation/delivery, with observed cancellation joins. Reward blending, settlement and the physical-reply heuristic remain unchanged. Erasure/reset remains the next separate task; this slice does not implement it.
+
+Independent spec and quality review approved the ten-file bounded source slice, including explicit review of the889-line production pipeline. A P3 rendered-copy finding was fixed through trusted closed ContextChanged classification, preserving provider-controlled backend errors and uncertain-delivery precedence. A genuine actual-pipeline RED reproduced backend-blaming copy; Revoke/RemoveSource/DisableLearning now render “The context for this answer changed while I was checking it. Please ask again.” Fresh scoped rereview closed F1 and verified all source/package modes, exact index and preserved original evidence. Final fix-focused correction21/ask22/generation59/pipeline44+one existing ignored/llm25/provider-runtime25 and Clippy/static checks passed.
+
+Strict command `CARGO_BUILD_JOBS=2 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited0 with default concurrency:2,038Rust passed/0failed/8existing ignored in63.65s;334 printed Python cases,Swift12+16,Clippy,required pinned WDBX fixture,locked release1m22s and actual offline text-benchmark startup one test passed (48successful synthetic probes/60localhost calls). Accepted RustSec debt remains five vulnerabilities and four informational advisories; audit is not clean. Complete before/after stable snapshot:785inputs,SHA256bc3bb69faa974609841ee45d3cf45fddbe9067261b745fc9c014ea3a9f733db7,HEADe742375ff9b3d20b97df09c7fad10c1225ae957c. Terminal gate81550, full manifests/logs/reports/artifact hashes are preserved in ignored Learning task3-qualified-evidence.
+
+Candidate SHA25693588cc291010478956dfeed75f28011900bd72ea3cb5f94a27cb9af952a0139 differs installedb965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9. Installed/provider/Discord/platform/human acceptance remains OPEN. An independently authorized cleanup chat removed generated debug artifacts during focused checks; the missing-rmeta attempt was environmental, the canonical rebuild and final gate passed, and no source/archive loss was observed. This chat performed no cleanup, Git mutation, deployment/service change or live provider/server action. Learning Tasks4–5 and downstream source work remain open. These completion-record edits follow the frozen gate and do not qualify a new fingerprint.
+
+
+### 2026-10-03 Learning Task5 source qualification; human/provider acceptance open
+
+Current source: frozen schema-1 synthetic corpus has 100 distinct cases, five
+classes of 20. The pure public evaluator enforces that shape and bounded
+field/list/identity preflight before grounding or counting. The production offline
+`--learning-quality CORPUS.json --json` caller exits before configured-state,
+credential, provider or gateway initialization, uses a 1 MiB regular-file bound
+and emits closed counts/provenance/hashes. Dotted tokens are bounded before
+expansion; Unix nonblocking open plus opened-handle metadata rejects FIFO races.
+DQN imports reject nonfinite values and invalid actions atomically, then replace
+replay while preserving capacity and documented legacy width compatibility.
+Task4 erasure code and policy weights were not changed by this Task5 repair.
+
+Fresh independent standards/spec review passed, closing LQ5-1/2/3 with no open
+source findings. RED evidence includes four import failures and one public-corpus
+failure, followed by 242 brain and 5 CLI unit tests passing. The original
+corpus/held-out/rollback tests are green; no individual historical RED evidence is
+claimed for those three. Full receipt and review links:
+[Learning Task5 verification](verification/2026-10-03-learning-quality-v1.md).
+
+Strict `CARGO_BUILD_JOBS=2 ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` exited 0
+(session32980): **2,087 Rust passed / 0 failed / 8 ignored** in106.35s;
+**339 Python unittest cases** (333 before Swift, 1 actual text startup, 5 actual
+learning CLI startup), separately 16 publication scenarios; Swift **12+16**,
+required pinned WDBX conformance, warnings-denied Clippy and locked release
+**2m25s** passed. All five learning CLI subprocess cases passed on the rebuilt
+release artifact. Accepted RustSec debt remains **5 vulnerabilities +4 informational
+advisories** (3 unmaintained,1 yanked); audit is not clean. Nonfatal macOS unwind
+and rust-objcopy/libLLVM debug-stripping warnings remain visible in the log.
+
+Synthetic measurements: TP30/FP0/TN70/FN0; correction Repair6/Ignore14/mismatch0;
+seed1369907238, topology[18,64,32,3], untrained stay/reply/react92/5/3.
+Corpus SHA256 `20237fe9320d68dd1ff60af329c308ec7f67322817e9cf86087fabd308b0fb0f`;
+emitted evaluator-source SHA256
+`366cb3e7575c0f37ffb3322c3088674d6be455bf596a02af0ff775542783af5d`.
+Agent-authored labels are still pending human adjudication; these counts do not
+qualify provider answers or supply factual-confidence probabilities.
+
+Stable gate snapshot: **799 files**, no changed files, HEAD
+e742375ff9b3d20b97df09c7fad10c1225ae957c, aggregate SHA256
+`fc1cc1bb6e5c81457638dede4e712dd5c5a627127d4f51a4364189843677a457`.
+Complete manifests/result/log are retained under ignored Learning
+`task5-quality-evidence-20261003/fix3-root-run/`; scoped fixes/reviews preserve the
+earlier evidence. Candidate SHA256
+`f4d76cd9e141b5ad04cba7fc9965d4a05b8b7359933d77a66d65655c1805582a`
+differs from installed
+`b965ed9b11c9aa2f0ac85dd6213661c781716c5eb80a0dac11d27fba254fb5a9`.
+No deployment or installed fix3 identity is claimed. No service mutation, live
+provider/Discord action, commit or push occurred here.
+
+**Partial overall:** human adjudication of all 100 labels, operator-reviewed
+fixed-provider answers/manual support before tuning, installed identity and live
+runtime acceptance remain OPEN. These record/plan edits follow the frozen source
+gate and receive Liquid/diff checks separately; they do not qualify a new source
+fingerprint or close unrelated Learning/whole-bot work.
+
+
+### 2026-10-03 full-source review; source qualification only
+
+Current repaired source passed independent whole-diff/cross-seam review with no
+unresolved blockers. Two P2 defects were repaired through attributable RED/GREEN
+regressions: accepted-preview withdrawal now attempts static terminal replacement
+without retrying uncertain delivery, and canonical pending actions are validated
+before restore/load/publication. Strict gate session 14918 exited 0 with unchanged
+800-input SHA256
+`6bb0d2d1dcfb1bff572d844b4749692c899b1cd96146f1f865bbcab3afcc0ac9`:
+2,090 Rust passed/0 failed/8 ignored,339 Python cases,16 separate publication scenarios,
+Swift 12+16,required WDBX parity,Clippy,locked release and rebuilt offline startup.
+Accepted RustSec debt is5 vulnerabilities plus 3 unmaintained informational records;
+the macOS linker unwind warning remains nonfatal. HEAD/index are preserved.
+
+Learning Task 4 erasure/reset and Task 5 bounded evaluator/import/offline CLI source
+are included. The originalTask 4 gate's793→795 input drift remains disclosed; it
+was not stable-source qualification. Task 5's later799-file/2,087-test combined
+receipt remains historical. All 100 synthetic labels and fixed-provider/manual
+support before tuning remain pending. No installed identity, provider latency or
+quality, managed-service readiness, live Discord/Activity, Linux/Windows runtime
+or human audio acceptance is established. No deployment, restart, live call,
+Discord mutation or Git publication occurred.
+
+[Full-source verification](verification/2026-10-03-full-source-review.md) records
+repairs, counts, exclusions and evidence. These document updates follow that
+repaired gate; the final complete-tree confirmation is external so its fingerprint
+can include this receipt without self-reference. This entry adds source evidence
+only and does not close live acceptance or future program work.
+
+
+### 2026-10-03 ContinuityTask1 source snapshot only
+
+Current tested domain24focused passes; independent Abbey review found no blockers.
+Strict required-WDBX gate2967 exited0,2,114Rust passed/0failed/8ignored,
+339Python cases plus16publication scenarios,Swift12+16,Clippy and locked release;
+identical804input fingerprintf1a6e2ce96642ff1555592127805fce6315d0be05a51ef8328344c0c47e7a6a7.
+No live continuity feature is claimed: the new domain is cfg(test), andTasks2/3
+private human flows/fresh access/prompt barriers/canonical admission/clear/erasure
+remain mandatory. All whole-program downstream source and external/human proofs
+remain open. This receipt follows the qualified snapshot; no new whole-tree
+fingerprint or installed identity is inferred. No service, Git or live mutation.
+See [domain evidence](verification/2026-10-03-continuity-domain.md).
+
+
+## 2026-10-03 Continuity source integration correction
+
+Current source only: native private show/propose/confirm/clear; observed immutable human previews; late native/receipt prompt and delivery checks; validated canonical cards; covered admission and fenced clear/member-erasure recovery. Strict unchanged822-input gate exited0 with2180Rust passes/8excluded. [Source receipt](verification/2026-10-03-continuity-integration.md). The earlier tested-domain-only statement is historical. Installed, provider, Discord and human acceptance remain unverified; no service or live acceptance was performed. Initiative and other completion-program residuals remain open.
+
+
+## 2026-10-03 Initiative source correction
+
+Current source only: [Initiative receipt](verification/2026-10-03-initiative-source.md), stable851inputs, strictWDBXgate0,2277Rustpasses/8existing exclusions. Native scoped task-follow-up admission/delivery/stop/erasure and private conservative readable-subset counts are tested. Task3 human willing-recipient pilot, actual replies/usefulness, installed hash/provider/Discord behavior, ActivityPortal, Linux/Windows and human voice remain unverified. No production outreach or service mutation was performed. This appended evidence was written after that frozen gate.
+
+
+## 2026-10-03 Community and Activity focused source correction
+
+Current source: CommunityO7 human-assessed exact-source shadow cases, independent
+staff review and subject appeal are implemented. Actual defects were reproduced:
+missing native IDs/roles/positive attribution and mentions, unsafe parent child
+creation, stopped retry uncertainty, read-only Show mutation, policy/proof checks
+after path creation, late staff/hierarchy fallback and wrong command-name copy.
+Focused final evidence: shadow45/0, private help115/0, catalog27/0, printed native14/0,
+warnings-denied Clippy0. Independent complete-delta review has no blocking findings;
+strict qualification of the combined current snapshot is pending.
+
+ActivityTask4 source preparation is implemented with four fixed assets, readonly
+manifest-addressed packages, observed existing Node identity, finite proposal-only
+ingress and dry-run exact rollback. DNS-label RED preceded repair; actual Python
+package17/0, DNS4/0, direct-child probe6/0 and CourtNode20/0/0skipped passed.
+The packaged Node test used an ephemeral loopback port and observed termination;
+configured8791 and managed services were untouched. Candidate/prior packages and
+rollback are retained under `/Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003`.
+Full stable required-WDBX gate and receipt remain pending for these additions.
+
+Independent classifier/live shadow pilot/appeal utility, O1/O6 live blueprints and
+enforcement activation, Initiative willing-recipient pilot, ActivityHTTPS host/
+ingress installation/Portal/iframe/two-participant/disconnect/restart/instance
+witnesses, installed/provider/operator/platform and human corpus/voice acceptance
+remain OPEN. Fresh ABI aggregate-split repair and named Abbey combined source
+qualification remain required. No Git/deploy/restart/provider/Discord action occurred.
+
+
+## 2026-10-03 Community and Activity current source qualification correction
+
+Current: CommunityO7 bounded human-assessed operational shadow/review/appeal and
+ActivityTask4 immutable package/finite ingress proposal/dry-run rollback source are
+independently reviewed without blocking findings and source-qualified by strict
+gate2 actualexit0:2338Rust passed/0failed/8existing exclusions,366Python cases plus
+16publication scenarios,Swift12+16,Clippy/locked release. Complete878inputs stable
+SHA256c16ab5c39cabd1c3f086318499e0630a14cbb0815c3d461a222b046c8b8eb99b;
+HEAD/index and required sibling fixture preserved. [Receipt](../docs/verification/2026-10-03-community-activity-source.md)
+records actual RED/GREEN, complete50delta review, real filesystem/retained/native
+proof, Activity27Python/20Node cases, five accepted vulnerabilities and remaining
+proof gaps. Gate1's terminal exit was not returned; its unchanged success-marked
+log remains unqualified. Gate2 has a durable actualreturncode receipt.
+
+These receipt/plan/checklist writes follow frozen gate2 and require their own
+final documentation-inclusive source attribution. Community's independent
+classifier/live moderation/appeal utility/activation and Activity's publicHTTPS/
+finite ingress installation/Portal/iframe/member/recovery/restart/instance witnesses
+remain OPEN, as do previously named installed/provider/operator/platform/human
+corpus/voice and Initiative willing-recipient acceptance. ABI foundation aggregate
+split and named Abbey combined source repair/qualification remain required.
+No Git/deploy/service/provider/Discord action occurred. Whole all-plans objective
+is Partial; only this bounded source slice is qualified.

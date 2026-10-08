@@ -3,15 +3,15 @@ use super::*;
 #[test]
 fn pending_rewards_export_and_restore_across_a_restart() {
     let mut a = RewardCollector::new();
-    a.register_reply(vec![0.0; 3], 1, "m1", "discord:g", 10);
-    a.reaction("👍", "m1", true);
+    a.register_reply(vec![0.0; 3], 1, "m1", "discord:g", CHAN, T0);
+    a.reaction(key("m1", "👍", 1), true, T0);
     let rows = a.export_pending();
     let json = serde_json::to_string(&rows).unwrap();
     let back: Vec<(String, Pending)> = serde_json::from_str(&json).unwrap();
     let mut b = RewardCollector::new();
-    b.restore(back);
+    b.restore_recovered(back, a.export_recovery()).unwrap();
     assert_eq!(b.pending_len(), 1);
-    let settled = b.settle_expired(10 + SETTLEMENT_WINDOW_SECS + 1);
+    let settled = b.settle_expired(T0 + SETTLEMENT_WINDOW_SECS + 1);
     assert_eq!(settled.len(), 1);
     assert!(
         (settled[0].1.reward - 0.8).abs() < 1e-6,
@@ -28,6 +28,7 @@ fn collector_with_reply() -> RewardCollector {
         BotAction::Reply.index(),
         "msg-1",
         "g-1",
+        CHAN,
         T0,
     );
     c
@@ -54,11 +55,11 @@ fn reply_starts_mildly_negative() {
 #[test]
 fn three_positives_cap_and_fourth_is_ignored() {
     let mut c = collector_with_reply();
-    c.reaction("👍", "msg-1", true);
-    c.reaction("❤️", "msg-1", true);
-    c.reaction("🔥", "msg-1", true);
+    c.reaction(key("msg-1", "👍", 1), true, T0);
+    c.reaction(key("msg-1", "❤️", 1), true, T0);
+    c.reaction(key("msg-1", "🔥", 1), true, T0);
     assert!(approx(reward_of(&c, "msg-1"), 2.8));
-    c.reaction("💯", "msg-1", true);
+    c.reaction(key("msg-1", "💯", 1), true, T0);
     assert!(
         approx(reward_of(&c, "msg-1"), 2.8),
         "fourth positive ignored"
@@ -69,20 +70,20 @@ fn three_positives_cap_and_fourth_is_ignored() {
 #[test]
 fn negative_reaction_subtracts_one_without_cap() {
     let mut c = collector_with_reply();
-    c.reaction("👎", "msg-1", true);
+    c.reaction(key("msg-1", "👎", 1), true, T0);
     assert!(approx(reward_of(&c, "msg-1"), -1.2));
-    c.reaction("💀", "msg-1", true);
-    c.reaction("😡", "msg-1", true);
-    c.reaction("🤮", "msg-1", true);
+    c.reaction(key("msg-1", "💀", 1), true, T0);
+    c.reaction(key("msg-1", "😡", 1), true, T0);
+    c.reaction(key("msg-1", "🤮", 1), true, T0);
     assert!(approx(reward_of(&c, "msg-1"), -4.2));
 }
 
 #[test]
 fn removed_reactions_unknown_emoji_and_unknown_targets_are_ignored() {
     let mut c = collector_with_reply();
-    c.reaction("👍", "msg-1", false);
-    c.reaction("🙂", "msg-1", true);
-    c.reaction("👍", "msg-other", true);
+    c.reaction(key("msg-1", "👍", 1), false, T0);
+    c.reaction(key("msg-1", "🙂", 1), true, T0);
+    c.reaction(key("msg-other", "👍", 1), true, T0);
     assert!(approx(reward_of(&c, "msg-1"), -0.2));
     assert_eq!(c.pending_len(), 1);
 }
@@ -90,16 +91,16 @@ fn removed_reactions_unknown_emoji_and_unknown_targets_are_ignored() {
 #[test]
 fn human_reply_adds_half() {
     let mut c = collector_with_reply();
-    c.human_replied("msg-1");
+    c.human_replied(CHAN, "msg-1", T0);
     assert!(approx(reward_of(&c, "msg-1"), 0.3));
-    c.human_replied("msg-other");
+    c.human_replied(CHAN, "msg-other", T0);
     assert_eq!(c.pending_len(), 1);
 }
 
 #[test]
 fn deletion_settles_immediately_at_minus_two() {
     let mut c = collector_with_reply();
-    c.reaction("👍", "msg-1", true);
+    c.reaction(key("msg-1", "👍", 1), true, T0);
     c.abbey_message_deleted("msg-1");
     let settled = c.settle_expired(T0 + 1);
     assert_eq!(settled.len(), 1);
@@ -136,18 +137,18 @@ fn settles_only_strictly_after_the_window() {
 #[test]
 fn settled_reward_is_clamped_to_plus_minus_three() {
     let mut c = collector_with_reply();
-    for _ in 0..10 {
-        c.reaction("👎", "msg-1", true);
+    for member in 0..10 {
+        c.reaction(key("msg-1", "👎", member), true, T0);
     }
     let settled = c.settle_expired(T0 + SETTLEMENT_WINDOW_SECS + 1);
     assert_eq!(settled[0].1.reward, -3.0);
 
     let mut c = collector_with_reply();
     for e in ["👍", "❤️", "🔥"] {
-        c.reaction(e, "msg-1", true);
+        c.reaction(key("msg-1", e, 1), true, T0);
     }
-    c.human_replied("msg-1");
-    c.human_replied("msg-1");
+    c.human_replied(CHAN, "msg-1", T0);
+    c.human_replied(CHAN, "msg-1", T0);
     // −0.2 + 3 + 0.5 + 0.5 = 3.8 → clamped to 3.
     let settled = c.settle_expired(T0 + SETTLEMENT_WINDOW_SECS + 1);
     assert_eq!(settled[0].1.reward, 3.0);
@@ -156,7 +157,7 @@ fn settled_reward_is_clamped_to_plus_minus_three() {
 #[test]
 fn settle_drains_only_expired_entries() {
     let mut c = collector_with_reply();
-    c.register_reply(vec![1.0], 1, "msg-2", "g-2", T0 + 100);
+    c.register_reply(vec![1.0], 1, "msg-2", "g-2", CHAN, T0 + 100);
     let settled = c.settle_expired(T0 + SETTLEMENT_WINDOW_SECS + 1);
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].0, "g-1");
@@ -230,13 +231,14 @@ fn a_pending_row_written_before_delayed_outcomes_still_loads() {
     let rows: Vec<(String, Pending)> =
         serde_json::from_str(legacy).expect("legacy pending rows must still deserialize");
     let mut c = RewardCollector::new();
-    c.restore(rows);
+    c.restore_recovered(rows, RewardRecovery::default())
+        .unwrap();
     assert_eq!(c.pending_len(), 1);
     assert_eq!(c.pending["m1"].scope, "");
-    assert_eq!(c.pending["m1"].ask, "");
+    assert_eq!(c.pending["m1"].ask_signature, Default::default());
     assert_eq!(c.pending["m1"].delayed_count, 0);
     // And it settles at the number the old build would have produced.
-    let settled = c.settle_expired(10 + SETTLEMENT_WINDOW_SECS + 1);
+    let settled = c.settle_expired(T0 + SETTLEMENT_WINDOW_SECS + 1);
     assert!(approx(settled[0].1.reward, 0.8));
 }
 
@@ -244,13 +246,20 @@ fn a_pending_row_written_before_delayed_outcomes_still_loads() {
 fn with_no_outcome_the_settled_reward_is_bit_identical_to_the_old_path() {
     // Same turn opened both ways; the delayed channel stays silent.
     let mut old = RewardCollector::new();
-    old.register_reply(vec![0.5, 0.25], BotAction::Reply.index(), "m", "g-1", T0);
-    old.reaction("👍", "m", true);
-    old.human_replied("m");
+    old.register_reply(
+        vec![0.5, 0.25],
+        BotAction::Reply.index(),
+        "m",
+        "g-1",
+        CHAN,
+        T0,
+    );
+    old.reaction(key("m", "👍", 1), true, T0);
+    old.human_replied(CHAN, "m", T0);
 
     let mut new = collector_with_turn();
-    new.reaction("👍", "abbey-1", true);
-    new.human_replied("abbey-1");
+    new.reaction(key("abbey-1", "👍", 1), true, T0);
+    new.human_replied(CHAN, "abbey-1", T0);
 
     assert_eq!(
         settled_reward(new).to_bits(),
@@ -263,7 +272,7 @@ fn with_no_outcome_the_settled_reward_is_bit_identical_to_the_old_path() {
 fn an_explicit_reply_to_credits_exactly_that_turn() {
     let mut c = collector_with_turn();
     c.register_turn(turn("abbey-2", CHAN, "and the retry budget?", T0 + 5));
-    assert!(c.observe_reply_to("abbey-1", ReplyOutcome::ExplicitThanks));
+    assert!(c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::ExplicitThanks, T0 + 10));
     assert_eq!(c.pending["abbey-1"].delayed_count, 1);
     assert!(approx(c.pending["abbey-1"].delayed_sum, 1.0));
     assert_eq!(
@@ -271,20 +280,20 @@ fn an_explicit_reply_to_credits_exactly_that_turn() {
         "the newer turn earned nothing"
     );
     assert!(
-        !c.observe_reply_to("no-such-turn", ReplyOutcome::ExplicitThanks),
+        !c.observe_reply_to(CHAN, "no-such-turn", ReplyOutcome::ExplicitThanks, T0 + 10),
         "an unknown target is ignored, not invented"
     );
 }
 
 #[test]
-fn a_scoped_observation_lands_on_the_newest_turn_in_that_channel() {
+fn a_scoped_observation_refuses_competing_turns_in_that_channel() {
     let mut c = collector_with_turn();
     c.register_turn(turn("abbey-2", CHAN, "and the retry budget?", T0 + 5));
     c.register_turn(turn("elsewhere", "discord:g-1:c-2", "unrelated", T0 + 9));
 
     let credited = c.observe_in_scope(CHAN, ASKER, ReplyOutcome::Correction, T0 + 10);
-    assert_eq!(credited.as_deref(), Some("abbey-2"), "newest turn in scope");
-    assert!(approx(c.pending["abbey-2"].delayed_sum, -1.0));
+    assert_eq!(credited, None);
+    assert_eq!(c.pending["abbey-2"].delayed_count, 0);
     assert_eq!(c.pending["abbey-1"].delayed_count, 0);
     assert_eq!(
         c.pending["elsewhere"].delayed_count, 0,
@@ -300,15 +309,22 @@ fn a_scoped_observation_lands_on_the_newest_turn_in_that_channel() {
 #[test]
 fn a_turn_opened_without_a_scope_is_unreachable_by_scope() {
     let mut c = RewardCollector::new();
-    c.register_reply(vec![0.0], BotAction::React.index(), "react-1", "g-1", T0);
-    assert_eq!(c.newest_open_turn_in_scope("", T0), None);
+    c.register_reply(
+        vec![0.0],
+        BotAction::React.index(),
+        "react-1",
+        "g-1",
+        "",
+        T0,
+    );
+    assert_eq!(c.attribution("", None, T0).ok().map(|(_, id)| id), None);
     assert_eq!(
         c.observe_in_scope(CHAN, ASKER, ReplyOutcome::ExplicitThanks, T0),
         None
     );
     assert_eq!(c.pending["react-1"].delayed_count, 0);
-    // …but an explicit reply-to still reaches it.
-    assert!(c.observe_reply_to("react-1", ReplyOutcome::ExplicitThanks));
+    // An unscoped turn cannot establish exact authority either.
+    assert!(!c.observe_reply_to(CHAN, "react-1", ReplyOutcome::ExplicitThanks, T0 + 10));
 }
 
 #[test]
@@ -370,7 +386,7 @@ fn an_explicit_reply_to_needs_no_asker_check() {
     // answers, so a third party thanking Abbey for someone else's answer
     // is still real evidence about that answer.
     let mut c = collector_with_turn();
-    assert!(c.observe_reply_to("abbey-1", ReplyOutcome::ExplicitThanks));
+    assert!(c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::ExplicitThanks, T0 + 10));
     assert!(approx(settled_reward(c), 0.8));
 }
 
@@ -378,12 +394,16 @@ fn an_explicit_reply_to_needs_no_asker_check() {
 fn attribution_expires_with_the_settlement_window() {
     let mut c = collector_with_turn();
     assert_eq!(
-        c.newest_open_turn_in_scope(CHAN, T0 + ATTRIBUTION_TTL_SECS),
+        c.attribution(CHAN, None, T0 + ATTRIBUTION_TTL_SECS)
+            .ok()
+            .map(|(_, id)| id),
         Some("abbey-1"),
         "exactly at the TTL is still attributable"
     );
     assert_eq!(
-        c.newest_open_turn_in_scope(CHAN, T0 + ATTRIBUTION_TTL_SECS + 1),
+        c.attribution(CHAN, None, T0 + ATTRIBUTION_TTL_SECS + 1)
+            .ok()
+            .map(|(_, id)| id),
         None,
         "one second past and the turn is no longer a candidate"
     );
@@ -409,7 +429,10 @@ fn attribution_expires_with_the_settlement_window() {
 fn a_deleted_turn_cannot_absorb_a_later_observation() {
     let mut c = collector_with_turn();
     c.abbey_message_deleted("abbey-1");
-    assert_eq!(c.newest_open_turn_in_scope(CHAN, T0 + 1), None);
+    assert_eq!(
+        c.attribution(CHAN, None, T0 + 1).ok().map(|(_, id)| id),
+        None
+    );
     assert_eq!(
         c.observe_in_scope(CHAN, ASKER, ReplyOutcome::ExplicitThanks, T0 + 1),
         None
@@ -418,14 +441,14 @@ fn a_deleted_turn_cannot_absorb_a_later_observation() {
 }
 
 #[test]
-fn same_second_turns_break_their_tie_deterministically() {
+fn same_second_turns_are_deterministically_ambiguous() {
     // Two turns registered in the same second: the choice must not depend
     // on HashMap iteration order, so run it repeatedly on fresh maps.
     for _ in 0..64 {
         let mut c = RewardCollector::new();
         c.register_turn(turn("aaa", CHAN, "first", T0));
         c.register_turn(turn("zzz", CHAN, "second", T0));
-        assert_eq!(c.newest_open_turn_in_scope(CHAN, T0), Some("zzz"));
+        assert_eq!(c.attribution(CHAN, None, T0).ok().map(|(_, id)| id), None);
     }
 }
 
@@ -434,19 +457,33 @@ fn the_ask_travels_with_the_turn_for_topic_comparison() {
     let mut c = collector_with_turn();
     assert_eq!(
         c.open_ask("abbey-1"),
-        Some("how do I configure the voice gateway timeout?")
+        Some(&crate::brain::ask_signature::AskSignature::from_text(
+            "how do I configure the voice gateway timeout?"
+        ))
     );
-    assert_eq!(c.open_ask_in_scope(CHAN, T0 + 1), c.open_ask("abbey-1"));
+    assert_eq!(
+        c.attribution(CHAN, None, T0 + 1)
+            .ok()
+            .and_then(|(_, id)| c.open_ask(id)),
+        c.open_ask("abbey-1")
+    );
     assert_eq!(c.open_ask("missing"), None);
     assert_eq!(
-        c.open_ask_in_scope(CHAN, T0 + ATTRIBUTION_TTL_SECS + 1),
+        c.attribution(CHAN, None, T0 + ATTRIBUTION_TTL_SECS + 1)
+            .ok()
+            .and_then(|(_, id)| c.open_ask(id)),
         None,
         "an expired turn offers no ask"
     );
 
     // The round trip the pipeline performs: ask → classify → credit.
-    let ask = c.open_ask_in_scope(CHAN, T0 + 1).unwrap().to_owned();
-    let o = crate::brain::outcome::classify(
+    let ask = c
+        .attribution(CHAN, None, T0 + 1)
+        .ok()
+        .and_then(|(_, id)| c.open_ask(id))
+        .unwrap()
+        .to_owned();
+    let o = crate::brain::outcome::classify_signature(
         "how can the voice gateway timeout be configured?",
         Some(&ask),
     );
@@ -463,14 +500,14 @@ fn thanks_and_correction_settle_on_opposite_sides_of_silence() {
     let silent = settled_reward(collector_with_turn());
 
     let mut thanked = collector_with_turn();
-    thanked.human_replied("abbey-1");
-    thanked.observe_reply_to("abbey-1", ReplyOutcome::ExplicitThanks);
+    thanked.human_replied(CHAN, "abbey-1", T0);
+    thanked.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::ExplicitThanks, T0 + 10);
     // −0.2 baseline + 0.5 engaged + 1.0 × 1.0 typed.
     assert!(approx(settled_reward(thanked), 1.3));
 
     let mut corrected = collector_with_turn();
-    corrected.human_replied("abbey-1");
-    corrected.observe_reply_to("abbey-1", ReplyOutcome::Correction);
+    corrected.human_replied(CHAN, "abbey-1", T0);
+    corrected.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::Correction, T0 + 10);
     // −0.2 + 0.5 − 1.0: worse than saying nothing at all.
     let corrected = settled_reward(corrected);
     assert!(approx(corrected, -0.7));
@@ -486,7 +523,7 @@ fn no_engagement_neither_penalises_nor_dilutes() {
 
     let mut c = collector_with_turn();
     for _ in 0..5 {
-        assert!(c.observe_reply_to("abbey-1", ReplyOutcome::NoEngagement));
+        assert!(c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::NoEngagement, T0 + 10));
     }
     assert_eq!(c.pending["abbey-1"].delayed_count, 0, "recorded as nothing");
     assert_eq!(
@@ -497,8 +534,8 @@ fn no_engagement_neither_penalises_nor_dilutes() {
 
     // And it does not drag a real signal toward the middle.
     let mut c = collector_with_turn();
-    c.observe_reply_to("abbey-1", ReplyOutcome::NoEngagement);
-    c.observe_reply_to("abbey-1", ReplyOutcome::ExplicitThanks);
+    c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::NoEngagement, T0 + 10);
+    c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::ExplicitThanks, T0 + 10);
     assert!(approx(settled_reward(c), 0.8), "-0.2 + full 1.0, not 0.5");
 }
 
@@ -506,7 +543,7 @@ fn no_engagement_neither_penalises_nor_dilutes() {
 fn several_outcomes_average_rather_than_accumulate() {
     let mut c = collector_with_turn();
     for _ in 0..8 {
-        c.observe_reply_to("abbey-1", ReplyOutcome::FollowUpQuestion);
+        c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::FollowUpQuestion, T0 + 10);
     }
     assert_eq!(c.pending["abbey-1"].delayed_count, 8);
     // Eight follow-ups are still one follow-up's worth of verdict, so a
@@ -518,10 +555,10 @@ fn several_outcomes_average_rather_than_accumulate() {
 fn the_blended_reward_is_still_clamped() {
     let mut c = collector_with_turn();
     for e in ["👍", "❤️", "🔥"] {
-        c.reaction(e, "abbey-1", true);
+        c.reaction(key("abbey-1", e, 1), true, T0);
     }
-    c.human_replied("abbey-1");
-    c.observe_reply_to("abbey-1", ReplyOutcome::ExplicitThanks);
+    c.human_replied(CHAN, "abbey-1", T0);
+    c.observe_reply_to(CHAN, "abbey-1", ReplyOutcome::ExplicitThanks, T0 + 10);
     // −0.2 + 3 + 0.5 + 1.0 = 4.3 → 3.
     assert_eq!(settled_reward(c), 3.0);
 }
@@ -533,14 +570,54 @@ fn the_delayed_channel_survives_a_restart() {
     let json = serde_json::to_string(&a.export_pending()).unwrap();
     let rows: Vec<(String, Pending)> = serde_json::from_str(&json).unwrap();
     let mut b = RewardCollector::new();
-    b.restore(rows);
+    b.restore_recovered(rows, a.export_recovery()).unwrap();
     assert_eq!(b.pending["abbey-1"].scope, CHAN);
     assert_eq!(b.pending["abbey-1"].delayed_count, 1);
     // Scope attribution keeps working against the restored row.
     assert_eq!(
-        b.newest_open_turn_in_scope(CHAN, T0 + 2),
+        b.attribution(CHAN, None, T0 + 2).ok().map(|(_, id)| id),
         Some("abbey-1"),
         "the ledger key survives, so a follow-up after a restart still lands"
     );
     assert!(approx(settled_reward(b), 0.8));
 }
+
+#[test]
+fn task1_duplicate_negative_does_not_accumulate() {
+    let mut c = collector_with_turn();
+    c.reaction(key("abbey-1", "👎", 1), true, T0);
+    c.reaction(key("abbey-1", "👎", 1), true, T0);
+    assert!(approx(reward_of(&c, "abbey-1"), -1.2));
+}
+
+#[test]
+fn task1_remove_reverses_only_recorded_contribution() {
+    let mut c = collector_with_turn();
+    c.reaction(key("abbey-1", "👍", 1), true, T0);
+    c.reaction(key("abbey-1", "👍", 1), false, T0);
+    c.reaction(key("abbey-1", "👍", 1), false, T0);
+    assert!(approx(reward_of(&c, "abbey-1"), -0.2));
+}
+
+#[test]
+fn task1_competing_scope_turns_are_ambiguous() {
+    let mut c = collector_with_turn();
+    c.register_turn(turn("abbey-2", CHAN, "another question", T0 + 1));
+    assert_eq!(
+        c.observe_in_scope(CHAN, ASKER, ReplyOutcome::Correction, T0 + 2),
+        None
+    );
+    assert_eq!(c.pending["abbey-1"].delayed_count, 0);
+    assert_eq!(c.pending["abbey-2"].delayed_count, 0);
+}
+
+fn key(message: &str, emoji: &str, reactor_hash: u64) -> ReactionKey {
+    ReactionKey {
+        scope: CHAN.into(),
+        message: message.into(),
+        reactor_hash,
+        emoji: emoji.into(),
+    }
+}
+
+mod attribution_recovery;

@@ -33,6 +33,9 @@ Invoke-Checked -Executable "python" -Arguments @("deploy/test-configure-fm-prima
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-publish-provider-qualification.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-check-activity-url-map.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/check-activity-url-map.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-prepare-court-release.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-court-release-dns.py")
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-court-release-node-probe.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-protocol.py", "ProtocolTests")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-service-environment.py")
 Invoke-Checked -Executable "python" -Arguments @("deploy/test-community-operations-control.py")
@@ -77,5 +80,8 @@ Write-Host "== offline text benchmark startup =="
 $benchmarkTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "target" }
 $benchmarkBinary = Join-Path $benchmarkTarget "release/abbey-bot.exe"
 Invoke-Checked -Executable "python" -Arguments @("scripts/test-text-benchmark-startup.py", "--binary", $benchmarkBinary)
+
+Write-Host "== offline learning quality startup =="
+Invoke-Checked -Executable "python" -Arguments @("scripts/test-learning-quality-startup.py", "--binary", $benchmarkBinary)
 
 Write-Host "== ok =="

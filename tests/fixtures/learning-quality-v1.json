@@ -1,0 +1,2364 @@
+{
+  "schema": 1,
+  "label_provenance": "synthetic-agent-authored; pending independent human adjudication; not provider evaluation",
+  "cases": [
+    {
+      "id": "supported-01",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-01",
+          "revision": "r1",
+          "current": true,
+          "text": "The Amber parser uses v2.4.1."
+        }
+      ],
+      "claim": {
+        "text": "The Amber parser uses v2.4.1.",
+        "cited_source_ids": [
+          "source-01"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-01",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-01",
+          "revision": "r1",
+          "current": true,
+          "text": "The Amber parser uses v2.4.1."
+        }
+      ],
+      "claim": {
+        "text": "The Amber parser uses v9.8.7.",
+        "cited_source_ids": [
+          "source-01"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-01",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-01",
+          "revision": "r1",
+          "current": true,
+          "text": "The Amber parser uses v2.4.1."
+        },
+        {
+          "id": "conflict-01",
+          "revision": "r2",
+          "current": true,
+          "text": "The Amber parser uses v9.8.7."
+        }
+      ],
+      "claim": {
+        "text": "The Amber parser uses v2.4.1.",
+        "cited_source_ids": [
+          "source-01",
+          "conflict-01"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-01",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-01",
+          "revision": "r1",
+          "current": true,
+          "text": "The Amber parser uses v2.4.1."
+        }
+      ],
+      "claim": {
+        "text": "The Amber parser uses v2.4.1.",
+        "cited_source_ids": [
+          "source-01"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "ExactReply",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 701
+      },
+      "expected_correction": "Repair",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-01",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "The Amber parser uses v9.8.7.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-02",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-02",
+          "revision": "r1",
+          "current": true,
+          "text": "The Birch launch date is 2025-03-14."
+        }
+      ],
+      "claim": {
+        "text": "Birch launched on 2025-03-14.",
+        "cited_source_ids": [
+          "source-02"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-02",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-02",
+          "revision": "r1",
+          "current": true,
+          "text": "The Birch launch date is 2025-03-14."
+        }
+      ],
+      "claim": {
+        "text": "Birch launched on 2031-09-22.",
+        "cited_source_ids": [
+          "source-02"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-02",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-02",
+          "revision": "r1",
+          "current": true,
+          "text": "The Birch launch date is 2025-03-14."
+        },
+        {
+          "id": "conflict-02",
+          "revision": "r2",
+          "current": true,
+          "text": "Birch launched on 2031-09-22."
+        }
+      ],
+      "claim": {
+        "text": "Birch launched on 2025-03-14.",
+        "cited_source_ids": [
+          "source-02",
+          "conflict-02"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-02",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-02",
+          "revision": "r1",
+          "current": true,
+          "text": "The Birch launch date is 2025-03-14."
+        }
+      ],
+      "claim": {
+        "text": "Birch launched on 2025-03-14.",
+        "cited_source_ids": [
+          "source-02"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "UniqueScoped",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 702
+      },
+      "expected_correction": "Repair",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-02",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Birch launched on 2031-09-22.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-03",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-03",
+          "revision": "r1",
+          "current": true,
+          "text": "Cedar occupancy was 42%."
+        }
+      ],
+      "claim": {
+        "text": "Cedar occupancy was 42 percent.",
+        "cited_source_ids": [
+          "source-03"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-03",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-03",
+          "revision": "r1",
+          "current": true,
+          "text": "Cedar occupancy was 42%."
+        }
+      ],
+      "claim": {
+        "text": "Cedar occupancy was 91%.",
+        "cited_source_ids": [
+          "source-03"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-03",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-03",
+          "revision": "r1",
+          "current": true,
+          "text": "Cedar occupancy was 42%."
+        },
+        {
+          "id": "conflict-03",
+          "revision": "r2",
+          "current": true,
+          "text": "Cedar occupancy was 91%."
+        }
+      ],
+      "claim": {
+        "text": "Cedar occupancy was 42 percent.",
+        "cited_source_ids": [
+          "source-03",
+          "conflict-03"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-03",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-03",
+          "revision": "r1",
+          "current": true,
+          "text": "Cedar occupancy was 42%."
+        }
+      ],
+      "claim": {
+        "text": "Cedar occupancy was 42 percent.",
+        "cited_source_ids": [
+          "source-03"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "ExactReply",
+        "quoted": true,
+        "authorized": true,
+        "source_turn": 703
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-03",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Cedar occupancy was 91%.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-04",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-04",
+          "revision": "r1",
+          "current": true,
+          "text": "Dune measured 3.75 seconds."
+        }
+      ],
+      "claim": {
+        "text": "Dune measured 3.75 seconds.",
+        "cited_source_ids": [
+          "source-04"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-04",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-04",
+          "revision": "r1",
+          "current": true,
+          "text": "Dune measured 3.75 seconds."
+        }
+      ],
+      "claim": {
+        "text": "Dune measured 8.25 seconds.",
+        "cited_source_ids": [
+          "source-04"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-04",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-04",
+          "revision": "r1",
+          "current": true,
+          "text": "Dune measured 3.75 seconds."
+        },
+        {
+          "id": "conflict-04",
+          "revision": "r2",
+          "current": true,
+          "text": "Dune measured 8.25 seconds."
+        }
+      ],
+      "claim": {
+        "text": "Dune measured 3.75 seconds.",
+        "cited_source_ids": [
+          "source-04",
+          "conflict-04"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-04",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-04",
+          "revision": "r1",
+          "current": true,
+          "text": "Dune measured 3.75 seconds."
+        }
+      ],
+      "claim": {
+        "text": "Dune measured 3.75 seconds.",
+        "cited_source_ids": [
+          "source-04"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "UniqueScoped",
+        "quoted": false,
+        "authorized": false,
+        "source_turn": 704
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-04",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Dune measured 8.25 seconds.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-05",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-05",
+          "revision": "r1",
+          "current": true,
+          "text": "Elm recorded 1,250 requests."
+        }
+      ],
+      "claim": {
+        "text": "Elm recorded 1,250 requests.",
+        "cited_source_ids": [
+          "source-05"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-05",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-05",
+          "revision": "r1",
+          "current": true,
+          "text": "Elm recorded 1,250 requests."
+        }
+      ],
+      "claim": {
+        "text": "Elm recorded 7,890 requests.",
+        "cited_source_ids": [
+          "source-05"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-05",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-05",
+          "revision": "r1",
+          "current": true,
+          "text": "Elm recorded 1,250 requests."
+        },
+        {
+          "id": "conflict-05",
+          "revision": "r2",
+          "current": true,
+          "text": "Elm recorded 7,890 requests."
+        }
+      ],
+      "claim": {
+        "text": "Elm recorded 1,250 requests.",
+        "cited_source_ids": [
+          "source-05",
+          "conflict-05"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-05",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-05",
+          "revision": "r1",
+          "current": true,
+          "text": "Elm recorded 1,250 requests."
+        }
+      ],
+      "claim": {
+        "text": "Elm recorded 1,250 requests.",
+        "cited_source_ids": [
+          "source-05"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "ExactReply",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": null
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-05",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Elm recorded 7,890 requests.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-06",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-06",
+          "revision": "r1",
+          "current": true,
+          "text": "The Fern motto is Quiet rivers turn."
+        }
+      ],
+      "claim": {
+        "text": "Fern says \"Quiet rivers turn\".",
+        "cited_source_ids": [
+          "source-06"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-06",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-06",
+          "revision": "r1",
+          "current": true,
+          "text": "The Fern motto is Quiet rivers turn."
+        }
+      ],
+      "claim": {
+        "text": "Fern says \"Loud oceans stop\".",
+        "cited_source_ids": [
+          "source-06"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-06",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-06",
+          "revision": "r1",
+          "current": true,
+          "text": "The Fern motto is Quiet rivers turn."
+        },
+        {
+          "id": "conflict-06",
+          "revision": "r2",
+          "current": true,
+          "text": "Fern says \"Loud oceans stop\"."
+        }
+      ],
+      "claim": {
+        "text": "Fern says \"Quiet rivers turn\".",
+        "cited_source_ids": [
+          "source-06",
+          "conflict-06"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-06",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-06",
+          "revision": "r1",
+          "current": true,
+          "text": "The Fern motto is Quiet rivers turn."
+        }
+      ],
+      "claim": {
+        "text": "Fern says \"Quiet rivers turn\".",
+        "cited_source_ids": [
+          "source-06"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "UniqueScoped",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 706
+      },
+      "expected_correction": "Repair",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-06",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Fern says \"Loud oceans stop\".",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-07",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-07",
+          "revision": "r1",
+          "current": true,
+          "text": "The Grove archive began in 2022."
+        }
+      ],
+      "claim": {
+        "text": "The Grove archive began in 2022.",
+        "cited_source_ids": [
+          "source-07"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-07",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-07",
+          "revision": "r1",
+          "current": true,
+          "text": "The Grove archive began in 2022."
+        }
+      ],
+      "claim": {
+        "text": "The Grove archive began in 2032.",
+        "cited_source_ids": [
+          "source-07"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-07",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-07",
+          "revision": "r1",
+          "current": true,
+          "text": "The Grove archive began in 2022."
+        },
+        {
+          "id": "conflict-07",
+          "revision": "r2",
+          "current": true,
+          "text": "The Grove archive began in 2032."
+        }
+      ],
+      "claim": {
+        "text": "The Grove archive began in 2022.",
+        "cited_source_ids": [
+          "source-07",
+          "conflict-07"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-07",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-07",
+          "revision": "r1",
+          "current": true,
+          "text": "The Grove archive began in 2022."
+        }
+      ],
+      "claim": {
+        "text": "The Grove archive began in 2022.",
+        "cited_source_ids": [
+          "source-07"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Duplicate",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 707
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-07",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "The Grove archive began in 2032.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-08",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-08",
+          "revision": "r1",
+          "current": true,
+          "text": "Harbor uses v3.2.0-rc1."
+        }
+      ],
+      "claim": {
+        "text": "Harbor uses v3.2.0-rc1.",
+        "cited_source_ids": [
+          "source-08"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-08",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-08",
+          "revision": "r1",
+          "current": true,
+          "text": "Harbor uses v3.2.0-rc1."
+        }
+      ],
+      "claim": {
+        "text": "Harbor uses v8.6.0-rc2.",
+        "cited_source_ids": [
+          "source-08"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-08",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-08",
+          "revision": "r1",
+          "current": true,
+          "text": "Harbor uses v3.2.0-rc1."
+        },
+        {
+          "id": "conflict-08",
+          "revision": "r2",
+          "current": true,
+          "text": "Harbor uses v8.6.0-rc2."
+        }
+      ],
+      "claim": {
+        "text": "Harbor uses v3.2.0-rc1.",
+        "cited_source_ids": [
+          "source-08",
+          "conflict-08"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-08",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-08",
+          "revision": "r1",
+          "current": true,
+          "text": "Harbor uses v3.2.0-rc1."
+        }
+      ],
+      "claim": {
+        "text": "Harbor uses v3.2.0-rc1.",
+        "cited_source_ids": [
+          "source-08"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Ambiguous",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 708
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-08",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Harbor uses v8.6.0-rc2.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-09",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-09",
+          "revision": "r1",
+          "current": true,
+          "text": "Iris grew by 12.5 percent."
+        }
+      ],
+      "claim": {
+        "text": "Iris grew by 12.5%.",
+        "cited_source_ids": [
+          "source-09"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-09",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-09",
+          "revision": "r1",
+          "current": true,
+          "text": "Iris grew by 12.5 percent."
+        }
+      ],
+      "claim": {
+        "text": "Iris grew by 88.5%.",
+        "cited_source_ids": [
+          "source-09"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-09",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-09",
+          "revision": "r1",
+          "current": true,
+          "text": "Iris grew by 12.5 percent."
+        },
+        {
+          "id": "conflict-09",
+          "revision": "r2",
+          "current": true,
+          "text": "Iris grew by 88.5%."
+        }
+      ],
+      "claim": {
+        "text": "Iris grew by 12.5%.",
+        "cited_source_ids": [
+          "source-09",
+          "conflict-09"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-09",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-09",
+          "revision": "r1",
+          "current": true,
+          "text": "Iris grew by 12.5 percent."
+        }
+      ],
+      "claim": {
+        "text": "Iris grew by 12.5%.",
+        "cited_source_ids": [
+          "source-09"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Expired",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 709
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-09",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Iris grew by 88.5%.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-10",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-10",
+          "revision": "r1",
+          "current": true,
+          "text": "Juniper processed 3 million rows."
+        }
+      ],
+      "claim": {
+        "text": "Juniper processed 3 million rows.",
+        "cited_source_ids": [
+          "source-10"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-10",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-10",
+          "revision": "r1",
+          "current": true,
+          "text": "Juniper processed 3 million rows."
+        }
+      ],
+      "claim": {
+        "text": "Juniper processed 9 million rows.",
+        "cited_source_ids": [
+          "source-10"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-10",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-10",
+          "revision": "r1",
+          "current": true,
+          "text": "Juniper processed 3 million rows."
+        },
+        {
+          "id": "conflict-10",
+          "revision": "r2",
+          "current": true,
+          "text": "Juniper processed 9 million rows."
+        }
+      ],
+      "claim": {
+        "text": "Juniper processed 3 million rows.",
+        "cited_source_ids": [
+          "source-10",
+          "conflict-10"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-10",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-10",
+          "revision": "r1",
+          "current": true,
+          "text": "Juniper processed 3 million rows."
+        }
+      ],
+      "claim": {
+        "text": "Juniper processed 3 million rows.",
+        "cited_source_ids": [
+          "source-10"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Unsupported",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 710
+      },
+      "expected_correction": "Ignore",
+      "expected": "Accept",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-10",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Juniper processed 9 million rows.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-11",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-11",
+          "revision": "r1",
+          "current": true,
+          "text": "Kestrel processed 24k items."
+        }
+      ],
+      "claim": {
+        "text": "Kestrel processed 24k items.",
+        "cited_source_ids": [
+          "source-11"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-11",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-11",
+          "revision": "r1",
+          "current": true,
+          "text": "Kestrel processed 24k items."
+        }
+      ],
+      "claim": {
+        "text": "Kestrel processed 67k items.",
+        "cited_source_ids": [
+          "source-11"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-11",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-11",
+          "revision": "r1",
+          "current": true,
+          "text": "Kestrel processed 24k items."
+        },
+        {
+          "id": "conflict-11",
+          "revision": "r2",
+          "current": true,
+          "text": "Kestrel processed 67k items."
+        }
+      ],
+      "claim": {
+        "text": "Kestrel processed 24k items.",
+        "cited_source_ids": [
+          "source-11",
+          "conflict-11"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-11",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-11",
+          "revision": "r1",
+          "current": true,
+          "text": "Kestrel processed 24k items."
+        }
+      ],
+      "claim": {
+        "text": "Kestrel processed 67k items.",
+        "cited_source_ids": [
+          "source-11"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "ExactReply",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 711
+      },
+      "expected_correction": "Repair",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-11",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Kestrel processed 67k items.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-12",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-12",
+          "revision": "r1",
+          "current": true,
+          "text": "Larch used version 4."
+        }
+      ],
+      "claim": {
+        "text": "Larch used v4.",
+        "cited_source_ids": [
+          "source-12"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-12",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-12",
+          "revision": "r1",
+          "current": true,
+          "text": "Larch used version 4."
+        }
+      ],
+      "claim": {
+        "text": "Larch used v9.",
+        "cited_source_ids": [
+          "source-12"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-12",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-12",
+          "revision": "r1",
+          "current": true,
+          "text": "Larch used version 4."
+        },
+        {
+          "id": "conflict-12",
+          "revision": "r2",
+          "current": true,
+          "text": "Larch used v9."
+        }
+      ],
+      "claim": {
+        "text": "Larch used v4.",
+        "cited_source_ids": [
+          "source-12",
+          "conflict-12"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-12",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-12",
+          "revision": "r1",
+          "current": true,
+          "text": "Larch used version 4."
+        }
+      ],
+      "claim": {
+        "text": "Larch used v9.",
+        "cited_source_ids": [
+          "source-12"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "UniqueScoped",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 712
+      },
+      "expected_correction": "Repair",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-12",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Larch used v9.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-13",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-13",
+          "revision": "r1",
+          "current": true,
+          "text": "Maple listed 2.6.8 and 2024-11-02."
+        }
+      ],
+      "claim": {
+        "text": "Maple listed 2.6.8 on 2024-11-02.",
+        "cited_source_ids": [
+          "source-13"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-13",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-13",
+          "revision": "r1",
+          "current": true,
+          "text": "Maple listed 2.6.8 and 2024-11-02."
+        }
+      ],
+      "claim": {
+        "text": "Maple listed 9.7.3 on 2033-02-08.",
+        "cited_source_ids": [
+          "source-13"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-13",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-13",
+          "revision": "r1",
+          "current": true,
+          "text": "Maple listed 2.6.8 and 2024-11-02."
+        },
+        {
+          "id": "conflict-13",
+          "revision": "r2",
+          "current": true,
+          "text": "Maple listed 9.7.3 on 2033-02-08."
+        }
+      ],
+      "claim": {
+        "text": "Maple listed 2.6.8 on 2024-11-02.",
+        "cited_source_ids": [
+          "source-13",
+          "conflict-13"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-13",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-13",
+          "revision": "r1",
+          "current": true,
+          "text": "Maple listed 2.6.8 and 2024-11-02."
+        }
+      ],
+      "claim": {
+        "text": "Maple listed 9.7.3 on 2033-02-08.",
+        "cited_source_ids": [
+          "source-13"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "ExactReply",
+        "quoted": true,
+        "authorized": true,
+        "source_turn": 713
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-13",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Maple listed 9.7.3 on 2033-02-08.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-14",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-14",
+          "revision": "r1",
+          "current": true,
+          "text": "Nectar says Silver clouds gather."
+        }
+      ],
+      "claim": {
+        "text": "Nectar says \"silver clouds gather\".",
+        "cited_source_ids": [
+          "source-14"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-14",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-14",
+          "revision": "r1",
+          "current": true,
+          "text": "Nectar says Silver clouds gather."
+        }
+      ],
+      "claim": {
+        "text": "Nectar says \"bronze suns disperse\".",
+        "cited_source_ids": [
+          "source-14"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-14",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-14",
+          "revision": "r1",
+          "current": true,
+          "text": "Nectar says Silver clouds gather."
+        },
+        {
+          "id": "conflict-14",
+          "revision": "r2",
+          "current": true,
+          "text": "Nectar says \"bronze suns disperse\"."
+        }
+      ],
+      "claim": {
+        "text": "Nectar says \"silver clouds gather\".",
+        "cited_source_ids": [
+          "source-14",
+          "conflict-14"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-14",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-14",
+          "revision": "r1",
+          "current": true,
+          "text": "Nectar says Silver clouds gather."
+        }
+      ],
+      "claim": {
+        "text": "Nectar says \"bronze suns disperse\".",
+        "cited_source_ids": [
+          "source-14"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "UniqueScoped",
+        "quoted": false,
+        "authorized": false,
+        "source_turn": 714
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-14",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Nectar says \"bronze suns disperse\".",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-15",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-15",
+          "revision": "r1",
+          "current": true,
+          "text": "Oak recorded 6.25 milliseconds."
+        }
+      ],
+      "claim": {
+        "text": "Oak recorded 6.25 milliseconds.",
+        "cited_source_ids": [
+          "source-15"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-15",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-15",
+          "revision": "r1",
+          "current": true,
+          "text": "Oak recorded 6.25 milliseconds."
+        }
+      ],
+      "claim": {
+        "text": "Oak recorded 98.75 milliseconds.",
+        "cited_source_ids": [
+          "source-15"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-15",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-15",
+          "revision": "r1",
+          "current": true,
+          "text": "Oak recorded 6.25 milliseconds."
+        },
+        {
+          "id": "conflict-15",
+          "revision": "r2",
+          "current": true,
+          "text": "Oak recorded 98.75 milliseconds."
+        }
+      ],
+      "claim": {
+        "text": "Oak recorded 6.25 milliseconds.",
+        "cited_source_ids": [
+          "source-15",
+          "conflict-15"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-15",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-15",
+          "revision": "r1",
+          "current": true,
+          "text": "Oak recorded 6.25 milliseconds."
+        }
+      ],
+      "claim": {
+        "text": "Oak recorded 98.75 milliseconds.",
+        "cited_source_ids": [
+          "source-15"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "ExactReply",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": null
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-15",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Oak recorded 98.75 milliseconds.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-16",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-16",
+          "revision": "r1",
+          "current": true,
+          "text": "Pine retains 55% of trials."
+        }
+      ],
+      "claim": {
+        "text": "Pine retains 55%.",
+        "cited_source_ids": [
+          "source-16"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-16",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-16",
+          "revision": "r1",
+          "current": true,
+          "text": "Pine retains 55% of trials."
+        }
+      ],
+      "claim": {
+        "text": "Pine retains 99%.",
+        "cited_source_ids": [
+          "source-16"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-16",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-16",
+          "revision": "r1",
+          "current": true,
+          "text": "Pine retains 55% of trials."
+        },
+        {
+          "id": "conflict-16",
+          "revision": "r2",
+          "current": true,
+          "text": "Pine retains 99%."
+        }
+      ],
+      "claim": {
+        "text": "Pine retains 55%.",
+        "cited_source_ids": [
+          "source-16",
+          "conflict-16"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-16",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-16",
+          "revision": "r1",
+          "current": true,
+          "text": "Pine retains 55% of trials."
+        }
+      ],
+      "claim": {
+        "text": "Pine retains 99%.",
+        "cited_source_ids": [
+          "source-16"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "UniqueScoped",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 716
+      },
+      "expected_correction": "Repair",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-16",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Pine retains 99%.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-17",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-17",
+          "revision": "r1",
+          "current": true,
+          "text": "Quartz published in 2018."
+        }
+      ],
+      "claim": {
+        "text": "Quartz published in 2018.",
+        "cited_source_ids": [
+          "source-17"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-17",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-17",
+          "revision": "r1",
+          "current": true,
+          "text": "Quartz published in 2018."
+        }
+      ],
+      "claim": {
+        "text": "Quartz published in 2041.",
+        "cited_source_ids": [
+          "source-17"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The checked specific in the claim is absent from the cited synthetic source."
+    },
+    {
+      "id": "contradictory-source-17",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-17",
+          "revision": "r1",
+          "current": true,
+          "text": "Quartz published in 2018."
+        },
+        {
+          "id": "conflict-17",
+          "revision": "r2",
+          "current": true,
+          "text": "Quartz published in 2041."
+        }
+      ],
+      "claim": {
+        "text": "Quartz published in 2018.",
+        "cited_source_ids": [
+          "source-17",
+          "conflict-17"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-17",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-17",
+          "revision": "r1",
+          "current": true,
+          "text": "Quartz published in 2018."
+        }
+      ],
+      "claim": {
+        "text": "Quartz published in 2041.",
+        "cited_source_ids": [
+          "source-17"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Duplicate",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 717
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-17",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Quartz published in 2041.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-18",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-18",
+          "revision": "r1",
+          "current": true,
+          "text": "Reed recorded 4,321 samples."
+        }
+      ],
+      "claim": {
+        "text": "Reed recorded 4,321 samples.",
+        "cited_source_ids": [
+          "source-18"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-18",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-18",
+          "revision": "r1",
+          "current": false,
+          "text": "Reed recorded 4,321 samples."
+        }
+      ],
+      "claim": {
+        "text": "Reed recorded 4,321 samples.",
+        "cited_source_ids": [
+          "source-18"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The matching synthetic source is stale, so it cannot support this claim."
+    },
+    {
+      "id": "contradictory-source-18",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-18",
+          "revision": "r1",
+          "current": true,
+          "text": "Reed recorded 4,321 samples."
+        },
+        {
+          "id": "conflict-18",
+          "revision": "r2",
+          "current": true,
+          "text": "Reed recorded 9,876 samples."
+        }
+      ],
+      "claim": {
+        "text": "Reed recorded 4,321 samples.",
+        "cited_source_ids": [
+          "source-18",
+          "conflict-18"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-18",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-18",
+          "revision": "r1",
+          "current": true,
+          "text": "Reed recorded 4,321 samples."
+        }
+      ],
+      "claim": {
+        "text": "Reed recorded 9,876 samples.",
+        "cited_source_ids": [
+          "source-18"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Ambiguous",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 718
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-18",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Reed recorded 9,876 samples.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-19",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-19",
+          "revision": "r1",
+          "current": true,
+          "text": "Sage says measure twice then cut."
+        }
+      ],
+      "claim": {
+        "text": "Sage says \"measure twice then cut\".",
+        "cited_source_ids": [
+          "source-19"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-19",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-19",
+          "revision": "r1",
+          "current": false,
+          "text": "Sage says measure twice then cut."
+        }
+      ],
+      "claim": {
+        "text": "Sage says \"measure twice then cut\".",
+        "cited_source_ids": [
+          "source-19"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "The matching synthetic source is stale, so it cannot support this claim."
+    },
+    {
+      "id": "contradictory-source-19",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-19",
+          "revision": "r1",
+          "current": true,
+          "text": "Sage says measure twice then cut."
+        },
+        {
+          "id": "conflict-19",
+          "revision": "r2",
+          "current": true,
+          "text": "Sage says \"discard every measurement\"."
+        }
+      ],
+      "claim": {
+        "text": "Sage says \"measure twice then cut\".",
+        "cited_source_ids": [
+          "source-19",
+          "conflict-19"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-19",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-19",
+          "revision": "r1",
+          "current": true,
+          "text": "Sage says measure twice then cut."
+        }
+      ],
+      "claim": {
+        "text": "Sage says \"discard every measurement\".",
+        "cited_source_ids": [
+          "source-19"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Expired",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 719
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-19",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Sage says \"discard every measurement\".",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    },
+    {
+      "id": "supported-20",
+      "class": "supported",
+      "sources": [
+        {
+          "id": "source-20",
+          "revision": "r1",
+          "current": true,
+          "text": "Thistle release v5.7.9 reached 73%."
+        }
+      ],
+      "claim": {
+        "text": "Thistle release v5.7.9 reached 73%.",
+        "cited_source_ids": [
+          "source-20"
+        ]
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Accept",
+      "rationale": "Every checked specific is supplied by the current cited synthetic record."
+    },
+    {
+      "id": "unsupported-20",
+      "class": "unsupported",
+      "sources": [
+        {
+          "id": "source-20",
+          "revision": "r1",
+          "current": true,
+          "text": "Thistle release v5.7.9 reached 73%."
+        }
+      ],
+      "claim": {
+        "text": "Thistle release v5.7.9 reached 73%.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "A supplied record is not evidence for a claim that cites no record."
+    },
+    {
+      "id": "contradictory-source-20",
+      "class": "contradictory-source",
+      "sources": [
+        {
+          "id": "source-20",
+          "revision": "r1",
+          "current": true,
+          "text": "Thistle release v5.7.9 reached 73%."
+        },
+        {
+          "id": "conflict-20",
+          "revision": "r2",
+          "current": true,
+          "text": "Thistle release v8.1.6 reached 97%."
+        }
+      ],
+      "claim": {
+        "text": "Thistle release v5.7.9 reached 73%.",
+        "cited_source_ids": [
+          "source-20",
+          "conflict-20"
+        ]
+      },
+      "contradictory": true,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "Synthetic fixture labels these current records contradictory; token presence cannot settle the conflict."
+    },
+    {
+      "id": "correction-20",
+      "class": "correction",
+      "sources": [
+        {
+          "id": "source-20",
+          "revision": "r1",
+          "current": true,
+          "text": "Thistle release v5.7.9 reached 73%."
+        }
+      ],
+      "claim": {
+        "text": "Thistle release v8.1.6 reached 97%.",
+        "cited_source_ids": [
+          "source-20"
+        ]
+      },
+      "contradictory": false,
+      "correction": {
+        "attribution": "Unsupported",
+        "quoted": false,
+        "authorized": true,
+        "source_turn": 720
+      },
+      "expected_correction": "Ignore",
+      "expected": "Abstain",
+      "rationale": "Claim support is evaluated independently of the curated correction admission label."
+    },
+    {
+      "id": "empty-retrieval-20",
+      "class": "empty-retrieval",
+      "sources": [],
+      "claim": {
+        "text": "Thistle release v8.1.6 reached 97%.",
+        "cited_source_ids": []
+      },
+      "contradictory": false,
+      "correction": null,
+      "expected_correction": null,
+      "expected": "Abstain",
+      "rationale": "No source was retrieved; a specific claim must abstain."
+    }
+  ]
+}

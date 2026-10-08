@@ -57,7 +57,15 @@ impl AppState {
         let Some(signal) = style_signal::classify(text) else {
             return;
         };
-        Self::lock(&self.stores)
+        let mut stores = Self::lock(&self.stores);
+        if stores
+            .reward_recovery
+            .erasure
+            .blocks(scoped_guild, scoped_user, now)
+        {
+            return;
+        }
+        stores
             .addenda
             .entry(scoped_guild.to_owned())
             .or_default()

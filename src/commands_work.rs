@@ -25,7 +25,8 @@ use serenity::all::{Permissions, UserId};
         "feedback",
         "automation",
         "reminder",
-        "recall"
+        "recall",
+        "continuity"
     )
 )]
 pub async fn work(_ctx: Context<'_>) -> Result<(), Error> {
@@ -308,3 +309,7 @@ use controls::{automation, feedback, learning, preferences, reminder, reset_pref
 
 mod recall;
 use recall::recall;
+
+pub(crate) mod continuity;
+
+use continuity::continuity;

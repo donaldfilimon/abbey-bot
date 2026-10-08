@@ -262,6 +262,9 @@ fn help_is_bounded_and_does_not_expose_hidden_voice_channels_or_mentions() {
     .collect();
     for section in HelpSection::ALL {
         let raw = catalog::render_help(section, &input);
+        if section == HelpSection::Administration {
+            println!("Administration ({} chars):\n{raw}", raw.chars().count());
+        }
         // Do not merely rely on clamping to accidentally drop an eligible leaf.
         assert!(
             raw.chars().count() <= 2000,
@@ -291,6 +294,9 @@ fn help_is_bounded_and_does_not_expose_hidden_voice_channels_or_mentions() {
 #[test]
 fn runtime_projection_observes_configuration_guild_opt_out_and_scope() {
     let data = Data {
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
         state: runtime::AppState::in_memory(),
         voice: None,
     };
@@ -311,6 +317,9 @@ fn projection_requires_qualified_routable_fm_and_respects_guild_vision() {
     };
     use std::sync::Arc;
     let mut data = Data {
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
         state: runtime::AppState::in_memory(),
         voice: None,
     };
@@ -401,6 +410,9 @@ fn voice_projection_requires_exact_guild_and_complete_selected_local_backend() {
         true,
     ));
     let mut data = Data {
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
         state: runtime::AppState::in_memory(),
         voice: Some(Arc::new(voice)),
     };

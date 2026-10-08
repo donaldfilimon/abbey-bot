@@ -286,6 +286,7 @@ fn dm_is_self_only_and_operator_commands_do_not_leak() {
     for key in [
         CommandKey::Remember,
         CommandKey::Forget,
+        CommandKey::ForgetLearning,
         CommandKey::PendingList,
         CommandKey::PendingConfirm,
         CommandKey::PendingDismiss,
@@ -346,8 +347,8 @@ fn catalog_identity_policy_and_description_data_are_valid() {
         assert!(access_valid(spec.eligibility.access.rule(), 0));
         assert!(condition_valid(spec.eligibility.condition.rule(), 0));
     }
-    assert_eq!(keys.len(), 106);
-    assert_eq!(registered_commands().len(), 106);
+    assert_eq!(keys.len(), 117);
+    assert_eq!(registered_commands().len(), 117);
     assert!(planned_commands().is_empty());
     let input = member();
     for rule in [AccessRule::All(&[]), AccessRule::Any(&[])] {
@@ -892,5 +893,44 @@ fn introduction_catalog_is_guild_private_and_bound_to_self_service_guard() {
                 .collect::<Vec<_>>(),
             parameters
         );
+    }
+}
+
+#[test]
+fn continuity_private_slash_leaves_are_discoverable_and_catalog_bound() {
+    for name in [
+        "work continuity show",
+        "work continuity propose",
+        "work continuity confirm",
+        "work continuity clear",
+    ] {
+        let spec = registered_commands()
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        assert_eq!(spec.kind, CommandKind::Slash);
+        assert!(spec.private);
+        assert_eq!(spec.registration.contexts, BOTH);
+        assert_eq!(spec.eligibility.access, AccessId::A0);
+        assert_eq!(spec.eligibility.condition, ConditionId::C0);
+    }
+}
+
+#[test]
+fn continuity_work_help_is_readable_with_every_private_leaf() {
+    for context in [InteractionContext::Guild, InteractionContext::BotDm] {
+        let mut input = member();
+        input.context = context;
+        let rendered = render_help(HelpSection::Work, &input);
+        println!(
+            "{context:?} Work help ({} characters):\n{rendered}",
+            rendered.chars().count()
+        );
+        assert!(rendered.chars().count() <= 2000);
+        for leaf in ["show", "propose", "confirm", "clear"] {
+            assert!(rendered.contains(&format!(
+                "`/work continuity {leaf}` (slash command; private)"
+            )));
+        }
     }
 }

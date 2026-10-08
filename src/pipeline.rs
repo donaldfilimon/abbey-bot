@@ -16,8 +16,7 @@ use std::sync::Mutex;
 use crate::ask;
 use crate::brain::budget::Budget;
 use crate::brain::intent;
-use crate::brain::outcome::{self, ReplyOutcome};
-use crate::brain::reward::ReplyTurn;
+use crate::brain::reward::{FeedbackAttribution, ReactionKey, ReplyTurn};
 use crate::brain::state::{self, BotAction, StateInput};
 use crate::engine;
 use crate::generation::{Ask, Delivery, generate_read_only, generate_with_tools, with_typing};
@@ -245,13 +244,45 @@ pub async fn handle<O: Outbound + Sync>(
     };
 
     let (text, attachments) = match triage(&event, settings.enabled) {
-        RouteDecision::Ignore(_) => return Outcome::Ignored("triage"),
+        RouteDecision::Ignore(_) => {
+            if settings.learning_enabled
+                && matches!(event.kind, crate::platform::EventKind::Reaction { .. })
+            {
+                state.record_learning_attribution(
+                    &scoped_guild,
+                    FeedbackAttribution::Unsupported,
+                    now,
+                );
+            }
+            return Outcome::Ignored("triage");
+        }
         RouteDecision::Reward {
             emoji,
             target_message_id,
             added,
         } => {
-            AppState::lock(&state.rewards).reaction(&emoji, &target_message_id, added);
+            if !settings.learning_enabled || event.native_user_id.is_empty() {
+                if settings.learning_enabled {
+                    state.record_learning_attribution(
+                        &scoped_guild,
+                        FeedbackAttribution::Unsupported,
+                        now,
+                    );
+                }
+                return Outcome::Ignored("learning off or unknown reactor");
+            }
+            let attribution = AppState::lock(&state.rewards).reaction(
+                ReactionKey {
+                    scope: scoped_channel.clone(),
+                    message: target_message_id,
+                    reactor_hash: crate::brain::addenda::member_hash(&scoped_user),
+                    emoji,
+                },
+                added,
+                now,
+            );
+            state.record_learning_attribution(&scoped_guild, attribution, now);
+            tracing::debug!(?attribution, "reaction attribution");
             return Outcome::Rewarded;
         }
         RouteDecision::Welcome { display_name } => {
@@ -280,34 +311,38 @@ pub async fn handle<O: Outbound + Sync>(
     // delayed channel today. It covers a reply-to and a same-channel follow-up.
     // Reactions still land on the untyped path, and edits, threads, and voice
     // are not observed at all.
-    let attributed = {
-        let mut rewards = AppState::lock(&state.rewards);
-        if let Some(id) = reply_to {
-            rewards.human_replied(id);
+    let correction = AppState::lock(&state.rewards).correction_source(
+        &scoped_channel,
+        &scoped_guild,
+        &scoped_user,
+        reply_to,
+        &text,
+        now,
+        settings.learning_enabled && !event.native_user_id.is_empty(),
+    );
+    let session_mode = correction.as_ref().map_or(
+        crate::generation::SessionMode::Shared,
+        crate::generation::SessionMode::Repair,
+    );
+    let attributed = if settings.learning_enabled && !event.native_user_id.is_empty() {
+        let attribution = AppState::lock(&state.rewards).feedback(
+            &scoped_channel,
+            &scoped_user,
+            reply_to,
+            &text,
+            now,
+        );
+        state.record_learning_attribution(&scoped_guild, attribution, now);
+        tracing::debug!(?attribution, "feedback attribution");
+        matches!(
+            attribution,
+            FeedbackAttribution::ExactReply | FeedbackAttribution::UniqueScoped
+        )
+    } else {
+        if settings.learning_enabled {
+            state.record_learning_attribution(&scoped_guild, FeedbackAttribution::Unsupported, now);
         }
-        let prior_ask = match reply_to {
-            Some(id) => rewards.open_ask(id),
-            None => rewards.open_ask_in_scope(&scoped_channel, now),
-        }
-        .map(str::to_owned);
-        // An unreadable or off-topic message means the human moved on without
-        // engaging: weak evidence, worth exactly nothing, never a penalty.
-        let observed =
-            outcome::classify(&text, prior_ask.as_deref()).unwrap_or(ReplyOutcome::NoEngagement);
-        let credited = match reply_to {
-            Some(id) => rewards
-                .observe_reply_to(id, observed)
-                .then(|| id.to_owned()),
-            None => rewards.observe_in_scope(&scoped_channel, &scoped_user, observed, now),
-        };
-        if let Some(turn) = &credited {
-            tracing::debug!(
-                turn = %turn,
-                outcome = ?observed,
-                "delayed outcome attributed to an open turn"
-            );
-        }
-        credited.is_some()
+        false
     };
     // Style feedback ("too long", "less formal") counts only from a member's
     // own message about Abbey (a reply to her turn, a follow-up to it, or a
@@ -374,37 +409,55 @@ pub async fn handle<O: Outbound + Sync>(
         // mention/DM reply settles 150 s later into `BrainRegistry::remember`,
         // which drops experiences for guilds that are not loaded.
         let stores = AppState::lock(&state.stores);
-        let mut brains = AppState::lock(&state.brains);
-        let brain = brains.brain(&scoped_guild, &*stores, now);
-        if let Some(eps) = settings.epsilon_override {
-            brain.set_epsilon(eps);
-        }
-        if forced {
-            if let Some(stats) = brains.stats_mut(&scoped_guild) {
-                stats.record_forced();
+        if stores
+            .reward_recovery
+            .erasure
+            .blocks(&scoped_guild, &scoped_user, now)
+        {
+            if forced {
+                BotAction::Reply
+            } else {
+                BotAction::Stay
             }
-            BotAction::Reply
         } else {
-            let q = brain.q_values(&encoded);
-            let chosen = BotAction::from_index(brain.select_action(&encoded))
-                .expect("DqnAgent::select_action returned out-of-range index");
-            if let Some(stats) = brains.stats_mut(&scoped_guild) {
-                stats.record_decision(&encoded, &q, chosen);
+            let mut brains = AppState::lock(&state.brains);
+            let brain = brains.brain(&scoped_guild, &*stores, now);
+            if let Some(eps) = settings.epsilon_override {
+                brain.set_epsilon(eps);
             }
-            tracing::info!(
-                guild = %scoped_guild,
-                action = crate::brain::telemetry::action_name(chosen),
-                q = ?q,
-                intent = ?intent,
-                heat,
-                "policy decision"
-            );
-            chosen
+            if forced {
+                if let Some(stats) = brains.stats_mut(&scoped_guild) {
+                    stats.record_forced();
+                }
+                BotAction::Reply
+            } else {
+                let q = brain.q_values(&encoded);
+                let chosen = BotAction::from_index(brain.select_action(&encoded))
+                    .expect("DqnAgent::select_action returned out-of-range index");
+                if let Some(stats) = brains.stats_mut(&scoped_guild) {
+                    stats.record_decision(&encoded, &q, chosen);
+                }
+                tracing::info!(
+                    guild = %scoped_guild,
+                    action = crate::brain::telemetry::action_name(chosen),
+                    q = ?q,
+                    intent = ?intent,
+                    heat,
+                    "policy decision"
+                );
+                chosen
+            }
         }
     };
 
     if action == BotAction::Stay {
-        if settings.learning_enabled {
+        let stores = AppState::lock(&state.stores);
+        if settings.learning_enabled
+            && !stores
+                .reward_recovery
+                .erasure
+                .blocks(&scoped_guild, &scoped_user, now)
+        {
             AppState::lock(&state.brains).remember(
                 &scoped_guild,
                 crate::brain::reward::RewardCollector::silence_experience(encoded.to_vec()),
@@ -439,13 +492,16 @@ pub async fn handle<O: Outbound + Sync>(
         // Learning-off participation does not enqueue training experiences.
         if settings.learning_enabled {
             // A reaction back lands on the user's own message, so that is the key.
-            AppState::lock(&state.rewards).register_reply(
-                encoded.to_vec(),
-                BotAction::React.index(),
-                event.native_message_id.clone(),
-                scoped_guild.clone(),
+            AppState::lock(&state.rewards).register_turn(ReplyTurn {
+                state: encoded.to_vec(),
+                action: BotAction::React.index(),
+                sent_native_message_id: event.native_message_id.clone(),
+                scoped_guild_id: scoped_guild.clone(),
+                scope: scoped_channel.clone(),
+                asker: scoped_user.clone(),
+                ask: String::new(),
                 now,
-            );
+            });
         }
         return Outcome::Reacted;
     }
@@ -486,7 +542,13 @@ pub async fn handle<O: Outbound + Sync>(
         }
     }
     out.typing(&event.native_channel_id).await;
-    let context = assemble_context(
+    if correction
+        .as_ref()
+        .is_some_and(|source| !crate::generation::consent::correction_current(state, source))
+    {
+        return Outcome::ReplyFailed(crate::generation::consent::WITHDRAWN_REPLY.into());
+    }
+    let mut context = assemble_context(
         state,
         &scoped_guild,
         &scoped_user,
@@ -494,10 +556,27 @@ pub async fn handle<O: Outbound + Sync>(
         &enriched,
         reputation,
     );
+    if forced
+        && event.network == crate::platform::SocialNetwork::Discord
+        && event.native_guild_id.is_none()
+        && let (Ok(actor), Ok(channel)) = (
+            event.native_user_id.parse(),
+            event.native_channel_id.parse(),
+        )
+    {
+        context.continuity = state
+            .prepare_continuity_context(
+                crate::work::WorkScope::Personal { owner: actor },
+                actor,
+                channel,
+                crate::runtime::continuity_context::ContinuityAudience::OwnerDm,
+            )
+            .await;
+    }
     let guard = match crate::generation::consent::GenerationGuard::capture(
         state,
         &Ask {
-            session_mode: crate::generation::SessionMode::Shared,
+            session_mode,
             subject: Some((&scoped_guild, &scoped_user)),
             scope: &scoped_channel,
             context: &context,
@@ -516,7 +595,7 @@ pub async fn handle<O: Outbound + Sync>(
         // someone addressed Abbey — budgeted policy replies stay single-shot.
         let ask = Ask {
             subject: Some((&scoped_guild, &scoped_user)),
-            session_mode: crate::generation::SessionMode::Shared,
+            session_mode,
             scope: &scoped_channel,
             context: &context,
             user_input: &enriched,
@@ -527,7 +606,7 @@ pub async fn handle<O: Outbound + Sync>(
             native_channel_id: &event.native_channel_id,
             reply_to: reply_to.as_deref(),
         });
-        if forced {
+        if forced && correction.is_none() {
             let mut host = crate::runtime::ToolScope {
                 memory_turn: Some(&memory_turn),
                 state,
@@ -587,7 +666,7 @@ pub async fn handle<O: Outbound + Sync>(
                 title: None,
                 accent_color: None,
             };
-            if let Err(error) = guard.check(state) {
+            if let Err(error) = guard.check_fresh(state).await {
                 return Outcome::ReplyFailed(error.to_string());
             }
             let receipt = out
@@ -652,13 +731,19 @@ pub async fn handle<O: Outbound + Sync>(
     }
     {
         let mut stores = AppState::lock(&state.stores);
-        AppState::lock(&state.social).record_interaction(
-            &scoped_user,
-            &scoped_guild,
-            intent.quality(),
-            now,
-            &mut *stores,
-        );
+        if !stores
+            .reward_recovery
+            .erasure
+            .blocks(&scoped_guild, &scoped_user, now)
+        {
+            AppState::lock(&state.social).record_interaction(
+                &scoped_user,
+                &scoped_guild,
+                intent.quality(),
+                now,
+                &mut *stores,
+            );
+        }
     }
     finish_memory_turn(state, out, &event, memory_turn, true).await;
     Outcome::Replied

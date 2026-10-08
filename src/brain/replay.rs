@@ -44,7 +44,6 @@ impl ReplayBuffer {
 
     /// Maximum number of entries retained.
     #[must_use]
-    #[cfg(test)]
     pub fn capacity(&self) -> usize {
         self.capacity
     }

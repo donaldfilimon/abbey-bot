@@ -1,5 +1,6 @@
 use super::*;
 use crate::work::WorkError;
+mod task_follow_up_migration;
 #[test]
 fn disabled_defaults_and_limits() {
     assert!(!MemberPolicy::default().personalized_enabled());
@@ -97,6 +98,9 @@ fn candidate(id: u64) -> Candidate {
         destination: DestinationPreference::Origin,
         message_id: None,
         introduction_id: None,
+        work_ref: None,
+        expires_at: None,
+        follow_up_reason: None,
     }
 }
 #[test]

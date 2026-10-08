@@ -73,6 +73,7 @@ impl Network {
                     } else {
                         let mut member = Member::default();
                         member.user.id = UserId::new(id);
+                        member.user.bot = id == 99;
                         member.guild_id = GuildId::new(7);
                         serde_json::to_vec(&member).unwrap()
                     }

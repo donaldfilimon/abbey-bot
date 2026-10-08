@@ -226,7 +226,9 @@ async fn discord_telegram_and_slack_share_canonical_persona_tool_memory_and_visi
 async fn a_reaction_feeds_the_reward_collector() {
     let state = AppState::in_memory();
     let out = FakeOut::default();
-    AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "abbey-msg", "discord:g", 0);
+    let now = runtime::now();
+    open_turn(&state, now);
+    enable_feedback(&state);
     let event = SocialEvent {
         kind: EventKind::Reaction {
             emoji: "🔥".into(),
@@ -239,7 +241,7 @@ async fn a_reaction_feeds_the_reward_collector() {
         handle(&state, &out, event, false, None).await,
         Outcome::Rewarded
     );
-    let settled = AppState::lock(&state.rewards).settle_expired(10_000);
+    let settled = AppState::lock(&state.rewards).settle_expired(now + 151);
     assert_eq!(settled.len(), 1);
     assert!((settled[0].1.reward - 0.8).abs() < 1e-6, "−0.2 + 1.0");
 }
@@ -269,9 +271,10 @@ fn only_settled_reward(state: &AppState, now: u64) -> f32 {
 async fn a_thanks_in_reply_to_abbey_reaches_the_delayed_channel() {
     let state = AppState::in_memory();
     let out = FakeOut::default();
-    open_turn(&state, 0);
-    // The guild has not opted in, so Abbey stays silent — but reward
-    // bookkeeping for a turn she already took runs before the gates.
+    enable_feedback(&state);
+    let now = runtime::now();
+    open_turn(&state, now);
+    // Learning is on; unsolicited speech remains off.
     let outcome = handle(
         &state,
         &out,
@@ -282,7 +285,7 @@ async fn a_thanks_in_reply_to_abbey_reaches_the_delayed_channel() {
     .await;
     assert_eq!(outcome, Outcome::Ignored("act off"));
     // −0.2 baseline + 0.5 untyped engagement + 1.0 typed thanks.
-    let reward = only_settled_reward(&state, 10_000);
+    let reward = only_settled_reward(&state, now + 151);
     assert!((reward - 1.3).abs() < 1e-6, "{reward}");
 }
 
@@ -290,7 +293,9 @@ async fn a_thanks_in_reply_to_abbey_reaches_the_delayed_channel() {
 async fn a_correction_in_reply_to_abbey_costs_more_than_silence() {
     let state = AppState::in_memory();
     let out = FakeOut::default();
-    open_turn(&state, 0);
+    enable_feedback(&state);
+    let now = runtime::now();
+    open_turn(&state, now);
     let _ = handle(
         &state,
         &out,
@@ -301,7 +306,7 @@ async fn a_correction_in_reply_to_abbey_costs_more_than_silence() {
     .await;
     // −0.2 + 0.5 engaged − 1.0 typed correction: below the −0.2 a turn
     // nobody answered would have settled at.
-    let reward = only_settled_reward(&state, 10_000);
+    let reward = only_settled_reward(&state, now + 151);
     assert!((reward + 0.7).abs() < 1e-6, "{reward}");
     assert!(reward < -0.2);
 }
@@ -310,6 +315,7 @@ async fn a_correction_in_reply_to_abbey_costs_more_than_silence() {
 async fn a_same_channel_follow_up_needs_no_reply_pointer() {
     let state = AppState::in_memory();
     let out = FakeOut::default();
+    enable_feedback(&state);
     let now = runtime::now();
     open_turn(&state, now);
     let _ = handle(
@@ -333,6 +339,7 @@ async fn a_same_channel_follow_up_needs_no_reply_pointer() {
 async fn a_bystanders_thanks_in_the_same_channel_is_not_credited() {
     let state = AppState::in_memory();
     let out = FakeOut::default();
+    enable_feedback(&state);
     let now = runtime::now();
     open_turn(&state, now);
     // u2 was never answered by Abbey — this is "thanks Carol!", not
@@ -356,6 +363,7 @@ async fn a_bystanders_thanks_in_the_same_channel_is_not_credited() {
 async fn unrelated_chatter_leaves_the_turn_exactly_as_it_was() {
     let state = AppState::in_memory();
     let out = FakeOut::default();
+    enable_feedback(&state);
     let now = runtime::now();
     open_turn(&state, now);
     let _ = handle(
@@ -560,8 +568,24 @@ async fn a_forced_reply_loads_the_brain_so_its_reward_is_not_dropped() {
     assert_eq!(outcome, Outcome::Replied);
     assert_eq!(AppState::lock(&state.brains).loaded_guilds(), ["discord:g"]);
     // Simulate a settled reward for that guild: it lands in the buffer.
-    AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "sent-1", "discord:g", 0);
-    AppState::lock(&state.rewards).reaction("👍", "sent-1", true);
+    AppState::lock(&state.rewards).register_reply(
+        vec![0.0; 18],
+        1,
+        "sent-1",
+        "discord:g",
+        "discord:c1",
+        0,
+    );
+    AppState::lock(&state.rewards).reaction(
+        ReactionKey {
+            scope: "discord:c1".into(),
+            message: "sent-1".into(),
+            reactor_hash: 1,
+            emoji: "👍".into(),
+        },
+        true,
+        0,
+    );
     let settled = AppState::lock(&state.rewards).settle_expired(1_000);
     let mut brains = AppState::lock(&state.brains);
     for (g, exp) in settled {
@@ -961,3 +985,14 @@ mod memory_outcomes;
 
 #[path = "tests/style_addenda.rs"]
 mod style_addenda;
+
+fn enable_feedback(state: &AppState) {
+    let mut stores = AppState::lock(&state.stores);
+    AppState::lock(&state.guilds).update("discord:g", &mut *stores, |s| s.learning_enabled = true);
+}
+
+#[path = "tests/reward_attribution.rs"]
+mod reward_attribution;
+
+#[path = "tests/correction.rs"]
+mod correction;

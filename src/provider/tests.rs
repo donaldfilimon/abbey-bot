@@ -320,6 +320,7 @@ fn cli_argv_contains_instructions_but_no_facts_or_transcript() {
         reputation: 0.5,
         addenda: String::new(),
         personal_memory_permits: Default::default(),
+        continuity: None,
     };
     let persona = crate::persona::Persona::Abbey;
     let core = crate::ask::system_prompt(persona);

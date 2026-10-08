@@ -545,8 +545,24 @@ fn settled_rewards_reach_the_guild_stats() {
         let mut brains = AppState::lock(&state.brains);
         brains.brain("discord:g", &*stores, 0);
     }
-    AppState::lock(&state.rewards).register_reply(vec![0.0; 18], 1, "m1", "discord:g", 0);
-    AppState::lock(&state.rewards).reaction("👍", "m1", true);
+    AppState::lock(&state.rewards).register_reply(
+        vec![0.0; 18],
+        1,
+        "m1",
+        "discord:g",
+        "discord:c1",
+        0,
+    );
+    AppState::lock(&state.rewards).reaction(
+        crate::brain::reward::ReactionKey {
+            scope: "discord:c1".into(),
+            message: "m1".into(),
+            reactor_hash: 1,
+            emoji: "👍".into(),
+        },
+        true,
+        0,
+    );
     // settle_rewards reads the real clock; the entry is 150 s+ old by any clock.
     state.settle_rewards();
     let brains = AppState::lock(&state.brains);
@@ -607,4 +623,69 @@ fn fm_vision_binds_to_system_mode() {
     assert_eq!(chosen.mode, crate::provider::FmMode::System);
     let error = super::provider_setup::fm_vision_instance(&route.instances[..1]).unwrap_err();
     assert!(error.0.contains("requires system"), "{}", error.0);
+}
+
+#[test]
+fn reward_recovery_snapshot_publishes_with_pending_and_loads_from_canonical_bytes() {
+    let dir = TestDirectory::new();
+    let state =
+        AppState::in_memory_with_persistence(Some(dir.0.clone()), Arc::new(FsPersistenceSink));
+    let key = crate::brain::reward::ReactionKey {
+        scope: "discord:c1".into(),
+        message: "recovery-fixture".into(),
+        reactor_hash: 7,
+        emoji: "👍".into(),
+    };
+    {
+        let mut rewards = AppState::lock(&state.rewards);
+        rewards.register_reply(
+            vec![0.0; 18],
+            1,
+            "recovery-fixture",
+            "discord:g",
+            "discord:c1",
+            100,
+        );
+        rewards.reaction(key.clone(), true, 100);
+    }
+    let report = state.persist_all_at(101);
+    assert_eq!(report.canonical_state, PersistComponentOutcome::Committed);
+    let loaded = Stores::load(&dir.0).unwrap();
+    let mut rewards = RewardCollector::new();
+    rewards
+        .restore_recovered(loaded.pending_rewards, loaded.reward_recovery)
+        .unwrap();
+    assert_eq!(
+        rewards.reaction(key, true, 102),
+        crate::brain::reward::FeedbackAttribution::Duplicate
+    );
+    assert!((rewards.settle_expired(251)[0].1.reward - 0.8).abs() < 1e-6);
+}
+
+#[test]
+fn erasure_settlement_cannot_drain_before_brain_transaction() {
+    let state = AppState::in_memory();
+    AppState::lock(&state.rewards).register_reply(
+        vec![0.0; STATE_DIMENSIONS],
+        1,
+        "erasure-race",
+        "discord:1",
+        "discord:2",
+        0,
+    );
+    let brains = AppState::lock(&state.brains);
+    let worker = state.clone();
+    let join = std::thread::spawn(move || worker.settle_rewards());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+    while std::time::Instant::now() < deadline && AppState::lock(&state.rewards).pending_len() == 1
+    {
+        std::thread::yield_now();
+    }
+    let still_pending = AppState::lock(&state.rewards).pending_len();
+    drop(brains);
+    join.join().unwrap();
+    assert_eq!(
+        still_pending, 1,
+        "drained samples escape the erasure/reset lock boundary"
+    );
 }

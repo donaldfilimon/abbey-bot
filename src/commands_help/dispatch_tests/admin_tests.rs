@@ -362,3 +362,79 @@ async fn actual_admin_page_select_opens_dashboard_page_fail_closed() {
         })
     }));
 }
+
+#[tokio::test]
+async fn erasure_actual_reset_press_acknowledges_and_rechecks_native_authority() {
+    use crate::commands_brain::{LearningResetConfirmation, handle_reset_press};
+    let fixture = DiscordFixture::new().await;
+    let data = configured_data();
+    let session = crate::admin_dashboard::AdminSession {
+        owner: ACTOR,
+        guild: GUILD,
+        expiry: runtime::now() + 900,
+        page: crate::admin_dashboard::AdminPage::Operations,
+    };
+    for case in [
+        "no-manager",
+        "permission-failure",
+        "other-owner",
+        "other-guild",
+        "other-channel",
+        "expired",
+        "used",
+        "token",
+    ] {
+        fixture.permissions.store(
+            Permissions::MANAGE_GUILD.bits() | Permissions::VIEW_CHANNEL.bits(),
+            Ordering::SeqCst,
+        );
+        fixture
+            .fail_permissions
+            .store(case == "permission-failure", Ordering::SeqCst);
+        if case == "no-manager" {
+            fixture
+                .permissions
+                .store(Permissions::VIEW_CHANNEL.bits(), Ordering::SeqCst);
+        }
+        let mut confirmation = LearningResetConfirmation {
+            actor: ACTOR,
+            guild: GUILD,
+            channel: CHANNEL,
+            token: "task4-reset".into(),
+            created: runtime::now(),
+            used: false,
+        };
+        let mut press = admin_component(
+            &fixture,
+            &session,
+            crate::admin_dashboard::AdminAction::Flush,
+            CHANNEL,
+        );
+        press.data.custom_id = confirmation.token.clone();
+        match case {
+            "other-owner" => confirmation.actor += 1,
+            "other-guild" => confirmation.guild += 1,
+            "other-channel" => confirmation.channel += 1,
+            "expired" => confirmation.created -= 61,
+            "used" => confirmation.used = true,
+            "token" => confirmation.token = "other-token".into(),
+            _ => {}
+        }
+        let before = crate::runtime::AppState::lock(&data.state.stores).clone();
+        handle_reset_press(&fixture.context, &press, &data.state, &mut confirmation)
+            .await
+            .unwrap();
+        assert_eq!(*crate::runtime::AppState::lock(&data.state.stores), before);
+        let requests = fixture.take_requests();
+        assert_eq!(requests[0].body["type"], 6);
+        assert!(
+            requests.iter().any(|r| r.body["content"]
+                .as_str()
+                .is_some_and(|s| s.contains("reset refused"))),
+            "{case}"
+        );
+        if matches!(case, "no-manager" | "permission-failure") {
+            assert!(requests.len() > 2, "fresh REST lookup required");
+        }
+    }
+}

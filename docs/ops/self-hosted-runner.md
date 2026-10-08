@@ -1,6 +1,6 @@
 # Self-hosted macOS runner
 
-The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) runs on the repository's macOS arm64 runner. It checks out Abbey and WDBX separately, pins WDBX to `9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae`, and requires cross-repository conformance. Each run uses a unique disposable Cargo target directory. GitHub-hosted lanes were removed while Actions billing was locked; their absence is not Linux or Windows acceptance.
+The `Gate (macOS)` check (job `gate-macos` in `.github/workflows/rust.yml`) runs on the repository's macOS arm64 runner. It checks out Abbey and WDBX separately, pins WDBX to `7ddeb3d1389ec0e9fab5ac5397acf0da91a01174`, and requires cross-repository conformance. Each run uses a unique disposable Cargo target directory. GitHub-hosted lanes were removed while Actions billing was locked; their absence is not Linux or Windows acceptance.
 
 ## Registration
 

@@ -357,7 +357,12 @@ pub enum LlmErrorKind {
     ResponseBudget,
     Backend,
     Delivery,
+    /// Trusted local context/permission invalidation, never provider text.
+    ContextChanged,
 }
+
+pub(crate) const CONTEXT_CHANGED_REPLY: &str =
+    "The context for this answer changed while I was checking it. Please ask again.";
 
 impl LlmError {
     /// A backend, transport, or protocol failure. Provider-controlled text can
@@ -407,6 +412,18 @@ impl LlmError {
         Self {
             failure,
             ..Self::backend(detail.into())
+        }
+    }
+
+    /// Only local authorization/context guards may select this public category.
+    /// Provider-reported cancellation remains generic; neither is retryable.
+    pub(crate) fn context_changed() -> Self {
+        Self {
+            kind: LlmErrorKind::ContextChanged,
+            ..Self::classified(
+                CONTEXT_CHANGED_REPLY,
+                crate::provider::ProviderFailureKind::Cancelled,
+            )
         }
     }
 

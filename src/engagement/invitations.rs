@@ -69,6 +69,12 @@ impl EngagementStore {
         kind: EngagementKind,
         request: InvitationRequest,
     ) -> Result<Option<u64>, WorkError> {
+        if self
+            .erased_identities
+            .contains(&erasure_identity::invitation(request.interaction))
+        {
+            return Err(WorkError::Stale);
+        }
         if !invitation_kind(kind) || request.interaction == 0 {
             return Err(WorkError::Invalid);
         }
@@ -147,6 +153,9 @@ impl EngagementStore {
                 .unwrap_or(DestinationPreference::Origin),
             message_id: None,
             introduction_id: None,
+            work_ref: None,
+            expires_at: None,
+            follow_up_reason: None,
         };
         let mut next = self.clone();
         next.sequence = id;

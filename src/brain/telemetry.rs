@@ -7,10 +7,44 @@
 
 use std::collections::VecDeque;
 
+use crate::brain::reward::FeedbackAttribution;
 use crate::brain::state::BotAction;
 
 /// How many settled rewards the rolling mean covers.
 pub const RECENT_REWARDS: usize = 20;
+
+/// Process-local aggregate observations only. No member, message or text inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LearningAudit {
+    pub exact: u64,
+    pub unique: u64,
+    pub duplicate: u64,
+    pub ambiguous: u64,
+    pub expired: u64,
+    pub unsupported: u64,
+}
+impl LearningAudit {
+    pub fn record(&mut self, attribution: FeedbackAttribution) {
+        let count = match attribution {
+            FeedbackAttribution::ExactReply => &mut self.exact,
+            FeedbackAttribution::UniqueScoped => &mut self.unique,
+            FeedbackAttribution::Duplicate => &mut self.duplicate,
+            FeedbackAttribution::Ambiguous => &mut self.ambiguous,
+            FeedbackAttribution::Expired => &mut self.expired,
+            FeedbackAttribution::Unsupported => &mut self.unsupported,
+        };
+        *count = count.saturating_add(1);
+    }
+    pub fn snapshot(&self) -> Self {
+        *self
+    }
+    pub fn render(&self) -> String {
+        format!(
+            "Feedback since process start: accepted exact reply/reaction {} · unique scoped {}\nRefused: duplicate {} · ambiguous {} · expired {} · unsupported {}",
+            self.exact, self.unique, self.duplicate, self.ambiguous, self.expired, self.unsupported
+        )
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BrainStats {
@@ -27,7 +61,6 @@ pub struct BrainStats {
 
 /// The numbers `/admin brain` shows that live outside `BrainStats`.
 pub struct BrainView<'a> {
-    pub scoped_guild_id: &'a str,
     pub epsilon: f32,
     pub learn_steps: u64,
     pub buffer_len: usize,
@@ -77,7 +110,7 @@ impl BrainStats {
             Some(action) => {
                 let q = |a: BotAction| self.last_q.get(a.index()).copied().unwrap_or(0.0);
                 format!(
-                    "last decision: {} · q stay {:.2} / reply {:.2} / react {:.2}",
+                    "last decision: {} · action values: stay {:.2} / reply {:.2} / react {:.2}",
                     action_name(action),
                     q(BotAction::Stay),
                     q(BotAction::Reply),
@@ -89,13 +122,12 @@ impl BrainStats {
             .mean_recent_reward()
             .map_or_else(|| "n/a".to_string(), |m| format!("{m:.2}"));
         format!(
-            "**brain — {}**\n\
+            "**brain**\n\
              ε {:.3} · learn steps {} · replay buffer {}/{} · experiences {} · topology {:?}\n\
              {last}\n\
              decisions: stay {} · reply {} · react {} · forced (mentions/DMs) {}\n\
              rewards settled: {} · mean of last {}: {mean}\n\
              budget: {:.1} of {}/h left",
-            view.scoped_guild_id,
             view.epsilon,
             view.learn_steps,
             view.buffer_len,
@@ -127,9 +159,8 @@ pub const fn action_name(action: BotAction) -> &'static str {
 mod tests {
     use super::*;
 
-    fn view(stats_guild: &str) -> BrainView<'_> {
+    fn view(_stats_guild: &str) -> BrainView<'_> {
         BrainView {
-            scoped_guild_id: stats_guild,
             epsilon: 0.1,
             learn_steps: 3,
             buffer_len: 2,
@@ -139,6 +170,36 @@ mod tests {
             tokens_left: 5.0,
             topology: &[18, 64, 32, 3],
         }
+    }
+
+    #[test]
+    fn audit_closed_attributions_saturate_without_identity_or_text() {
+        let mut audit = LearningAudit::default();
+        for attribution in [
+            FeedbackAttribution::ExactReply,
+            FeedbackAttribution::UniqueScoped,
+            FeedbackAttribution::Duplicate,
+            FeedbackAttribution::Ambiguous,
+            FeedbackAttribution::Expired,
+            FeedbackAttribution::Unsupported,
+        ] {
+            audit.record(attribution);
+        }
+        assert_eq!(
+            audit.snapshot(),
+            LearningAudit {
+                exact: 1,
+                unique: 1,
+                duplicate: 1,
+                ambiguous: 1,
+                expired: 1,
+                unsupported: 1
+            }
+        );
+        audit.exact = u64::MAX;
+        audit.record(FeedbackAttribution::ExactReply);
+        assert_eq!(audit.snapshot().exact, u64::MAX);
+        assert!(audit.render().contains("unique scoped 1"));
     }
 
     #[test]
@@ -175,9 +236,9 @@ mod tests {
         let text = s.render(&view("discord:g"));
         assert_eq!(
             text,
-            "**brain — discord:g**\n\
+            "**brain**\n\
              ε 0.100 · learn steps 3 · replay buffer 2/10000 · experiences 2 · topology [18, 64, 32, 3]\n\
-             last decision: reply · q stay 0.10 / reply 0.70 / react 0.20\n\
+             last decision: reply · action values: stay 0.10 / reply 0.70 / react 0.20\n\
              decisions: stay 0 · reply 1 · react 0 · forced (mentions/DMs) 0\n\
              rewards settled: 1 · mean of last 1: 0.80\n\
              budget: 5.0 of 6/h left"
@@ -189,6 +250,9 @@ mod tests {
         let s = BrainStats::default();
         let text = s.render(&view("discord:g"));
         assert!(text.contains("last decision: none yet"), "{text}");
+        let mut decided = BrainStats::default();
+        decided.record_decision(&[], &[0.1, 0.2, 0.3], BotAction::Reply);
+        assert!(decided.render(&view("discord:g")).contains("action values"));
         assert!(
             text.contains("rewards settled: 0 · mean of last 0: n/a"),
             "{text}"

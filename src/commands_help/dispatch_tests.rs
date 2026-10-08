@@ -26,14 +26,20 @@ struct Request {
     body: Value,
 }
 
+type NativeResponseSequences =
+    std::collections::BTreeMap<String, std::collections::VecDeque<Value>>;
+
 struct DiscordFixture {
     context: serenity::all::Context,
     manager: Arc<ShardManager>,
     requests: Arc<Mutex<Vec<Request>>>,
+    native_responses: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
+    native_response_sequences: Arc<Mutex<NativeResponseSequences>>,
     permissions: Arc<AtomicU64>,
     fail_permissions: Arc<AtomicBool>,
     fail_acknowledgement: Arc<AtomicBool>,
     fail_next_edit: Arc<AtomicBool>,
+    fail_next_followup: Arc<AtomicBool>,
     hold_acknowledgement: Arc<AtomicBool>,
     acknowledgement_entered: Arc<tokio::sync::Semaphore>,
     acknowledgement_release: Arc<tokio::sync::Semaphore>,
@@ -132,19 +138,27 @@ impl DiscordFixture {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let native_responses = Arc::new(Mutex::new(
+            std::collections::BTreeMap::<String, Value>::new(),
+        ));
+        let native_response_sequences = Arc::new(Mutex::new(NativeResponseSequences::new()));
         let permissions = Arc::new(AtomicU64::new(Permissions::VIEW_CHANNEL.bits()));
         let fail_permissions = Arc::new(AtomicBool::new(false));
         let fail_acknowledgement = Arc::new(AtomicBool::new(false));
         let fail_next_edit = Arc::new(AtomicBool::new(false));
+        let fail_next_followup = Arc::new(AtomicBool::new(false));
         let hold_acknowledgement = Arc::new(AtomicBool::new(false));
         let acknowledgement_entered = Arc::new(tokio::sync::Semaphore::new(0));
         let acknowledgement_release = Arc::new(tokio::sync::Semaphore::new(0));
         let server = {
             let requests = Arc::clone(&requests);
+            let native_responses = Arc::clone(&native_responses);
+            let native_response_sequences = Arc::clone(&native_response_sequences);
             let permissions = Arc::clone(&permissions);
             let fail_permissions = Arc::clone(&fail_permissions);
             let fail_acknowledgement = Arc::clone(&fail_acknowledgement);
             let fail_next_edit = Arc::clone(&fail_next_edit);
+            let fail_next_followup = Arc::clone(&fail_next_followup);
             let hold_acknowledgement = Arc::clone(&hold_acknowledgement);
             let acknowledgement_entered = Arc::clone(&acknowledgement_entered);
             let acknowledgement_release = Arc::clone(&acknowledgement_release);
@@ -193,7 +207,30 @@ impl DiscordFixture {
                     let is_acknowledgement = matches!(body["type"].as_u64(), Some(5 | 6));
                     let is_permission_lookup = method == "GET";
                     let is_callback = route.ends_with("/callback");
-                    let (content_type, response) = if method == "GET" && route == "/fixture.png" {
+                    let native_response = if method == "GET" {
+                        let path = route.split('?').next().unwrap();
+                        let path = path.strip_prefix("/api/v10").unwrap_or(path);
+                        // Only GET fixtures consume a route-local sequence. Keep
+                        // its final value so later proof checks cannot silently
+                        // revert to the earlier static response.
+                        let sequenced = native_response_sequences
+                            .lock()
+                            .unwrap()
+                            .get_mut(path)
+                            .and_then(|queue| {
+                                if queue.len() > 1 {
+                                    queue.pop_front()
+                                } else {
+                                    queue.front().cloned()
+                                }
+                            });
+                        sequenced.or_else(|| native_responses.lock().unwrap().get(path).cloned())
+                    } else {
+                        None
+                    };
+                    let (content_type, response) = if let Some(response) = native_response {
+                        ("application/json", serde_json::to_vec(&response).unwrap())
+                    } else if method == "GET" && route == "/fixture.png" {
                         let mut encoded = std::io::Cursor::new(Vec::new());
                         ::image::DynamicImage::new_rgb8(2, 2)
                             .write_to(&mut encoded, ::image::ImageFormat::Png)
@@ -219,7 +256,16 @@ impl DiscordFixture {
                         }
                     } else if is_permission_lookup && route.contains("/members/") {
                         let mut member = Member::default();
-                        member.user = user(ACTOR);
+                        let requested_actor = route
+                            .split('?')
+                            .next()
+                            .unwrap()
+                            .rsplit('/')
+                            .next()
+                            .unwrap()
+                            .parse::<u64>()
+                            .unwrap();
+                        member.user = user(requested_actor);
                         member.guild_id = GuildId::new(GUILD);
                         ("application/json", serde_json::to_vec(&member).unwrap())
                     } else if is_permission_lookup && route.contains("/guilds/") {
@@ -245,12 +291,15 @@ impl DiscordFixture {
                     };
                     let edit_failed =
                         method == "PATCH" && fail_next_edit.swap(false, Ordering::SeqCst);
+                    let followup_failed = route.contains("/webhooks/")
+                        && fail_next_followup.swap(false, Ordering::SeqCst);
                     requests.lock().unwrap().push(Request {
                         method,
                         route,
                         body,
                     });
                     let failed = edit_failed
+                        || followup_failed
                         || (is_permission_lookup && fail_permissions.load(Ordering::SeqCst))
                         || (is_acknowledgement && fail_acknowledgement.load(Ordering::SeqCst));
                     let (status, response) = if failed {
@@ -364,10 +413,13 @@ impl DiscordFixture {
             context,
             manager,
             requests,
+            native_responses,
+            native_response_sequences,
             permissions,
             fail_permissions,
             fail_acknowledgement,
             fail_next_edit,
+            fail_next_followup,
             hold_acknowledgement,
             acknowledgement_entered,
             acknowledgement_release,
@@ -455,6 +507,9 @@ fn configured_data() -> Data {
 
 fn configured_data_at(address: Option<std::net::SocketAddr>) -> Data {
     let mut data = Data {
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
         state: runtime::AppState::in_memory(),
         voice: None,
     };
@@ -659,3 +714,25 @@ mod voice_tests;
 mod workflow_dispatch_tests;
 
 mod recall_policy_tests;
+
+mod continuity_tests;
+
+mod native_follow_up_tests;
+
+mod current_permissions_tests;
+
+#[path = "dispatch_tests/native_guild_member_tests.rs"]
+mod native_guild_member_tests;
+
+#[path = "dispatch_tests/native_perms_channel_tests.rs"]
+mod native_perms_channel_tests;
+
+#[path = "dispatch_tests/native_channel_fact_tests.rs"]
+mod native_channel_fact_tests;
+
+#[path = "dispatch_tests/native_roleplay_dm_tests.rs"]
+mod native_roleplay_dm_tests;
+
+mod contextual_native_red;
+
+mod modcase_native_tests;

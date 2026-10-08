@@ -35,11 +35,15 @@ use crate::wdbx::Recall;
 
 pub(crate) mod activity_readiness;
 mod community_filesystem;
+mod continuity_commit;
+pub(crate) mod continuity_context;
 pub(crate) mod engagement_candidates;
 mod engagement_commit;
 pub(crate) mod engagement_community;
 pub(crate) mod engagement_delivery;
+pub(crate) mod engagement_follow_up;
 mod engagement_metrics;
+mod learning_erasure;
 mod memory_service;
 mod personal_memory_commit;
 mod provider_setup;
@@ -150,6 +154,8 @@ pub struct AppState {
     self_weak: OnceLock<Weak<Self>>,
     persistence_requests: OnceLock<crate::service::persistence::PersistenceRequests>,
     persistence_preparation: tokio::sync::Mutex<()>,
+    continuity_access: OnceLock<Arc<dyn continuity_context::ContinuityAccessProvider>>,
+    continuity_safety: Mutex<continuity_context::ContinuitySafety>,
     work_delivery_running: tokio::sync::Mutex<()>,
     engagement_delivery_running: tokio::sync::Mutex<()>,
     community_maintenance_running: tokio::sync::Mutex<()>,
@@ -178,6 +184,8 @@ pub struct AppState {
     /// Shared, timeout-bounded client for Discord attachment downloads.
     pub attachments: reqwest::Client,
     pub data_dir: Option<PathBuf>,
+    /// Resolved once from existing config; current policy bytes still grant authority.
+    pub community_policy_path: Option<PathBuf>,
     persistence_sink: Arc<dyn PersistenceSink>,
     /// The bot's own user id per platform (`"discord:123"`), filled in at
     /// ready time; needed to tell a mention from a message and to ignore
@@ -270,6 +278,25 @@ impl std::fmt::Display for StartupError {
 impl std::error::Error for StartupError {}
 
 impl AppState {
+    /// Record both accepted and refused production attribution under the guild's
+    /// process-local aggregate policy statistics. Locks follow field order.
+    pub fn record_learning_attribution(
+        &self,
+        guild: &str,
+        attribution: crate::brain::reward::FeedbackAttribution,
+        admitted_at: u64,
+    ) {
+        let stores = Self::lock(&self.stores);
+        if stores
+            .reward_recovery
+            .erasure
+            .blocks(guild, "", admitted_at)
+        {
+            return;
+        }
+        Self::lock(&self.brains).record_learning_attribution(guild, attribution);
+    }
+
     /// Build from the environment: `ABBEY_DATA_DIR` (optional) decides whether
     /// anything survives a restart; the LLM and vision backends come from
     /// their own variables. A corrupt state file is a startup error, not a
@@ -280,6 +307,9 @@ impl AppState {
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let community_policy_path = std::env::var_os("ABBEY_COMMUNITY_POLICY")
+            .filter(|value| !value.is_empty())
             .map(PathBuf::from);
         let (stores, recall) = match &data_dir {
             Some(dir) => {
@@ -305,7 +335,12 @@ impl AppState {
                 .map_err(|e| StartupError(e.to_string()))?;
         }
         let mut rewards = RewardCollector::new();
-        rewards.restore(stores.pending_rewards.clone());
+        rewards
+            .restore_recovered(
+                stores.pending_rewards.clone(),
+                stores.reward_recovery.clone(),
+            )
+            .map_err(|e| StartupError(e.to_owned()))?;
         let fallback = match &backend {
             Some(Backend::Anthropic { .. }) => Backend::from_values(
                 None,
@@ -398,6 +433,7 @@ impl AppState {
                 data_dir.as_deref(),
             )),
             data_dir,
+            community_policy_path,
             persistence_sink: Arc::new(FsPersistenceSink),
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
@@ -412,6 +448,8 @@ impl AppState {
             self_weak: OnceLock::new(),
             persistence_requests: OnceLock::new(),
             persistence_preparation: tokio::sync::Mutex::new(()),
+            continuity_access: OnceLock::new(),
+            continuity_safety: Mutex::new(continuity_context::ContinuitySafety::new()),
             personal_memory_blocked: std::sync::atomic::AtomicBool::new(personal_memory_blocked),
             personal_memory_mutation: Mutex::new(()),
             personal_memory_pending: Mutex::new(Default::default()),
@@ -455,6 +493,7 @@ impl AppState {
                 data_dir.as_deref(),
             )),
             data_dir,
+            community_policy_path: None,
             persistence_sink,
             self_ids: Mutex::new(Vec::new()),
             voice_inspect: Arc::new(crate::inspect::VoiceInspectRegistry::default()),
@@ -469,6 +508,8 @@ impl AppState {
             self_weak: OnceLock::new(),
             persistence_requests: OnceLock::new(),
             persistence_preparation: tokio::sync::Mutex::new(()),
+            continuity_access: OnceLock::new(),
+            continuity_safety: Mutex::new(continuity_context::ContinuitySafety::new()),
             personal_memory_blocked: std::sync::atomic::AtomicBool::new(false),
             personal_memory_mutation: Mutex::new(()),
             personal_memory_pending: Mutex::new(Default::default()),
@@ -637,11 +678,13 @@ impl AppState {
 
     /// Settle expired rewards into their guilds' replay buffers.
     pub fn settle_rewards(&self) {
+        // Hold the brain transaction across drain and remember: reset cannot
+        // interleave a drained sample into a fresh policy.
+        let mut brains = Self::lock(&self.brains);
         let settled = Self::lock(&self.rewards).settle_expired(now());
         if settled.is_empty() {
             return;
         }
-        let mut brains = Self::lock(&self.brains);
         for (guild, exp) in settled {
             let loaded = brains.get(&guild).is_some();
             tracing::info!(
@@ -763,6 +806,7 @@ impl AppState {
     }
 
     pub async fn persist_all_gated(&self) -> PersistReport {
+        let _serial = self.persistence_preparation.lock().await;
         let snapshots = self.prepare_gated_snapshot().await;
         self.persist_snapshot(snapshots)
     }
@@ -812,14 +856,22 @@ impl AppState {
 
     fn take_snapshot(&self, t: u64) -> (Stores, Recall) {
         Self::lock(&self.engine).evict_idle(t, SESSION_IDLE_SECS);
-        self.memory_service().consistent_snapshot_after(|stores| {
+        let mut snapshot = self.memory_service().consistent_snapshot_after(|stores| {
             Self::lock(&self.brains).persist_all(stores, t);
             Self::lock(&self.social).flush(stores);
-            stores.pending_rewards = Self::lock(&self.rewards).export_pending();
-        })
+            let rewards = Self::lock(&self.rewards);
+            stores.pending_rewards = rewards.export_pending();
+            stores.reward_recovery = rewards.export_recovery();
+        });
+        snapshot.0.canonical_preparation_failed |=
+            self.overlay_continuity(&mut snapshot.0.continuity).is_err();
+        snapshot
     }
 
-    fn persist_snapshot(&self, snapshots: (Stores, Recall)) -> PersistReport {
+    fn persist_snapshot(&self, mut snapshots: (Stores, Recall)) -> PersistReport {
+        snapshots.0.canonical_preparation_failed |= self
+            .overlay_continuity(&mut snapshots.0.continuity)
+            .is_err();
         let revision = snapshots.0.work.recall.projection_revision;
         let report = crate::service::persistence::write_snapshot_published(
             self.data_dir.as_deref(),

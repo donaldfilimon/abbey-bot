@@ -17,6 +17,7 @@ use crate::inspect::{VoiceInspectRegistry, VoiceInspectState};
 use crate::voice::{VoiceBackendConfig, VoiceConfig, VoiceMode};
 
 mod activation;
+use activation::StopAuthority;
 mod control;
 mod music;
 mod ownership;
@@ -772,27 +773,11 @@ impl VoiceRuntime {
         }
     }
 
-    pub async fn set_presence_with_discord_session(
-        &self,
-        session_id: String,
-        status: impl Into<String>,
-    ) {
-        self.stop_to_inner(
-            VoicePhase::PresenceOnly,
-            status,
-            true,
-            None,
-            Some(session_id),
-            None,
-        )
-        .await;
-    }
-
     pub async fn pause_for_consent(&self, participants: HashSet<u64>) {
         self.stop_to_inner(
             VoicePhase::AwaitingConsent,
             "voice disconnected; renewed participant consent is required",
-            true,
+            StopAuthority::Cancel,
             Some(participants),
             None,
             None,
@@ -809,8 +794,15 @@ impl VoiceRuntime {
     /// Stop the installed actor/call state while preserving the caller's
     /// already-reserved start token. Must be used only under `transition`.
     pub async fn disconnect_for_replace(&self, status: impl Into<String>) {
-        self.stop_to_inner(VoicePhase::Disconnected, status, false, None, None, None)
-            .await;
+        self.stop_to_inner(
+            VoicePhase::Disconnected,
+            status,
+            StopAuthority::Preserve,
+            None,
+            None,
+            None,
+        )
+        .await;
     }
 
     pub async fn fail_safe(
@@ -829,7 +821,7 @@ impl VoiceRuntime {
         status: impl Into<String>,
         error: Option<crate::observability::OperationalErrorCategory>,
     ) {
-        self.stop_to_inner(phase, status, true, None, None, error)
+        self.stop_to_inner(phase, status, StopAuthority::Cancel, None, None, error)
             .await;
     }
 
@@ -837,20 +829,25 @@ impl VoiceRuntime {
         &self,
         phase: VoicePhase,
         status: impl Into<String>,
-        cancel_pending_start: bool,
+        authority: StopAuthority,
         participants: Option<HashSet<u64>>,
         discord_session_id: Option<String>,
         error: Option<crate::observability::OperationalErrorCategory>,
-    ) {
+    ) -> bool {
         let control = {
             let mut inner = self.inner.lock().await;
             let _activation = self
                 .activation_gate
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let StopAuthority::Start(generation) = authority
+                && !self.start_is_current(generation)
+            {
+                return false;
+            }
             self.media_epoch.store(0, Ordering::SeqCst);
             self.clear_unmute_grace();
-            if cancel_pending_start {
+            if !matches!(authority, StopAuthority::Preserve) {
                 let generation = self.start_generation.fetch_add(1, Ordering::SeqCst) + 1;
                 self.pending_start_generation.store(0, Ordering::SeqCst);
                 self.start_changes.send_replace(generation);
@@ -887,6 +884,7 @@ impl VoiceRuntime {
         if let Some(control) = control {
             stop_control(control).await;
         }
+        true
     }
 
     pub async fn snapshot(&self) -> VoiceSnapshot {

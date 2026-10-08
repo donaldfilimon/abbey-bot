@@ -849,3 +849,9 @@ mod feedback_tests;
 mod admission_outcomes;
 
 mod plans;
+
+#[path = "tests/task_follow_up.rs"]
+mod task_follow_up;
+
+#[path = "tests/guild_enabled.rs"]
+mod guild_enabled;

@@ -238,12 +238,25 @@ assert unsupportedSpecificAccepted == 0
 assert factsAfterBrainRollback == factsBefore
 ```
 
-- [ ] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
-- [ ] **Step 3: Implement the pinned interface/behavior:** Add deterministic seeds, topology/nonfinite import regressions and scoped snapshot comparison using existing DQN APIs. Do not tune reward weights/actions until operator review of held-out measurements.
-- [ ] **Step 4: Run focused verification:** `cargo test --locked brain; cargo test --locked grounding (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
-- [ ] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
-- [ ] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
-- [ ] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
+- [x] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
+- [x] **Step 3: Implement the pinned interface/behavior:** Add deterministic seeds, topology/nonfinite import regressions and scoped snapshot comparison using existing DQN APIs. Do not tune reward weights/actions until operator review of held-out measurements.
+- [x] **Step 4: Run focused verification:** `cargo test --locked brain; cargo test --locked grounding (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
+- [x] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
+- [x] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
+- [x] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
+
+Task5 evidence update (2026-10-03): Steps2–7 are checked for the bounded source
+slice only, based on independent spec/standards PASS, strict32980 exit0 on stable
+799-file SHA `fc1cc1bb6e5c81457638dede4e712dd5c5a627127d4f51a4364189843677a457`,
+and the [source receipt](../../verification/2026-10-03-learning-quality-v1.md).
+Step1 remains unchecked as a historical RED-evidence limitation: all three named
+tests pass, but their individual pre-implementation failures were not retained.
+The actual NaN/action/replay/full-corpus RED regressions are preserved and satisfy
+the recorded Step2 failure check; no retrospective RED is fabricated. Overall
+Task5 remains Partial: the 100 synthetic labels are agent-authored, independent
+human adjudication and fixed-provider/manual support are OPEN before tuning,
+and no deployed/live identity proof is supplied. These plan checks are a later
+documentation delta, not part of the frozen source-gate manifest.
 
 ## Self-review and execution handoff
 

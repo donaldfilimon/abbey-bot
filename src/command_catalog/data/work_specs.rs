@@ -78,6 +78,10 @@ macro_rules! work_catalog {
         true,
         "Inspect scope recall availability and revision."
     ),
+    spec!(WorkContinuityShow, Slash, "work continuity show", BOTH, A0, C0, Work, true, "Show a card."),
+    spec!(WorkContinuityPropose, Slash, "work continuity propose", BOTH, A0, C0, Work, true, "Preview a card."),
+    spec!(WorkContinuityConfirm, Slash, "work continuity confirm", BOTH, A0, C0, Work, true, "Confirm a card."),
+    spec!(WorkContinuityClear, Slash, "work continuity clear", BOTH, A0, C0, Work, true, "Clear a card."),
     spec!(
         WorkBriefing,
         Slash,

@@ -6,6 +6,7 @@ use crate::persona::Persona;
 /// Where `/roleplay` was invoked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleplayContext {
+    Unproved,
     BotDm,
     Guild { channel_nsfw: bool },
 }
@@ -13,6 +14,8 @@ pub enum RoleplayContext {
 /// Outcome of the roleplay gate. Callers render [`RoleplayDecision::message`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleplayDecision {
+    /// Current native channel or recipient facts could not be confirmed.
+    RefuseUnproved,
     /// Proceed with Aviva (product Discord NSFW mode — not an HQ pack rewrite).
     AllowAviva,
     /// Gate is off (DM or NSFW guild).
@@ -29,12 +32,15 @@ impl RoleplayDecision {
     pub const fn persona(self) -> Option<Persona> {
         match self {
             Self::AllowAviva => Some(Persona::Aviva),
-            Self::RefuseDisabled | Self::RefuseGuildSfw => None,
+            Self::RefuseUnproved | Self::RefuseDisabled | Self::RefuseGuildSfw => None,
         }
     }
 
     pub const fn message(self) -> &'static str {
         match self {
+            Self::RefuseUnproved => {
+                "Current channel access could not be confirmed. Roleplay is available only in a DM with me or an NSFW server channel while enabled."
+            }
             Self::AllowAviva => "Aviva roleplay is available here. I'll answer as Aviva.",
             Self::RefuseDisabled => {
                 "Roleplay is disabled here. An operator can enable it with `/admin nsfw on` in a server, or `/nsfw on` in a DM with me."
@@ -56,6 +62,7 @@ impl RoleplayDecision {
 /// - Guild SFW × anything → refuse SFW (never Abbey SFW roleplay)
 pub fn decide(context: RoleplayContext, enabled: bool) -> RoleplayDecision {
     match context {
+        RoleplayContext::Unproved => RoleplayDecision::RefuseUnproved,
         RoleplayContext::BotDm => {
             if enabled {
                 RoleplayDecision::AllowAviva
@@ -131,6 +138,7 @@ mod tests {
         assert!(allow.message().contains("Aviva"));
 
         for refuse in [
+            RoleplayDecision::RefuseUnproved,
             RoleplayDecision::RefuseDisabled,
             RoleplayDecision::RefuseGuildSfw,
         ] {
@@ -151,5 +159,16 @@ mod tests {
             decide(RoleplayContext::BotDm, false),
             RoleplayDecision::RefuseDisabled
         );
+    }
+
+    #[test]
+    fn unproved_native_context_never_grants_a_persona() {
+        for enabled in [false, true] {
+            let decision = decide(RoleplayContext::Unproved, enabled);
+            assert_eq!(decision, RoleplayDecision::RefuseUnproved);
+            assert!(!decision.allow());
+            assert_eq!(decision.persona(), None);
+            assert!(decision.message().contains("could not be confirmed"));
+        }
     }
 }

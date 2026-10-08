@@ -40,6 +40,8 @@ pub fn qualify(input: Input) -> Result<Proposal, &'static str> {
     if input.guild == 0
         || input.channel == 0
         || input.message == 0
+        || input.source_author == 0
+        || input.target == 0
         || !input.source_matches_scope
         || input.source_author != input.target
     {
@@ -173,5 +175,19 @@ mod tests {
         ] {
             assert!(qualify(changed).is_err());
         }
+    }
+    // Insert in the existing contextual.rs test module. No new API is required.
+    // Current source returns Ok for author == target == 0: this assertion is RED.
+    #[test]
+    fn contextual_requires_positive_source_author_and_target() {
+        assert!(qualify(input()).is_ok());
+        assert!(
+            qualify(Input {
+                source_author: 0,
+                target: 0,
+                ..input()
+            })
+            .is_err()
+        );
     }
 }

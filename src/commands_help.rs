@@ -222,6 +222,8 @@ pub(crate) async fn current_permissions(
     channel: serenity::all::ChannelId,
     actor: UserId,
 ) -> Result<Permissions, Error> {
+    let expected_guild = guild;
+    let expected_channel = channel;
     let (member, guild, channel) = tokio::try_join!(
         guild.member(&ctx.http, actor),
         guild.to_partial_guild(&ctx.http),
@@ -230,7 +232,19 @@ pub(crate) async fn current_permissions(
     let channel = channel
         .guild()
         .ok_or("Permission context is unavailable.")?;
-    if channel.guild_id != guild.id {
+    if member.user.id != actor
+        || member.guild_id != expected_guild
+        || guild.id != expected_guild
+        || channel.id != expected_channel
+        || channel.guild_id != expected_guild
+        || !guild
+            .roles
+            .contains_key(&serenity::all::RoleId::new(expected_guild.get()))
+        || member
+            .roles
+            .iter()
+            .any(|role| !guild.roles.contains_key(role))
+    {
         return Err("Permission context changed.".into());
     }
     Ok(guild.user_permissions_in(&channel, &member))
@@ -416,13 +430,24 @@ pub fn catalog_check(ctx: Context<'_>) -> poise::BoxFuture<'_, Result<bool, Erro
         {
             Ok(allowed) => allowed,
             Err(_) => {
-                ctx.say("Discord could not confirm the current permissions. Please try again.")
-                    .await?;
+                ctx.send(
+                    poise::CreateReply::default()
+                        .content(
+                            "Discord could not confirm the current permissions. Please try again.",
+                        )
+                        .allowed_mentions(crate::gateway::no_mentions()),
+                )
+                .await?;
                 return Ok(false);
             }
         };
         if allowed != catalog::Availability::Ready {
-            ctx.say(allowed.message()).await?;
+            ctx.send(
+                poise::CreateReply::default()
+                    .content(allowed.message())
+                    .allowed_mentions(crate::gateway::no_mentions()),
+            )
+            .await?;
         }
         Ok(allowed == catalog::Availability::Ready)
     })

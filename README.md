@@ -82,7 +82,7 @@ warnings; it is not a clean audit. Dated live observations remain in
 | Provider qualification | **PARTIAL** | `--provider-self-test primary|fm|all --json` implemented; MLX-VLM tool-continuation **FAILS**; FM vision/OCR **FAILS** |
 | Installed artifact identity | **PENDING** | Launchd installer exists; exact-head CI required before deployment |
 | Live Discord (2-guild isolation) | **PENDING** | Requires exact-head CI green + operator sandbox guilds |
-| Consented voice (8/8 lifecycle) | **PENDING** | Requires fresh unanimous consent + human-witnessed audible reply |
+| Consented voice (8/8 lifecycle) | **PENDING** | Requires current unanimous personal Local policy-1 receipts + human-witnessed audible reply |
 | Managed service | **PENDING** | Requires full protocol repeat through installed service |
 | Windows runtime | **PENDING** | CI proves contracts only; no live Windows acceptance |
 
@@ -115,6 +115,7 @@ Active voice guidance includes a wake-name example and the stop command.
 <!-- BEGIN GENERATED COMMAND CATALOG -->
 | Command | Context | Response | What it does |
 |---|---|---|---|
+| `/engage follow_up` | guild, bot DM | private | Request a task follow-up. |
 | `/engage introduce` | guild | private | Propose a mutually approved introduction in this server. |
 | `/engage introduction` | guild | private | Privately review, edit or withdraw your own introduction. |
 | `/engage invite` | guild, bot DM | private | Request a policy-gated Activity or voice invitation. |
@@ -136,6 +137,10 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/work decision` | guild, bot DM | private | Record a project decision. |
 | `/work recall configure` | guild, bot DM | private | Configure scope recall opt-in. |
 | `/work recall show` | guild, bot DM | private | Inspect scope recall availability and revision. |
+| `/work continuity show` | guild, bot DM | private | Show a card. |
+| `/work continuity propose` | guild, bot DM | private | Preview a card. |
+| `/work continuity confirm` | guild, bot DM | private | Confirm a card. |
+| `/work continuity clear` | guild, bot DM | private | Clear a card. |
 | `/work briefing` | guild, bot DM | private | Review current work privately. |
 | `/work complete` | guild, bot DM | private | Complete a current task. |
 | `/work status` | guild, bot DM | private | Change a task's status. |
@@ -157,6 +162,10 @@ Active voice guidance includes a wake-name example and the stop command.
 | `Ask Abbey` | guild, bot DM | private | Ask about a selected message privately. |
 | `/perms` | guild | public | Explain a member's channel permissions. |
 | `/modcall` | guild | private | Recommend a moderation action after permission and hierarchy checks. |
+| `/modcase show` | guild | private | Show an exact operational case after current subject or staff authorization. |
+| `/modcase review` | guild | private | Record an independent current staff review; no Discord action is taken. |
+| `/modcase appeal` | guild | private | Appeal your own exact operational case in its original source channel. |
+| `/modcase resolve_appeal` | guild | private | Record an independent staff appeal decision; no Discord action is taken. |
 | `/server blueprint` | guild, bot DM | private | Create a server blueprint without changing the server. |
 | `/server create-channel` | guild | private | Create a text channel when you and Abbey both have Manage Channels. |
 | `/server rename-channel` | guild | private | Rename a channel when you and Abbey both have Manage Channels. |
@@ -173,6 +182,7 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/forum perms` | guild | private | Snapshot and gap-fill Abbey's #help forum overwrite bits. |
 | `/memory_use` | guild, bot DM | private | Privately review or change your generated-use consent; confirm an exact stored fact. |
 | `/remember` | guild, bot DM | private | Store a fact about yourself; generated-use consent is a separate choice. |
+| `/forget_learning` | guild, bot DM | private | Erase your linkable learning in this scope; aggregate influence needs a separate reset. |
 | `/forget` | guild, bot DM | private | Remove one of your own stored facts. |
 | `/pending list` | guild, bot DM | private | Review proposed fact replacements. |
 | `/pending confirm` | guild, bot DM | private | Apply an explicitly chosen replacement in your own memory. |
@@ -198,6 +208,7 @@ Active voice guidance includes a wake-name example and the stop command.
 | `/admin brain` | guild | private | Inspect the learning policy and exploration setting. |
 | `/admin flush` | guild | private | Persist current state and report each result. |
 | `/admin export` | guild | private | Export the server's brain snapshot privately. |
+| `/admin reset_learning` | guild | private | Confirm learning reset. |
 | `/admin reset` | guild | private | Clear only this channel's transcript. |
 | `/admin dashboard` | guild | private | Open private administration controls. |
 | `/admin quarantine` | guild | private | Mark a member's stored fact as suspect for review. |
@@ -635,6 +646,32 @@ implemented in the parent crate; see Local music mirroring below. Source tests d
 audible Discord acceptance. `./check.sh` runs synthetic audio tests and a Swift
 release build on macOS; Windows and Linux explicitly skip the macOS SDK layer.
 
+## Offline learning quality evaluation
+
+Run the frozen synthetic corpus without credentials or provider calls:
+
+```sh
+cargo run --locked -- --learning-quality tests/fixtures/learning-quality-v1.json --json
+```
+
+The command exits before runtime, credential or configured-state initialization.
+It accepts a regular JSON file up to 1 MiB, schema 1, with 100 cases across five
+classes of 20. Before grounding, each case is limited to eight sources/citations,
+4,096 bytes per source, 2,048 bytes per claim, 128 bytes per nonwhitespace token,
+64 bytes per identifier/revision and 512 bytes per rationale. Unix opens are
+nonblocking; regular-file checks inspect the opened handle. It reports
+lexical-support TP/FP/TN/FN counts by class, correction
+admission mismatches, exact corpus and evaluator-source SHA256 identities, and
+the untrained seeded policy's stay/reply/react distribution. Action values are
+not answer confidence. Exit 1 reports false-positive acceptances or correction
+mismatches; exit 2 refuses invalid input. False negatives remain visible.
+
+Labels are synthetic and agent-authored, pending independent human adjudication.
+These measurements do not establish semantic truth or provider answer quality.
+An operator-reviewed fixed-provider run and manually adjudicated support on this
+same corpus remain required before reward or action tuning. No weights are tuned
+or persisted by this command.
+
 ## Configured backends
 
 `/persona ask` answers come from an external or local model, never from the
@@ -816,7 +853,8 @@ Abbey keeps these evidence layers separate; passing one never implies the next:
    listener ownership, and rollback target proves only installed identity.
 7. A controlled foreground two-guild text/tool/image run proves live Discord
    behavior for that exact foreground binary and selected qualified provider.
-8. Fresh unanimous consent plus a human-witnessed 8/8 lifecycle proves only the
+8. Current unanimous personal Local policy-1 receipts plus a human-witnessed
+   8/8 lifecycle prove only the
    consented voice run.
 9. Repeating the complete protocol through the managed service proves the
    managed deployment. It cannot be inferred from the foreground run.
@@ -837,6 +875,15 @@ stopped by barge-in, participant-change pause plus fresh-epoch resume, and the
 final Songbird leave. It cannot prove that each human actually consented or
 heard the response; those remain explicit manual witness facts, separate from
 source tests and the offline audition.
+
+The eight-case operator ledger and watcher decision boundary are recorded in
+[MLAI live acceptance](docs/MLAI-LIVE-ACCEPTANCE.md#2026-10-02-voice-task4-operator-checklist-and-open-witness-ledger).
+A valid saved Local policy-1 choice survives visits and restarts; a new media
+epoch still requires current roster, permissions and receipt coverage. Missing
+consent calls for the participant's own choice and current manager join/resume,
+never a restart retry. The Office Hours fallback watcher remains unchanged
+pending witnessed installed join/reconnect evidence and an explicit operator
+service decision; its presence/mute observation cannot establish consent.
 
 Provider self-test exit codes are `0` when every capability required by the
 selected runtime configuration passes, `1` for a required probe failure, and

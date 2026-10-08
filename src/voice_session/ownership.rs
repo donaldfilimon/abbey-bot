@@ -35,6 +35,25 @@ impl VoiceRuntime {
     pub fn attach_telemetry(&self, events: crate::service::telemetry::TelemetryRequests) {
         let _ = self.telemetry.set(events);
     }
+    pub(crate) fn record_voice_stage(
+        &self,
+        stage: crate::observability::VoiceStage,
+        outcome: crate::observability::EventOutcome,
+        duration: std::time::Duration,
+    ) {
+        if let Some(events) = self.telemetry.get() {
+            use crate::observability::{EventComponent, OperationalEvent};
+            if let Ok(event) = OperationalEvent::new(
+                crate::runtime::now_millis(),
+                EventComponent::Voice,
+                stage.code(),
+                outcome,
+            ) {
+                let _ = events.event(event.with_duration(duration));
+            }
+        }
+    }
+
     pub fn attach_service(&self, registry: OperationRegistry) {
         self.consent.attach_service(registry.clone());
         let _ = self.service.set(registry);

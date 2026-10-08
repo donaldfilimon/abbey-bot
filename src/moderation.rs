@@ -16,6 +16,7 @@
 //! Nothing here talks to Discord, so the ladder is unit-tested directly.
 
 pub mod contextual;
+pub(crate) mod shadow;
 
 /// How bad the incident is. Judged by a human; this module does not classify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

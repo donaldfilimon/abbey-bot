@@ -8,10 +8,12 @@ use crate::{
         AppState,
         engagement_delivery::{AuthorizedDestination, EngagementTransport, SendFailure},
     },
-    work::WorkError,
+    work::{WorkAccess, WorkDestination, WorkError, WorkScope},
 };
-use serenity::all::{ChannelId, ChannelType, CreateMessage, GuildId, Http, Permissions, UserId};
-use std::sync::Arc;
+use serenity::all::{
+    ChannelId, ChannelType, CreateMessage, GuildId, Http, Permissions, RoleId, UserId,
+};
+use std::{collections::BTreeSet, sync::Arc};
 pub(crate) struct DiscordEngagementDelivery(pub Arc<Http>);
 fn origin(scope: &EngagementScope) -> u64 {
     match scope {
@@ -40,12 +42,13 @@ impl DiscordEngagementDelivery {
         let message = ChannelId::new(origin(&source.scope))
             .message(&self.0, source.message)
             .await
-            .map_err(|_| WorkError::Denied)?;
+            .map_err(authorization_failure)?;
         let guild = match source.scope {
             EngagementScope::Guild { guild, .. } => Some(guild),
             EngagementScope::Dm { .. } => None,
         };
-        if message.author.bot
+        if message.id.get() != source.message
+            || message.author.bot
             || message.author.id.get() != source.author
             || message.channel_id.get() != origin(&source.scope)
             || message.guild_id.is_some_and(|id| Some(id.get()) != guild)
@@ -57,12 +60,15 @@ impl DiscordEngagementDelivery {
         let channel = ChannelId::new(origin(&source.scope))
             .to_channel(&self.0)
             .await
-            .map_err(|_| WorkError::Denied)?;
+            .map_err(authorization_failure)?;
         match (&source.scope, channel) {
             (EngagementScope::Guild { guild, .. }, serenity::all::Channel::Guild(channel))
-                if channel.guild_id.get() == *guild => {}
+                if channel.id.get() == origin(&source.scope)
+                    && channel.guild_id.get() == *guild => {}
             (EngagementScope::Dm { member, .. }, serenity::all::Channel::Private(channel))
-                if channel.recipient.id.get() == *member => {}
+                if channel.id.get() == origin(&source.scope)
+                    && channel.recipient.id.get() == *member
+                    && !channel.recipient.bot => {}
             _ => return Err(WorkError::Denied),
         }
         if message.content.chars().count() > 16_000 {
@@ -82,12 +88,15 @@ impl DiscordEngagementDelivery {
             None if matches!(r.scope, EngagementScope::Guild { .. })
                 && r.destination == DestinationPreference::Origin =>
             {
-                self.0
+                let bot = self
+                    .0
                     .get_current_user()
                     .await
-                    .map_err(authorization_failure)?
-                    .id
-                    .get()
+                    .map_err(authorization_failure)?;
+                if !bot.bot || bot.id.get() == 0 {
+                    return Err(WorkError::Denied);
+                }
+                bot.id.get()
             }
             None => return Err(WorkError::Denied),
         };
@@ -104,7 +113,11 @@ impl DiscordEngagementDelivery {
                     .create_dm_channel(&self.0)
                     .await
                     .map_err(authorization_failure)?;
-                if dm.id.get() != channel || dm.recipient.id.get() != member {
+                if dm.id.get() != channel
+                    || dm.recipient.id.get() != member
+                    || dm.recipient.bot
+                    || dm.kind != ChannelType::Private
+                {
                     return Err(WorkError::Denied);
                 }
                 channel
@@ -113,7 +126,8 @@ impl DiscordEngagementDelivery {
                 if guild == 0 {
                     return Err(WorkError::Invalid);
                 }
-                let guild = GuildId::new(guild)
+                let requested_guild = GuildId::new(guild);
+                let guild = requested_guild
                     .to_partial_guild(&self.0)
                     .await
                     .map_err(authorization_failure)?;
@@ -123,15 +137,21 @@ impl DiscordEngagementDelivery {
                     .map_err(authorization_failure)?
                     .guild()
                     .ok_or(WorkError::Denied)?;
-                if native.guild_id != guild.id {
+                if guild.id != requested_guild
+                    || native.id.get() != channel
+                    || native.guild_id != requested_guild
+                {
                     return Err(WorkError::Denied);
                 }
                 let bot = self
                     .0
                     .get_current_user()
                     .await
-                    .map_err(authorization_failure)?
-                    .id;
+                    .map_err(authorization_failure)?;
+                if !bot.bot || bot.id.get() == 0 || r.member.is_none() && member != bot.id.get() {
+                    return Err(WorkError::Denied);
+                }
+                let bot = bot.id;
                 let actor = guild
                     .member(&self.0, UserId::new(member))
                     .await
@@ -140,6 +160,25 @@ impl DiscordEngagementDelivery {
                     .member(&self.0, bot)
                     .await
                     .map_err(authorization_failure)?;
+                let complete_roles = |held: &serenity::all::Member| {
+                    held.roles
+                        .iter()
+                        .all(|id| id.get() != 0 && guild.roles.contains_key(id))
+                };
+                if actor.user.id.get() != member
+                    || actor.guild_id != requested_guild
+                    || r.member.is_some() && actor.user.bot
+                    || bot_member.user.id != bot
+                    || !bot_member.user.bot
+                    || bot_member.guild_id != requested_guild
+                    || !guild
+                        .roles
+                        .contains_key(&RoleId::new(requested_guild.get()))
+                    || !complete_roles(&actor)
+                    || !complete_roles(&bot_member)
+                {
+                    return Err(WorkError::Denied);
+                }
                 let thread = matches!(
                     native.kind,
                     ChannelType::PublicThread
@@ -151,15 +190,14 @@ impl DiscordEngagementDelivery {
                     if metadata.archived || metadata.locked {
                         return Err(WorkError::Denied);
                     }
-                    let parent = native
-                        .parent_id
-                        .ok_or(WorkError::Denied)?
+                    let parent_id = native.parent_id.ok_or(WorkError::Denied)?;
+                    let parent = parent_id
                         .to_channel(&self.0)
                         .await
                         .map_err(authorization_failure)?
                         .guild()
                         .ok_or(WorkError::Denied)?;
-                    if parent.guild_id != guild.id {
+                    if parent.id != parent_id || parent.guild_id != requested_guild {
                         return Err(WorkError::Denied);
                     }
                     let mut membership = [false; 2];
@@ -170,7 +208,17 @@ impl DiscordEngagementDelivery {
                                 .get_thread_member(&self.0, user, true)
                                 .await
                                 .map_err(authorization_failure)?;
-                            membership[index] = proof.user_id == user;
+                            membership[index] = proof.id == native.id
+                                && proof.user_id == user
+                                && proof.guild_id.is_none_or(|id| id == requested_guild)
+                                && proof.member.as_ref().is_none_or(|held| {
+                                    held.user.id == user
+                                        && held.user.bot == (user == bot)
+                                        // REST may omit the embedded member's guild ID.
+                                        // Guild authority comes from the bound primary
+                                        // member and exact thread/channel proof above.
+                                        && complete_roles(held)
+                                });
                         }
                     }
                     if !thread_authorized(
@@ -211,7 +259,12 @@ impl DiscordEngagementDelivery {
                         .create_dm_channel(&self.0)
                         .await
                         .map_err(authorization_failure)?;
-                    if dm.recipient.id.get() != member || dm.id.get() == channel {
+                    if dm.recipient.id.get() != member
+                        || dm.recipient.bot
+                        || dm.id.get() == 0
+                        || dm.id.get() == channel
+                        || dm.kind != ChannelType::Private
+                    {
                         return Err(WorkError::Denied);
                     }
                     dm.id.get()
@@ -228,6 +281,20 @@ impl DiscordEngagementDelivery {
     }
 }
 impl EngagementTransport for DiscordEngagementDelivery {
+    async fn authorize_work(
+        &self,
+        scope: &WorkScope,
+        actor: u64,
+        origin: u64,
+        target: &WorkDestination,
+        audience: &BTreeSet<u64>,
+    ) -> Result<(WorkAccess, u64), WorkError> {
+        use crate::runtime::work_delivery::WorkDeliveryTransport;
+        // Reuse only the fresh Work proof, never its batching/receipt/send path.
+        super::work_delivery::DiscordWorkDelivery(self.0.clone())
+            .authorize(scope, actor, origin, target, audience)
+            .await
+    }
     async fn authorize(
         &self,
         r: &EngagementReservation,
@@ -281,13 +348,32 @@ impl EngagementTransport for DiscordEngagementDelivery {
         let reply = ChannelId::new(origin(&candidate.scope))
             .message(&self.0, response)
             .await
-            .map_err(|_| WorkError::Denied)?;
+            .map_err(authorization_failure)?;
         let bot = self
             .0
             .get_current_user()
             .await
-            .map_err(|_| WorkError::Denied)?;
-        if reply.author.id != bot.id
+            .map_err(authorization_failure)?;
+        if candidate.work_ref.is_some()
+            && (!bot.bot
+                || bot.id.get() == 0
+                || reply.edited_timestamp.is_some()
+                || reply.guild_id.is_some_and(|id| match candidate.scope {
+                    EngagementScope::Guild { guild, .. } => id.get() != guild,
+                    EngagementScope::Dm { .. } => true,
+                })
+                || reply.message_reference.as_ref().is_some_and(|reference| {
+                    reference.channel_id.get() != origin(&candidate.scope)
+                        || reference.guild_id.is_some_and(|id| match candidate.scope {
+                            EngagementScope::Guild { guild, .. } => id.get() != guild,
+                            EngagementScope::Dm { .. } => true,
+                        })
+                }))
+        {
+            return Err(WorkError::Denied);
+        }
+        if reply.id.get() != response
+            || reply.author.id != bot.id
             || !reply.author.bot
             || reply.channel_id.get() != origin(&candidate.scope)
             || reply
@@ -342,7 +428,18 @@ impl EngagementTransport for DiscordEngagementDelivery {
                     .limit(100),
             )
             .await
-            .map_err(|_| WorkError::Denied)?;
+            .map_err(authorization_failure)?;
+        if candidate.work_ref.is_some()
+            && messages.iter().any(|message| {
+                message.channel_id.get() != origin(&candidate.scope)
+                    || message.guild_id.is_some_and(|id| match candidate.scope {
+                        EngagementScope::Guild { guild, .. } => id.get() != guild,
+                        EngagementScope::Dm { .. } => true,
+                    })
+            })
+        {
+            return Err(WorkError::Denied);
+        }
         Ok(exchange_current(
             source,
             &messages
@@ -420,6 +517,9 @@ impl EngagementTransport for DiscordEngagementDelivery {
             return Ok("Welcome to the server! Feel free to share what you’re working on or ask a question when you’re ready.".into());
         }
         let input = match candidate.kind {
+            EngagementKind::FollowUp if candidate.work_ref.is_some() => {
+                "Write one short progress or blocker question grounded only in the supplied exact current native task and human exchange. Do not invent completion, progress, deadlines, assignments or promises."
+            }
             EngagementKind::ConversationStarter => {
                 "Write one short unaddressed public conversation starter grounded in the supplied current channel source. Ask a concrete useful question; never announce engagement or address or identify a member."
             }

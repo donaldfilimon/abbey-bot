@@ -155,6 +155,17 @@ pub fn member_hash(member_key: &str) -> u64 {
 }
 
 impl AddendaLedger {
+    pub(crate) fn erase_member(&mut self, key: &str) -> usize {
+        let before = self.observations.len();
+        let member = member_hash(key);
+        self.observations.retain(|o| o.member != member);
+        before - self.observations.len()
+    }
+
+    pub(crate) fn record_count(&self) -> usize {
+        self.observations.len() + self.active.len() + self.suppressed.len()
+    }
+
     /// Project only current observations without pruning or exposing member hashes.
     pub fn pending_evidence(&self, policy: &Policy, now: u64) -> Vec<FeedbackEvidence> {
         [

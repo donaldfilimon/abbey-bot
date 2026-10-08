@@ -91,6 +91,7 @@ mod host_music;
 mod http_body;
 mod image_attachment;
 mod inspect;
+mod learning_quality_cli;
 mod llm;
 mod managed_env;
 mod managed_log;
@@ -150,9 +151,9 @@ mod wyhash;
 
 use serenity::all::{GatewayIntents, GuildId};
 
-/// Shared command state. Empty today; the type exists so adding state later does
-/// not mean touching every command signature.
+/// Shared native command state, including the transient human preview owner.
 pub struct Data {
+    pub(crate) continuity: std::sync::Arc<commands_work::continuity::HumanContinuity>,
     pub state: std::sync::Arc<runtime::AppState>,
     pub voice: Option<std::sync::Arc<voice_session::VoiceRuntime>>,
 }
@@ -271,6 +272,9 @@ fn main() -> Result<(), Error> {
     };
     if let StartupAction::FmManifestIdentity(cli) = &startup {
         return provider_identity::run(cli);
+    }
+    if let StartupAction::LearningQuality(corpus) = &startup {
+        std::process::exit(learning_quality_cli::run(corpus));
     }
     let managed = if startup == StartupAction::ManagedDiscord {
         configure_managed_panic_hook(None);
@@ -395,7 +399,15 @@ fn initialize_state() -> Result<Data, Error> {
             )
             .map_err(|error| runtime::StartupError(error.into()))?;
     }
-    Ok(Data { state, voice })
+    let continuity = std::sync::Arc::new(
+        commands_work::continuity::HumanContinuity::new()
+            .map_err(|error| runtime::StartupError(error.to_string()))?,
+    );
+    Ok(Data {
+        state,
+        voice,
+        continuity,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -551,6 +563,7 @@ enum StartupAction {
     ProviderSelfTest(provider::QualificationTarget),
     TextBenchmark(provider_self_test::benchmark::Options),
     FmManifestIdentity(std::path::PathBuf),
+    LearningQuality(std::path::PathBuf),
     ServerPlan(server::run::Options),
 }
 
@@ -619,6 +632,9 @@ fn parse_startup_arguments(
     if mode == std::ffi::OsStr::new("--text-benchmark") {
         return provider_self_test::benchmark::parse(arguments).map(StartupAction::TextBenchmark);
     }
+    if mode == std::ffi::OsStr::new("--learning-quality") {
+        return learning_quality_cli::parse(arguments).map(StartupAction::LearningQuality);
+    }
     Err(format!(
         "unknown argument {mode:?}; usage: abbey-bot [--voice-self-test OUTPUT.wav | --provider-self-test primary|fm|all --json | --server-plan PLAN.toml --guild ID [--stage additive|reveal|overwrites] [--category NAME] [--apply]]"
     ))
@@ -642,6 +658,7 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_context::read_image_text(),
         commands::perms(),
         commands::modcall(),
+        commands::modcase(),
         commands_server::server(),
         commands::webhook(),
         commands_forum::forum(),
@@ -649,6 +666,7 @@ fn application_commands() -> Vec<poise::Command<Data, Error>> {
         commands_engage::engage(),
         commands_brain::remember(),
         commands_brain::forget(),
+        commands_brain::forget_learning(),
         commands_brain::memory_use(),
         commands_brain::pending(),
         commands_brain::recall(),

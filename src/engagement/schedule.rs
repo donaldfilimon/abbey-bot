@@ -34,6 +34,12 @@ impl Candidate {
 }
 impl EngagementStore {
     pub fn propose(&mut self, p: CandidateProposal, now: u64) -> Result<Option<u64>, WorkError> {
+        if self
+            .erased_identities
+            .contains(&erasure_identity::proposal(&p))
+        {
+            return Err(WorkError::Stale);
+        }
         utc(now)?;
         utc(p.due_at)?;
         if let Some(source) = &p.source {
@@ -109,6 +115,9 @@ impl EngagementStore {
             },
             message_id: None,
             introduction_id: p.introduction_id,
+            work_ref: None,
+            expires_at: None,
+            follow_up_reason: None,
         };
         candidate.weekly_deadline()?;
         // Validate the complete prospective record without partially inserting it.

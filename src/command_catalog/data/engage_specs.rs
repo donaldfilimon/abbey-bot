@@ -1,6 +1,7 @@
 //! Registered private engagement controls, expanded beside the core catalog.
 macro_rules! engage_catalog {
     ($($rest:tt)*) => { &[
+    spec!(EngageFollowUp, Slash, "engage follow_up", BOTH, A0, C0, Engagement, true, "Request a task follow-up."),
     spec!(EngageIntroduce, Slash, "engage introduce", GUILD, A0, C0, Engagement, true, "Propose a mutually approved introduction in this server."),
     spec!(EngageIntroduction, Slash, "engage introduction", GUILD, A0, C0, Engagement, true, "Privately review, edit or withdraw your own introduction."),
     spec!(

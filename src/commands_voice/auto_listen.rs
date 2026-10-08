@@ -94,20 +94,23 @@ pub async fn try_auto_listen_while_present(
 /// When auto-listen is enabled and Local consent already covers everyone present,
 /// start the same listening path as `/voice join consent:true` without a prior
 /// muted Pass-mode bounce. Otherwise ask the caller to take muted autojoin.
+/// The caller captures `operation` before entry; only our own reservation may
+/// advance it, so fallback cannot adopt a stop or another start's generation.
 pub async fn try_auto_listen_at_startup(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
     state: Arc<crate::runtime::AppState>,
+    operation: &mut u64,
 ) -> Result<AutoListenStartup, String> {
-    evaluate_auto_listen(ctx, runtime, state).await
+    evaluate_auto_listen(ctx, runtime, state, operation).await
 }
 
 async fn evaluate_auto_listen(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
     state: Arc<crate::runtime::AppState>,
+    operation: &mut u64,
 ) -> Result<AutoListenStartup, String> {
-    let operation = runtime.start_operation_token();
     let enabled = auto_listen_enabled();
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
@@ -161,12 +164,14 @@ async fn evaluate_auto_listen(
                 present = participants.len(),
                 "ABBEY_VOICE_AUTO_LISTEN=1: unanimous Local consent present; starting consented listening"
             );
-            let reservation = reserve_auto_listen(&runtime, operation, async {
+            let reservation = reserve_auto_listen(&runtime, *operation, async {
                 verify_required_voice_permissions_live(ctx, guild_id, channel_id)
                     .await
                     .map_err(String::from)
             })
             .await?;
+            // Only this attempt's own reservation may advance fallback authority.
+            *operation = reservation.0;
             activate_local_auto_listen(ctx, runtime, state, participants, reservation).await?;
             Ok(AutoListenStartup::Listening)
         }

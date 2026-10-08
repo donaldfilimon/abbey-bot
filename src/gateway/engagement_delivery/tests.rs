@@ -78,6 +78,9 @@ async fn engagement_delivery_private_generation_uses_fresh_source_without_shared
         destination: DestinationPreference::Private,
         message_id: None,
         introduction_id: None,
+        work_ref: None,
+        expires_at: None,
+        follow_up_reason: None,
     };
     let adapter = DiscordEngagementDelivery(Arc::new(Http::new("synthetic-fixture")));
     adapter
@@ -200,3 +203,6 @@ fn engagement_delivery_fresh_after_source_proof_blocks_restart_reply_and_full_pa
 }
 #[path = "tests/introductions.rs"]
 mod introductions;
+
+#[path = "tests/identity.rs"]
+mod identity;

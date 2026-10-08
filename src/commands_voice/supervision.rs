@@ -12,6 +12,9 @@ use super::discord::{
 };
 use crate::voice_session::{DiscordSessionEvent, VoicePhase, VoiceRuntime};
 
+mod presence;
+use presence::reserve_presence_fallback;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BotVoiceImpact {
     Healthy,
@@ -51,27 +54,43 @@ fn classify_bot_voice_payload(facts: BotVoiceFacts) -> BotVoiceImpact {
 pub async fn autojoin_self_deafened(
     ctx: &serenity::all::Context,
     runtime: Arc<VoiceRuntime>,
+    operation: u64,
 ) -> Result<(), String> {
     let _transition = runtime.transition.lock().await;
     let guild_id = GuildId::new(runtime.config.guild_id);
     let channel_id = ChannelId::new(runtime.config.channel_id);
-    let channel = channel_id
-        .to_channel(&ctx.http)
-        .await
-        .map_err(|error| format!("fetching the configured channel failed: {error}"))?;
-    let Some(channel) = channel.guild() else {
-        return Err("the configured voice destination is not a server channel".into());
+    let Some(generation) = reserve_presence_fallback(&runtime, operation, async {
+        let channel = channel_id
+            .to_channel(&ctx.http)
+            .await
+            .map_err(|error| format!("fetching the configured channel failed: {error}"))?;
+        let Some(channel) = channel.guild() else {
+            return Err("the configured voice destination is not a server channel".into());
+        };
+        if channel.guild_id != guild_id || channel.kind != ChannelType::Voice {
+            return Err(
+                "the configured destination is not a voice channel in its configured server".into(),
+            );
+        }
+        Ok(())
+    })
+    .await?
+    else {
+        tracing::info!("muted autojoin cancelled; no fallback join attempted");
+        return Ok(());
     };
-    if channel.guild_id != guild_id || channel.kind != ChannelType::Voice {
-        return Err(
-            "the configured destination is not a voice channel in its configured server".into(),
-        );
-    }
+    let _start_attempt = super::StartAttempt {
+        runtime: Arc::clone(&runtime),
+        generation,
+    };
     let manager = songbird::get(ctx)
         .await
         .ok_or_else(|| "Songbird was not registered in the Discord client".to_string())?;
+    if !runtime.start_is_current(generation) {
+        return Ok(());
+    }
     runtime
-        .disconnect("replacing voice with safe no-audio presence")
+        .disconnect_for_replace("replacing voice with safe no-audio presence")
         .await;
     let old_voice_session =
         cached_bot_voice_state_from_serenity(ctx, guild_id).map(|state| state.session_id);
@@ -88,6 +107,9 @@ pub async fn autojoin_self_deafened(
     if let Some(old_session_id) = old_voice_session.as_deref() {
         wait_for_voice_session_gone(ctx, guild_id, old_session_id).await?;
     }
+    if !runtime.start_is_current(generation) {
+        return Ok(());
+    }
     let prepared_call = manager.get_or_insert(guild_id);
     super::configure_disconnected_call(&prepared_call, crate::voice::VoiceMode::Disabled).await;
     if let Err(error) = set_muted_self_deafened(&prepared_call).await {
@@ -95,6 +117,10 @@ pub async fn autojoin_self_deafened(
         return Err(format!(
             "preparing the muted/self-deafened state failed: {error}"
         ));
+    }
+    if !runtime.start_is_current(generation) {
+        let _ = manager.remove(guild_id).await;
+        return Ok(());
     }
     let call = match manager.join(guild_id, channel_id).await {
         Ok(call) => call,
@@ -110,12 +136,17 @@ pub async fn autojoin_self_deafened(
             "entering the required muted/self-deafened state failed: {error}"
         ));
     }
+    if !runtime.start_is_current(generation) {
+        let _ = manager.remove(guild_id).await;
+        return Ok(());
+    }
     let session_id = match wait_for_bot_voice_state(ctx, guild_id, channel_id).await {
         Ok(session_id) => session_id,
         Err(error) => {
             let _ = manager.remove(guild_id).await;
             runtime
-                .fail_safe(
+                .fail_start(
+                    generation,
                     "Discord did not confirm safe no-audio presence",
                     crate::observability::OperationalErrorCategory::Timeout,
                 )
@@ -123,12 +154,17 @@ pub async fn autojoin_self_deafened(
             return Err(error);
         }
     };
-    runtime
-        .set_presence_with_discord_session(
+    if !runtime
+        .set_presence_for_start(
+            generation,
             session_id,
             "connected muted/self-deafened; media decoding is disabled",
         )
-        .await;
+        .await
+    {
+        let _ = manager.remove(guild_id).await;
+        return Ok(());
+    }
     tracing::info!(guild = %guild_id, channel = %channel_id, "joined Discord voice with decryption/decoding and transmission disabled");
     Ok(())
 }

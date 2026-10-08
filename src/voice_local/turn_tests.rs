@@ -110,6 +110,13 @@ impl Fixture {
                         }
                         other => panic!("unexpected test route: {other}"),
                     };
+                    let canned_reply = if gate_stage == "generation_failure" && stage == "generation" {
+                        br#"{"choices":[]}"#.to_vec()
+                    } else if gate_stage == "synthesis_failure" && stage == "synthesis" {
+                        b"INVALID_SYNTHETIC_WAV".to_vec()
+                    } else {
+                        canned_reply
+                    };
                     let response = format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", canned_reply.len());
                     // A deliberately superseded turn may close its HTTP request.
                     let _ = socket.write_all(response.as_bytes()).await;
@@ -834,3 +841,6 @@ async fn personal_memory_adapter_final_voice_play_rechecks_after_activation_gate
     assert!(event_rx.try_recv().is_err());
     fixture.stop().await;
 }
+
+#[path = "timing_tests.rs"]
+mod timing_tests;

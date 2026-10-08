@@ -234,13 +234,34 @@ fn discord_message_event(msg: &Message) -> SocialEvent {
     }
 }
 
-fn discord_reaction_event(reaction: &Reaction, added: bool) -> SocialEvent {
+async fn discord_reaction_event(
+    ctx: &serenity::all::Context,
+    reaction: &Reaction,
+    added: bool,
+) -> Option<SocialEvent> {
+    // Remove events lack member facts. Query the native user for both paths;
+    // absent identity, lookup failure and bot accounts never become human reward.
+    let id = reaction.user_id?;
+    let user = ctx.http.get_user(id).await.ok();
+    verified_reaction_event(reaction, added, user.as_ref())
+}
+
+fn verified_reaction_event(
+    reaction: &Reaction,
+    added: bool,
+    user: Option<&serenity::all::User>,
+) -> Option<SocialEvent> {
+    let id = reaction.user_id?;
+    let user = user?;
+    if user.id != id || user.bot {
+        return None;
+    }
     let emoji = match &reaction.emoji {
         ReactionType::Unicode(s) => s.clone(),
-        ReactionType::Custom { name, .. } => name.clone().unwrap_or_default(),
+        ReactionType::Custom { .. } => return None,
         _ => String::new(),
     };
-    SocialEvent {
+    Some(SocialEvent {
         network: SocialNetwork::Discord,
         kind: EventKind::Reaction {
             emoji,
@@ -257,7 +278,7 @@ fn discord_reaction_event(reaction: &Reaction, added: bool) -> SocialEvent {
         user_display_name: String::new(),
         is_bot: false,
         timestamp: crate::runtime::now(),
-    }
+    })
 }
 
 /// Strip the bot's own mention from text using `memchr` to avoid a double
@@ -365,7 +386,9 @@ pub async fn on_discord_event(
             tracing::info!(channel, ?guild, mentions_bot, ?outcome, "message handled");
         }
         FullEvent::ReactionAdd { add_reaction } => {
-            let event = discord_reaction_event(add_reaction, true);
+            let Some(event) = discord_reaction_event(ctx, add_reaction, true).await else {
+                return;
+            };
             let outcome = pipeline::handle(state, &out, event, false, None).await;
             tracing::info!(
                 message = add_reaction.message_id.get(),
@@ -374,7 +397,9 @@ pub async fn on_discord_event(
             );
         }
         FullEvent::ReactionRemove { removed_reaction } => {
-            let event = discord_reaction_event(removed_reaction, false);
+            let Some(event) = discord_reaction_event(ctx, removed_reaction, false).await else {
+                return;
+            };
             pipeline::handle(state, &out, event, false, None).await;
         }
         FullEvent::MessageUpdate { event, .. } => {
@@ -475,6 +500,36 @@ fn discord_connection_observed(state: &AppState, ready: bool) {
 mod tests {
     use super::super::shared;
     use super::*;
+
+    #[test]
+    fn reaction_translation_requires_matching_current_human_facts() {
+        let mut reaction: Reaction = serde_json::from_value(serde_json::json!({
+            "user_id":"7", "channel_id":"9", "message_id":"10", "guild_id":"8",
+            "emoji":{"id":null,"name":"👍"}, "burst":false, "type":0
+        }))
+        .unwrap();
+        let mut user: serenity::all::User = serde_json::from_value(serde_json::json!({
+            "id":"7", "username":"fixture", "discriminator":"0", "avatar":null, "bot":false
+        }))
+        .unwrap();
+        for added in [true, false] {
+            assert!(
+                verified_reaction_event(&reaction, added, None).is_none(),
+                "lookup failure refuses"
+            );
+            let event = verified_reaction_event(&reaction, added, Some(&user)).unwrap();
+            assert_eq!(event.native_user_id, "7");
+            assert!(!event.is_bot);
+            user.bot = true;
+            assert!(verified_reaction_event(&reaction, added, Some(&user)).is_none());
+            user.bot = false;
+            user.id = serenity::all::UserId::new(6);
+            assert!(verified_reaction_event(&reaction, added, Some(&user)).is_none());
+            user.id = serenity::all::UserId::new(7);
+        }
+        reaction.user_id = None;
+        assert!(verified_reaction_event(&reaction, true, Some(&user)).is_none());
+    }
 
     #[cfg(unix)]
     #[tokio::test]

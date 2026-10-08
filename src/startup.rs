@@ -32,6 +32,9 @@ pub(super) async fn run(
         StartupAction::FmManifestIdentity(_) => {
             return Err("FM identity command must run before application startup".into());
         }
+        StartupAction::LearningQuality(_) => {
+            return Err("learning quality evaluation must run before application startup".into());
+        }
         StartupAction::VoiceSelfTest(output) => {
             let report = voice_self_test::run(&output)
                 .await
@@ -171,6 +174,7 @@ pub(super) async fn run(
     };
     terminal.initialization = None;
     let Data {
+        continuity,
         state,
         voice: voice_runtime,
     } = initialized.map_err(|_| "state initialization panicked")??;
@@ -365,10 +369,12 @@ pub(super) async fn run(
                             // and the ledger already covers the room. That avoids the
                             // muted-autojoin → leave → decode-rejoin race that can surface
                             // a stale disconnect VoiceStateUpdate after media opens.
+                            let mut operation = runtime.start_operation_token();
                             match commands_voice::try_auto_listen_at_startup(
                                 ctx,
                                 std::sync::Arc::clone(runtime),
                                 std::sync::Arc::clone(&shell_state),
+                                &mut operation,
                             )
                             .await
                             {
@@ -381,6 +387,7 @@ pub(super) async fn run(
                                     commands_voice::autojoin_self_deafened(
                                         ctx,
                                         std::sync::Arc::clone(runtime),
+                                        operation,
                                     )
                                     .await
                                     .map_err(runtime::StartupError)?;
@@ -393,6 +400,7 @@ pub(super) async fn run(
                                     commands_voice::autojoin_self_deafened(
                                         ctx,
                                         std::sync::Arc::clone(runtime),
+                                        operation,
                                     )
                                     .await
                                     .map_err(runtime::StartupError)?;
@@ -428,6 +436,7 @@ pub(super) async fn run(
                         .map_err(|_| "managed ready publication failed")?;
                 }
                 Ok(Data {
+                    continuity,
                     state: shell_state,
                     voice: setup_voice_runtime,
                 })
@@ -479,6 +488,11 @@ pub(super) async fn run(
     };
 
     supervisor.finish_startup();
+    state
+        .attach_continuity_access(std::sync::Arc::new(
+            gateway::continuity_access::DiscordContinuityAccess(client.http.clone()),
+        ))
+        .map_err(|_| runtime::StartupError("continuity access installation failed".into()))?;
     let scheduler_state = state.clone();
     let work_transport = std::sync::Arc::new(gateway::work_delivery::DiscordWorkDelivery(
         client.http.clone(),

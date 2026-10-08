@@ -736,3 +736,5 @@ async fn engagement_candidates_aborted_invalidation_waiter_observation() {
 async fn engagement_candidates_aborted_invalidation_waiter_deletion() {
     dropped_waiter_failure_latch(true).await;
 }
+
+mod weekly_erasure;

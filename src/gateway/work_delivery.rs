@@ -3,7 +3,9 @@ use crate::{
     runtime::work_delivery::WorkDeliveryTransport,
     work::{WorkAccess, WorkDestination, WorkError, WorkScope},
 };
-use serenity::all::{ChannelId, ChannelType, CreateMessage, GuildId, Http, Permissions, UserId};
+use serenity::all::{
+    ChannelId, ChannelType, CreateMessage, GuildId, Http, Permissions, RoleId, UserId,
+};
 use std::{collections::BTreeSet, sync::Arc};
 
 pub(crate) struct DiscordWorkDelivery(pub Arc<Http>);
@@ -28,8 +30,12 @@ impl WorkDeliveryTransport for DiscordWorkDelivery {
                 let dm = UserId::new(actor)
                     .create_dm_channel(&self.0)
                     .await
-                    .map_err(|_| WorkError::Denied)?;
-                if dm.id.get() != origin || dm.recipient.id.get() != actor {
+                    .map_err(native_failure)?;
+                if dm.id.get() != origin
+                    || dm.kind != ChannelType::Private
+                    || dm.recipient.id.get() != actor
+                    || dm.recipient.bot
+                {
                     return Err(WorkError::Denied);
                 }
                 Ok((
@@ -47,24 +53,40 @@ impl WorkDeliveryTransport for DiscordWorkDelivery {
                 if *channel != origin {
                     return Err(WorkError::Denied);
                 }
-                let guild = GuildId::new(*guild)
+                let expected_guild = *guild;
+                let guild = GuildId::new(expected_guild)
                     .to_partial_guild(&self.0)
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(native_failure)?;
                 let channel = ChannelId::new(origin)
                     .to_channel(&self.0)
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(native_failure)?;
                 let channel = channel.guild().ok_or(WorkError::Denied)?;
                 // Thread membership requires a separate proof; never infer it
                 // from parent overwrites or silently fall back to another channel.
-                if channel.guild_id != guild.id || channel.kind != ChannelType::Text {
+                if guild.id.get() != expected_guild
+                    || guild.owner_id.get() == 0
+                    || channel.id.get() != origin
+                    || channel.guild_id != guild.id
+                    || channel.kind != ChannelType::Text
+                    || !guild.roles.contains_key(&RoleId::new(expected_guild))
+                {
                     return Err(WorkError::Denied);
                 }
                 let actor_member = guild
                     .member(&self.0, UserId::new(actor))
                     .await
-                    .map_err(|_| WorkError::Denied)?;
+                    .map_err(native_failure)?;
+                if actor_member.user.id.get() != actor
+                    || actor_member.user.bot
+                    || actor_member
+                        .roles
+                        .iter()
+                        .any(|role| !guild.roles.contains_key(role))
+                {
+                    return Err(WorkError::Denied);
+                }
                 let perms = guild.user_permissions_in(&channel, &actor_member);
                 if !perms.contains(Permissions::VIEW_CHANNEL) {
                     return Err(WorkError::Denied);
@@ -81,8 +103,13 @@ impl WorkDeliveryTransport for DiscordWorkDelivery {
                         let dm = UserId::new(actor)
                             .create_dm_channel(&self.0)
                             .await
-                            .map_err(|_| WorkError::Denied)?;
-                        if dm.recipient.id.get() != actor || dm.id.get() == origin {
+                            .map_err(native_failure)?;
+                        if dm.recipient.id.get() != actor
+                            || dm.recipient.bot
+                            || dm.id.get() == 0
+                            || dm.id.get() == origin
+                            || dm.kind != ChannelType::Private
+                        {
                             return Err(WorkError::Denied);
                         }
                         Ok((access, dm.id.get()))
@@ -90,16 +117,22 @@ impl WorkDeliveryTransport for DiscordWorkDelivery {
                     WorkDestination::TeamChannel {
                         channel: destination,
                     } if *destination == origin => {
-                        let bot = self
-                            .0
-                            .get_current_user()
-                            .await
-                            .map_err(|_| WorkError::Denied)?
-                            .id;
-                        let member = guild
-                            .member(&self.0, bot)
-                            .await
-                            .map_err(|_| WorkError::Denied)?;
+                        let current_bot =
+                            self.0.get_current_user().await.map_err(native_failure)?;
+                        if current_bot.id.get() == 0 || !current_bot.bot {
+                            return Err(WorkError::Denied);
+                        }
+                        let bot = current_bot.id;
+                        let member = guild.member(&self.0, bot).await.map_err(native_failure)?;
+                        if member.user.id != bot
+                            || !member.user.bot
+                            || member
+                                .roles
+                                .iter()
+                                .any(|role| !guild.roles.contains_key(role))
+                        {
+                            return Err(WorkError::Denied);
+                        }
                         if !guild
                             .user_permissions_in(&channel, &member)
                             .contains(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES)
@@ -113,10 +146,16 @@ impl WorkDeliveryTransport for DiscordWorkDelivery {
                             let page = guild
                                 .members(&self.0, Some(1000), after)
                                 .await
-                                .map_err(|_| WorkError::Denied)?;
+                                .map_err(native_failure)?;
                             let complete = page.len() < 1000;
                             for member in &page {
-                                if !seen.insert(member.user.id.get()) {
+                                if member.user.id.get() == 0
+                                    || member
+                                        .roles
+                                        .iter()
+                                        .any(|role| !guild.roles.contains_key(role))
+                                    || !seen.insert(member.user.id.get())
+                                {
                                     return Err(WorkError::Denied);
                                 }
                                 if guild
@@ -165,6 +204,19 @@ impl WorkDeliveryTransport for DiscordWorkDelivery {
             .await
             .map(|m| m.id.get())
             .map_err(|_| WorkError::Denied)
+    }
+}
+
+fn native_failure(error: serenity::Error) -> WorkError {
+    match error {
+        serenity::Error::Http(ref error)
+            if error
+                .status_code()
+                .is_some_and(|status| matches!(status.as_u16(), 403 | 404)) =>
+        {
+            WorkError::Denied
+        }
+        _ => WorkError::Missing,
     }
 }
 

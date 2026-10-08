@@ -1,6 +1,47 @@
 //! Retained filesystem transactions. Dropping the receiver never drops the owner.
 use super::AppState;
 impl AppState {
+    /// Keep raw operational records inside the retained owner; the shell learns
+    /// only whether this fresh exact capture can reconfirm an existing receipt.
+    pub(crate) async fn existing_moderation_shadow(
+        &self,
+        policy_path: std::path::PathBuf,
+        expected_digest: String,
+        new: crate::moderation::shadow::NewCase,
+    ) -> Result<bool, &'static str> {
+        let data = self
+            .data_dir
+            .clone()
+            .ok_or("contextual persistence unavailable")?;
+        self.community_filesystem(move || {
+            let (policy, digest) = crate::persist::community_ops::load_policy(&policy_path)?;
+            if digest != expected_digest {
+                return Err("contextual policy changed; refresh native evidence");
+            }
+            let projection = crate::moderation::shadow::ShadowPolicy {
+                guild: policy.guild,
+                owner: policy.owner,
+                stopped: policy.mode == crate::community_ops::Mode::Stopped,
+                scope: policy.contextual_shadow,
+            };
+            // Check current owner and proof age before any private case snapshot,
+            // then check again after filesystem work before returning existence.
+            crate::moderation::shadow::CaseStore::default().has_existing_capture(
+                &new,
+                &projection,
+                &digest,
+                super::now(),
+            )?;
+            let store =
+                crate::persist::moderation_shadow::load_existing(&data)?.unwrap_or_default();
+            if crate::persist::community_ops::load_policy(&policy_path)?.1 != digest {
+                return Err("contextual policy changed during existing read");
+            }
+            store.has_existing_capture(&new, &projection, &digest, super::now())
+        })
+        .await
+    }
+
     pub(crate) async fn community_filesystem<T, F>(&self, work: F) -> Result<T, &'static str>
     where
         T: Send + 'static,
@@ -90,3 +131,40 @@ mod tests {
         );
     }
 }
+
+impl AppState {
+    pub(crate) async fn publish_moderation_shadow(
+        &self,
+        policy_path: std::path::PathBuf,
+        policy_digest: String,
+        mutation: crate::moderation::shadow::Mutation,
+    ) -> Result<crate::persist::moderation_shadow::PublicationReceipt, &'static str> {
+        self.publish_shadow_using_clock(policy_path, policy_digest, mutation, super::now)
+            .await
+    }
+    async fn publish_shadow_using_clock(
+        &self,
+        policy_path: std::path::PathBuf,
+        policy_digest: String,
+        mutation: crate::moderation::shadow::Mutation,
+        clock: impl Fn() -> u64 + Send + 'static,
+    ) -> Result<crate::persist::moderation_shadow::PublicationReceipt, &'static str> {
+        let data = self
+            .data_dir
+            .clone()
+            .ok_or("contextual persistence unavailable")?;
+        self.community_filesystem(move || {
+            crate::persist::moderation_shadow::transact(
+                &data,
+                &policy_path,
+                &policy_digest,
+                mutation,
+                clock,
+            )
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests;

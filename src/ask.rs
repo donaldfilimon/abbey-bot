@@ -221,6 +221,9 @@ pub fn render_failure(
             "the backend returned an error; try again or check the bot logs"
         }
         crate::llm::LlmErrorKind::Delivery => "delivery failed",
+        crate::llm::LlmErrorKind::ContextChanged => {
+            return format!("**{persona}** — {}", crate::llm::CONTEXT_CHANGED_REPLY);
+        }
     };
     format!(
         "**{persona}** — the {backend_label} call failed, so there is no answer: {public_reason}"
@@ -542,6 +545,47 @@ mod tests {
                 assert!(reply.contains("may have reached the chat"), "{reply}");
                 assert!(reply.contains("won’t resend"), "{reply}");
             }
+        }
+    }
+    #[test]
+    fn trusted_context_change_has_honest_copy_without_backend_blame() {
+        let error = crate::llm::LlmError::context_changed();
+        assert_eq!(
+            error.provider_failure(),
+            crate::provider::ProviderFailureKind::Cancelled
+        );
+        assert!(!error.provider_failure().is_transient());
+        assert!(!error.provider_failure().is_blocked());
+        assert!(error.outbound_failure().is_none());
+        let reply = render_failure(Persona::Abbey, "private-provider-label", &error);
+        assert_eq!(
+            reply,
+            format!("**Abbey** — {}", crate::llm::CONTEXT_CHANGED_REPLY)
+        );
+        println!("{reply}");
+    }
+
+    #[test]
+    fn provider_cancellation_cannot_spoof_trusted_context_copy() {
+        for error in [
+            crate::llm::LlmError::backend(crate::llm::CONTEXT_CHANGED_REPLY.into()),
+            crate::llm::LlmError::classified(
+                crate::llm::CONTEXT_CHANGED_REPLY,
+                crate::provider::ProviderFailureKind::Cancelled,
+            ),
+            crate::llm::LlmError::classified(
+                "PRIVATE_PROVIDER_DETAIL",
+                crate::provider::ProviderFailureKind::TransportUnavailable,
+            ),
+        ] {
+            assert_eq!(error.kind(), crate::llm::LlmErrorKind::Backend);
+            let reply = render_failure(Persona::Abbey, "configured endpoint", &error);
+            assert_eq!(
+                reply,
+                "**Abbey** — the configured endpoint call failed, so there is no answer: the backend returned an error; try again or check the bot logs"
+            );
+            assert!(!reply.contains("PRIVATE_PROVIDER_DETAIL"));
+            assert!(!reply.contains(crate::llm::CONTEXT_CHANGED_REPLY));
         }
     }
 }

@@ -174,3 +174,101 @@ fn dashboard_uses_classic_bounded_rows_and_private_registration() {
         };
     }
 }
+
+#[test]
+fn brain_diagnostics_private_authority_pending_guard_and_maximum_copy() {
+    use crate::brain::state::BotAction;
+    use crate::brain::telemetry::{BrainStats, LearningAudit};
+    assert!(!brain_diagnostics_authorized(Permissions::VIEW_CHANNEL));
+    assert!(!brain_diagnostics_authorized(Permissions::MANAGE_GUILD));
+    assert!(brain_diagnostics_authorized(
+        Permissions::VIEW_CHANNEL | Permissions::MANAGE_GUILD
+    ));
+    let mut stats = BrainStats::default();
+    let mut audit = LearningAudit::default();
+    let mut view = BrainView {
+        epsilon: 0.1,
+        learn_steps: 0,
+        buffer_len: 0,
+        buffer_capacity: runtime::REPLAY_CAPACITY,
+        experiences: 0,
+        budget_per_hour: 6,
+        tokens_left: 6.0,
+        topology: &runtime::TOPOLOGY,
+    };
+    for case in ["empty", "current", "maximum"] {
+        let pending = match case {
+            "empty" => (0, None),
+            "current" => {
+                stats.record_decision(&[], &[0.1, 0.7, 0.2], BotAction::Reply);
+                audit.record(crate::brain::reward::FeedbackAttribution::ExactReply);
+                (2, Some(149))
+            }
+            _ => {
+                stats.record_decision(&[], &[f32::MAX; 3], BotAction::Reply);
+                stats.action_counts = [u64::MAX; 3];
+                stats.forced_replies = u64::MAX;
+                stats.settled_total = u64::MAX;
+                audit = LearningAudit {
+                    exact: u64::MAX,
+                    unique: u64::MAX,
+                    duplicate: u64::MAX,
+                    ambiguous: u64::MAX,
+                    expired: u64::MAX,
+                    unsupported: u64::MAX,
+                };
+                view.epsilon = f32::MAX;
+                view.learn_steps = u64::MAX;
+                view.experiences = u64::MAX;
+                view.buffer_len = usize::MAX;
+                view.buffer_capacity = usize::MAX;
+                view.budget_per_hour = u32::MAX;
+                view.tokens_left = f32::MAX;
+                (usize::MAX, Some(u64::MAX))
+            }
+        };
+        let text = render_brain_diagnostics(&stats, &view, audit, pending, BrainGuard::Ready);
+        println!("{case} ({} chars):\n{text}", text.chars().count());
+        assert!(text.chars().count() <= 2000);
+        for field in [
+            "accepted exact reply/reaction",
+            "unique scoped",
+            "duplicate",
+            "ambiguous",
+            "expired",
+            "unsupported",
+            "oldest age",
+            "Guard reason",
+        ] {
+            assert!(text.contains(field));
+        }
+        for secret in [
+            "discord:",
+            "member",
+            "turn id",
+            "raw ask",
+            "probability",
+            "truth score",
+        ] {
+            assert!(!text.contains(secret));
+        }
+        if case != "empty" {
+            assert!(text.contains("action values"));
+        }
+    }
+    let mut settings = GuildSettings::default();
+    assert_eq!(
+        BrainGuard::from_settings(&settings, false, "discord:c").label(),
+        "learning off"
+    );
+    settings.learning_enabled = true;
+    assert!(
+        BrainGuard::from_settings(&settings, true, "discord:c")
+            .label()
+            .contains("quiet")
+    );
+    assert_eq!(
+        BrainGuard::from_settings(&settings, false, "discord:c").label(),
+        "unsolicited actions off"
+    );
+}

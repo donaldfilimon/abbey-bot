@@ -83,8 +83,11 @@ impl AppState {
                 .collect(),
             join_events_available: facts.join_events_available,
         };
-        self.commit_work_owned(move |work| work.engagement.propose_community(&facts, now))
-            .await?;
+        self.commit_work_owned_at(
+            move |work| work.engagement.propose_community(&facts, now),
+            now,
+        )
+        .await?;
         Ok(())
     }
     pub(crate) async fn community_join(

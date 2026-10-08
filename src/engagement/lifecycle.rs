@@ -1,6 +1,7 @@
 //! Attempted capacity is durable and never refunded. Call inside the owned commit.
 use super::*;
 use crate::calendar::utc;
+use crate::work::follow_up::FollowUpDecision;
 use chrono::{Datelike, Duration, Timelike};
 use chrono_tz::Tz;
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,39 +46,108 @@ impl EngagementStore {
         member: u64,
         now: u64,
     ) -> Result<(String, String), WorkError> {
-        let p = self.member_policies.get(&member).ok_or(WorkError::Denied)?;
-        p.validate()?;
+        self.allowed_with_reason(c, member, now)
+            .map_err(|(error, _)| error)
+    }
+    // One eligibility calculation owns both the existing error contract and
+    // the closed private explanations used by optional task follow-ups.
+    fn allowed_with_reason(
+        &self,
+        c: &Candidate,
+        member: u64,
+        now: u64,
+    ) -> Result<(String, String), (WorkError, FollowUpDecision)> {
+        let p = self
+            .member_policies
+            .get(&member)
+            .ok_or((WorkError::Denied, FollowUpDecision::Disabled))?;
+        p.validate()
+            .map_err(|error| (error, FollowUpDecision::Disabled))?;
         let guild_stopped =
             matches!(c.scope,EngagementScope::Guild{guild,..} if p.stopped_guilds.contains(&guild));
-        if !p.personalized_enabled()
-            || guild_stopped
-            || p.stopped_scopes.contains(&c.scope)
-            || p.snoozed_until.is_some_and(|t| t > now)
-        {
-            return Err(WorkError::Denied);
+        if p.global_stop || guild_stopped || p.stopped_scopes.contains(&c.scope) {
+            return Err((WorkError::Denied, FollowUpDecision::OptedOut));
+        }
+        if !p.personalized_enabled() {
+            return Err((WorkError::Denied, FollowUpDecision::Disabled));
+        }
+        if p.snoozed_until.is_some_and(|t| t > now) {
+            return Err((WorkError::Denied, FollowUpDecision::Quiet));
         }
         let tz = p
             .timezone
             .as_ref()
-            .ok_or(WorkError::Denied)?
+            .ok_or((WorkError::Denied, FollowUpDecision::Disabled))?
             .parse::<Tz>()
-            .map_err(|_| WorkError::Invalid)?;
-        let hour = utc(now)?.with_timezone(&tz).hour();
+            .map_err(|_| (WorkError::Invalid, FollowUpDecision::Disabled))?;
+        let hour = utc(now)
+            .map_err(|error| (error, FollowUpDecision::Disabled))?
+            .with_timezone(&tz)
+            .hour();
         let start = u32::from(p.quiet_start);
         let end = u32::from(p.quiet_end);
         if (start < end && hour >= start && hour < end)
             || (start > end && (hour >= start || hour < end))
         {
-            return Err(WorkError::Denied);
+            return Err((WorkError::Denied, FollowUpDecision::Quiet));
         }
         if c.kind == EngagementKind::WeeklyCheckIn
             && p.weekly_subscription
                 .as_ref()
                 .is_none_or(|w| w.scope != c.scope)
         {
-            return Err(WorkError::Denied);
+            return Err((WorkError::Denied, FollowUpDecision::OptedOut));
         }
-        buckets(now, tz)
+        buckets(now, tz).map_err(|error| (error, FollowUpDecision::Disabled))
+    }
+    fn task_follow_up_member_allowed(
+        &self,
+        c: &Candidate,
+        now: u64,
+    ) -> Result<(String, String), (WorkError, FollowUpDecision)> {
+        if c.kind != EngagementKind::FollowUp || c.work_ref.is_none() {
+            return Err((WorkError::Invalid, FollowUpDecision::StaleTask));
+        }
+        let member = c
+            .member
+            .filter(|member| *member != 0)
+            .ok_or((WorkError::Invalid, FollowUpDecision::AccessDenied))?;
+        c.scope
+            .validate()
+            .map_err(|error| (error, FollowUpDecision::AccessDenied))?;
+        if matches!(c.scope, EngagementScope::Dm { member: owner, .. } if owner != member) {
+            return Err((WorkError::Denied, FollowUpDecision::AccessDenied));
+        }
+        let b = self.allowed_with_reason(c, member, now)?;
+        // Task requests require a positive saved choice for this exact origin.
+        // Existing conversation candidates retain their original fallback.
+        if self.member_policies[&member]
+            .destinations
+            .get(&c.scope)
+            .copied()
+            != Some(c.destination)
+        {
+            return Err((WorkError::Denied, FollowUpDecision::OptedOut));
+        }
+        Ok(b)
+    }
+    /// Member policy only: Work task/access/source authority remains with WorkStore.
+    pub(crate) fn task_follow_up_member_decision(
+        &self,
+        c: &Candidate,
+        now: u64,
+    ) -> Result<FollowUpDecision, WorkError> {
+        let b = match self.task_follow_up_member_allowed(c, now) {
+            Ok(b) => b,
+            Err((WorkError::Denied, reason)) => return Ok(reason),
+            Err((error, _)) => return Err(error),
+        };
+        let member = c.member.ok_or(WorkError::Invalid)?;
+        match self.capacity(member, now, &b) {
+            Ok(()) => Ok(FollowUpDecision::Allowed),
+            Err(WorkError::Denied) => Ok(FollowUpDecision::Budget),
+            Err(error) => Err(error),
+        }
     }
     pub(super) fn capacity(
         &self,
@@ -85,6 +155,9 @@ impl EngagementStore {
         now: u64,
         b: &(String, String),
     ) -> Result<(), WorkError> {
+        if now < self.safety_pruned_through {
+            return Err(WorkError::Denied);
+        }
         let p = self.member_policies.get(&member).ok_or(WorkError::Denied)?;
         let tz = p
             .timezone
@@ -92,13 +165,24 @@ impl EngagementStore {
             .ok_or(WorkError::Denied)?
             .parse::<Tz>()
             .map_err(|_| WorkError::Invalid)?;
-        let rows: Vec<_> = self.charges.iter().filter(|c| c.member == member).collect();
-        let saved_day = rows.iter().filter(|c| c.local_day == b.0).count();
-        let saved_week = rows.iter().filter(|c| c.local_week == b.1).count();
+        let rows: Vec<_> = self
+            .charges
+            .iter()
+            .filter(|c| c.member == member)
+            .map(|c| (&c.local_day, &c.local_week, c.at))
+            .chain(
+                self.erased_contact_charges
+                    .iter()
+                    .filter(|c| c.member == member)
+                    .map(|c| (&c.local_day, &c.local_week, c.at)),
+            )
+            .collect();
+        let saved_day = rows.iter().filter(|c| *c.0 == b.0).count();
+        let saved_week = rows.iter().filter(|c| *c.1 == b.1).count();
         let mut day = 0;
         let mut week = 0;
         for c in rows {
-            let current = buckets(c.at, tz)?;
+            let current = buckets(c.2, tz)?;
             day += usize::from(current.0 == b.0);
             week += usize::from(current.1 == b.1);
         }
@@ -123,6 +207,7 @@ impl EngagementStore {
             || c.state != CandidateState::Pending
             || c.due_at > now
             || !c.weekly_window(now)?
+            || !c.task_follow_up_window(now)?
         {
             return Err(WorkError::Stale);
         }
@@ -175,13 +260,22 @@ impl EngagementStore {
         if !eligible {
             return Err(WorkError::Denied);
         }
-        let b = self.allowed(c, member, now)?;
+        let b = if c.work_ref.is_some() {
+            self.task_follow_up_member_allowed(c, now)
+                .map_err(|(error, _)| error)?
+        } else {
+            self.allowed(c, member, now)?
+        };
         self.capacity(member, now, &b)?;
-        if self.charges.len() >= 20_000 {
+        if self.charges.len() + self.erased_contact_charges.len() >= 20_000 {
             return Err(WorkError::Full);
         }
         let p = &self.member_policies[&member];
-        let destination = if c.kind == EngagementKind::ProjectCheckIn {
+        let destination = if c.work_ref.is_some() {
+            // Consent was checked against this stored destination before the
+            // existing reserve path could overwrite it from current policy.
+            c.destination
+        } else if c.kind == EngagementKind::ProjectCheckIn {
             DestinationPreference::Origin
         } else if c.kind == EngagementKind::WeeklyCheckIn {
             p.weekly_subscription
@@ -231,6 +325,7 @@ impl EngagementStore {
             || c.member != r.member
             || c.destination != r.destination
             || !c.weekly_window(now)?
+            || !c.task_follow_up_window(now)?
         {
             return Err(WorkError::Stale);
         }
@@ -262,7 +357,17 @@ impl EngagementStore {
         {
             return Err(WorkError::Stale);
         }
-        self.allowed(c, member, now)?;
+        if c.work_ref.is_some() {
+            if now < self.safety_pruned_through {
+                return Err(WorkError::Denied);
+            }
+            self.task_follow_up_member_allowed(c, now)
+                .map_err(|(error, _)| error)?;
+            // Its own durable charge may have exhausted the budget. Validate
+            // consent again, but never admit or charge this reservation twice.
+        } else {
+            self.allowed(c, member, now)?;
+        }
         let eligible = if c.kind == EngagementKind::ProjectCheckIn {
             self.community_receipt_current(c)
         } else if super::invitations::invitation_kind(c.kind) && c.source.is_none() {
@@ -301,6 +406,13 @@ impl EngagementStore {
         };
         c.state = state;
         c.message_id = message;
+        if c.work_ref.is_some()
+            && matches!(state, CandidateState::Sent | CandidateState::ReviewRequired)
+        {
+            // Observed send uncertainty supersedes an earlier cancellation
+            // explanation; only closed cancelled/rejected rows retain one.
+            c.follow_up_reason = None;
+        }
         if let Some(id) = c.introduction_id
             && matches!(state, CandidateState::Rejected | CandidateState::Cancelled)
         {
@@ -342,9 +454,28 @@ impl EngagementStore {
         for c in self.candidates.values_mut() {
             if c.state == CandidateState::Reserved {
                 c.state = CandidateState::ReviewRequired;
+                if c.work_ref.is_some() {
+                    c.follow_up_reason = None;
+                }
                 n += 1;
             }
         }
         n
     }
 }
+
+impl Candidate {
+    fn task_follow_up_window(&self, now: u64) -> Result<bool, WorkError> {
+        if self.work_ref.is_none() {
+            return Ok(true);
+        }
+        let expires = self.expires_at.ok_or(WorkError::Invalid)?;
+        if self.kind != EngagementKind::FollowUp || expires <= self.due_at {
+            return Err(WorkError::Invalid);
+        }
+        utc(expires)?;
+        Ok(now < expires)
+    }
+}
+#[cfg(test)]
+mod task_follow_up_tests;

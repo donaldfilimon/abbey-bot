@@ -71,6 +71,9 @@ fn preview(source: &SourceRef, kind: EngagementKind, due: u64) -> Candidate {
         destination: DestinationPreference::Origin,
         message_id: None,
         introduction_id: None,
+        work_ref: None,
+        expires_at: None,
+        follow_up_reason: None,
     }
 }
 impl AppState {
@@ -92,18 +95,25 @@ impl AppState {
                 .store(false, std::sync::atomic::Ordering::SeqCst);
             return Err(WorkError::Persistence);
         };
+        let admitted_at = super::now();
         let receiver = registry.spawn_result(
             crate::service::OperationKind::EngagementDelivery,
             async move {
                 let result = state
-                    .commit_work_owned(move |work| {
-                        let value = change(&mut work.engagement)?;
-                        work.engagement.validate()?;
-                        Ok(value)
-                    })
+                    .commit_work_owned_at(
+                        move |work| {
+                            let value = change(&mut work.engagement)?;
+                            work.engagement.validate()?;
+                            Ok(value)
+                        },
+                        admitted_at,
+                    )
                     .await
                     .map(|(value, _)| value);
-                if result.is_err() {
+                if result
+                    .as_ref()
+                    .is_err_and(|error| *error != WorkError::Stale)
+                {
                     state
                         .engagement_events_healthy
                         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -115,7 +125,11 @@ impl AppState {
             Ok(receiver) => receiver.await.unwrap_or(Err(WorkError::Persistence)),
             Err(_) => Err(WorkError::Persistence),
         };
-        if result.is_err() {
+        // A refused erased callback is expected and does not poison other scopes.
+        if result
+            .as_ref()
+            .is_err_and(|error| *error != WorkError::Stale)
+        {
             self.engagement_events_healthy
                 .store(false, std::sync::atomic::Ordering::SeqCst);
         }
@@ -467,22 +481,59 @@ impl AppState {
                     if sources.is_empty() {
                         return None;
                     }
-                    Some((*member, w.scope.clone(), sources, due))
+                    Some((*member, w.clone(), sources, due))
                 })
                 .collect::<Vec<_>>()
         };
-        for (member, scope, sources, due) in plans {
-            self.commit_work_owned(|work| {
-                work.engagement.weekly_assessments.insert(member, due);
-                work.engagement.validate()
-            })
-            .await?;
+        let mut stale = false;
+        for (member, subscription, sources, due) in plans {
+            let scope = subscription.scope.clone();
+            let committed = self
+                .commit_work_owned_at(
+                    |work| {
+                        let e = &mut work.engagement;
+                        let current_sources: Vec<_> = e
+                            .eligibility
+                            .get(&member)
+                            .into_iter()
+                            .flatten()
+                            .filter(|s| s.scope == scope)
+                            .cloned()
+                            .collect();
+                        let latest = sources.iter().max_by_key(|s| (s.at, s.message));
+                        if !enabled(e, member, &scope)
+                            || e.member_policies
+                                .get(&member)
+                                .and_then(|p| p.weekly_subscription.as_ref())
+                                != Some(&subscription)
+                            || current_sources != sources
+                            || latest.is_none_or(|source| !current(e, source))
+                            || e.weekly_assessments
+                                .get(&member)
+                                .is_some_and(|old| *old >= due)
+                        {
+                            return Err(WorkError::Stale);
+                        }
+                        e.weekly_assessments.insert(member, due);
+                        e.validate()
+                    },
+                    now,
+                )
+                .await;
+            match committed {
+                Err(WorkError::Stale) => {
+                    stale = true;
+                    continue;
+                }
+                Err(error) => return Err(error),
+                Ok(_) => {}
+            }
             let _ = self
                 .clone()
                 .assess_engagement(scope, member, sources, transport, Some(due))
                 .await;
         }
-        Ok(())
+        if stale { Err(WorkError::Stale) } else { Ok(()) }
     }
 }
 #[cfg(test)]

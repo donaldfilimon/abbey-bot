@@ -1,5 +1,7 @@
 //! Private invoking-member engagement controls. Catalog guards acknowledge first.
 mod controls;
+mod follow_up;
+use follow_up::follow_up;
 mod introductions;
 mod invitations;
 use introductions::{introduce, introduction};
@@ -114,6 +116,7 @@ async fn update_policy(
 #[poise::command(
     slash_command,
     subcommands(
+        "follow_up",
         "invite",
         "introduce",
         "introduction",
@@ -180,7 +183,12 @@ async fn show_status(ctx: Context<'_>) -> Result<(), Error> {
     text.push_str(&format!(
         "\n{activity}\n{voice}\nYour invitations in this origin: {invitations}"
     ));
-    reply(ctx, text).await
+    reply(ctx, text).await?;
+    let tasks = follow_up::status_text(ctx).await;
+    if !tasks.is_empty() {
+        reply(ctx, tasks).await?;
+    }
+    Ok(())
 }
 #[allow(clippy::too_many_arguments)]
 #[poise::command(slash_command, ephemeral)]

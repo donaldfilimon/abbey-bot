@@ -341,5 +341,9 @@ mod schedule;
 pub(crate) use schedule::WorkBatch;
 mod delivery_lifecycle;
 
+// Canonical card storage is the prerequisite for the private command/runtime flow.
+pub mod continuity;
+pub mod follow_up;
+
 #[cfg(test)]
 mod tests;

@@ -116,6 +116,50 @@ pub(super) const REGISTERED: &[CommandSpec] = work_catalog![
         "Recommend a moderation action after permission and hierarchy checks."
     ),
     spec!(
+        ModcaseShow,
+        Slash,
+        "modcase show",
+        GUILD,
+        A0,
+        C0,
+        Moderation,
+        true,
+        "Show an exact operational case after current subject or staff authorization."
+    ),
+    spec!(
+        ModcaseReview,
+        Slash,
+        "modcase review",
+        GUILD,
+        A2,
+        C0,
+        Moderation,
+        true,
+        "Record an independent current staff review; no Discord action is taken."
+    ),
+    spec!(
+        ModcaseAppeal,
+        Slash,
+        "modcase appeal",
+        GUILD,
+        A0,
+        C0,
+        Moderation,
+        true,
+        "Appeal your own exact operational case in its original source channel."
+    ),
+    spec!(
+        ModcaseResolveAppeal,
+        Slash,
+        "modcase resolve_appeal",
+        GUILD,
+        A2,
+        C0,
+        Moderation,
+        true,
+        "Record an independent staff appeal decision; no Discord action is taken."
+    ),
+    spec!(
         ServerBlueprint,
         Slash,
         "server blueprint",
@@ -290,6 +334,17 @@ pub(super) const REGISTERED: &[CommandSpec] = work_catalog![
         Memory,
         true,
         "Store a fact about yourself; generated-use consent is a separate choice."
+    ),
+    spec!(
+        ForgetLearning,
+        Slash,
+        "forget_learning",
+        BOTH,
+        A1,
+        C0,
+        Memory,
+        true,
+        "Erase your linkable learning in this scope; aggregate influence needs a separate reset."
     ),
     spec!(
         Forget,
@@ -565,6 +620,17 @@ pub(super) const REGISTERED: &[CommandSpec] = work_catalog![
         Administration,
         true,
         "Export the server's brain snapshot privately."
+    ),
+    spec!(
+        AdminResetLearning,
+        Slash,
+        "admin reset_learning",
+        GUILD,
+        A4,
+        C0,
+        Administration,
+        true,
+        "Confirm learning reset."
     ),
     spec!(
         AdminReset,

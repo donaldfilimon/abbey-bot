@@ -44,6 +44,7 @@ async fn registered_stats_ignores_other_guilds_and_dms_but_keeps_own_brain_and_b
                 1,
                 scope,
                 scope,
+                scope,
                 1,
             );
             runtime::AppState::lock(&data.state.brains)

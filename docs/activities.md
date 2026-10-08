@@ -260,3 +260,34 @@ Discord acceptance remain open. The existing `com.donaldfilimon.abbey-court`
 launch agent is a separate installed process; it was not restarted or republished
 by these source tests. Publish only an immutable reviewed Node release after the
 operator selects the HTTPS host/routing and authorizes that publication.
+
+
+## 2026-10-03 Task 4 source preparation
+
+Immutable four-asset packages, observed Node identity, finite proposal-only
+ingress and an exact dry-run rollback receipt are now implemented. The commands
+and actual package paths are in [Activity source preparation](../activity/README.md#immutable-source-package-preparation).
+The candidate manifest is `7c5464c089240ac2be6fcb3a409540b266c392bb47db3ad8d2fd7467b7ab368b`;
+its Court digest is `b81786c9d780ba01a7d1c757825ae4b898998c44358fc60f5e4a8c9dc1f93530`.
+A separately copied prior installed-assets package is source inventory, not proof
+of the running process or operational rollback readiness.
+
+Current focused checks: 17 package tests, four DNS tests, six actual direct-child
+probe tests and 20 Court Node tests passed. The packaged Court test used an
+ephemeral loopback port, matched health/static/POST digests and observed process
+termination. The source helper's oversized-label refusal and valid internal
+hyphen/punycode support have attributable RED/GREEN evidence. The complete
+combined source qualification is pending the stable strict gate; historical
+source or local-host receipts do not qualify these additions.
+
+Task 4 remains Partial: public HTTPS host selection, installed finite ingress,
+public API, operator activation, Portal mapping, iframe READY, participant,
+separate-instance, disconnect/restart and human witnesses remain open. This
+preparation does not alter the existing invitation-readiness contract.
+
+
+Task4 source qualification correction: the independently reviewed complete878-input
+snapshot passed required-WDBX gate2 with actualexit0,2338Rust/366Python/Swift12+16.
+[Source receipt](verification/2026-10-03-community-activity-source.md) preserves
+actual package/Node tests and all public/operator/human gaps. This bounded source
+result does not close the overall Task4 publication/iframe acceptance.

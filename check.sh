@@ -45,6 +45,9 @@ python3 deploy/test-publish-provider-qualification.py
 python3 deploy/test-check-launchd-env.py
 python3 deploy/test-check-activity-url-map.py
 python3 deploy/check-activity-url-map.py
+python3 scripts/test-prepare-court-release.py
+python3 scripts/test-court-release-dns.py
+python3 scripts/test-court-release-node-probe.py
 python3 deploy/test-service-protocol.py
 python3 deploy/test-service-environment.py
 python3 deploy/test-service-installation.py
@@ -109,5 +112,8 @@ cargo build --release --locked
 
 echo "== offline text benchmark startup =="
 python3 scripts/test-text-benchmark-startup.py --binary "${CARGO_TARGET_DIR:-target}/release/abbey-bot"
+
+echo "== offline learning quality startup =="
+python3 scripts/test-learning-quality-startup.py --binary "${CARGO_TARGET_DIR:-target}/release/abbey-bot"
 
 echo "== ok =="

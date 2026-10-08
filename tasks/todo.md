@@ -668,5 +668,105 @@ Discord and human voice acceptance remain separate.
 - [x] Text Task3 retained/coalesced bounded producer, actual nonstream process cleanup and cancellation telemetry; independent review and strict gate1,944passed/eight exclusions.
 - [x] Text Task4 source deterministic48+6 reporting/comparison; independent review and strict gate1,960passed/eight exclusions. Installed/live baselines, witnesses and performance acceptance remain open.
 - [x] Voice Task1 pure production phase/permission upgrade and durable consent policy; independent review and stable combined strict gate1,966passed/eight exclusions.
-- [ ] Voice Tasks2–4, Learning, Continuity, Initiative and separate Community/Training-foundation gaps; installed/live/human evidence remains open.
+- [x] Voice Task2 original-token retained upgrade and startup fallback fencing; independent review and strict gate1,977passed/eight exclusions.
+- [x] Voice Task3 content-free timing and fake-media lifecycle matrix; independent review/rereview and stable strict gate1,989passed/eight exclusions.
+- [ ] Voice Task4 operator/watcher decision and eight human witnesses; Learning, Continuity, Initiative and separate Community/Training-foundation gaps; installed/live/human evidence remains open.
 - [ ] All required installed/provider/Discord/platform/public Activity/human acceptance receipts.
+
+- [x] Learning Task1 typed attribution and canonical reaction recovery; legacy compatibility finding LQ1-001 closed by independent rereview, stable strict gate2,015passed/eight exclusions.
+- [ ] Learning Tasks2–5 raw-ask minimization/diagnostics, read-only corrections, erasure/reset and held-out quality corpus; downstream Continuity/Initiative/community operations/training-foundation and external acceptance remain open.
+
+- [x] Learning Task2 bounded ask-signature canonical migration, aggregate diagnostics and fresh authorization; independent review/P3 rereview and stable strict gate2,025passed/eight exclusions.
+- [ ] Learning Tasks3–5 correction recovery, linkable erasure/scoped reset and held-out evaluation, followed by downstream source work and separate installed/live/human acceptance.
+
+- [x] Learning Task3 native-bound read-only correction recovery; honest context-loss rendering independently rereviewed, stable required-WDBX strict gate2,038passed/eight exclusions.
+- [ ] Learning Tasks4–5 linkable erasure/scoped reset and held-out evaluation; downstream source and separate installed/live/human acceptance remain open.
+
+
+## 2026-10-03 full-source review correction
+
+Earlier aggregate Learning rows are historical: they mix source progress with
+still-open downstream and external acceptance. The current source receipt is
+[full-source review](../docs/verification/2026-10-03-full-source-review.md), with a
+separate final docs-inclusive gate result. Historical receipts are not rewritten.
+
+- [x] Learning Task 4 source: linkable erasure and manager-confirmed scoped reset; independently reviewed canonical readback, callback/settlement and queued-planner fences, covered by the current stable repaired 2,090-test strict gate. Original 2,064-command input drift remains unqualified.
+- [x] Learning Task 5 source: bounded 100-case evaluator, atomic finite/action/replay import and offline CLI; independently reviewed and covered by the current strict gate. Overall Task 5 remains Partial.
+- [x] Complete shared-diff review, both confirmed P2 repairs, focused RED/GREEN regressions, unchanged repaired input manifest and green strict source gate; preserve staged work and append evidence corrections.
+- [ ] Learning Task 5 independent human adjudication of all 100 synthetic labels and operator-reviewed fixed-provider answers/manual support before tuning.
+- [ ] Future Continuity and native optional-task Initiative implementation, including their actual erasure integration.
+- [ ] Separate installed/provider/Discord/platform/public Activity/human voice acceptance, including Voice Task 4's watcher decision and eight human witnesses.
+
+
+## 2026-10-03 Continuity execution correction
+
+- [x] ContinuityTask1 tested domain:24focused passes, independent domain review and stable strict source snapshot2,114Rust passes/8existing exclusions; cfg(test) staging is explicit.
+- [ ] ContinuityTasks2/3 complete enabled private command/prompt, fresh authorization, canonical/episode and clear/member-erasure vertical slice; production integration remainsPartial.
+- [ ] InitiativeT1–3 native optional-task eligibility/delivery/inspection and erasure.
+- [ ] CommunityO7 operational shadow-case/review/appeal pipeline, then separately authorized measured activation.
+- [ ] ABI aggregate held-out family/split isolation repair and foundation qualification after Abbey repository source work and fresh ownership.
+- [ ] All previously recorded operator/provider/installed/Discord/Activity/platform/human witness obligations remain open.
+
+[Task1 evidence](../docs/verification/2026-10-03-continuity-domain.md) preserves
+its exact frozen gate identity; these later checklist updates do not qualify a
+new fingerprint. Whole all-plans goal is active, not complete.
+
+
+## 2026-10-03 Continuity production correction
+
+- [x] ContinuityTasks1–3 source vertical slice:90focused Continuity passes; independent final review; stable strict gate2180passed/8excluded. [Receipt](../docs/verification/2026-10-03-continuity-integration.md). Earlier test-only/Partial rows describe historical snapshots.
+- [ ] InitiativeT1–3 native task-follow-up source through the existing Engagement owner and erasure.
+- [ ] CommunityO7 shadow-case/review/appeal source and fresh sibling/training-foundation qualification.
+- [ ] Previously recorded installed/provider/operator/Discord/Activity/platform/human acceptance; the all-plans objective remains incomplete.
+
+
+## 2026-10-03 Initiative source correction
+
+- [x] InitiativeTasks1/2 plusTask3 source: native exact scoped follow-up admission/delivery, private readable receipt denominator, stop/erasure and no replay; independently reviewed; stable strict2277pass/8excluded gate. [Receipt](../docs/verification/2026-10-03-initiative-source.md).
+- [ ] InitiativeTask3 willing-recipient bounded live usefulness pilot; no source test substitutes for observed human feedback.
+- [ ] CommunityO7 operational shadow/review/appeal source and Activity immutable host/rollback package preparation.
+- [ ] Fresh ABI foundation aggregate split repair/source qualification and named Abbey chat/distillation combined source gate.
+- [ ] Previously recorded installed/provider/Discord/ActivityPortal/platform/human corpus/voice/operator acceptance. Whole all-plans goal remains incomplete.
+
+
+## 2026-10-03 Community and Activity execution correction
+
+- [x] CommunityO7 bounded human-assessed shadow/review/appeal implementation and focused attributable repairs; independent review and focused suites are green.
+- [x] ActivityTask4 immutable candidate/prior package, observed Node, finite ingress proposal and dry-run rollback source; package17/DNS4/probe6/Court20 focused checks green.
+- [ ] Combined exact unchanged Community/Activity complete-input authoritative required-WDBX source gate and qualification receipt.
+- [ ] Independent classifier agreement/live shadow moderation/subject appeal utility or enforcement activation, and Activity host/TLS/finite ingress installation/Portal/iframe/two-participant/recovery/restart/instance witnesses.
+- [ ] Fresh ABI foundation aggregate family isolation and named Abbey combined chat/distillation source repair/qualification.
+- [ ] Existing installed/provider/operator/platform/human corpus/voice and Initiative willing-recipient acceptance. Whole all-plans goal remains incomplete.
+
+
+## 2026-10-03 Community and Activity source qualification correction
+
+- [x] CommunityO7 bounded human shadow/review/appeal source and ActivityTask4 immutable package/ingress proposal/dry-run rollback source; complete independent review, strictgate2 actual0, stable878inputs and2338Rust/366Python/Swift12+16; [receipt](../docs/verification/2026-10-03-community-activity-source.md).
+- [x] Gate2 qualification receipt, ledger corrections and source-plan metadata recorded; these writes follow its frozen snapshot.
+
+Final documentation-inclusive qualification requires the external `community-activity-gate3-result.json` in the recorded evidence directory, with saved actualexit0 and matching complete before/after/current manifests. This checklist does not substitute for that record.
+
+- [ ] ABI foundation aggregate-split isolation and named Abbey chat/distillation combined source repair/current gates.
+- [ ] Community independent classifier/live shadow/appeal utility/activation, Activity host/TLS/ingress/Portal/iframe/member/recovery/instance witnesses and all previously named installed/provider/operator/platform/human/Initiative pilot acceptance. Whole all-plans objective remains Partial.
+
+
+### 2026-10-08 verified integration source receipt
+
+Current source: `ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` returned exit 0
+on macOS with Rust 1.98.0 and Python 3.14.8. Formatting, deployment/privacy/
+contract/security checks, strict pinned WDBX conformance, offline Swift audio,
+warnings-denied Clippy, 2338 Rust tests (0 failed, 8 existing ignored), locked
+release build and offline text/learning startup checks passed.
+
+The existing HPKE patch now selects 0.8 with libcrux-kem 0.0.10, resolving
+RUSTSEC-2026-0330 and RUSTSEC-2026-0331. Five previously reviewed vulnerabilities
+remain accepted debt; this is not a clean audit. WDBX CI and validators pin
+7ddeb3d1389ec0e9fab5ac5397acf0da91a01174. The task-follow-up erasure race fixture
+now aligns delivery and erasure clocks, preserving its retained-charge assertion;
+the focused regression and full suite passed.
+
+ABI foundation and Abbey combined source prerequisites were qualified and pushed
+on 2026-10-08. Bot publication and installed service cutover are pending at this
+receipt. Provider, independent human corpus, live voice/initiative/moderation,
+Activity ingress/Portal/iframe and hardware acceptance remain open. Historical
+receipts remain historical; this entry does not close the whole all-plans goal.

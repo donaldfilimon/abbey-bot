@@ -798,6 +798,7 @@ mod acceptance;
 mod tests;
 
 mod config;
+pub(crate) mod continuity;
 mod edge;
 mod process;
 pub use edge::{EdgeReason, MemoryEdge, MemoryEdgeRequest, Reviewer};

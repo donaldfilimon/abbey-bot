@@ -414,6 +414,7 @@ mod tests {
             reputation: 0.9,
             addenda: String::new(),
             personal_memory_permits: Default::default(),
+            continuity: None,
         };
         let p = PromptParts::new(
             "CORE".into(),

@@ -123,6 +123,9 @@ fn introductions_private_review_distinguishes_delivery_outcomes_and_own_receipt(
             destination: DestinationPreference::Origin,
             message_id: None,
             introduction_id: Some(1),
+            work_ref: None,
+            expires_at: None,
+            follow_up_reason: None,
         },
     );
     for state in [

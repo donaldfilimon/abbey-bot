@@ -126,6 +126,17 @@ pub fn community_candidates(
     }
     let mut proposals = Vec::new();
     for f in &facts.rows {
+        if store
+            .erased_identities
+            .contains(&erasure_identity::community(
+                &f.scope,
+                f.kind,
+                &f.evidence,
+                f.source.as_ref(),
+            ))
+        {
+            continue;
+        }
         if matches!(f.evidence, CommunityEvidence::Join { .. })
             && store.community_receipts.iter().any(|(id, r)| {
                 r.evidence == f.evidence
@@ -216,6 +227,9 @@ impl EngagementStore {
         facts: &CommunityFacts,
         now: u64,
     ) -> Result<usize, WorkError> {
+        if self.erased_community_charges.len() + self.community_receipts.len() >= 10_000 {
+            return Err(WorkError::Full);
+        }
         let proposals = community_candidates(self, facts, now);
         let mut next = self.clone();
         let mut count = 0;
@@ -258,11 +272,28 @@ impl EngagementStore {
         Ok(count)
     }
     pub(crate) fn community_capacity(&self, c: &Candidate, now: u64) -> bool {
+        if now < self.safety_pruned_through {
+            return false;
+        }
         let interval = match c.kind {
             EngagementKind::ConversationStarter => DAY,
             EngagementKind::ProjectCheckIn => WEEK,
             _ => return true,
         };
+        if self.erased_community_charges.iter().any(|r| {
+            r.scope == c.scope
+                && r.kind == c.kind
+                && r.at.saturating_add(interval) > now
+                && (c.kind != EngagementKind::ProjectCheckIn
+                    || match self.community_receipts.get(&c.id).map(|r| &r.evidence) {
+                        Some(CommunityEvidence::Project { project, .. }) => {
+                            r.project.as_ref() == Some(&erasure_identity::project(*project))
+                        }
+                        _ => true,
+                    })
+        }) {
+            return false;
+        }
         self.community_receipts.iter().all(|(id, r)| {
             if *id == c.id
                 || r.attempted_at

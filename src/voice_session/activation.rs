@@ -1,7 +1,76 @@
 //! Start reservations, consent activation and Discord-session correlation.
 use super::*;
 
+pub(super) enum StopAuthority {
+    Cancel,
+    Preserve,
+    Start(u64),
+}
+
 impl VoiceRuntime {
+    pub async fn set_presence_with_discord_session(
+        &self,
+        session_id: String,
+        status: impl Into<String>,
+    ) {
+        self.stop_to_inner(
+            VoicePhase::PresenceOnly,
+            status,
+            StopAuthority::Cancel,
+            None,
+            Some(session_id),
+            None,
+        )
+        .await;
+    }
+
+    /// Publish output-only presence only while this exact fallback owns its start.
+    pub async fn set_presence_for_start(
+        &self,
+        generation: u64,
+        session_id: String,
+        status: impl Into<String>,
+    ) -> bool {
+        self.stop_to_inner(
+            VoicePhase::PresenceOnly,
+            status,
+            StopAuthority::Start(generation),
+            None,
+            Some(session_id),
+            None,
+        )
+        .await
+    }
+
+    /// A late fallback failure may stop only the generation that requested it.
+    pub async fn fail_start(
+        &self,
+        generation: u64,
+        status: impl Into<String>,
+        error: crate::observability::OperationalErrorCategory,
+    ) -> bool {
+        {
+            let _activation = self
+                .activation_gate
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !self.start_is_current(generation) {
+                return false;
+            }
+            self.music
+                .stop("voice failed", PlaybackTermination::Errored);
+        }
+        self.stop_to_inner(
+            VoicePhase::Failed,
+            status,
+            StopAuthority::Start(generation),
+            None,
+            None,
+            Some(error),
+        )
+        .await
+    }
+
     /// Reserve one potentially slow start attempt. Leave/pause/replacement
     /// invalidates this token without having to wait for model preflight.
     pub fn reserve_start(&self) -> u64 {
@@ -428,5 +497,72 @@ impl VoiceRuntime {
             self.record_verification_activation(evidence, inner.consent_epoch);
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn startup_fallback_publication_refuses_stop_while_state_lock_is_held() {
+        let runtime = VoiceRuntime::new(VoiceConfig::selected_only(
+            1,
+            2,
+            VoiceBackendConfig::Disabled,
+            true,
+        ));
+        let generation = runtime.reserve_start();
+        let guard = runtime.inner.lock().await;
+        let publish = runtime.set_presence_for_start(generation, "old".into(), "presence");
+        tokio::pin!(publish);
+        assert!(futures_util::poll!(&mut publish).is_pending());
+        runtime.cancel_pending_start();
+        drop(guard);
+        assert!(!publish.await);
+        assert_eq!(runtime.snapshot().await.phase, VoicePhase::Disconnected);
+        let fresh = runtime.reserve_start();
+        runtime.disconnect_for_replace("own replacement").await;
+        assert!(
+            runtime
+                .set_presence_for_start(fresh, "new".into(), "fresh presence")
+                .await
+        );
+        assert_eq!(runtime.snapshot().await.phase, VoicePhase::PresenceOnly);
+        assert!(!runtime.media_enabled(runtime.current_epoch()));
+    }
+    #[tokio::test]
+    async fn startup_fallback_late_error_cannot_cancel_newer_start() {
+        let runtime = VoiceRuntime::new(VoiceConfig::selected_only(
+            1,
+            2,
+            VoiceBackendConfig::Disabled,
+            true,
+        ));
+        let old = runtime.reserve_start();
+        let guard = runtime.inner.lock().await;
+        let failure = runtime.fail_start(
+            old,
+            "late timeout",
+            crate::observability::OperationalErrorCategory::Timeout,
+        );
+        tokio::pin!(failure);
+        assert!(futures_util::poll!(&mut failure).is_pending());
+        let new = runtime.reserve_start();
+        drop(guard);
+        assert!(!failure.await);
+        assert!(runtime.start_is_current(new));
+        assert_eq!(runtime.snapshot().await.phase, VoicePhase::Disconnected);
+        assert!(
+            runtime
+                .fail_start(
+                    new,
+                    "current timeout",
+                    crate::observability::OperationalErrorCategory::Timeout
+                )
+                .await
+        );
+        assert_eq!(runtime.snapshot().await.phase, VoicePhase::Failed);
+        assert!(!runtime.start_is_current(new));
     }
 }

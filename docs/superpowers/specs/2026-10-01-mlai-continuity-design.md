@@ -69,3 +69,140 @@ Task 1 owns `ContinuityProposal { id: ProposalId, actor: u64, scope: WorkScope, 
 
 Add `two_proposals_same_base_revision_bind_exact_text`, `other_actor_control_denied`, `proposal_expired_or_missing_after_restart_denied`, and `changed_source_between_preview_and_click_denied` to Task1/2 source tests. Use two different texts and proposal IDs against base_revision0; confirming A stores only A, and confirming B afterward yields Stale. An old control never resolves to a newer proposal. Restart test creates a new proposal with the same numeric sequence under a different boot nonce, then clicks the old control and asserts denial without changing the new proposal.
 
+
+
+## 2026-10-03 execution clarification: canonical authority and erased ownership
+
+The existing whole-program execution direction is recorded in tasks/goals.md;
+the Proposed header above describes the planning snapshot. These reviewed
+clarifications supersede the earlier raw confirm/context signatures before new
+product code is introduced.
+
+The new schema1card also requires `confirmed_by: u64`, copied from the validated
+member that confirmed its exact immutable proposal. Reject zero and a personal
+confirmer different from its owner. Replacement replaces all text/refs; no
+proposal history is retained. Member erasure removes a card confirmed by that
+member in the erased exact scope, or linked through a current native task owner,
+assignee or decision author, while retaining unrelated cards and underlying Work
+records. No continuity schema is previously Current, so unowned team text never
+receives a migration default.
+
+Pure confirm/context take a borrowed current canonical `&WorkStore` alongside
+fresh `WorkAccess`; the earlier raw reference set is insufficient authority.
+Use existing `WorkStore::scope_projects(scope, access, manager)`: all projects
+in the exact scope must authorize, and an empty scope refuses. Confirm/clear
+require existing Work manager membership; context/show require Work membership.
+A delegated Work manager without MANAGE_GUILD is allowed; a guild administrator
+absent Work membership is refused. Do not change WorkAccess.can_manage semantics.
+Validate every selected Task/Decision against exact native kind, project, current
+revision and scope; newly added unrelated records do not invalidate selected refs.
+Missing, changed or unauthorized selected source excludes the entire context.
+
+`ContinuityStore::confirm` consumes an opaque, nonserializable
+`ResolvedConfirmation`, not a raw proposal or client-submitted text. The transient
+registry resolves the exact nonce/sequence ID, actor, scope and expiry once; only
+the private native-human command shell owns that registry. The pure confirmation
+then repeats canonical authority, expiry, source and base-revision checks.
+Task1 proves inert/unresolved proposals, exact-text CAS and consumed-grant refusal;
+actual native-human-versus-model dispatch exclusion remains Task2 and cannot be
+proven by an intent boolean. No model/tool confirmation route may be registered.
+
+The NEW domain module may be registered under cfg(test) for Task1's focused and
+full source gate while production consumers are absent. This is tested domain
+coverage, not a live continuity feature. Task2 must remove that staging only when
+real private command/runtime consumers exist; Task3 must add canonical/episode/
+erasure integration. All three tasks and all R1–R8 requirements remain required.
+
+
+## 2026-10-03 reviewed receipt recovery and retained access addendum
+
+Receipt-bearing cards carry optional validated lower-case64hex episode_receipt
+(defaultNone for legacy ungated cards). Summary/Durable admission commits the
+schema, scope, confirmer, revision, exact text, sources and expiry, excluding
+its returned receipt. A replacement supersedes the exact prior receipt.
+Receipt-bearing expiry/source exclusion does not silently delete the canonical
+receipt join: keep it inert until an admitted clear/erasure; legacy no-receipt
+cards retain existing bounded load pruning. All retained card metadata counts
+against the256-card canonical cap.
+
+An appended forget followed by failed canonical publication cannot be rolled
+back or safely re-proposed. Use the existing read-only ABI CLI contract:
+`wdbx episode verify <guild-ref> <receipt> --json` with the configured endpoint,
+token-file and optionalCA argv. No new dependency/database. Exact request argv
+binds the digest; current CLI does not echo it. Strict typed string fields
+found=true, exact guild_ref, event_kind=memory_candidate,
+memory_forgotten=false/true and signature_status=valid/unsigned distinguish
+Live/Forgotten; invalid, unknown_key, missing/malformed fields, duplicate
+critical fields, trailing JSON or nonzero exit are Unknown. Unsigned preserves
+the existingC0 policy; this adds no cryptographic maturity or payload-commitment
+claim. Verify exposes no class/text commitment: creation and receipt ownership
+remain the canonical runtime join.
+
+Receipt-bearing context requires positiveLive verification on every fresh
+admission/dispatch/output boundary, alongside native access and final canonical
+card/epoch checks. Missing usable gate excludes; no downgrade to ungated
+context. Remote liveness is a current observation, not an atomic remote lease.
+Local canonical monitoring remains inexpensive and transport-free.
+
+Explicit clear/member erasure reconciles each exact old receipt. Forgotten
+permits local-only deletion; Live permits one explicitly requested forget;
+Unknown preserves card/receipt, keeps this boot's protective fence and reports
+incomplete. Reserve bounded process-local exact-target Appended memo capacity
+before a proposal; retain positive digest/sequence through local write failure.
+An exact same-boot retry uses local-only publication. Restart uses verification,
+never blind replay or refusal-text inference. Key memo by full card fingerprint,
+original receipt and gate identity; do not evict unresolved entries. Each admitted
+card deletion is exactly read back before proceeding to another card. A later
+failure is partial and does not roll back earlier external or local effects.
+
+Reuse bounded retained ABI child execution: clear credential environment,
+capstdout/stderr, use configured timeout/cancellation, actual kill+wait and
+observed joins. Closed service admission starts no verify/proposal. Native
+GET-only access separately has a5-second bound; retained provider cancellation
+and the canonical monitor surround the fresh check after reservation. Recheck
+local generation both before and after waiting for canonical state.
+
+These are additive rules for the new, still-PartialTasks2/3. They revise no
+previouslyCurrent public/persistence/CLI contract and authorize no live source
+validation. Qualification remains pending the enabled private/canonical/
+covered-gate/erasure vertical slice and its stable authoritative gate.
+
+
+## 2026-10-03 reviewed mutation linearization
+
+The retained continuity mutation owner first acquires the existing async
+persistence_preparation serial. Waiting for that serial is not a destructive
+transition. Then it advances the checked boot generation and fences exact target
+scopes before gate or disk IO, retaining the serial through observed canonical
+publication and exact readback. Every production clear/member-erasure epoch
+mutation uses this serial. Confirmation checks its resolved grant generation
+again after acquiring it. This prevents a clear from invalidating an immutable
+FIFO write after submission and losing its Appended receipt. A failed deletion
+keeps its scope fenced; unrelated failed fences cannot be cleared by success.
+
+
+## 2026-10-03 reviewed incomplete publication recovery
+
+Reserve bounded pending/orphan capacity and require configured canonical writer
+before proposing. Appended candidates whose final fresh actor/manager/source/
+proposal-expiry/generation checks fail remain bounded transient orphan targets,
+never canonical cards. Explicit clear/member erase selects canonical and orphan
+receipts; restart discards orphan plaintext and controls, leaving only the remote
+content-free commitment. This is an incomplete operation, not a saved card.
+
+An authorized exact-target Replace/Delete may stage a pending publication after
+its required gate effect. Every canonical snapshot applies that target overlay
+against the exact expected old card, preserving unrelated rows. A generic write
+cannot clear its context fence. Explicit retained reconciliation under the same
+serial submits a fresh complete snapshot, verifies exact bytes and validated load,
+and installs only its owned target and lineage. Write-then-error may reconcile
+observed canonical bytes but still reports the actual failed sink result. Pending
+scope metadata blocks early lineage publication; mismatched readback keeps the
+expected lineage so stale snapshots cannot bless unrelated disk data. Only the
+relevant scope is reconciled; unrelated failed scopes remain fenced. A scope is
+unfenced only when all canonical/pending/orphan targets in it are settled. No
+refused or unknown candidate is automatically re-proposed.
+
+Execution ruling (2026-10-03): native command Data owns one boot-nonce proposal registry. A proposal becomes confirmable only after its private preview send succeeds and its generation and expiry are rechecked. Failed/unobserved previews are discarded. All four leaves remain catalog-deferred, ephemeral, and fresh-authorized. Verification remains pending for the complete enabled flow.
+
+2026-10-03 reviewed publication rule: pending overlays apply atomically to a cloned card store. CAS conflict refuses every canonical/projection write, never publishes a partial overlay. Generic tuple/final-snapshot contracts are preserved through snapshot-only, serde-skipped canonical_preparation_failed metadata checked by persist_canonical_owned before sink IO; direct personal candidates propagate the overlay error immediately before both canonical writes. This adds no persisted field, dependency, or external API. Member erase reconciles only exact-scope pending targets linked through expected or desired cards; unrelated targets retain their fences. Observed pending deletions contribute to the successful removal count.

@@ -134,18 +134,21 @@ pub fn classify(text: &str) -> Option<StyleSignal> {
 
 /// Conservatively reject quotation/code markup rather than attributing pasted
 /// words to the member. Apostrophes inside words remain ordinary feedback.
-fn contains_quotation(text: &str) -> bool {
+pub(super) fn contains_quotation(text: &str) -> bool {
     if text.contains(['`', '"', '“', '”', '‘'])
-        || text
-            .lines()
-            .any(|line| line.trim_start().starts_with('>') || line.trim_start().starts_with("~~~"))
+        || text.lines().any(|line| {
+            line.starts_with("    ")
+                || line.starts_with('\t')
+                || line.trim_start().starts_with('>')
+                || line.trim_start().starts_with("~~~")
+        })
     {
         return true;
     }
     let mut previous = None;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\''
+        if matches!(c, '\'' | '’')
             && !previous.is_some_and(char::is_alphanumeric)
             && chars.peek().is_some_and(|next| next.is_alphanumeric())
         {

@@ -11,6 +11,7 @@ use std::{future::Future, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 mod plan;
 mod preflight;
+pub(super) mod task;
 use plan::{DeliveryPlan, PlanAdmission};
 use preflight::PreflightOutcome;
 
@@ -26,6 +27,16 @@ pub(crate) enum SendFailure {
     Uncertain,
 }
 pub(crate) trait EngagementTransport: Send + Sync {
+    fn authorize_work(
+        &self,
+        _scope: &crate::work::WorkScope,
+        _actor: u64,
+        _origin: u64,
+        _target: &crate::work::WorkDestination,
+        _audience: &std::collections::BTreeSet<u64>,
+    ) -> impl Future<Output = Result<(crate::work::WorkAccess, u64), WorkError>> + Send {
+        async { Err(WorkError::Denied) }
+    }
     fn authorize(
         &self,
         reservation: &EngagementReservation,
@@ -231,7 +242,11 @@ impl AppState {
             let mut stores = Self::lock(&self.stores);
             Self::lock(&self.guilds).config(&guild, &mut *stores)
         };
-        if self.quiet || !settings.unsolicited || !settings.unsolicited_channel_allowed(&channel) {
+        if self.quiet
+            || !settings.enabled
+            || !settings.unsolicited
+            || !settings.unsolicited_channel_allowed(&channel)
+        {
             return Err(WorkError::Denied);
         }
         if acquire {
@@ -253,8 +268,11 @@ impl AppState {
         let Ok(_single) = self.engagement_delivery_running.try_lock() else {
             return Ok(());
         };
-        self.commit_work_owned(|store| store.engagement.expire_missed_weekly(now()))
-            .await?;
+        self.commit_work_owned(|store| {
+            task::cancel_invalidated(store, now())?;
+            store.engagement.expire_missed_weekly(now())
+        })
+        .await?;
         self.clone().plan_weekly(transport, now()).await?;
         self.clone().plan_community(transport, now()).await?;
         let due = Self::lock(&self.stores).work.engagement.due(now());
@@ -265,17 +283,21 @@ impl AppState {
             // Clone a prospective store to preflight policy without charging or I/O.
             let preview = {
                 let stores = Self::lock(&self.stores);
-                let mut store = stores.work.engagement.clone();
-                let candidate = store
+                let mut work = stores.work.clone();
+                let candidate = work
+                    .engagement
                     .candidates
                     .get(&id)
                     .cloned()
                     .ok_or(WorkError::Missing)?;
-                store.reserve(id, candidate.revision, now()).and_then(|r| {
-                    DeliveryPlan::resolve(&store, &candidate, &r).map(|plan| (candidate, r, plan))
-                })
+                work.engagement
+                    .reserve(id, candidate.revision, now())
+                    .and_then(|r| {
+                        DeliveryPlan::resolve(&work, &candidate, &r)
+                            .map(|plan| (candidate, r, plan))
+                    })
             };
-            let Ok((candidate, preview, plan)) = preview else {
+            let Ok((candidate, preview, mut plan)) = preview else {
                 continue;
             };
             match plan.admission(&self, &candidate, now()) {
@@ -286,6 +308,26 @@ impl AppState {
                         .await?;
                     continue;
                 }
+            }
+            if let Err(failure) =
+                Box::pin(plan.work_preflight(&self, transport, &candidate, &cancel, &now)).await
+            {
+                match failure {
+                    FinalCheckFailure::Rejected
+                    | FinalCheckFailure::Failed(
+                        WorkError::Denied | WorkError::Invalid | WorkError::Stale,
+                    ) => {
+                        self.commit_work_owned(|work| {
+                            task::cancel_invalidated(work, now())?;
+                            plan.reject_pending(&mut work.engagement, &candidate)
+                        })
+                        .await?;
+                    }
+                    // No canonical member charge or provider request exists.
+                    // Missing proof, deadline and cancellation never grant access.
+                    _ => {}
+                }
+                continue;
             }
             let destination = match preflight::authorize(transport, &preview, &cancel).await {
                 PreflightOutcome::Authorized(destination) => destination,
@@ -300,6 +342,13 @@ impl AppState {
                     continue;
                 }
             };
+            if !plan.matches_work_destination(&destination) {
+                self.commit_work_owned(|work| {
+                    plan.reject_pending(&mut work.engagement, &candidate)
+                })
+                .await?;
+                continue;
+            }
             if !self.engagement_guild_gate(&candidate.scope, now(), true) {
                 continue;
             }
@@ -308,7 +357,7 @@ impl AppState {
                 .commit_work_owned(|s| {
                     if cancel.is_cancelled()
                         || plan.reduced(&self, &candidate, now())
-                        || !plan.evidence_current(&s.engagement, &candidate)
+                        || !plan.evidence_current(s, &candidate, now())
                     {
                         return Err(WorkError::Denied);
                     }
@@ -332,9 +381,7 @@ impl AppState {
                 crate::observability::EventCode::EngagementQueue,
                 Duration::from_secs(now().saturating_sub(candidate.due_at)),
             );
-            let body = plan
-                .body(&self, transport, &candidate, &cancel, now())
-                .await;
+            let body = plan.body(&self, transport, &candidate, &cancel, &now).await;
             let mut error = body.as_ref().err().and_then(|error| work_failure(*error));
             let malformed_body = body
                 .as_ref()
@@ -344,7 +391,7 @@ impl AppState {
                 && body.chars().count() <= 1900
             {
                 let proof = plan
-                    .prove(&self, transport, &candidate, &cancel, now())
+                    .prove(&self, transport, &candidate, &cancel, &now)
                     .await;
                 // Recipient access must be fresher than every external source proof.
                 let fresh = final_bounded(&cancel, transport.authorize(&reservation))
@@ -357,7 +404,11 @@ impl AppState {
                     plan.ready_after_proofs(&self, &candidate, now())?;
                     self.engagement_guild_check(&candidate.scope, now(), false)
                         .map_err(FinalCheckFailure::policy)?;
-                    Self::lock(&self.stores)
+                    let stores = Self::lock(&self.stores);
+                    // Exact task/source/audience and reservation share this last
+                    // short canonical check after all external proofs.
+                    verified(plan.evidence_current(&stores.work, &candidate, now()))?;
+                    stores
                         .work
                         .engagement
                         .validate_reserved(&reservation, now())
@@ -415,6 +466,18 @@ impl AppState {
             }
             let settled = self
                 .commit_work_owned(|s| {
+                    // Erasure won canonical publication while generation was
+                    // held. Its two replay commitments are the only authority
+                    // for this no-op; never recreate a deleted receipt.
+                    if !s.engagement.candidates.contains_key(&id)
+                        && matches!(
+                            outcome,
+                            DeliveryOutcome::Rejected | DeliveryOutcome::Cancelled
+                        )
+                        && s.engagement.task_follow_up_erased(&candidate)
+                    {
+                        return Ok(());
+                    }
                     let state = s
                         .engagement
                         .candidates
@@ -429,6 +492,7 @@ impl AppState {
                     {
                         return Ok(());
                     }
+                    plan.annotate_task_failure(s, &candidate, outcome, now());
                     s.engagement.settle(id, outcome)
                 })
                 .await;

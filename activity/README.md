@@ -99,3 +99,48 @@ The host limits JSON requests to 1,024 bytes, rooms to 256, browser ballots to
 five seconds. Public ingress must preserve these limits and avoid access logs
 containing room/player query values. Local health and two-browser tests do not
 qualify public HTTPS, Discord iframe operation, or invitations.
+
+
+## Immutable source package preparation
+
+Prepare the four Court assets with the existing Node runtime from the repository
+root. The output is a readonly, content-addressed source package. These commands
+prepare files and dry-run metadata; activating the managed service still requires
+an operator decision and preservation of its original plist and installed assets.
+Run each command separately:
+
+```sh
+python3 scripts/prepare-court-release.py prepare --source activity --output /Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003/court-packages --node /opt/homebrew/bin/node
+python3 scripts/prepare-court-release.py verify /Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003/court-packages/release-7c5464c089240ac2be6fcb3a409540b266c392bb47db3ad8d2fd7467b7ab368b
+python3 scripts/prepare-court-release.py prepare --source /Users/donaldfilimon/.local/share/abbey-court --output /Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003/court-packages --node /opt/homebrew/bin/node
+python3 scripts/prepare-court-release.py rollback-plan --candidate /Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003/court-packages/release-7c5464c089240ac2be6fcb3a409540b266c392bb47db3ad8d2fd7467b7ab368b --previous /Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003/court-packages/release-68f9d921f74bbfb98f72ca5b876ff9e917572ca99ac6b79c7846a4e633e8da43 --receipt /Users/donaldfilimon/.codex/verification/abbey-bot-continuity-20261003/court-plans/rollback.json
+```
+
+Those directory names are the observed 2026-10-03 manifest identities. A new
+asset, preparer or Node version produces a new directory; use the path returned
+by `prepare`, then `verify` it. The candidate's advertised Court digest is
+`b81786c9d780ba01a7d1c757825ae4b898998c44358fc60f5e4a8c9dc1f93530`.
+The copied prior assets are a rollback source snapshot; their active process
+identity is unverified. The receipt binds both verified package and Node identities
+and reports `actions_executed: []`.
+
+The helper copies only `app.js`, `court.js`, `index.html` and `server/court.mjs`;
+OAuth examples and environment files are excluded. Existing release and receipt
+replay verifies bytes without rewriting them. Missing, oversized, changed,
+symlinked, writable or extra artifact files, changed Node bytes, and another
+writer's held lock refuse preparation or verification.
+
+Default ingress metadata is proposal-only with unselected TLS origin, backend
+`127.0.0.1:8791`, exact static/health/Court routes, 1,024-byte bodies, 256 active
+connections, five-second request/header/socket/body deadlines, disabled
+access/query/body logging and deployed-digest passthrough. Optional `--ingress`
+accepts only this same structure with an operator-selected canonical HTTPS DNS
+root. It performs no DNS, TLS, proxy, Portal or service operation. The generic
+Court default stays on port 8790.
+
+Source tests execute the packaged module on an ephemeral loopback port and
+observe its termination. Public HTTPS/API reachability, finite ingress installation,
+Portal mapping, actual iframe READY, two-participant and separate-instance
+witnesses, disconnect/restart acceptance and installed/service identity remain
+open. Package metadata cannot populate the Activity readiness file or enable
+invitations.

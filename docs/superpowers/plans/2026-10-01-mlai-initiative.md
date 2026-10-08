@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Proposed; planning complete does not mean execution approved.
+**Status:** Execution authorized by Donald. Tasks1/2 and Task3 source qualified on 2026-10-03; Task3 human pilot remains Partial. See [source receipt](../../verification/2026-10-03-initiative-source.md).
 
 **Goal:** Deliver useful explicitly opted-in task follow-ups with inspectable suppression and no repeated or cross-scope outreach.
 
@@ -61,7 +61,7 @@ The task file lists are owned scopes, not permission to revert surrounding chang
 
 **Interfaces:** Produces FollowUpFacts/Decision/Intent; consumes existing WorkScope/WorkDestination/preferences and exact source revision.
 
-- [ ] **Step 1: Write failing regressions in the owning inline/src test module or real HTTP fixture.**
+- [x] **Step 1: Write failing regressions in the owning inline/src test module or real HTTP fixture.**
 
   Test `guild_opt_in_is_not_dm_or_cross_guild_opt_in` pins:
 
@@ -81,12 +81,12 @@ assert decision in [StaleTask, ActivityUnavailable]
 assert sharedMemberCharges == 1; assert taskRevisionCount <= 1
 ```
 
-- [ ] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
-- [ ] **Step 3: Implement the pinned interface/behavior:** Consume existing approved /engage MemberPolicy opt-in, stop, timezone and destination controls; add no independent opt-in or recipient budget. Keep required configured Work reminders separate. Preserve existing reminder contracts and print/read opt-in, stop and suppression copy.
-- [ ] **Step 4: Run focused verification:** `cargo test --locked follow_up; cargo test --locked work::policy (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
-- [ ] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
-- [ ] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
-- [ ] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
+- [x] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
+- [x] **Step 3: Implement the pinned interface/behavior:** Consume existing approved /engage MemberPolicy opt-in, stop, timezone and destination controls; add no independent opt-in or recipient budget. Keep required configured Work reminders separate. Preserve existing reminder contracts and print/read opt-in, stop and suppression copy.
+- [x] **Step 4: Run focused verification:** `cargo test --locked follow_up; cargo test --locked work::policy (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
+- [x] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
+- [x] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
+- [x] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
 
 ### Task 2: Reserve and settle through existing delivery ownership
 
@@ -99,7 +99,7 @@ assert sharedMemberCharges == 1; assert taskRevisionCount <= 1
 
 **Interfaces:** Consumes FollowUpIntent, typed OutboundFailure and approved EngagementStore reservation/CandidateState; produces existing durable reservation/settlement records.
 
-- [ ] **Step 1: Write failing regressions in the owning inline/src test module or real HTTP fixture.**
+- [x] **Step 1: Write failing regressions in the owning inline/src test module or real HTTP fixture.**
 
   Test `accepted_send_crash_is_review_required_not_replayed` pins:
 
@@ -119,12 +119,12 @@ assert sendCount == 0
 assert reservations == 1; assert quotaCharge == 1
 ```
 
-- [ ] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
-- [ ] **Step 3: Implement the pinned interface/behavior:** Delegate to EngagementStore::recover_reserved and AppState::deliver_engagement; reuse Work audience intersection only for validating the optional task reference, and perform late authorization through engagement transport. Do not change required Work reminder reservation paths. Keep root-retained joins and reservation-before-send ordering; classify blocked destinations without charging provider circuit.
-- [ ] **Step 4: Run focused verification:** `cargo test --locked engagement::schedule; cargo test --locked engagement_delivery (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
-- [ ] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
-- [ ] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
-- [ ] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
+- [x] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
+- [x] **Step 3: Implement the pinned interface/behavior:** Delegate to EngagementStore::recover_reserved and AppState::deliver_engagement; reuse Work audience intersection only for validating the optional task reference, and perform late authorization through engagement transport. Do not change required Work reminder reservation paths. Keep root-retained joins and reservation-before-send ordering; classify blocked destinations without charging provider circuit.
+- [x] **Step 4: Run focused verification:** `cargo test --locked engagement::schedule; cargo test --locked engagement_delivery (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
+- [x] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
+- [x] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
+- [x] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
 
 ### Task 3: Inspect and erase follow-up state; qualify usefulness
 
@@ -139,7 +139,7 @@ assert reservations == 1; assert quotaCharge == 1
 
 **Interfaces:** Consumes eligibility and delivery receipts; produces private reason/expiry/status views and learning erasure hook for member-linked preferences/receipts.
 
-- [ ] **Step 1: Write failing regressions in the owning inline/src test module or real HTTP fixture.**
+- [x] **Step 1: Write failing regressions in the owning inline/src test module or real HTTP fixture.**
 
   Test `inspection_does_not_leak_other_scope` pins:
 
@@ -159,12 +159,12 @@ assert candidateAfterErase == None
 assert total == useful + stopped + failed + unanswered
 ```
 
-- [ ] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
+- [x] **Step 2: Run the focused command below and confirm the named new regression fails for the intended invariant, not compile/environment noise.** For operator-only tasks, use the receipt/witness assertions as acceptance checks; do not manufacture a failing unit test or perform a live action without its authorization.
 - [ ] **Step 3: Implement the pinned interface/behavior:** Show attempted/confirmed/review-required distinctions. Use a bounded operator-approved pilot of at most three willing recipients; no unsolicited expansion while measuring. Record replies only when observed and honor stop immediately.
-- [ ] **Step 4: Run focused verification:** `cargo test --locked follow_up; cargo test --locked work (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
-- [ ] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
-- [ ] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
-- [ ] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
+- [x] **Step 4: Run focused verification:** `cargo test --locked follow_up; cargo test --locked work (separate commands)`. Semicolon-separated entries in this documentation mean separate tool calls; preserve each exit status. Expected: all selected tests pass, nonzero count; operator rows require actual receipts, not command success alone.
+- [x] **Step 5: Review the complete owned diff, print/read changed user-visible text, run applicable docs/Activity checks, and obtain independent review.** Keep the interface/spec contract explicit in the review receipt.
+- [x] **Step 6: Run `./check.sh` once this independently reviewable source deliverable is stable; record terminal exit, counts and source identity.** Do not duplicate a still-running Cargo/gate handle. For docs-only/operator records use Liquid/diff checks and the existing applicable source evidence instead of re-running an unchanged build.
+- [x] **Step 7: Record Current/Partial/Blocked evidence and unresolved proof layers in `docs/MLAI-LIVE-ACCEPTANCE.md`.** No commit/push/PR in this step; those require separate user instruction.
 
 ## Self-review and execution handoff
 
@@ -180,3 +180,14 @@ Task1 owns `evaluate_follow_up(facts: &FollowUpFacts, now: u64) -> FollowUpDecis
 
 Task3's private inspection reads existing /engage receipts; no duplicate stop command. Concurrent task follow-up and conversation follow-up consume the same global member charge ledger. Add a cross-domain two-guild-plus-DM budget test, source revision cancellation test, stop-after-reservation test and restart Reserved→ReviewRequired test. Activity readiness comes only from the approved operator receipt; voice invitations never grant listening consent.
 
+## 2026-10-03 source execution addendum
+
+Native admission/due-time and additive migration are pinned in
+[the reviewed addendum](../specs/2026-10-03-initiative-native-admission.md).
+Root is the sole source writer; subagents draft and independently review outside
+the shared source. Additional owned seams: commands_engage/follow_up and existing
+catalog; runtime/engagement_follow_up and delivery child modules; gateway Work
+proof adapter; Engagement loading/validation/erasure and child regressions.
+No incompatible existing public contract or production dependency is introduced.
+Task3 source inspection/erasure can qualify independently; its actual usefulness
+pilot remains open until separately authorized willing participants are observed.

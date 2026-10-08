@@ -137,6 +137,12 @@ pub struct Candidate {
     pub destination: DestinationPreference,
     pub message_id: Option<u64>,
     pub introduction_id: Option<u64>,
+    #[serde(default)]
+    pub work_ref: Option<crate::work::WorkContentRef>,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub follow_up_reason: Option<crate::work::follow_up::FollowUpDecision>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,6 +160,8 @@ pub struct EngagementStore {
     pub invitation_requests: BTreeMap<u64, InvitationRequest>,
     pub suppressed_invitation_requests: BTreeMap<u64, SuppressedInvitationRequest>,
     pub feedback: BTreeMap<u64, BTreeMap<u64, ExplicitFeedback>>,
+    pub erased_identities: BTreeSet<String>,
+    pub safety_pruned_through: u64,
     pub sequence: u64,
     pub member_policies: BTreeMap<u64, MemberPolicy>,
     /// Direct-interaction source identities only; never inferred from memory.
@@ -165,6 +173,9 @@ pub struct EngagementStore {
     pub candidates: BTreeMap<u64, Candidate>,
     pub introductions: BTreeMap<u64, Introduction>,
     pub charges: Vec<ContactCharge>,
+    /// Minimized linkable safety accounting retained after learning erasure.
+    pub erased_contact_charges: Vec<erasure::ErasedContactCharge>,
+    pub erased_community_charges: Vec<erasure::ErasedCommunityCharge>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,10 +189,15 @@ pub struct InvitationRequest {
 }
 pub mod classifier;
 pub mod community;
+mod erasure;
+mod erasure_identity;
 pub mod introductions;
 pub mod invitations;
 pub mod lifecycle;
 mod loading;
+mod task_follow_up;
+mod task_receipt_status;
+pub(crate) use task_receipt_status::TaskReceiptAggregate;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SuppressedInvitationRequest {

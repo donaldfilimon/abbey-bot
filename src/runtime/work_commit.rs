@@ -20,6 +20,7 @@ impl AppState {
         if self.data_dir.is_none() || self.service.get().is_none() {
             return Err(WorkError::Persistence);
         }
+        let admitted_at = super::now();
         let state = self.owned_state().ok_or(WorkError::Persistence)?;
         let result = self
             .service
@@ -29,7 +30,7 @@ impl AppState {
                 crate::service::OperationKind::PersistencePreparation,
                 async move {
                     state
-                        .commit_work_owned(change)
+                        .commit_work_owned_at(change, admitted_at)
                         .await
                         .map(|(value, _)| value)
                 },
@@ -43,10 +44,31 @@ impl AppState {
         &self,
         change: impl FnOnce(&mut crate::work::WorkStore) -> Result<R, crate::work::WorkError>,
     ) -> Result<(R, crate::persist::PersistReport), crate::work::WorkError> {
+        self.commit_work_owned_at(change, super::now()).await
+    }
+    /// Carry the original owner admission through asynchronous fact gathering.
+    pub(super) async fn commit_work_owned_at<R>(
+        &self,
+        change: impl FnOnce(&mut crate::work::WorkStore) -> Result<R, crate::work::WorkError>,
+        admitted_at: u64,
+    ) -> Result<(R, crate::persist::PersistReport), crate::work::WorkError> {
         use crate::{persist::PersistComponentOutcome, work::WorkError};
         let _serial = self.persistence_preparation.lock().await;
         let mut snapshot = self.snapshot_without_proposals();
+        snapshot
+            .stores
+            .work
+            .engagement
+            .prune_erasure_safety(admitted_at);
+        let before_engagement = snapshot.stores.work.engagement.clone();
         let value = change(&mut snapshot.stores.work)?;
+        if !snapshot.stores.work.engagement.erasure_admitted(
+            &snapshot.stores.reward_recovery.erasure,
+            &before_engagement,
+            admitted_at,
+        ) {
+            return Err(WorkError::Stale);
+        }
         let work = snapshot.stores.work.clone();
         let report = self
             .persistence_requests

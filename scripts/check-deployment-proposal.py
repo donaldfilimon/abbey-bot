@@ -67,7 +67,7 @@ def errors(root):
                         issues.append('critical step may not skip or ignore failure')
             checkouts = [s for s in steps if 'uses' in s]
             if len(checkouts) != 2 or any(s['uses'] != 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' or s['with'].get('persist-credentials') is not False for s in checkouts): issues.append('checkout provenance drift')
-            if checkouts[0]['with'].get('ref') != '${{ github.sha }}' or checkouts[1]['with'].get('ref') != '9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae': issues.append('exact checkout revision drift')
+            if checkouts[0]['with'].get('ref') != '${{ github.sha }}' or checkouts[1]['with'].get('ref') != '7ddeb3d1389ec0e9fab5ac5397acf0da91a01174': issues.append('exact checkout revision drift')
         if jobs['gate-macos']['name'] != 'Gate (macOS)': issues.append('required check name drift')
         deploy = jobs['deploy-macos']
         if deploy['needs'] != 'gate-macos': issues.append('prerequisite drift')

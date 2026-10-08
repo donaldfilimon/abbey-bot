@@ -380,6 +380,7 @@ class MarkdownFilesTests(unittest.TestCase):
             "activity/server/README.md",
             "contracts/abbey/corpus/README.md",
             "contracts/abbey/corpus/compatibility.md",
+            "docs/2026-10-02-completion-source-audit.md",
             "docs/MLAI-LIVE-ACCEPTANCE.md",
             "docs/README.md",
             "docs/activities.md",

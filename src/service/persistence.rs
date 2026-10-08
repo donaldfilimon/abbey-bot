@@ -287,7 +287,10 @@ fn write_snapshot_observed(
             PersistComponentOutcome::SkippedCanonicalFailure,
         );
     }
-    if let Ok(disk) = Stores::load(dir) {
+    if let Ok(disk) = Stores::load(dir)
+        && disk.canonical_base.get() == snapshot.stores.canonical_base.get()
+    {
+        // Only the exact owned publication may advance the live parent.
         published(disk.canonical_base.get());
     }
     observed(ComponentProgress {
@@ -314,3 +317,6 @@ impl Drop for PersistenceWriter {
         self.stop();
     }
 }
+
+#[cfg(test)]
+mod continuity_tests;

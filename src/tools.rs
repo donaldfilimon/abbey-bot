@@ -755,4 +755,25 @@ mod tests {
             "compatibility vocabulary remains five"
         );
     }
+    #[test]
+    fn continuity_confirmation_has_no_model_dispatch_route() {
+        let mut host = FakeHost::default();
+        for name in [
+            "continuity_confirm",
+            "confirm_continuity",
+            "work continuity confirm",
+            "continuity_clear",
+        ] {
+            let call = ToolCall {
+                id: "synthetic".into(),
+                name: name.into(),
+                arguments: serde_json::json!({"proposal_id":"00:1","human":true}),
+            };
+            assert_eq!(
+                dispatch(&call, &mut host).content,
+                format!("Unknown tool `{name}`.")
+            );
+        }
+        assert!(host.log.is_empty());
+    }
 }

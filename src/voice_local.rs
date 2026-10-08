@@ -75,7 +75,7 @@ enum TurnOutcome {
         transcript: String,
         spoken_answer: String,
         persist: bool,
-        memory_guard: generation::consent::GenerationGuard,
+        memory_guard: Box<generation::consent::GenerationGuard>,
         audio: DecodedAudio,
     },
     Ignored {
@@ -582,7 +582,7 @@ pub async fn run(mut session: LocalSession) {
                                     scope,
                                     transcript,
                                     spoken_answer,
-                                    memory_guard,
+                                    memory_guard: *memory_guard,
                                 });
                                 tracing::info!(
                                     epoch = session.epoch,

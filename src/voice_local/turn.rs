@@ -1,14 +1,75 @@
 //! Per-turn recognition, cognition and synthesis behind actor-owned deadlines.
 use super::*;
+use crate::observability::{EventOutcome, VoiceStage};
+
+/// A terminal observation follows the invoked stage operation, including abort.
+/// Generation measures the entire attempt: admission, guards, preparation and
+/// finalization as well as execution. Its event does not prove a provider call.
+/// The actor joins aborted owners before teardown completes, so Drop is observed.
+struct StageTimer {
+    runtime: Arc<VoiceRuntime>,
+    stage: VoiceStage,
+    started: Instant,
+    finished: bool,
+}
+impl StageTimer {
+    fn new(runtime: &Arc<VoiceRuntime>, stage: VoiceStage) -> Self {
+        Self {
+            runtime: Arc::clone(runtime),
+            stage,
+            started: Instant::now(),
+            finished: false,
+        }
+    }
+    fn finish(&mut self, outcome: EventOutcome) {
+        if !self.finished {
+            self.finished = true;
+            self.runtime
+                .record_voice_stage(self.stage, outcome, self.started.elapsed());
+        }
+    }
+    fn finish_speech_result<T>(&mut self, result: &Result<T, String>) {
+        self.finish(if result.is_ok() {
+            EventOutcome::Succeeded
+        } else {
+            EventOutcome::Failed
+        });
+    }
+    fn finish_result<T>(&mut self, result: &Result<T, crate::llm::LlmError>) {
+        use crate::provider::ProviderFailureKind;
+        self.finish(match result {
+            Ok(_) => EventOutcome::Succeeded,
+            Err(error) => match error.provider_failure() {
+                ProviderFailureKind::Timeout => EventOutcome::TimedOut,
+                ProviderFailureKind::Cancelled => EventOutcome::Cancelled,
+                _ => EventOutcome::Failed,
+            },
+        });
+    }
+}
+impl Drop for StageTimer {
+    fn drop(&mut self) {
+        self.finish(EventOutcome::Cancelled);
+    }
+}
+
+async fn synthesize(work: &TurnWork, spoken_answer: &str) -> Result<DecodedAudio, String> {
+    let mut timing = StageTimer::new(&work.runtime, VoiceStage::Synthesis);
+    let result = work.client.synthesize(spoken_answer).await;
+    timing.finish_speech_result(&result);
+    result
+}
 
 pub(super) async fn recognize_before_deadline(work: TurnWork) -> TurnOutcome {
     let turn = work.turn;
     let epoch = work.consent_epoch;
     let runtime = Arc::clone(&work.runtime);
     let deadline = work.captured_at + MAX_RECOGNITION_DELAY;
-    match tokio::time::timeout_at(deadline, recognize_turn(work)).await {
+    let mut timing = StageTimer::new(&runtime, VoiceStage::Recognition);
+    match tokio::time::timeout_at(deadline, recognize_turn(work, &mut timing)).await {
         Ok(outcome) => outcome,
         Err(_) => {
+            timing.finish(EventOutcome::TimedOut);
             // Close capture immediately even if the actor is temporarily
             // awaiting a playback lock; the actor then retires the call.
             let _ = runtime.revoke_media(epoch);
@@ -17,9 +78,10 @@ pub(super) async fn recognize_before_deadline(work: TurnWork) -> TurnOutcome {
     }
 }
 
-async fn recognize_turn(mut work: TurnWork) -> TurnOutcome {
-    let recognition_started = Instant::now();
-    let transcript = match work.client.transcribe(&work.utterance.pcm).await {
+async fn recognize_turn(mut work: TurnWork, timing: &mut StageTimer) -> TurnOutcome {
+    let result = work.client.transcribe(&work.utterance.pcm).await;
+    timing.finish_speech_result(&result);
+    let transcript = match result {
         Ok(transcript) => transcript,
         Err(error) => {
             return TurnOutcome::Failed {
@@ -37,7 +99,7 @@ async fn recognize_turn(mut work: TurnWork) -> TurnOutcome {
     let safely_attributed = work.utterance.speaker_id.is_some() && !work.utterance.overlap;
     tracing::info!(
         turn = work.turn,
-        recognition_seconds = recognition_started.elapsed().as_secs_f64(),
+        recognition_seconds = timing.started.elapsed().as_secs_f64(),
         safely_attributed,
         "local voice recognition finished"
     );
@@ -124,7 +186,7 @@ pub(super) async fn generate_turn(
         };
         let memory_guard = generation::consent::GenerationGuard::fresh(&work.state);
         let spoken_answer = crate::offline_voice::spoken_text(&answer);
-        let audio = match work.client.synthesize(&spoken_answer).await {
+        let audio = match synthesize(&work, &spoken_answer).await {
             Ok(audio) => audio,
             Err(error) => {
                 return TurnOutcome::Failed {
@@ -151,7 +213,7 @@ pub(super) async fn generate_turn(
             transcript,
             spoken_answer,
             persist: false,
-            memory_guard,
+            memory_guard: Box::new(memory_guard),
             audio,
         };
     }
@@ -191,6 +253,7 @@ pub(super) async fn generate_turn(
             };
         }
     };
+    let mut generation_timing = StageTimer::new(&work.runtime, VoiceStage::Generation);
     let generation = generation::generate_without_delivery(
         &work.state,
         &work.backend,
@@ -199,6 +262,7 @@ pub(super) async fn generate_turn(
         Some(VOICE_SYSTEM_SUFFIX),
     )
     .await;
+    generation_timing.finish_result(&generation);
     let (answer, _) = match generation {
         Ok(answer) => answer,
         Err(error) => {
@@ -221,7 +285,7 @@ pub(super) async fn generate_turn(
     }
     let spoken_answer = crate::offline_voice::spoken_text(&answer);
     let synthesis_started = Instant::now();
-    let audio = match work.client.synthesize(&spoken_answer).await {
+    let audio = match synthesize(&work, &spoken_answer).await {
         Ok(audio) => audio,
         Err(error) => {
             return TurnOutcome::Failed {
@@ -254,7 +318,60 @@ pub(super) async fn generate_turn(
         spoken_answer,
         // Voice recognition is transient; never retain a conversational transcript.
         persist: false,
-        memory_guard,
+        memory_guard: Box::new(memory_guard),
         audio,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn generation_failure_event(
+        failure: crate::provider::ProviderFailureKind,
+    ) -> serde_json::Value {
+        let runtime = Arc::new(VoiceRuntime::new(crate::voice::VoiceConfig::selected_only(
+            1,
+            2,
+            crate::voice::VoiceBackendConfig::Disabled,
+            true,
+        )));
+        let (mut writer, events) = crate::service::telemetry::TelemetryWriter::recording_for_test();
+        runtime.attach_telemetry(writer.requests());
+        {
+            let mut timing = StageTimer::new(&runtime, VoiceStage::Generation);
+            let result: Result<(), crate::llm::LlmError> = Err(crate::llm::LlmError::classified(
+                "PRIVATE_SYNTHETIC_BACKEND_DETAIL",
+                failure,
+            ));
+            // The same completion mapping used by generate_turn; Drop must not
+            // append a second terminal event after a typed returned failure.
+            timing.finish_result(&result);
+        }
+        writer.stop();
+        writer.joined().await.unwrap();
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["code"], "voice_generation");
+        assert!(events[0]["duration_ms"].as_u64().is_some());
+        assert_eq!(events[0].as_object().unwrap().len(), 6);
+        assert!(
+            !events[0]
+                .to_string()
+                .contains("PRIVATE_SYNTHETIC_BACKEND_DETAIL")
+        );
+        events[0].clone()
+    }
+
+    #[tokio::test]
+    async fn typed_generation_timeout_is_distinct_from_backend_failure() {
+        let event = generation_failure_event(crate::provider::ProviderFailureKind::Timeout).await;
+        assert_eq!(event["outcome"], "timed_out");
+    }
+
+    #[tokio::test]
+    async fn typed_generation_cancellation_is_distinct_from_backend_failure() {
+        let event = generation_failure_event(crate::provider::ProviderFailureKind::Cancelled).await;
+        assert_eq!(event["outcome"], "cancelled");
     }
 }

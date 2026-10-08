@@ -23,6 +23,11 @@ pub struct Policy {
     pub membership_matrix: BTreeSet<(u64, u64)>,
     #[serde(default)]
     pub assessment: proposals::AssessmentScope,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::moderation::shadow::ShadowScope::is_disabled_default"
+    )]
+    pub contextual_shadow: crate::moderation::shadow::ShadowScope,
     pub actions: Vec<Action>,
 }
 
@@ -174,6 +179,7 @@ impl Policy {
         {
             return Err("invalid owner assessment scope");
         }
+        self.contextual_shadow.validate(&self.protected_channels)?;
         for action in &self.actions {
             if action.key.is_empty()
                 || action.key.len() > 128
@@ -356,6 +362,7 @@ mod tests {
             ordinary_roles: BTreeSet::new(),
             membership_matrix: BTreeSet::new(),
             assessment: proposals::AssessmentScope::default(),
+            contextual_shadow: crate::moderation::shadow::ShadowScope::default(),
             actions: vec![Action {
                 key: "topic-v1".into(),
                 reason: "approved guidance".into(),

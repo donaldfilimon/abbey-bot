@@ -57,5 +57,5 @@ regex = "1.13.1"
 # openmls_rust_crypto 0.5.1 is the API line required by davey 0.1.4, but its
 # published manifest pins the vulnerable HPKE 0.6/libcrux SHA3 stack. The
 # reviewed local copy changes only those three dependency versions to the
-# compatible fixed HPKE 0.7 RustCrypto line; see its PATCH.md.
+# compatible fixed HPKE 0.8 RustCrypto line; see its PATCH.md.
 openmls_rust_crypto = { path = "patches/openmls_rust_crypto-0.5.1" }

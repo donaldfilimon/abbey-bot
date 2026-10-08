@@ -144,16 +144,18 @@ type RoundOutcome =
 
 /// Whether prompt preparation may update shared conversation state.
 #[derive(Clone, Copy)]
-pub enum SessionMode {
+pub enum SessionMode<'a> {
     Shared,
     Ephemeral,
     /// Read only caller-supplied context; do not read shared session history.
     SourceOnly,
+    /// Read-only correction bound to a still-current scoped bot turn.
+    Repair(&'a crate::brain::correction::CorrectionSource),
 }
 
 /// What generation is asked to do, independent of delivery and capabilities.
 pub struct Ask<'a> {
-    pub session_mode: SessionMode,
+    pub session_mode: SessionMode<'a>,
     /// Authenticated subject, independent of the service-produced context seal.
     pub subject: Option<(&'a str, &'a str)>,
     pub scope: &'a str,
@@ -169,7 +171,11 @@ impl Ask<'_> {
         if matches!(self.session_mode, SessionMode::Shared) {
             AppState::lock(&state.engine).set_session_persona(self.scope, persona, self.now);
         }
-        crate::engine::Engine::prepare_source_only(persona, self.context, self.user_input)
+        if matches!(self.session_mode, SessionMode::Repair(_)) {
+            crate::engine::Engine::prepare_repair(persona, self.context, self.user_input)
+        } else {
+            crate::engine::Engine::prepare_source_only(persona, self.context, self.user_input)
+        }
     }
 }
 
@@ -377,14 +383,36 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
     timing: Option<&timing::Timing>,
 ) -> Result<(String, Option<String>, Persona, &'static str), llm::LlmError> {
     let guard = consent::GenerationGuard::capture(state, ask)?;
+    if !guard.permits_delivery(
+        delivery.as_ref().map(|value| value.native_channel_id),
+        response_style == llm::ResponseStyle::Spoken,
+    ) {
+        return Err(llm::LlmError::context_changed());
+    }
     if let ToolAccess::Enabled(host) = &access
         && !guard.matches_host(host)
     {
-        return Err(llm::LlmError::classified(
-            consent::WITHDRAWN_REPLY,
-            crate::provider::ProviderFailureKind::Cancelled,
+        return Err(llm::LlmError::context_changed());
+    }
+    let repair = matches!(ask.session_mode, SessionMode::Repair(_));
+    if repair && access.is_enabled() {
+        return Err(llm::LlmError::backend(
+            "correction requires read-only generation".into(),
         ));
     }
+    if repair && ask.context.grounding_sources(ask.user_input).is_empty() {
+        return Ok((
+            crate::brain::correction::INSUFFICIENT_EVIDENCE.into(),
+            None,
+            access.persona(),
+            conversation.label(),
+        ));
+    }
+    let system_suffix = if repair {
+        Some(crate::brain::correction::RECOVERY_INSTRUCTIONS)
+    } else {
+        system_suffix
+    };
     let vocabulary = crate::tools::production_tools_when_enabled(
         access.is_enabled() && conversation.tools_available(),
     );
@@ -392,14 +420,11 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
     let mut extra_turns = Vec::new();
     let mut grounding_results = Vec::new();
     for round_index in 0..=crate::tools::MAX_TOOL_ROUNDS {
-        guard.check(state)?;
+        guard.check_fresh(state).await?;
         let persona = access.persona();
         let prepared = ask.prepare(state, persona);
         if !guard.validates_prepared(&prepared) {
-            return Err(llm::LlmError::classified(
-                consent::WITHDRAWN_REPLY,
-                crate::provider::ProviderFailureKind::Cancelled,
-            ));
+            return Err(llm::LlmError::context_changed());
         }
         let mut turns = prepared.turns.clone();
         turns.extend(extra_turns.iter().cloned());
@@ -497,7 +522,7 @@ async fn generate_conversation_timed<O: Outbound + Sync>(
             }
             // Fit per reserved provider from the untrimmed parts, so a
             // fallback re-fits to the new window (or sends everything).
-            guard.check(state)?;
+            guard.check_fresh(state).await?;
             let fitted = prompt_budget::fitted(&parts, conversation.prompt_budget());
             let label = conversation.label();
             let started = || {

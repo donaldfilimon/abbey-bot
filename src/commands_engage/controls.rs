@@ -268,6 +268,9 @@ pub fn stop_store(
         {
             c.revision = c.revision.checked_add(1).ok_or(WorkError::Invalid)?;
             c.state = CandidateState::Cancelled;
+            if c.work_ref.is_some() && c.follow_up_reason.is_none() {
+                c.follow_up_reason = Some(crate::work::follow_up::FollowUpDecision::OptedOut);
+            }
         }
     }
     for id in introductions {

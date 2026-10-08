@@ -4,17 +4,27 @@ use crate::{llm, personal_memory::MemoryUsePermitSet, runtime::AppState};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GenerationGuard {
+    continuity: Option<crate::runtime::continuity_context::AdmittedContinuity>,
     permits: MemoryUsePermitSet,
     exposure_epoch: u64,
     barrier_open: bool,
+    correction: Option<std::sync::Arc<crate::brain::correction::CorrectionSource>>,
 }
 
-pub(crate) const WITHDRAWN_REPLY: &str =
-    "Personal context changed while this answer was being prepared. Please ask again.";
+pub(crate) const WITHDRAWN_REPLY: &str = llm::CONTEXT_CHANGED_REPLY;
 
 impl GenerationGuard {
     pub(crate) fn capture(state: &AppState, ask: &Ask<'_>) -> Result<Self, llm::LlmError> {
         let context = ask.context;
+        if context.continuity.as_ref().is_some_and(|card| {
+            !card.binds(
+                ask.scope,
+                ask.subject,
+                matches!(ask.session_mode, SessionMode::Ephemeral),
+            ) || !card.current(state)
+        }) {
+            return Err(denied());
+        }
         let permits = &context.personal_memory_permits;
         match ask.subject {
             Some((guild, user)) => {
@@ -45,6 +55,18 @@ impl GenerationGuard {
             return Err(denied());
         }
         let value = Self {
+            continuity: context.continuity.clone(),
+            correction: match ask.session_mode {
+                SessionMode::Repair(source) => {
+                    if source.scope != ask.scope
+                        || ask.subject.is_none_or(|(guild, _)| guild != source.guild)
+                    {
+                        return Err(denied());
+                    }
+                    Some(std::sync::Arc::new(source.clone()))
+                }
+                _ => None,
+            },
             permits: permits.clone(),
             exposure_epoch,
             barrier_open: state
@@ -55,6 +77,18 @@ impl GenerationGuard {
     }
 
     pub(crate) fn check(&self, state: &AppState) -> Result<(), llm::LlmError> {
+        if self
+            .continuity
+            .as_ref()
+            .is_some_and(|card| !card.current(state))
+        {
+            return Err(denied());
+        }
+        if let Some(source) = &self.correction
+            && !correction_current(state, source)
+        {
+            return Err(denied());
+        }
         if state.personal_memory_exposure_epoch() != self.exposure_epoch
             || state
                 .validate_personal_memory_permits(&MemoryUsePermitSet::empty(self.exposure_epoch))
@@ -71,6 +105,8 @@ impl GenerationGuard {
     pub(crate) fn fresh(state: &AppState) -> Self {
         let exposure_epoch = state.personal_memory_exposure_epoch();
         Self {
+            continuity: None,
+            correction: None,
             permits: MemoryUsePermitSet::empty(exposure_epoch),
             exposure_epoch,
             barrier_open: state
@@ -79,7 +115,39 @@ impl GenerationGuard {
     }
 
     pub(super) fn validates_prepared(&self, prepared: &crate::engine::PreparedTurn) -> bool {
-        prepared.personal_memory_permits == self.permits
+        prepared.personal_memory_permits == self.permits && prepared.continuity == self.continuity
+    }
+
+    /// Native access is refreshed at dispatch/output boundaries, while the
+    /// inexpensive canonical monitor continues to run without repeated REST.
+    pub(crate) async fn check_fresh(&self, state: &AppState) -> Result<(), llm::LlmError> {
+        self.check(state)?;
+        // Keep the receipt/process authorization state machine off callers'
+        // inline frames, including ordinary turns with no continuity card.
+        if let Some(card) = &self.continuity
+            && !Box::pin(card.fresh(state)).await
+        {
+            return Err(denied());
+        }
+        self.check(state)
+    }
+
+    pub(super) fn permits_delivery(&self, native: Option<&str>, spoken: bool) -> bool {
+        self.continuity
+            .as_ref()
+            .is_none_or(|card| card.permits_delivery(native, spoken))
+    }
+
+    pub(crate) fn permits_public(&self) -> bool {
+        self.continuity
+            .as_ref()
+            .is_none_or(|card| card.permits_public())
+    }
+
+    pub(crate) fn permits_private(&self, actor: u64, channel: u64) -> bool {
+        self.continuity
+            .as_ref()
+            .is_none_or(|card| card.permits_private(actor, channel))
     }
 
     pub(super) fn authorizes_personal_memory(&self) -> bool {
@@ -115,11 +183,23 @@ impl GenerationGuard {
     }
 }
 
+/// Check source admission before taking a new evidence snapshot and throughout
+/// retained generation. Each lock is released before any asynchronous work.
+pub(crate) fn correction_current(
+    state: &AppState,
+    source: &crate::brain::correction::CorrectionSource,
+) -> bool {
+    let enabled = {
+        let stores = AppState::lock(&state.stores);
+        AppState::lock(&state.guilds)
+            .lookup(&source.guild, &*stores)
+            .is_some_and(|settings| settings.enabled && settings.learning_enabled)
+    };
+    enabled && AppState::lock(&state.rewards).correction_current(source, crate::runtime::now())
+}
+
 fn denied() -> llm::LlmError {
-    llm::LlmError::classified(
-        WITHDRAWN_REPLY,
-        crate::provider::ProviderFailureKind::Cancelled,
-    )
+    llm::LlmError::context_changed()
 }
 
 #[cfg(test)]

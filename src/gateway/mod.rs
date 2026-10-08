@@ -1,5 +1,6 @@
 //! Gateway trinity — exports, validated connector configuration, and wiring.
 
+pub(crate) mod continuity_access;
 pub mod discord;
 mod engagement_community;
 pub(crate) mod engagement_delivery;

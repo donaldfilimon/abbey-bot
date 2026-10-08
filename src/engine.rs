@@ -84,6 +84,7 @@ pub struct PreparedTurn {
     pub turns: Vec<ChatTurn>,
     grounding: Grounding,
     pub(crate) personal_memory_permits: crate::personal_memory::MemoryUsePermitSet,
+    pub(crate) continuity: Option<crate::runtime::continuity_context::AdmittedContinuity>,
 }
 
 impl PreparedTurn {
@@ -173,6 +174,17 @@ impl Engine {
         Self::prepare_turns(persona, context, user_input, Vec::new())
     }
 
+    /// Correction text is a query, never evidence for its own replacement claim.
+    pub(crate) fn prepare_repair(
+        persona: Persona,
+        context: &PersonaContext,
+        user_input: &str,
+    ) -> PreparedTurn {
+        let mut prepared = Self::prepare_source_only(persona, context, user_input);
+        prepared.grounding = Grounding::from_sources(context.grounding_sources(user_input));
+        prepared
+    }
+
     fn prepare_turns(
         persona: Persona,
         context: &PersonaContext,
@@ -192,6 +204,7 @@ impl Engine {
         let persona_core = crate::ask::system_prompt(persona);
         let context_addenda = context.addenda.clone();
         let context_permits = context.personal_memory_permits.clone();
+        let continuity = context.continuity.clone();
         // The message being answered is the relevance query, so the facts
         // shown are the ones that bear on it.
         let context = context.render(user_input);
@@ -203,6 +216,7 @@ impl Engine {
             turns,
             grounding,
             personal_memory_permits: context_permits,
+            continuity,
         }
     }
 
@@ -296,6 +310,7 @@ mod tests {
             reputation: 0.5,
             addenda: String::new(),
             personal_memory_permits: Default::default(),
+            continuity: None,
         };
         let prepared = engine.prepare("c", Persona::Aviva, &context, "hi", 1);
         // Compose from the canonical renderers rather than re-pinning their
@@ -519,5 +534,26 @@ mod tests {
         let prompt = welcome_prompt("Dana");
         assert!(prompt.starts_with("You are Abi. "), "{prompt}");
         assert!(prompt.contains("named Dana just joined"), "{prompt}");
+    }
+    #[test]
+    fn correction_query_is_not_factual_authority() {
+        let mut context = PersonaContext::empty();
+        context.user_facts = vec!["The current version is 1.2.3.".into()];
+        let prepared = Engine::prepare_repair(
+            Persona::Abbey,
+            &context,
+            "that's wrong; the version is 9.9.9",
+        );
+        assert!(
+            crate::grounding::check("The version is 1.2.3.", prepared.grounding()).is_grounded()
+        );
+        assert!(
+            crate::grounding::check("The version is 9.9.9.", prepared.grounding()).should_hedge()
+        );
+        assert_eq!(prepared.turns.len(), 1);
+        assert!(
+            prepared.turns[0].text.contains("9.9.9"),
+            "query remains transient input, not fact authority"
+        );
     }
 }

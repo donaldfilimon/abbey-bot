@@ -48,6 +48,9 @@ closed!(EventCode {
     EngagementCompleted,
     EngagementFailure,
     VoiceState,
+    VoiceRecognition,
+    VoiceGeneration,
+    VoiceSynthesis,
     ReadinessPublished,
     ShutdownStarted,
     ShutdownCompleted,
@@ -72,6 +75,22 @@ impl TextStage {
             Self::FinalDelivered => EventCode::DiscordFinalDelivered,
             Self::Cancelled => EventCode::GenerationFailure,
             Self::DeliveryFailed => EventCode::DiscordPostFailure,
+        }
+    }
+}
+/// Closed voice stages; raw speech and attribution never enter managed events.
+#[derive(Clone, Copy)]
+pub(crate) enum VoiceStage {
+    Recognition,
+    Generation,
+    Synthesis,
+}
+impl VoiceStage {
+    pub(crate) const fn code(self) -> EventCode {
+        match self {
+            Self::Recognition => EventCode::VoiceRecognition,
+            Self::Generation => EventCode::VoiceGeneration,
+            Self::Synthesis => EventCode::VoiceSynthesis,
         }
     }
 }

@@ -98,6 +98,9 @@ fn receipt(state: CandidateState) -> EngagementStore {
             destination: DestinationPreference::Origin,
             message_id: (state == CandidateState::Sent).then_some(88),
             introduction_id: None,
+            work_ref: None,
+            expires_at: None,
+            follow_up_reason: None,
         },
     );
     if matches!(state, CandidateState::Reserved | CandidateState::Sent) {
@@ -372,3 +375,6 @@ fn engage_receipt_counts_are_private_closed_and_include_both_introduction_member
     assert_eq!(s.member_policies, policies);
     assert_eq!(s.candidates[&1].state, CandidateState::Sent);
 }
+
+#[path = "tests/task_receipt_stop.rs"]
+mod task_receipt_stop;

@@ -106,3 +106,40 @@ fn final_delivered_is_a_closed_event_code() {
         "discord_final_delivered"
     );
 }
+
+#[test]
+fn voice_stage_events_are_closed_content_free_durations() {
+    for (stage, code) in [
+        (VoiceStage::Recognition, "voice_recognition"),
+        (VoiceStage::Generation, "voice_generation"),
+        (VoiceStage::Synthesis, "voice_synthesis"),
+    ] {
+        for outcome in [
+            EventOutcome::Succeeded,
+            EventOutcome::Failed,
+            EventOutcome::Cancelled,
+            EventOutcome::TimedOut,
+        ] {
+            let event = OperationalEvent::new(1, EventComponent::Voice, stage.code(), outcome)
+                .unwrap()
+                .with_duration(std::time::Duration::from_millis(17));
+            let doc: serde_json::Value = serde_json::from_slice(&event.encode().unwrap()).unwrap();
+            assert_eq!(doc["code"], code);
+            assert_eq!(doc["duration_ms"], 17);
+            assert_eq!(doc.as_object().unwrap().len(), 6);
+            for key in doc.as_object().unwrap().keys() {
+                assert!(
+                    [
+                        "schema_version",
+                        "occurred_at_unix_ms",
+                        "component",
+                        "code",
+                        "outcome",
+                        "duration_ms"
+                    ]
+                    .contains(&key.as_str())
+                );
+            }
+        }
+    }
+}

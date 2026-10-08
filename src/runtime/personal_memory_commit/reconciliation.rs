@@ -252,6 +252,8 @@ impl AppState {
             &candidate.personal_memory,
             &candidate.personal_memory_exposure,
         )?;
+        self.overlay_continuity(&mut candidate.continuity)
+            .map_err(|_| MemoryConsentError::Persistence)?;
         persist::persist_canonical_owned(owner, &*self.persistence_sink, dir, candidate)
             .map_err(|_| MemoryConsentError::Persistence)?;
         candidate
@@ -267,6 +269,8 @@ impl AppState {
                 .activation_pending = false;
         }
         complete_qualified_outcomes(candidate);
+        self.overlay_continuity(&mut candidate.continuity)
+            .map_err(|_| MemoryConsentError::Persistence)?;
         persist::persist_canonical_owned(owner, &*self.persistence_sink, dir, candidate)
             .map_err(|_| MemoryConsentError::Persistence)?;
         candidate

@@ -8,6 +8,8 @@ struct LoadedEngagementStore {
     invitation_requests: BTreeMap<u64, InvitationRequest>,
     suppressed_invitation_requests: BTreeMap<u64, SuppressedInvitationRequest>,
     feedback: BTreeMap<u64, BTreeMap<u64, ExplicitFeedback>>,
+    erased_identities: BTreeSet<String>,
+    safety_pruned_through: u64,
     sequence: u64,
     member_policies: BTreeMap<u64, MemberPolicy>,
     weekly_assessments: BTreeMap<u64, u64>,
@@ -18,6 +20,8 @@ struct LoadedEngagementStore {
     candidates: BTreeMap<u64, Candidate>,
     introductions: BTreeMap<u64, Introduction>,
     charges: Vec<ContactCharge>,
+    erased_contact_charges: Vec<erasure::ErasedContactCharge>,
+    erased_community_charges: Vec<erasure::ErasedCommunityCharge>,
 }
 impl<'de> Deserialize<'de> for EngagementStore {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {

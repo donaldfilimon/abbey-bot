@@ -113,6 +113,7 @@ enum Race {
     Reply,
     Deleted,
     Uncertain,
+    Erase(u64),
 }
 struct Fake {
     state: Arc<AppState>,
@@ -189,6 +190,11 @@ impl EngagementTransport for Fake {
         _: &str,
         _: u64,
     ) -> Result<String, WorkError> {
+        if let Race::Erase(member) = self.race {
+            self.state
+                .erase_personal_learning("discord:7".into(), member)
+                .await?;
+        }
         Ok("Which part of the experiment is still blocked?".into())
     }
     async fn send(&self, channel: u64, _: &str) -> Result<u64, SendFailure> {
@@ -439,4 +445,32 @@ fn community_bot_source_never_observed_or_eligible() {
         crate::runtime::engagement_candidates::event_source(&event),
         Err(WorkError::Denied)
     );
+}
+
+#[tokio::test]
+async fn erasure_during_actual_public_generation_stops_source_delivery_only() {
+    for member in [2, 3] {
+        let h = Harness::new();
+        let f = Fake::new(&h, Race::Erase(member));
+        let result = h
+            .state
+            .clone()
+            .deliver_engagement(&f, CancellationToken::new(), || NOW)
+            .await;
+        assert_eq!(
+            result,
+            if member == 2 {
+                Err(WorkError::Missing)
+            } else {
+                Ok(())
+            }
+        );
+        assert_eq!(f.sends.load(Ordering::SeqCst), usize::from(member == 3));
+        let disk = Stores::load(&h.dir).unwrap();
+        assert_eq!(
+            disk.work.engagement.candidates.contains_key(&1),
+            member == 3
+        );
+        h.finish().await;
+    }
 }

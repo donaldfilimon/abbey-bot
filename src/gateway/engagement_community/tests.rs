@@ -207,6 +207,9 @@ async fn community_public_generation_is_source_only_without_tools_or_shared_hist
             destination: DestinationPreference::Origin,
             message_id: None,
             introduction_id: None,
+            work_ref: None,
+            expires_at: None,
+            follow_up_reason: None,
         };
         DiscordEngagementDelivery(Arc::new(serenity::all::Http::new("synthetic-fixture")))
             .generate(

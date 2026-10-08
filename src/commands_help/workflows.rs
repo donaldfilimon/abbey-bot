@@ -457,17 +457,17 @@ async fn run_modal(
             .await?;
         return Ok(());
     }
-    let answer = crate::commands::answer_question_in_scope(
+    let answer = crate::commands::answer_private_question_in_scope(
         &data.state,
         session.guild,
         session.channel,
         session.owner,
         question,
-        None,
-        crate::commands::Commit::No,
     )
     .await;
-    let text = answer.delivery_text(&data.state);
+    let text = answer
+        .private_delivery_text(&data.state, session.owner, session.channel)
+        .await;
     let timing = answer.timing_for_delivery(&data.state);
     let (_, memory) = crate::commands::deliver_generated_reply(&data.state, answer.memory, async {
         let receipt = interaction

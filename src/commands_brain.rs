@@ -32,7 +32,12 @@ use crate::{Context, Error};
 
 mod addenda;
 mod dashboard;
+mod learning;
 mod media;
+use learning::admin_reset_learning;
+pub use learning::forget_learning;
+#[cfg(test)]
+pub(crate) use learning::{Confirmation as LearningResetConfirmation, handle_reset_press};
 mod memory_commands;
 mod memory_review;
 mod personal_memory_commands;
@@ -193,6 +198,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         "admin_flush",
         "admin_export",
         "admin_reset",
+        "admin_reset_learning",
         "admin_dashboard",
         "admin_quarantine",
         "admin_contradict",
@@ -439,6 +445,69 @@ pub async fn admin_budget(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum BrainGuard {
+    Disabled,
+    LearningOff,
+    Quiet,
+    ActOff,
+    ChannelOff,
+    Ready,
+}
+impl BrainGuard {
+    fn from_settings(settings: &GuildSettings, quiet: bool, channel: &str) -> Self {
+        if !settings.enabled {
+            Self::Disabled
+        } else if !settings.learning_enabled {
+            Self::LearningOff
+        } else if quiet {
+            Self::Quiet
+        } else if !settings.unsolicited {
+            Self::ActOff
+        } else if !settings.unsolicited_channel_allowed(channel) {
+            Self::ChannelOff
+        } else {
+            Self::Ready
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "bot disabled",
+            Self::LearningOff => "learning off",
+            Self::Quiet => "quiet mode blocks unsolicited actions",
+            Self::ActOff => "unsolicited actions off",
+            Self::ChannelOff => "unsolicited actions blocked in this channel",
+            Self::Ready => {
+                "learning on; unsolicited actions still require provider and budget admission"
+            }
+        }
+    }
+}
+
+fn brain_diagnostics_authorized(permissions: Permissions) -> bool {
+    permissions.contains(Permissions::VIEW_CHANNEL)
+        && permissions.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR)
+}
+
+fn render_brain_diagnostics(
+    stats: &crate::brain::telemetry::BrainStats,
+    view: &BrainView<'_>,
+    audit: crate::brain::telemetry::LearningAudit,
+    pending: (usize, Option<u64>),
+    guard: BrainGuard,
+) -> String {
+    let age = pending
+        .1
+        .map_or_else(|| "none".into(), |seconds| format!("{seconds}s"));
+    format!(
+        "{}\n{}\nPending: {} · oldest age: {age}\nGuard reason: {}",
+        stats.render(view),
+        audit.render(),
+        pending.0,
+        guard.label()
+    )
+}
+
 /// Inspect this server's policy: ε, steps, buffer fill, experiences.
 #[poise::command(slash_command, guild_only, ephemeral, rename = "brain")]
 pub async fn admin_brain(
@@ -446,6 +515,21 @@ pub async fn admin_brain(
     #[description = "Override exploration ε (0–1); omit to show"] epsilon: Option<f64>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    let Some(guild_id) = ctx.guild_id() else {
+        return Err("Server context is unavailable.".into());
+    };
+    let permissions = crate::commands_help::current_permissions(
+        ctx.serenity_context(),
+        guild_id,
+        ctx.channel_id(),
+        ctx.author().id,
+    )
+    .await?;
+    if !brain_diagnostics_authorized(permissions) {
+        ctx.say("Current permission to manage this server is required to inspect its brain.")
+            .await?;
+        return Ok(());
+    }
     let g = scoped_guild(ctx);
     let state = &ctx.data().state;
     let override_eps = epsilon.map(guild::clamp_epsilon);
@@ -470,7 +554,6 @@ pub async fn admin_brain(
         let (eps, steps, buffer) = (brain.epsilon(), brain.step_count(), brain.buffer_len());
         let experiences = brains.experience_count(&g).unwrap_or(0);
         let view = BrainView {
-            scoped_guild_id: &g,
             epsilon: eps,
             learn_steps: steps,
             buffer_len: buffer,
@@ -481,10 +564,13 @@ pub async fn admin_brain(
             topology: &runtime::TOPOLOGY,
         };
         let stats = brains.stats(&g).cloned().unwrap_or_default();
-        format!(
-            "{}\nact: {}",
-            stats.render(&view),
-            if settings.unsolicited { "on" } else { "off" }
+        let pending = AppState::lock(&state.rewards).pending_age(&g, now);
+        render_brain_diagnostics(
+            &stats,
+            &view,
+            brains.learning_audit(&g),
+            pending,
+            BrainGuard::from_settings(&settings, state.quiet, &scoped_channel(ctx)),
         )
     };
     ctx.say(clamp_message(text)).await?;

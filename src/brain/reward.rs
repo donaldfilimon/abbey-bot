@@ -24,6 +24,13 @@
 
 use std::collections::HashMap;
 
+mod attribution;
+mod recovery;
+pub use attribution::{FeedbackAttribution, ReactionKey};
+pub use recovery::RewardRecovery;
+pub(crate) use recovery::pending_rows;
+
+use crate::brain::ask_signature::AskSignature;
 use crate::brain::outcome::{self, ReplyOutcome};
 use crate::brain::replay::Experience;
 use crate::brain::state::BotAction;
@@ -68,7 +75,7 @@ pub struct ReplyTurn {
     pub scope: String,
     pub scoped_guild_id: String,
     /// The user message this turn answered, as the human wrote it — what
-    /// [`outcome::classify`] compares a later question against to decide
+    /// [`outcome::classify_signature`] compares a later question against to decide
     /// whether it is the same ask, the same topic, or unrelated.
     ///
     /// The *raw* text, not the vision-enriched text the model was prompted
@@ -103,9 +110,9 @@ pub struct Pending {
     /// state file — both simply cannot be credited by scope.
     #[serde(default)]
     pub scope: String,
-    /// The ask this turn answered. Empty is handled the same way.
-    #[serde(default)]
-    pub ask: String,
+    /// Bounded lexical context; old raw asks migrate on read, never publication.
+    #[serde(default, alias = "ask")]
+    pub ask_signature: AskSignature,
     /// Scoped id of the human this turn answered. Empty means no marker-only
     /// outcome can be corroborated, so none is credited by scope.
     #[serde(default)]
@@ -117,6 +124,9 @@ pub struct Pending {
     /// channel is silent and settlement uses the immediate heuristic alone.
     #[serde(default)]
     pub delayed_count: u16,
+    /// Legacy rows have no dedup ledger: preserve their reward but refuse reactions.
+    #[serde(default)]
+    pub reaction_tracking: bool,
 }
 
 /// Holds replies open for their settlement window and closes them into
@@ -126,15 +136,70 @@ pub struct Pending {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RewardCollector {
     pending: HashMap<String, Pending>,
+    #[serde(default)]
+    recovery: RewardRecovery,
 }
 
 impl RewardCollector {
+    pub(crate) fn erase_learning(
+        &mut self,
+        scope: &str,
+        member: Option<&str>,
+        ledger: crate::brain::erasure::ErasureLedger,
+    ) -> (usize, usize) {
+        let before = self.pending.len();
+        let removed: std::collections::HashSet<_> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| p.scoped_guild_id == scope && member.is_none_or(|m| m == p.asker))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let reaction_before = self.recovery.reactions.len();
+        let own: Vec<_> = self
+            .recovery
+            .reactions
+            .iter()
+            .filter(|r| {
+                self.pending
+                    .get(&r.key.message)
+                    .is_some_and(|p| p.scoped_guild_id == scope)
+                    && member.is_none_or(|m| super::addenda::member_hash(m) == r.key.reactor_hash)
+            })
+            .map(|r| r.key.clone())
+            .collect();
+        for key in own {
+            if let Some(index) = self.recovery.reactions.iter().position(|r| r.key == key) {
+                let row = self.recovery.reactions.remove(index);
+                if let Some(p) = self.pending.get_mut(&key.message) {
+                    match row.contribution {
+                        recovery::ReactionContribution::Positive => {
+                            p.reward -= 1.0;
+                            p.positive_reactions = p.positive_reactions.saturating_sub(1);
+                        }
+                        recovery::ReactionContribution::Negative => p.reward += 1.0,
+                        recovery::ReactionContribution::Capped => (),
+                    }
+                }
+            }
+        }
+        self.pending.retain(|id, _| !removed.contains(id));
+        self.recovery
+            .reactions
+            .retain(|r| !removed.contains(&r.key.message));
+        self.recovery.erasure = ledger;
+        (
+            before - self.pending.len(),
+            reaction_before - self.recovery.reactions.len(),
+        )
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Take everything still open — for persistence, so a restart inside the
-    /// settlement window does not drop the reward. `restore` puts it back.
+    /// settlement window does not drop the reward. `restore_recovered` restores
+    /// these rows together with their canonical dedup metadata.
     pub fn export_pending(&self) -> Vec<(String, Pending)> {
         let mut rows: Vec<(String, Pending)> = self
             .pending
@@ -145,21 +210,26 @@ impl RewardCollector {
         rows
     }
 
-    /// Restore previously exported rows (existing keys win).
-    pub fn restore(&mut self, rows: Vec<(String, Pending)>) {
-        for (k, v) in rows {
-            self.pending.entry(k).or_insert(v);
-        }
-    }
-
     /// Number of replies still awaiting settlement.
     pub fn pending_len(&self) -> usize {
         self.pending.len()
     }
 
+    /// Aggregate pending count and oldest age for a guild, with caller time.
+    pub fn pending_age(&self, guild: &str, now: u64) -> (usize, Option<u64>) {
+        let mut count = 0;
+        let mut oldest = None;
+        for p in self.pending.values().filter(|p| p.scoped_guild_id == guild) {
+            count += 1;
+            let age = now.saturating_sub(p.created_at);
+            oldest = Some(oldest.map_or(age, |old: u64| old.max(age)));
+        }
+        (count, oldest)
+    }
+
     /// Open a reply for evidence. Starts at −0.2; engagement earns it back.
     ///
-    /// The context-free form: no channel scope and no ask, so the turn can be
+    /// The context-free form has a scope but no ask. A React action can be
     /// credited only by an explicit reply-to or a reaction, never by a
     /// same-channel follow-up. Right for a bare reaction, whose "turn" is the
     /// *user's* message id — nobody replies to a reaction, and there is no
@@ -171,13 +241,14 @@ impl RewardCollector {
         action: usize,
         sent_native_message_id: impl Into<String>,
         scoped_guild_id: impl Into<String>,
+        scope: impl Into<String>,
         now: u64,
     ) {
         self.register_turn(ReplyTurn {
             state,
             action,
             sent_native_message_id: sent_native_message_id.into(),
-            scope: String::new(),
+            scope: scope.into(),
             scoped_guild_id: scoped_guild_id.into(),
             ask: String::new(),
             asker: String::new(),
@@ -188,6 +259,30 @@ impl RewardCollector {
     /// Open a reply for evidence, carrying the context that makes a later
     /// observation attributable. Same −0.2 baseline and same settlement.
     pub fn register_turn(&mut self, turn: ReplyTurn) {
+        if self
+            .recovery
+            .erasure
+            .blocks(&turn.scoped_guild_id, &turn.asker, turn.now)
+        {
+            return;
+        }
+        self.prune_recovery(turn.now);
+        // Never replace a still-credited row, a retained closed turn, or an old
+        // creation timestamp retired from the bounded recovery window.
+        // Restored legacy rows may exceed today's admission bound. They are
+        // never recreated here; freeze new work until that finite cohort drains.
+        if self.pending.values().any(|p| !p.reaction_tracking)
+            || self.pending.contains_key(&turn.sent_native_message_id)
+            || self
+                .recovery
+                .settled
+                .iter()
+                .any(|row| row.message == turn.sent_native_message_id)
+            || self.recovery.retired_through.is_some_and(|t| turn.now <= t)
+            || self.pending.len() + self.recovery.settled.len() >= recovery::MAX_RECOVERY_ENTRIES
+        {
+            return;
+        }
         self.pending.insert(
             turn.sent_native_message_id,
             Pending {
@@ -199,108 +294,21 @@ impl RewardCollector {
                 created_at: turn.now,
                 settle_immediately: false,
                 scope: turn.scope,
-                ask: turn.ask,
+                ask_signature: AskSignature::from_text(&turn.ask),
                 asker: turn.asker,
                 delayed_sum: 0.0,
                 delayed_count: 0,
+                reaction_tracking: true,
             },
         );
     }
 
     /// The ask a specific open turn answered, if that turn is still open.
-    pub fn open_ask(&self, turn_id: &str) -> Option<&str> {
+    pub fn open_ask(&self, turn_id: &str) -> Option<&AskSignature> {
         self.pending
             .get(turn_id)
-            .map(|p| p.ask.as_str())
-            .filter(|a| !a.is_empty())
-    }
-
-    /// Turn id of the newest still-attributable turn in `scope`.
-    ///
-    /// Newest wins because a channel's most recent Abbey turn is what a bare
-    /// follow-up is almost always reacting to. Ties on `created_at` break on
-    /// the turn id so the choice is deterministic — `HashMap` iteration order
-    /// is not, and a nondeterministic reward would be untestable and
-    /// unreproducible across restarts.
-    ///
-    /// Skips turns outside [`ATTRIBUTION_TTL_SECS`] and turns already flagged
-    /// for immediate settlement (a deleted message must not absorb credit for
-    /// what someone said afterwards). The TTL is checked here rather than
-    /// left to sweep timing, so attribution does not depend on when the
-    /// scheduler last ran.
-    pub fn newest_open_turn_in_scope(&self, scope: &str, now: u64) -> Option<&str> {
-        if scope.is_empty() {
-            return None;
-        }
-        self.pending
-            .iter()
-            .filter(|(_, p)| {
-                p.scope == scope
-                    && !p.settle_immediately
-                    && now.saturating_sub(p.created_at) <= ATTRIBUTION_TTL_SECS
-            })
-            .max_by(|a, b| a.1.created_at.cmp(&b.1.created_at).then(a.0.cmp(b.0)))
-            .map(|(k, _)| k.as_str())
-    }
-
-    /// The ask of the newest attributable turn in `scope`.
-    pub fn open_ask_in_scope(&self, scope: &str, now: u64) -> Option<&str> {
-        let turn = self.newest_open_turn_in_scope(scope, now)?;
-        self.open_ask(turn)
-    }
-
-    /// Credit a typed outcome to the turn named by an explicit reply-to.
-    ///
-    /// Returns whether it landed on an open turn. This touches only the
-    /// delayed channel: [`Self::human_replied`] remains the immediate
-    /// heuristic's "a human engaged at all" credit. A Discord reply-to
-    /// legitimately feeds both — one records *that* someone engaged, the other
-    /// records *what they said*, which is the blend, not a double count.
-    pub fn observe_reply_to(&mut self, turn_id: &str, outcome: ReplyOutcome) -> bool {
-        match self.pending.get_mut(turn_id) {
-            Some(p) => {
-                credit(p, outcome);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Credit a typed outcome to the newest attributable turn in `scope`.
-    ///
-    /// The (scope, turn id) path: a follow-up question or a thank-you posted
-    /// as an ordinary channel message carries no reply-to pointer, so the only
-    /// way back to the action that earned it is "the last thing Abbey said
-    /// here, if it is still recent".
-    ///
-    /// `observer` is the scoped id of whoever spoke. A marker-only outcome
-    /// ([`ReplyOutcome::needs_the_original_asker`]) is credited only when it
-    /// comes from the human the turn answered — otherwise "thanks Carol!" in a
-    /// busy channel would land on Abbey's open turn at full weight, which is
-    /// the highest-frequency way this path could lie. Topical outcomes carry
-    /// their own corroboration and may come from anyone.
-    ///
-    /// **Still a heuristic.** The reply-to path is the precise one; this trades
-    /// precision for coverage, bounded by the TTL, by the asker check, by the
-    /// ±3 settlement clamp, and by the fact that
-    /// [`ReplyOutcome::NoEngagement`] — the most common classification — costs
-    /// nothing.
-    ///
-    /// Returns the turn id credited, if any.
-    pub fn observe_in_scope(
-        &mut self,
-        scope: &str,
-        observer: &str,
-        outcome: ReplyOutcome,
-        now: u64,
-    ) -> Option<String> {
-        let turn = self.newest_open_turn_in_scope(scope, now)?.to_owned();
-        let p = self.pending.get_mut(&turn)?;
-        if outcome.needs_the_original_asker() && (p.asker.is_empty() || p.asker != observer) {
-            return None;
-        }
-        credit(p, outcome);
-        Some(turn)
+            .map(|p| &p.ask_signature)
+            .filter(|a| !a.token_hashes.is_empty())
     }
 
     /// Silence settles instantly at 0 — there is nothing to wait for. Pure
@@ -312,39 +320,6 @@ impl RewardCollector {
             action: BotAction::Stay.index(),
             reward: 0.0,
             done: true,
-        }
-    }
-
-    /// A reaction on one of Abbey's messages. Removed reactions and unknown
-    /// targets are ignored. Positive reactions earn +1 each, capped at three;
-    /// negative reactions cost −1 each, uncapped (the settle-time clamp bounds it).
-    pub fn reaction(&mut self, emoji: &str, target_native_message_id: &str, added: bool) {
-        if !added {
-            return;
-        }
-        let Some(p) = self.pending.get_mut(target_native_message_id) else {
-            return;
-        };
-        if POSITIVE_EMOJI.contains(&emoji) {
-            if p.positive_reactions < MAX_POSITIVE_REACTIONS {
-                p.reward += 1.0;
-                p.positive_reactions += 1;
-            }
-        } else if NEGATIVE_EMOJI.contains(&emoji) {
-            p.reward -= 1.0;
-        }
-    }
-
-    /// A human replied to one of Abbey's messages: +0.5.
-    ///
-    /// The **untyped** engagement credit, unchanged: it records that someone
-    /// bothered to reply, and says nothing about whether the reply helped.
-    /// Still the whole story when the message body is unreadable — without the
-    /// MESSAGE_CONTENT intent Discord delivers an empty body, and there is
-    /// nothing for [`outcome::classify`] to read.
-    pub fn human_replied(&mut self, to_native_message_id: &str) {
-        if let Some(p) = self.pending.get_mut(to_native_message_id) {
-            p.reward += 0.5;
         }
     }
 
@@ -370,6 +345,7 @@ impl RewardCollector {
     /// the delayed channel. With no typed outcome the blend is the identity,
     /// so this is byte-for-byte the number it produced before.
     pub fn settle_expired(&mut self, now: u64) -> Vec<(String, Experience)> {
+        self.prune_recovery(now);
         let expired: Vec<String> = self
             .pending
             .iter()
@@ -380,7 +356,28 @@ impl RewardCollector {
             .collect();
         expired
             .into_iter()
-            .filter_map(|key| self.pending.remove(&key))
+            .filter_map(|key| {
+                let p = self.pending.remove(&key)?;
+                self.recovery.reactions.retain(|row| row.key.message != key);
+                if p.reaction_tracking {
+                    self.recovery.settled.push(recovery::SettledTurn {
+                        message: key,
+                        scope: p.scope.clone(),
+                        created_at: p.created_at,
+                        closed_at: now.max(p.created_at),
+                    });
+                } else {
+                    // Legacy contributions have no reaction keys to retain.
+                    // Retire original creation time without allocating one
+                    // marker per carryover row; still-open rows are untouched.
+                    self.recovery.retired_through = Some(
+                        self.recovery
+                            .retired_through
+                            .map_or(p.created_at, |old| old.max(p.created_at)),
+                    );
+                }
+                Some(p)
+            })
             .map(|p| {
                 let blended = outcome::blend(p.reward, p.delayed_sum, p.delayed_count);
                 let exp = Experience {

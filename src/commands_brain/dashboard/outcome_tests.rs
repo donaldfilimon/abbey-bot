@@ -25,6 +25,9 @@ fn owner_mode_controls_reject_stale_ownership_and_wrong_policy_scope() {
 async fn eight_pages_fit_classic_rows_and_only_wired_actions_are_exposed() {
     use crate::admin_dashboard::{AdminPage, AdminSession};
     let data = crate::Data {
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
         state: AppState::in_memory(),
         voice: None,
     };
@@ -87,7 +90,13 @@ async fn unsolicited_dashboard_uses_streaming_read_only_route_without_tool_capab
     let mut state = AppState::in_memory();
     std::sync::Arc::get_mut(&mut state).unwrap().providers =
         ProviderRuntime::legacy(None, None, vec![fm], None, true, 1, 1);
-    let data = crate::Data { state, voice: None };
+    let data = crate::Data {
+        state,
+        voice: None,
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
+    };
     assert!(data.state.providers.tools_enabled());
     assert!(
         data.state
@@ -133,7 +142,13 @@ async fn unsolicited_dashboard_uses_streaming_read_only_route_without_tool_capab
 #[tokio::test]
 async fn failed_delivery_keeps_the_setting_change_and_the_original_failure() {
     let state = AppState::in_memory();
-    let data = crate::Data { state, voice: None };
+    let data = crate::Data {
+        state,
+        voice: None,
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
+    };
     let mut mutations = 0;
     update_dashboard_setting(&data, 7, |settings| {
         settings.unsolicited = true;

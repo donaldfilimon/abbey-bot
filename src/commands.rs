@@ -29,6 +29,9 @@ use crate::generation;
 use crate::llm;
 use crate::moderation::{self, History, Severity};
 mod contextual_moderation;
+mod modcase;
+pub use modcase::modcase;
+mod question;
 use crate::perms::{self, Overwrite, Scope, Subject};
 use crate::persona::Persona;
 use crate::pipeline;
@@ -42,6 +45,7 @@ use crate::server::Archetype;
 use crate::webhook;
 use crate::{Context, Error};
 pub use contextual_moderation::ContextAssessmentChoice;
+use question::answer_question_with_memory;
 
 // ---------------------------------------------------------------------------
 // Choice mirrors
@@ -155,11 +159,34 @@ async fn fetch_member_and_guild(
     guild_id: GuildId,
     user_id: serenity::all::UserId,
 ) -> Result<(Member, PartialGuild), Error> {
-    tokio::try_join!(
+    let (member, guild) = tokio::try_join!(
         guild_id.member(ctx.http(), user_id),
         guild_id.to_partial_guild(ctx.http()),
-    )
-    .map_err(Into::into)
+    )?;
+    if !member_facts_match(&member, &guild, guild_id, user_id) {
+        return Err("Discord could not confirm the requested member and guild facts.".into());
+    }
+    Ok((member, guild))
+}
+
+fn member_facts_match(
+    member: &Member,
+    guild: &PartialGuild,
+    guild_id: GuildId,
+    user_id: serenity::all::UserId,
+) -> bool {
+    guild_id.get() != 0
+        && user_id.get() != 0
+        && guild.id == guild_id
+        && member.guild_id == guild_id
+        && member.user.id == user_id
+        && guild
+            .roles
+            .contains_key(&serenity::all::RoleId::new(guild_id.get()))
+        && member
+            .roles
+            .iter()
+            .all(|role| role.get() != 0 && guild.roles.contains_key(role))
 }
 
 /// A member's highest role position; 0 when they hold only `@everyone`.
@@ -261,7 +288,7 @@ pub async fn ask(
     // None made the override available on the explanation and unavailable on the
     // answer, which is backwards.
     let reply = answer_question(ctx, &question, r#as.map(Into::into), Commit::Yes).await;
-    let text = reply.delivery_text(&ctx.data().state);
+    let text = reply.public_delivery_text(&ctx.data().state).await;
     let timing = reply.timing_for_delivery(&ctx.data().state);
     let delivery = deliver_generated_reply(&ctx.data().state, reply.memory, async {
         let receipt = ctx.say(clamp_message(text)).await?;
@@ -312,17 +339,35 @@ pub async fn roleplay(
             .nsfw_roleplay_enabled
     };
 
-    let context = if ctx.guild_id().is_some() {
+    let context = if let Some(guild_id) = ctx.guild_id() {
         let channel_nsfw = match ctx.channel_id().to_channel(ctx.http()).await {
-            Ok(channel) => channel
-                .guild()
-                .is_some_and(|guild_channel| guild_channel.nsfw),
+            Ok(channel) => channel.guild().is_some_and(|guild_channel| {
+                guild_channel.id == ctx.channel_id()
+                    && guild_channel.guild_id == guild_id
+                    && guild_channel.nsfw
+            }),
             // Fail closed: unknown channel shape is treated as SFW.
             Err(_) => false,
         };
         RoleplayContext::Guild { channel_nsfw }
     } else {
-        RoleplayContext::BotDm
+        let proved_dm = match ctx.channel_id().to_channel(ctx.http()).await {
+            Ok(serenity::all::Channel::Private(channel)) => {
+                ctx.author().id.get() != 0
+                    && ctx.channel_id().get() != 0
+                    && !ctx.author().bot
+                    && channel.id == ctx.channel_id()
+                    && channel.kind == ChannelType::Private
+                    && channel.recipient.id == ctx.author().id
+                    && !channel.recipient.bot
+            }
+            _ => false,
+        };
+        if proved_dm {
+            RoleplayContext::BotDm
+        } else {
+            RoleplayContext::Unproved
+        }
     };
 
     let decision = roleplay_gate::decide(context, enabled);
@@ -345,7 +390,7 @@ pub async fn roleplay(
     };
 
     let reply = answer_question(ctx, &prompt, Some(persona), Commit::Yes).await;
-    let text = reply.delivery_text(&ctx.data().state);
+    let text = reply.public_delivery_text(&ctx.data().state).await;
     let timing = reply.timing_for_delivery(&ctx.data().state);
     let delivery = deliver_generated_reply(&ctx.data().state, reply.memory, async {
         let receipt = ctx.say(clamp_message(text)).await?;
@@ -441,6 +486,26 @@ pub(crate) async fn answer_question_in_scope(
     }
 }
 
+/// Only the native modal shell may request team continuity. Its response is
+/// ephemeral and generation never commits a shared transcript.
+pub(crate) async fn answer_private_question_in_scope(
+    state: &AppState,
+    guild: Option<u64>,
+    channel: u64,
+    user: u64,
+    question: &str,
+) -> GeneratedReply {
+    let memory = crate::memory_gate::MemoryTurn::default();
+    let (text, guard, timing) =
+        question::answer_private_with_memory(state, guild, channel, user, question, &memory).await;
+    GeneratedReply {
+        text,
+        memory,
+        guard,
+        timing,
+    }
+}
+
 pub(crate) struct GeneratedReply {
     pub text: String,
     pub memory: crate::memory_gate::MemoryTurn,
@@ -463,143 +528,35 @@ impl GeneratedReply {
         if self
             .guard
             .as_ref()
-            .is_some_and(|guard| guard.check(state).is_err())
+            .is_some_and(|guard| !guard.permits_public() || guard.check(state).is_err())
         {
             generation::consent::WITHDRAWN_REPLY.into()
         } else {
             self.text.clone()
         }
     }
-}
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn answer_question_with_memory(
-    state: &AppState,
-    guild: Option<u64>,
-    channel: u64,
-    user: u64,
-    question: &str,
-    forced: Option<Persona>,
-    commit: Commit,
-    memory: &crate::memory_gate::MemoryTurn,
-) -> (
-    String,
-    Option<generation::consent::GenerationGuard>,
-    Option<generation::DeliveryTiming>,
-) {
-    let scope = format!("discord:{channel}");
-    // Same composition the message pipeline uses, so `/persona ask` and an
-    // ordinary message never disagree about identical text. Session stickiness
-    // still applies, but only to text neither layer has an opinion about.
-    let route = routing_signals::route(question, forced);
-    let routed = if route.is_decisive() {
-        route.persona
-    } else {
-        AppState::lock(&state.engine)
-            .session_persona(&scope)
-            .unwrap_or(route.persona)
-    };
-    let scoped_guild = match guild {
-        Some(g) => format!("discord:{g}"),
-        None => format!("discord:dm:{user}"),
-    };
-    let scoped_user = format!("discord:{user}");
-    let now = runtime::now();
-    if !reserve_ask(state, &scoped_user, now) {
-        return (ASK_COOLDOWN_REPLY.to_string(), None, None);
-    }
-    match state.generation_label() {
-        None => (ask::degraded_reply(routed), None, None),
-        Some(backend_label) => {
-            // Same per-channel transcript, memory context, and tool loop the
-            // pipeline uses, so a slash-command question and a DM continue
-            // one thread. No streaming: an interaction followup is one post.
-            let reputation = state.reputation_snapshot(&scoped_guild, &scoped_user);
-            let context = pipeline::assemble_context(
-                state,
-                &scoped_guild,
-                &scoped_user,
-                &scope,
-                question,
-                reputation,
-            );
-            let guard = match generation::consent::GenerationGuard::capture(
-                state,
-                &generation::Ask {
-                    subject: Some((&scoped_guild, &scoped_user)),
-                    session_mode: generation::SessionMode::SourceOnly,
-                    scope: &scope,
-                    context: &context,
-                    user_input: question,
-                    now,
-                },
-            ) {
-                Ok(guard) => guard,
-                Err(error) => {
-                    return (
-                        ask::render_failure(routed, backend_label, &error),
-                        None,
-                        None,
-                    );
-                }
-            };
-            let mut host = runtime::ToolScope {
-                memory_turn: Some(memory),
-                state,
-                network: crate::platform::SocialNetwork::Discord,
-                scoped_guild: scoped_guild.clone(),
-                scoped_user: scoped_user.clone(),
-                scoped_channel: scope.clone(),
-                now,
-                persona: routed,
-            };
-            let outcome = {
-                generation::generate_with_tools_without_delivery(
-                    state,
-                    &mut host,
-                    &generation::Ask {
-                        subject: Some((&scoped_guild, &scoped_user)),
-                        session_mode: if commit == Commit::Yes {
-                            generation::SessionMode::Shared
-                        } else {
-                            generation::SessionMode::Ephemeral
-                        },
-                        scope: &scope,
-                        context: &context,
-                        user_input: question,
-                        now,
-                    },
-                )
-                .await
-            };
-            match outcome {
-                Ok((answer, persona, provider_label, timing)) => {
-                    if let Err(error) = guard.check(state) {
-                        return (
-                            ask::render_failure(routed, backend_label, &error),
-                            None,
-                            None,
-                        );
-                    }
-                    if commit == Commit::Yes {
-                        AppState::lock(&state.engine).commit(&scope, question, &answer, now);
-                    }
-                    (
-                        ask::render_answer(persona, provider_label, &answer),
-                        Some(guard),
-                        timing,
-                    )
-                }
-                Err(error) => {
-                    tracing::warn!(error = %error, backend = backend_label, "slash-command generation failed");
-                    (
-                        ask::render_failure(routed, backend_label, &error),
-                        None,
-                        None,
-                    )
-                }
-            }
+    pub(crate) async fn public_delivery_text(&self, state: &AppState) -> String {
+        if let Some(guard) = &self.guard
+            && (!guard.permits_public() || guard.check_fresh(state).await.is_err())
+        {
+            return generation::consent::WITHDRAWN_REPLY.into();
         }
+        self.delivery_text(state)
+    }
+
+    pub(crate) async fn private_delivery_text(
+        &self,
+        state: &AppState,
+        actor: u64,
+        channel: u64,
+    ) -> String {
+        if let Some(guard) = &self.guard
+            && (!guard.permits_private(actor, channel) || guard.check_fresh(state).await.is_err())
+        {
+            return generation::consent::WITHDRAWN_REPLY.into();
+        }
+        self.text.clone()
     }
 }
 
@@ -712,6 +669,7 @@ pub async fn perms(
         return Ok(());
     };
 
+    let requested_channel = channel;
     let (channel, (member, guild)) = tokio::try_join!(
         async { channel.to_channel(ctx.http()).await.map_err(Error::from) },
         fetch_member_and_guild(ctx, guild_id, user.id),
@@ -721,6 +679,9 @@ pub async fn perms(
             .await?;
         return Ok(());
     };
+    if channel.id != requested_channel || channel.guild_id != guild_id {
+        return Err("Discord could not confirm the requested channel in this guild.".into());
+    }
 
     // Threads carry no overwrites of their own — they inherit the parent's.
     // Reading their empty list would produce "no overwrite touches them",
@@ -864,6 +825,9 @@ pub async fn modcall(
     // can. Two independent ways Discord refuses: the permission bit, and role
     // hierarchy. Report the first that applies.
     let target = guild_id.member(ctx.http(), user.id).await?;
+    if !member_facts_match(&target, &guild, guild_id, user.id) {
+        return Err("Discord could not confirm the requested moderation target.".into());
+    }
     let blocker = recommendation.action.required_permission().and_then(|required| {
         if !held.get_permission_names().contains(&required) {
             Some(format!("You do not have **{required}**, so you cannot carry this out — hand it to someone who does."))
@@ -918,11 +882,18 @@ pub async fn webhook(
     // ChannelId, never GuildChannel — see the module doc.
     ctx.defer_ephemeral().await?;
 
+    let guild_id = ctx.guild_id().ok_or("This command requires a server.")?;
+    let requested_channel = channel;
     let channel = channel.to_channel(ctx.http()).await?;
     let Some(channel) = channel.guild() else {
         ctx.say("That is not a server channel.").await?;
         return Ok(());
     };
+    if channel.id != requested_channel || channel.guild_id != guild_id {
+        return Err(
+            "Discord could not confirm the requested webhook channel in this guild.".into(),
+        );
+    }
 
     let target = match channel.kind {
         ChannelType::Category => {

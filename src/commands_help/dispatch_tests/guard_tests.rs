@@ -1,5 +1,6 @@
 //! Registered command guards: access, capability, guild-only, memory-subject and autocomplete checks.
 use super::*;
+use crate::runtime::AppState;
 
 fn ordinary(command: &&poise::Command<Data, Error>) -> bool {
     !matches!(
@@ -309,6 +310,9 @@ async fn registered_guard_failed_acknowledgement_never_loads_permissions() {
 async fn registered_autocomplete_guards_skip_defer_and_rest_and_keep_suggestions_self_scoped() {
     let fixture = DiscordFixture::new().await;
     let data = Data {
+        continuity: std::sync::Arc::new(
+            crate::commands_work::continuity::HumanContinuity::new().unwrap(),
+        ),
         state: runtime::AppState::in_memory(),
         voice: None,
     };
@@ -396,4 +400,60 @@ async fn registered_help_guard_defers_privately_before_its_adapter_loads_permiss
     let requests = fixture.take_requests();
     assert_deferred_first(&requests, command);
     assert_eq!(requests.len(), 1);
+}
+
+#[tokio::test]
+async fn brain_body_refreshes_revoked_authority_before_diagnostics_or_epsilon_override() {
+    for override_epsilon in [false, true] {
+        let fixture = DiscordFixture::new().await;
+        fixture
+            .permissions
+            .store(Permissions::all().bits(), Ordering::SeqCst);
+        let data = configured_data();
+        let commands = crate::application_commands();
+        let command = leaves(&commands)
+            .into_iter()
+            .find(|c| c.qualified_name == "admin brain")
+            .unwrap();
+        let mut invocation = Invocation::new(command, true, None);
+        let options = poise::FrameworkOptions::default();
+        if override_epsilon {
+            invocation.interaction.data.options = serde_json::from_value(json!([
+                {"name":"epsilon", "type":10, "value":0.4}
+            ]))
+            .unwrap();
+        }
+        let args = invocation.interaction.data.options();
+        let context = invocation.context_with_args(
+            &fixture,
+            command,
+            &options,
+            &data,
+            poise::CommandInteractionType::Command,
+            &args,
+        );
+        assert!(
+            command.checks[0](poise::Context::Application(context))
+                .await
+                .unwrap()
+        );
+        let approved = fixture.take_requests();
+        assert_deferred_first(&approved, command);
+        fixture
+            .permissions
+            .store(Permissions::VIEW_CHANNEL.bits(), Ordering::SeqCst);
+        let before = AppState::lock(&data.state.stores).clone();
+        assert!(command.slash_action.unwrap()(context).await.is_ok());
+        let requests = fixture.take_requests();
+        assert_eq!(requests.iter().filter(|r| r.method == "GET").count(), 3);
+        let reply = requests.last().unwrap().body["content"].as_str().unwrap();
+        assert!(reply.contains("Current permission to manage this server is required"));
+        assert!(!reply.contains("Feedback since process start"));
+        assert!(AppState::lock(&data.state.stores).payload_eq(&before));
+        assert!(
+            AppState::lock(&data.state.brains)
+                .stats("discord:123")
+                .is_none()
+        );
+    }
 }

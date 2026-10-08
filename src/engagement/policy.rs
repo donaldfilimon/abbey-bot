@@ -107,6 +107,7 @@ impl SourceRef {
 }
 impl EngagementStore {
     pub fn validate(&self) -> Result<(), WorkError> {
+        self.validate_erased_charges()?;
         self.validate_invitation_requests()?;
         self.validate_community()?;
         for (id, members) in &self.feedback {
@@ -142,7 +143,7 @@ impl EngagementStore {
             || self.eligibility.len() > 10_000
             || self.eligibility.values().map(BTreeSet::len).sum::<usize>() > 10_000
             || self.guild_features.len() > 10_000
-            || self.charges.len() > 20_000
+            || self.charges.len() + self.erased_contact_charges.len() > 20_000
         {
             return Err(WorkError::Full);
         }
@@ -215,6 +216,7 @@ impl EngagementStore {
         let mut identities = BTreeSet::new();
         for (id, c) in &self.candidates {
             c.scope.validate()?;
+            c.validate_task_follow_up()?;
             if *id == 0
                 || c.id != *id
                 || *id > self.sequence

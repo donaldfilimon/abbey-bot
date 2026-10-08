@@ -10,6 +10,22 @@ pub(super) async fn run_abi_owned(
     timeout_secs: u64,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> GateOutcome {
+    match run_raw_owned(program, args, timeout_secs, cancel).await {
+        Ok(output) => classify(output.code, &output.stdout, &output.stderr),
+        Err(detail) => GateOutcome::Unavailable { detail },
+    }
+}
+pub(super) struct AbiOutput {
+    pub(super) code: Option<i32>,
+    pub(super) stdout: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
+}
+pub(super) async fn run_raw_owned(
+    program: &Path,
+    args: &[OsString],
+    timeout_secs: u64,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+) -> Result<AbiOutput, String> {
     let environment: Vec<(OsString, OsString)> = std::env::vars_os()
         .filter(|(name, _)| {
             ALLOWED_ENVIRONMENT
@@ -27,24 +43,18 @@ pub(super) async fn run_abi_owned(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
-        return GateOutcome::Unavailable {
-            detail: "the abi operation was cancelled during shutdown".into(),
-        };
+        return Err("the abi operation was cancelled during shutdown".into());
     }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            return GateOutcome::Unavailable {
-                detail: format!("could not start the abi binary: {error}"),
-            };
+            return Err(format!("could not start the abi binary: {error}"));
         }
     };
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = child.start_kill();
         let _ = child.wait().await;
-        return GateOutcome::Unavailable {
-            detail: "the abi child had no output pipes".into(),
-        };
+        return Err("the abi child had no output pipes".into());
     };
     let operation = async {
         let (stdout, stderr, status) = tokio::try_join!(
@@ -64,17 +74,19 @@ pub(super) async fn run_abi_owned(
         failure => {
             let _ = child.start_kill();
             let _ = child.wait().await;
-            return GateOutcome::Unavailable {
-                detail: match failure {
-                    Some(Ok(Err(detail))) => detail,
-                    Some(Err(_)) => format!("the abi binary did not answer within {timeout_secs}s"),
-                    None => "the abi operation was cancelled during shutdown".into(),
-                    Some(Ok(Ok(_))) => unreachable!("success handled above"),
-                },
-            };
+            return Err(match failure {
+                Some(Ok(Err(detail))) => detail,
+                Some(Err(_)) => format!("the abi binary did not answer within {timeout_secs}s"),
+                None => "the abi operation was cancelled during shutdown".into(),
+                Some(Ok(Ok(_))) => unreachable!("success handled above"),
+            });
         }
     };
-    classify(status.code(), &stdout, &stderr)
+    Ok(AbiOutput {
+        code: status.code(),
+        stdout,
+        stderr,
+    })
 }
 
 async fn read_capped(mut reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, String> {

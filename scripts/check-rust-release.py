@@ -5,7 +5,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-WDBX_REVISION = "9fee98ff5ccb92fa86a2ed44f93abd65e7e181ae"
+WDBX_REVISION = "7ddeb3d1389ec0e9fab5ac5397acf0da91a01174"
 
 # Deliberately validate the complete small expression, not isolated substrings.
 # A changed expression requires review and matching truth-table tests.

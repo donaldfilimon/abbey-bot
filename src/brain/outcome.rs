@@ -8,12 +8,12 @@
 //! types that observation, and `reward.rs` blends the typed value alongside the
 //! existing heuristic rather than in place of it.
 //!
-//! Claim-honest scope: this makes the loop *closable*. [`classify`] is a
+//! Claim-honest scope: this makes the loop *closable*. [`classify_signature`] is a
 //! deterministic lexicon over one message's text plus the ask it followed — not
 //! a model, and not a claim that Abbey understands whether she was helpful. It
 //! is wired to the Discord reply-to path and to same-channel follow-ups
 //! (`pipeline.rs`); nothing here reads reactions, edits, thread creation, or
-//! voice, and in-scope attribution is a heuristic that can mis-credit a busy
+//! voice, and in-scope attribution refuses competing open turns in a busy
 //! channel (see [`crate::brain::reward::RewardCollector::observe_in_scope`]).
 //!
 //! Pure: no clock, no I/O, no randomness.
@@ -173,7 +173,7 @@ const THANKS_TOKENS: [&str; 9] = [
 
 /// Dropped before measuring topic overlap: they are shared by every English
 /// sentence and would make unrelated questions look like rephrasings.
-const STOPWORDS: [&str; 34] = [
+pub(super) const STOPWORDS: [&str; 34] = [
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from",
     "how", "i", "in", "is", "it", "me", "my", "of", "on", "or", "that", "the", "this", "to", "was",
     "what", "when", "where", "why", "you",
@@ -200,7 +200,48 @@ const FOLLOW_UP_OVERLAP: f32 = 0.25;
 /// Precedence is deliberate: a correction beats a thanks, because "thanks, but
 /// that's wrong" is a correction wearing a courtesy. Explicit markers beat
 /// topical inference, because they say what happened rather than infer it.
+#[cfg(test)]
 pub fn classify(text: &str, prior_ask: Option<&str>) -> Option<ReplyOutcome> {
+    let prior = prior_ask.map(crate::brain::ask_signature::AskSignature::from_text);
+    classify_signature(text, prior.as_ref())
+}
+
+/// Compare transient feedback with minimized pending context.
+pub fn classify_signature(
+    text: &str,
+    prior: Option<&crate::brain::ask_signature::AskSignature>,
+) -> Option<ReplyOutcome> {
+    use crate::brain::ask_signature::AskSignature;
+    let current = AskSignature::from_text(text);
+    if current.markers.correction {
+        return Some(ReplyOutcome::Correction);
+    }
+    if current.markers.thanks {
+        return Some(ReplyOutcome::ExplicitThanks);
+    }
+    if !current.markers.question {
+        return None;
+    }
+    let prior = prior?;
+    if prior.token_hashes.is_empty() {
+        return None;
+    }
+    let shared = prior
+        .token_hashes
+        .iter()
+        .filter(|hash| current.token_hashes.contains(hash))
+        .count();
+    let overlap = shared as f32 / prior.token_hashes.len() as f32;
+    if overlap >= REPHRASE_OVERLAP {
+        Some(ReplyOutcome::RephrasedSameAsk)
+    } else if overlap >= FOLLOW_UP_OVERLAP {
+        Some(ReplyOutcome::FollowUpQuestion)
+    } else {
+        None
+    }
+}
+
+pub(super) fn marker_outcome(text: &str) -> Option<ReplyOutcome> {
     let lower = normalize(text);
     let tokens = content_tokens_keeping_stopwords(&lower);
     if tokens.is_empty() {
@@ -224,58 +265,23 @@ pub fn classify(text: &str, prior_ask: Option<&str>) -> Option<ReplyOutcome> {
         return Some(ReplyOutcome::ExplicitThanks);
     }
 
-    // Topical inference needs both a question and something to compare it to.
-    // `ends_with('?')` matches `state::encode`'s question feature exactly, so
-    // the two never disagree about what a question is.
-    if !text.trim_end().ends_with('?') {
-        return None;
-    }
-    let prior = normalize(prior_ask?);
-    let prior_content = content_tokens(&prior);
-    if prior_content.is_empty() {
-        return None;
-    }
-    let new_content = content_tokens(&lower);
-    let shared = prior_content
-        .iter()
-        .filter(|t| new_content.contains(*t))
-        .count();
-    let overlap = shared as f32 / prior_content.len() as f32;
-    if overlap >= REPHRASE_OVERLAP {
-        Some(ReplyOutcome::RephrasedSameAsk)
-    } else if overlap >= FOLLOW_UP_OVERLAP {
-        Some(ReplyOutcome::FollowUpQuestion)
-    } else {
-        // A question about something else is not evidence about the reply.
-        None
-    }
+    None
 }
 
 /// Lowercase, and fold the typographic apostrophe onto the ASCII one so
 /// `that’s not` (what phones and Discord autocorrect produce) matches the same
 /// phrase list as `that's not`.
-fn normalize(text: &str) -> String {
+pub(super) fn normalize(text: &str) -> String {
     text.trim().to_lowercase().replace('\u{2019}', "'")
 }
 
 /// Lowercased alphanumeric tokens, stopwords included — what the marker lists
 /// match against (`no` and `ty` are stopword-shaped but load-bearing).
-fn content_tokens_keeping_stopwords(lower: &str) -> Vec<&str> {
+pub(super) fn content_tokens_keeping_stopwords(lower: &str) -> Vec<&str> {
     lower
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
         .collect()
-}
-
-/// Deduplicated content words: stopwords and one-character tokens dropped.
-fn content_tokens(lower: &str) -> Vec<&str> {
-    let mut out: Vec<&str> = Vec::new();
-    for t in content_tokens_keeping_stopwords(lower) {
-        if t.chars().count() > 1 && !STOPWORDS.contains(&t) && !out.contains(&t) {
-            out.push(t);
-        }
-    }
-    out
 }
 
 #[cfg(test)]

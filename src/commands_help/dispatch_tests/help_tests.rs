@@ -35,6 +35,7 @@ async fn actual_help_navigation_waits_for_ack_and_refreshes_permissions_without_
         1,
         "pending-help-canary",
         "discord:123",
+        "discord:help-channel",
         1,
     );
     let stores = runtime::AppState::lock(&data.state.stores).clone();

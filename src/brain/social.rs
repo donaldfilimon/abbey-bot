@@ -85,6 +85,14 @@ pub struct SocialBrain {
 }
 
 impl SocialBrain {
+    /// Drop cached and dirty values without writing the erased score back.
+    pub(crate) fn erase(&mut self, scope: &str, user: Option<&str>) {
+        self.scores
+            .retain(|k, _| k.guild != scope || user.is_some_and(|u| k.user != u));
+        self.dirty
+            .retain(|k| k.guild != scope || user.is_some_and(|u| k.user != u));
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

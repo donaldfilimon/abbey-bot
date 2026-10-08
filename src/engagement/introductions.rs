@@ -33,6 +33,12 @@ impl EngagementStore {
         description: String,
         now: u64,
     ) -> Result<u64, WorkError> {
+        if self
+            .erased_identities
+            .contains(&erasure_identity::introduction(&scope, members))
+        {
+            return Err(WorkError::Stale);
+        }
         scope.validate()?;
         crate::calendar::utc(now)?;
         if members.contains(&0) || members[0] == members[1] || !description_valid(&description) {
@@ -100,6 +106,9 @@ impl EngagementStore {
                 destination: DestinationPreference::Origin,
                 message_id: None,
                 introduction_id: Some(id),
+                work_ref: None,
+                expires_at: None,
+                follow_up_reason: None,
             },
         );
         next.validate()?;
@@ -338,7 +347,7 @@ impl EngagementStore {
         let mut i = self.introductions[&c.introduction_id.ok_or(WorkError::Invalid)?].clone();
         let mut charges = Vec::new();
         let mut revisions = [0; 2];
-        if self.charges.len() + 2 > 20_000 {
+        if self.charges.len() + self.erased_contact_charges.len() + 2 > 20_000 {
             return Err(WorkError::Full);
         }
         for (index, member) in i.members.iter().enumerate() {

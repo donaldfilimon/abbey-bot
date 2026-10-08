@@ -77,6 +77,7 @@ pub struct BrainRegistry<B: Brain> {
     make: Box<dyn Fn() -> B + Send + Sync>,
     brains: HashMap<String, Loaded<B>>,
     evict_after_secs: u64,
+    learning_audits: HashMap<String, crate::brain::telemetry::LearningAudit>,
 }
 
 impl<B: Brain> BrainRegistry<B> {
@@ -85,6 +86,7 @@ impl<B: Brain> BrainRegistry<B> {
         Self {
             make: Box::new(make),
             brains: HashMap::new(),
+            learning_audits: HashMap::new(),
             evict_after_secs,
         }
     }
@@ -155,6 +157,12 @@ impl<B: Brain> BrainRegistry<B> {
         }
     }
 
+    /// Discard all loaded influence and aggregate audit counters without saving.
+    pub(crate) fn reset(&mut self, scope: &str) {
+        self.brains.remove(scope);
+        self.learning_audits.remove(scope);
+    }
+
     /// Experiences seen by this guild's brain (restored count + live adds);
     /// `None` when the guild is not loaded.
     pub fn experience_count(&self, scoped_guild_id: &str) -> Option<u64> {
@@ -168,6 +176,26 @@ impl<B: Brain> BrainRegistry<B> {
         let mut guilds: Vec<String> = self.brains.keys().cloned().collect();
         guilds.sort();
         guilds
+    }
+
+    /// Count observations without loading a policy, refreshing its idle clock,
+    /// creating experiences or spending budget. These aggregate counters live
+    /// for this process and are deliberately independent of model eviction.
+    pub fn record_learning_attribution(
+        &mut self,
+        guild: &str,
+        attribution: crate::brain::reward::FeedbackAttribution,
+    ) {
+        self.learning_audits
+            .entry(guild.to_owned())
+            .or_default()
+            .record(attribution);
+    }
+
+    pub fn learning_audit(&self, guild: &str) -> crate::brain::telemetry::LearningAudit {
+        self.learning_audits
+            .get(guild)
+            .map_or_else(Default::default, |audit| audit.snapshot())
     }
 
     /// The guild's telemetry, if its brain is loaded. Does not touch the idle clock.
@@ -226,6 +254,22 @@ mod tests {
 
     fn registry() -> BrainRegistry<Counter> {
         BrainRegistry::new(Counter::default, DEFAULT_EVICT_AFTER_SECS)
+    }
+
+    #[test]
+    fn refused_audit_observations_do_not_load_or_train_a_policy() {
+        let mut reg = registry();
+        reg.record_learning_attribution(A, crate::brain::reward::FeedbackAttribution::Expired);
+        assert!(reg.loaded_guilds().is_empty());
+        assert_eq!(reg.experience_count(A), None);
+        assert_eq!(reg.learning_audit(A).expired, 1);
+        assert_eq!(reg.learning_audit(B_), Default::default());
+        let mut store = InMemoryBrainStore::new();
+        reg.brain(A, &store, 0);
+        reg.persist_all(&mut store, DEFAULT_EVICT_AFTER_SECS + 1);
+        assert!(reg.loaded_guilds().is_empty());
+        assert_eq!(reg.learning_audit(A).expired, 1);
+        assert_eq!(registry().learning_audit(A), Default::default());
     }
 
     #[test]

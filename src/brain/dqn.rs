@@ -73,6 +73,14 @@ pub enum ImportError {
     },
     /// A layer's weight or bias vector is the wrong length for its slot.
     LayerShapeMismatch { layer: usize },
+    /// Nonfinite values would poison action values and subsequent training.
+    NonFiniteValue,
+    /// Replay actions must index an output of this agent's network.
+    ReplayActionOutOfRange {
+        experience: usize,
+        action: usize,
+        action_count: usize,
+    },
 }
 
 impl std::fmt::Display for ImportError {
@@ -90,6 +98,15 @@ impl std::fmt::Display for ImportError {
                     "snapshot layer {layer} has the wrong number of weights or biases"
                 )
             }
+            Self::NonFiniteValue => write!(f, "snapshot contains a nonfinite value"),
+            Self::ReplayActionOutOfRange {
+                experience,
+                action,
+                action_count,
+            } => write!(
+                f,
+                "snapshot experience {experience} action {action} exceeds {action_count} actions"
+            ),
         }
     }
 }
@@ -243,12 +260,15 @@ impl DqnAgent {
     }
 
     /// Loads a snapshot into both networks and restores ε / step count, and
-    /// refills the replay buffer with the snapshot's recent experiences
-    /// (state width must match; others are skipped).
+    /// replaces replay with the snapshot's recent experiences. The destination
+    /// capacity is preserved, retaining the newest entries on overflow. Legacy
+    /// state-width mismatches are skipped only after validating every action.
     ///
     /// # Errors
     /// Returns [`ImportError`] — and leaves the agent untouched — if the
-    /// snapshot's topology or any layer's shape differs from this agent's.
+    /// snapshot's topology or any layer's shape differs from this agent's,
+    /// any imported floating-point value is nonfinite, or any replay action
+    /// falls outside the network's output range (including skipped-width rows).
     pub fn import_weights(&mut self, snapshot: &BrainSnapshot) -> Result<(), ImportError> {
         if snapshot.topology != self.online.topology {
             return Err(ImportError::TopologyMismatch {
@@ -268,6 +288,44 @@ impl DqnAgent {
             }
         }
 
+        if !snapshot.epsilon.is_finite()
+            || snapshot.layers.iter().any(|layer| {
+                layer
+                    .weights
+                    .iter()
+                    .chain(&layer.biases)
+                    .any(|value| !value.is_finite())
+            })
+            || snapshot.experiences.iter().any(|experience| {
+                !experience.reward.is_finite()
+                    || experience
+                        .state
+                        .iter()
+                        .chain(&experience.next_state)
+                        .any(|value| !value.is_finite())
+            })
+        {
+            return Err(ImportError::NonFiniteValue);
+        }
+
+        let action_count = self.action_count();
+        for (experience, exp) in snapshot.experiences.iter().enumerate() {
+            if exp.action >= action_count {
+                return Err(ImportError::ReplayActionOutOfRange {
+                    experience,
+                    action: exp.action,
+                    action_count,
+                });
+            }
+        }
+        let width = self.state_size();
+        let mut replay = ReplayBuffer::new(self.buffer.capacity());
+        for exp in &snapshot.experiences {
+            if exp.state.len() == width && exp.next_state.len() == width {
+                replay.push(exp.clone());
+            }
+        }
+
         for (saved, live) in snapshot.layers.iter().zip(&mut self.online.layers) {
             live.weights.clone_from(&saved.weights);
             live.biases.clone_from(&saved.biases);
@@ -275,12 +333,7 @@ impl DqnAgent {
         self.target = self.online.clone();
         self.epsilon = snapshot.epsilon;
         self.step_count = snapshot.step_count;
-        let width = self.state_size();
-        for exp in &snapshot.experiences {
-            if exp.state.len() == width && exp.next_state.len() == width {
-                self.buffer.push(exp.clone());
-            }
-        }
+        self.buffer = replay;
         Ok(())
     }
 }
@@ -305,6 +358,10 @@ fn make_target(mut predicted: Vec<f32>, action: usize, value: f32) -> Vec<f32> {
     predicted[action] = value;
     predicted
 }
+
+#[cfg(test)]
+#[path = "dqn/import_tests.rs"]
+mod import_tests;
 
 #[cfg(test)]
 mod tests {
