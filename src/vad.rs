@@ -115,8 +115,8 @@ impl Vad for EnergyVad {
     }
 
     fn should_interrupt(&self, _ctx: &VadCtx) -> bool {
-        // Local energy alone never interrupts; the offline actor uses
-        // `Segmenter::SpeechStarted` for barge-in, and the composed actor
+        // Local energy alone never interrupts; the local actor uses a separate
+        // sustained-input confirmation gate for barge-in, and the composed actor
         // delegates the decision to the semantic gate.
         false
     }

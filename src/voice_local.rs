@@ -34,7 +34,9 @@ const MAX_PENDING_UTTERANCES: usize = 4;
 // must not hide a later withdrawal behind the general client's 300s timeout.
 const MAX_RECOGNITION_DELAY: Duration = Duration::from_secs(10);
 
+mod interruption;
 mod turn;
+use interruption::InterruptionGate;
 use turn::{generate_turn, recognize_before_deadline};
 
 #[cfg(test)]
@@ -224,6 +226,7 @@ pub async fn run(mut session: LocalSession) {
     let client = session.client.clone();
     let wake = Arc::new(Mutex::new(WakeState::default()));
     let mut segmenter = Segmenter::new();
+    let mut interruption = InterruptionGate::default();
     let mut recognition = JoinSet::new();
     let mut recognition_queue = VecDeque::new();
     let mut turns = JoinSet::new();
@@ -357,31 +360,42 @@ pub async fn run(mut session: LocalSession) {
                     continue;
                 }
                 let trigger_frame_overlap = frame.overlap;
+                let confirmed_speaker = interruption.observe(&frame);
                 let segment_events = segmenter.push(frame);
                 // Short noises can end without a Completed utterance. Do not
                 // leave a prepared reply waiting forever after such a noise.
                 input_speaking = segmenter.is_speaking();
+                if let Some(speaker_id) = confirmed_speaker {
+                    let playback_turn = turn_generation;
+                    let playback_stop_requested = stop_playback(&session.playback).await;
+                    if playback_stop_requested {
+                        let speaker_relation = match reply_speaker {
+                            Some(expected) if expected == speaker_id => "requester",
+                            Some(_) => "other participant",
+                            None => "unknown",
+                        };
+                        tracing::info!(turn = playback_turn, speaker_relation, trigger_frame_overlap,
+                            "local voice playback interrupted by sustained speech");
+                        pending_commit = None;
+                        playback_lifecycle.note_barge_stop_requested(playback_turn);
+                        session.runtime.note_barge_in();
+                    }
+                    set_activity_status(
+                        &session,
+                        !recognition.is_empty() || !recognition_queue.is_empty(),
+                        !turns.is_empty() || ready_reply.is_some(),
+                        "sustained speech detected; pending replies are preserved",
+                    ).await;
+                }
                 for event in segment_events {
                     match event {
                         SegmentEvent::SpeechStarted { speaker_id } => {
                             input_speaking = true;
-                            let playback_turn = turn_generation;
-                            let playback_stop_requested = stop_playback(&session.playback).await;
-                            if playback_stop_requested {
-                                let speaker_relation = match (reply_speaker, speaker_id) {
-                                    (Some(expected), Some(actual)) if expected == actual => "requester",
-                                    (Some(_), Some(_)) => "other participant",
-                                    _ => "unknown",
-                                };
-                                tracing::info!(turn = playback_turn, speaker_relation, trigger_frame_overlap,
-                                    "local voice playback interrupted by speech");
-                                pending_commit = None;
-                                playback_lifecycle.note_barge_stop_requested(playback_turn);
-                                session.runtime.note_barge_in();
-                            }
-                            // Stop audible output immediately, but preserve
-                            // recognition and an answer still being prepared.
-                            // Only an addressed replacement supersedes it.
+                            tracing::debug!(speaker_mapped = speaker_id.is_some(),
+                                "local voice input segment started");
+                            // Early detection defers prepared output, but only
+                            // sustained input may stop an audible reply. An
+                            // addressed replacement still supersedes it.
                             set_activity_status(
                                 &session,
                                 !recognition.is_empty() || !recognition_queue.is_empty(),
@@ -572,6 +586,7 @@ pub async fn run(mut session: LocalSession) {
                             turn,
                         ).await {
                             Ok(true) => {
+                                interruption.reset();
                                 open_continuation(&wake).await;
                                 pending_commit = should_commit_turn(
                                     persist,

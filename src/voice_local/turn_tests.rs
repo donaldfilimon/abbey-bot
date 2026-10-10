@@ -318,14 +318,14 @@ async fn prepared_reply_waits_for_a_short_noise_to_end() {
 }
 
 #[tokio::test]
-async fn audible_playback_still_stops_on_speech() {
+async fn audible_playback_still_stops_on_sustained_speech() {
     let mut fixture = Fixture::new("unused").await;
     fixture.utterance(1).await;
     fixture.expect("generation").await;
     fixture.release.take().unwrap().send(()).unwrap();
     fixture.expect("synthesis").await;
     fixture.expect_playback(true).await;
-    fixture.frames(2, 2, true).await;
+    fixture.frames(2, 15, true).await;
     fixture.expect_playback(false).await;
     // Taking the handle and recording the successful stop are separate
     // actor steps; synchronize on the counter before asserting it.
@@ -844,3 +844,6 @@ async fn personal_memory_adapter_final_voice_play_rechecks_after_activation_gate
 
 #[path = "timing_tests.rs"]
 mod timing_tests;
+
+#[path = "interruption_tests.rs"]
+mod interruption_tests;
