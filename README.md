@@ -320,8 +320,9 @@ joining pause the call; uncovered members agree, then a manager uses
 shows members only the coarse voice state, processing category, their own saved
 choice coverage, a visible configured channel, and one appropriate next action.
 Automatic voice-channel presence after a restart is muted and does not activate
-conversation. Ordinary speech does not cancel a reply still being prepared;
-speaking over audible playback stops it immediately.
+conversation. Ordinary speech does not cancel a reply still being prepared.
+During audible playback, brief noises are ignored; sustained speech from an
+identified participant interrupts the reply.
 
 **Your choice is remembered and reversible.** Agreement is scoped to the server,
 member, local/OpenAI processing mode and disclosure version, and persists across
@@ -986,8 +987,11 @@ is not persisted. After activation, the default spoken names are Abbey, Abby,
 Aviva, and Abi; no slash command is needed for each reply. Ordinary speech
 preserves an answer being prepared. A ready answer starts when speech is quiet,
 without waiting for older transcription work to finish. A newly recognized
-addressed question can replace that answer, and actual speech still interrupts
-playback. Same-speaker follow-ups are timed from when the speech was captured,
+addressed question can replace that answer. Acoustic interruption requires
+300 ms of voiced input from one identified speaker within a 400 ms window,
+allowing brief quiet gaps. Missing frames, uncertain attribution, overlap, and
+speaker changes reset that evidence; a short noise cannot cancel playback.
+Same-speaker follow-ups are timed from when the speech was captured,
 so an earlier aside cannot become a follow-up merely because transcription ran
 late. If live recognition cannot finish within ten seconds of capture, Abbey
 stops the session so a later withdrawal cannot remain hidden behind stalled

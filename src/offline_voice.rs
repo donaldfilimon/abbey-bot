@@ -244,8 +244,9 @@ struct ActiveUtterance {
 }
 
 /// Deterministic, allocation-bounded turn segmentation for Songbird's 20 ms
-/// callback frames. MLX/Whisper still performs transcription; this immediate
-/// energy gate exists so local playback can stop before a transcript arrives.
+/// callback frames. MLX/Whisper still performs transcription; early energy
+/// detection starts capture and defers prepared output while input is active.
+/// The local actor separately confirms sustained speech before stopping playback.
 /// The local MLX path uses [`EnergyVad`] only; thresholds are unified in
 /// [`crate::vad`] so the offline and Realtime pre-filter cannot drift.
 #[derive(Debug, Default)]
@@ -266,7 +267,7 @@ impl Segmenter {
 
     pub fn is_speaking(&self) -> bool {
         // A first voiced frame must defer prepared playback too, before the
-        // second frame confirms SpeechStarted and would interrupt that reply.
+        // second frame confirms SpeechStarted.
         self.active.is_some() || self.candidate_frames > 0
     }
 
