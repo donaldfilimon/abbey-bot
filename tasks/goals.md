@@ -2508,3 +2508,24 @@ The October 22 execution records continue into October 23. Stable source/main CI
 qualification is complete for 6eb5cff; provider reliability and installed/live/human
 acceptance remain open. Later record-only changes receive focused documentation
 checks and independent review, without claiming a new complete source fingerprint.
+
+
+## 2026-10-23 provider reliability repair correction
+
+The earlier narrow-probe pass and failed broader workloads remain historical.
+The actual missing model prerequisite was provisioned: `gemma4:latest` was an
+8B identity, while the repository documented `gemma4:12b`. A separate local
+12B temperature-0 profile passed all six capability probes and the unchanged
+48-case workload: exit 0, 48 successes, zero failures/incomplete/no-text, exact
+saved gated binary and unchanged model identity. No source, prompts, protocol,
+fixtures, scorer or acceptance limits changed. Original failed Qwen/GPT/Bonsai
+runs remain evidence; none was promoted. See the
+[repair receipt](../docs/verification/2026-10-22-mlai-release-baseline.md#2026-10-23-provider-repair-investigation)
+and [machine-readable evidence](../docs/verification/2026-10-23-provider-repair.json).
+
+The inactive private proposal now selects the qualified candidate for text and
+vision. Current source-record main 890adf0 passed exact-head macOS CI; the saved
+provider-tested artifact retains its own 6eb5cff source and binary identity.
+No deployment occurred. Comparable installed/Discord latency, private Discord
+access (no usable MCP exposed), speech runtime, service transaction and all
+required live/human acceptance remain open. Full MLAI release remains Partial.

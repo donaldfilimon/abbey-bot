@@ -804,3 +804,14 @@ replaces the earlier pending source rows for this exact snapshot only. Whole rel
 
 - [x] Record the stable source/CI qualification and both failing real-provider evaluations; independently review the final record-only diff.
 - [ ] Resolve the named provider, private configuration, installation and live/human prerequisites before full-release closure.
+
+
+### 2026-10-23 provider repair correction
+
+- [x] Diagnose model-output failures without weakening strict parsing, fixture text or scoring; preserve all failed candidate reports.
+- [x] Provision the documented missing local 12B prerequisite and qualify a separate temperature-0 profile on the exact gated binary: six capabilities and unchanged 48/48 workload pass, zero failures/no-text.
+- [x] Capture parent/candidate manifest identities, resolved parameters, original reports' hashes and all successful measurement coverage; update the inactive private proposal only.
+- [ ] Establish comparable installed/Discord stage latency and complete private configuration, speech qualification, operator-directed transactional installation/readiness and required live/human acceptance.
+
+[Provider repair evidence](../docs/verification/2026-10-23-provider-repair.json).
+The provider48 candidate failure is repaired; whole-release acceptance remains Partial.
