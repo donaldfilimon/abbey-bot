@@ -904,3 +904,38 @@ The strict gate found new TLS trust advisories RUSTSEC-2026-0381/0382. Both lock
 graphs were repaired with patched WebPKI/roots versions; debt and Linux TLS checks
 pass without expanding accepted debt. The complete repaired gate and exact-main
 CI remain separate requirements. No live service or Discord action occurred.
+
+
+## 2026-10-22 fixed-main source and candidate qualification correction
+
+The [final fixed-main receipt](verification/2026-10-22-mlai-release-baseline.md#final-fixed-main-source-and-candidate-qualification)
+qualifies published source `6eb5cff114c22dd7a2d0f78f98c2a1c2df8bf215`: isolated
+pinned strict gate exit 0, 1,062 unchanged inputs, Rust 2,356/0/8 ignored, patched
+transport 2/0, Swift 12+16, locked release and offline startup checks. Exact-main
+[Gate (macOS)](https://github.com/donaldfilimon/abbey-bot/actions/runs/39894628930)
+completed success. The earlier canonical exit-0 run changed Cargo.lock and is
+explicitly unqualified; no historical receipt is promoted by that mixed run.
+
+The saved binary matches the six-capability-passing local Gemma candidate exactly:
+SHA-256 `96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9`.
+This qualifies synthetic text/streaming/schema/tools/vision/OCR for those bytes,
+not a managed service, installed latency or human answer quality. The previously
+disabled source workflow was re-enabled and its runner subsequently came online.
+
+This Mac is the selected target. Its actual owner environment and installed
+executable remain absent. An inactive private `env.pending` proposes the qualified
+local route. No service install/start, live Discord message, voice capture,
+moderation activation or Portal action occurred. Voice, ordinary-member journeys,
+100-label human adjudication, initiative/community pilots and Activity public
+witnesses remain open in the [matrix](verification/2026-10-22-mlai-release-matrix.md).
+
+
+### Candidate provider benchmark correction
+
+The broader Gemma candidate workload subsequently exited 1: 48 attempted,
+19 successes, 29 failures, zero incomplete, 11 no-text. An existing local
+GPT-OSS alternative failed streaming/schema/tools qualification. Six narrow
+Gemma probe passes do not qualify release reliability. No scorer or acceptance
+threshold was weakened, no production route was promoted, and no installed/Discord
+latency is claimed. Details and raw-evidence references are in the
+[provider reliability section](verification/2026-10-22-mlai-release-baseline.md#broader-provider-reliability-remains-open).

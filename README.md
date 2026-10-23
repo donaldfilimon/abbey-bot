@@ -1321,6 +1321,15 @@ need them.
 
 ### Required checks
 
+Confirm `cargo --version` and `rustc --version` select Rust 1.98.0 before
+validation. A Homebrew Cargo ahead of rustup proxies can bypass
+`rust-toolchain.toml`. To select the installed pinned toolchain explicitly:
+
+```sh
+abbey_gate_bin=$(dirname "$(rustup which --toolchain 1.98.0 cargo)")
+PATH="$abbey_gate_bin:$PATH" RUSTC="$abbey_gate_bin/rustc" RUSTDOC="$abbey_gate_bin/rustdoc" ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh
+```
+
 ```sh
 ./check.sh
 # On Windows PowerShell:

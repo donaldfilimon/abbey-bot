@@ -1,6 +1,8 @@
 # MLAI release baseline execution — 2026-10-22
 
-**Status: Partial; full release not accepted.** Requirement coverage and external
+**Status: Partial; full release not accepted.** Latest: source and candidate qualified
+on published main `6eb5cff`; see the final fixed-main section. Earlier pending
+entries below are chronological observations. Requirement coverage and external
 prerequisites are in the [release matrix](2026-10-22-mlai-release-matrix.md).
 
 ## Source and publication
@@ -116,3 +118,93 @@ The independent human-learning worksheet is prepared outside the repository at
 All 100 human verdicts are null; agent labels are in a separate comparison file.
 The frozen corpus SHA-256 accompanies the worksheet. This preparation does not
 constitute independent adjudication or fixed-provider answer qualification.
+
+## Final fixed-main source and candidate qualification
+
+2026-10-23 continuation of the October 22 release execution.
+
+Source **6eb5cff114c22dd7a2d0f78f98c2a1c2df8bf215** passed the complete strict
+`ABBEY_REQUIRE_WDBX_CONFORMANCE=1 ./check.sh` under explicitly selected Rust
+1.98.0. The detached sibling worktree isolated source from concurrent changes.
+Actual exit **0**; elapsed 1121.93 seconds; **1,062 inputs unchanged**.
+Manifest SHA-256 `e4ea19d527dab189bc39d4c7659e836752197d33648b47631db1d6ad4ad59238`; full log SHA-256
+`907a77e6968834a508c7ef63681c2a46844c1a9277472f0c90a9011123bbca98`. Evidence and saved executable remain outside source
+under `/Users/donald/.codex/verification/abbey-bot-release-20261022/final-main/`.
+
+Observed checks: 2,356 Rust tests passed, zero failed, eight ignored; two patched
+Serenity transport regressions passed; warnings-denied bot Clippy, Swift 12+16,
+strict sibling fixture parity, debt policy, locked release and offline text/learning
+startup checks passed. Activity separately passed 20/20 and Pages selectors 21/21.
+The remaining accepted ringbuf vulnerability and three informational warnings
+are unchanged; the audit is not clean. Existing upstream Serenity warnings remain
+visible. These counts describe this snapshot, not the October 19 mixed source.
+
+The existing Rust workflow was found manually disabled and re-enabled as source
+validation only. The runner subsequently came online. Exact-source
+[Gate (macOS)](https://github.com/donaldfilimon/abbey-bot/actions/runs/39894628930)
+completed **success** for this same SHA. PRs #190/#191 are merged. Any earlier
+offline/disabled statements above describe observations before that restoration.
+
+The prior canonical run exited 0 but changed Cargo.lock during execution; its
+manifest comparison failed. It is retained as mixed-input evidence and does not
+supply source qualification. The fixed-main run above replaces it for that claim.
+
+Saved candidate binary SHA-256:
+`96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9`. Its bytes match the earlier saved candidate exactly, so
+the successful synthetic provider report applies to this exact artifact: local
+Ollama `gemma4:latest`, OS build 26B118, fixture abbey-provider-fixtures-v1; text,
+streaming, structured output, tools, vision and OCR all pass. Report exit 0,
+17.09 seconds. No PCC/cloud route or live Discord credential was used.
+
+The inactive owner-only `env.pending` now proposes that qualified local
+text/tool/vision route; existing nonblank choices and credential contents are
+preserved. The actual managed `env` and installed executable remain absent.
+This is candidate qualification, not installed identity, live answer quality or
+speech qualification. MLX speech endpoints, human voice, six Discord cases,
+installed baseline comparisons, held-out human labels/answers and other live
+acceptance remain open. No service installation or start occurred.
+
+The current immutable Activity package was prepared and verified with Node
+v26.12.0. Package identity `b17bfb0c4bb3ee0c5ee7195d19dcf15e16f4801919c11cb9a416fd3d4534d20a`;
+Court digest `b81786c9d780ba01a7d1c757825ae4b898998c44358fc60f5e4a8c9dc1f93530`.
+It remains prepared-source-only, ingress proposal-only and activation
+operator-required; origin is unset and no prior installed assets establish a
+rollback target. No host/TLS/Portal/iframe readiness is inferred.
+
+These qualification-record updates follow the frozen source gate. They receive
+focused Pages/Liquid/diff validation; they do not rewrite the qualified manifest
+or claim that a later documentation commit already passed exact-head CI.
+
+## Broader provider reliability remains open
+
+The unchanged saved release artifact ran the actual 48-case synthetic workload
+against local Gemma: exit **1**, 43.31 seconds, **19 successes / 29 failures /
+0 incomplete / 11 no-text**. The model bundle identity remained unchanged.
+Failures were 18 fixture mismatches, one response-schema failure and ten later
+invalid-request refusals. A minimal synthetic reproduction returned `7.0` for
+a fixture requiring exactly `7`; this identifies an exact-format mismatch, not
+incorrect arithmetic. No scorer, workload, acceptance limit or production prompt
+was weakened to change that result. The tool/protocol failure remains unresolved.
+
+Observed candidate provider-first-text p95 was 5,438 ms across 37 observed samples
+out of 48 attempts. This is not Discord first-visible latency or an installed
+baseline. The CLI's named-artifact argument pointed to the saved candidate copy;
+its report explicitly retains managed-service, declared-model/hardware, delivery,
+voice-contention and capability-qualification gaps. No installed identity is
+claimed by that pathname or by this measurement. Raw reports, model/hardware
+identity and result exits are retained beside the frozen gate evidence.
+
+A bounded alternative probe used existing local `gpt-oss:20b` for text with
+separately identified Gemma vision. Exit **1**, 57.84 seconds: text and Gemma
+vision/OCR passed; streaming (`stream_protocol`), structured output and tools
+(`tool_protocol`) failed. Its metadata reported no remote host/model; no cloud
+model, download or production route change was used. A full 48-case run was
+not performed for this candidate after required capability failure.
+
+The six passing Gemma capability probes are retained as narrow candidate evidence,
+not promoted to release reliability. The proposed Gemma settings remain inactive
+and require review of these failed benchmark cases before route selection.
+Next provider work is an identity-bound local serving/model qualification repair
+or an explicit acceptance decision, followed by the unchanged workload and then
+installed/Discord measurements. Private Discord configuration, speech setup and
+all human/public acceptance remain open. The full MLAI release is **Partial**.
