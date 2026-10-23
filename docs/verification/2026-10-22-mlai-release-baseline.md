@@ -208,3 +208,101 @@ Next provider work is an identity-bound local serving/model qualification repair
 or an explicit acceptance decision, followed by the unchanged workload and then
 installed/Discord measurements. Private Discord configuration, speech setup and
 all human/public acceptance remain open. The full MLAI release is **Partial**.
+
+## 2026-10-23 provider repair investigation
+
+The provider repair keeps the exact saved executable above and leaves the
+synthetic prompts, fixtures, protocol validation, scoring and acceptance limits
+unchanged. A direct GPT-OSS stream had valid SSE framing but returned a marker
+with incorrect capitalization; that observation does not justify relaxing the
+stream parser. Qwen's deterministic candidate passed text/streaming and Gemma
+vision/OCR, but failed tools/structured output. A direct synthetic Qwen tool
+request produced the correct call and nonce after 108.54 seconds, then returned
+`ABB_EY_PROVIDER_CONTINUATION_V1` instead of the exact requested marker. Qwen
+remains unselected, and its failures remain recorded.
+
+A separate local Ollama profile, `abbey-gptoss20b:t0-20261023`, derives from the
+already installed `gpt-oss:20b` with temperature changed from 1 to 0. Its source
+model is preserved; no model download, cloud route, production selection or
+service action occurred. Parent manifest digest:
+`f38aa0c53da5f8c49d08c43a99df24ff53167fe68e24664a7777288e7656fdfe`;
+candidate manifest digest:
+`8a541710a0caa203c8eb7d43dbcf6bc6d3e0548ece3adbc794d9b2f1d92e4f07`.
+Gemma vision remains separately identified by manifest
+`eb2177adf7646d15faead94fdad6d3e170dc8015653418a3b7d5d52a6380be5b`.
+Resolved parameters, local model metadata, recipe, unchanged-binary identity and
+raw reports are retained under
+`/Users/donald/.codex/verification/abbey-bot-provider-repair-20261023/`.
+
+All six narrow capability checks passed for that GPT text/Gemma vision
+combination: actual exit 0, 29.93 seconds. This is a candidate result, not
+installed readiness or a replacement for the broader workload. Independent
+review requires a fixed-profile baseline before any same-model latency claim;
+a comparison against failed Gemma measurements cannot establish that claim.
+
+Discord MCP discovery inspected the available tool inventory and searched the
+plugin catalog. No usable Discord connector was exposed; the search returned
+only Vercel. No credential was fetched, displayed or fabricated. Private bot
+configuration remains a local-install prerequisite. Additional connectors may
+exist outside this session's available inventory.
+
+The unchanged 48-case GPT candidate workload subsequently exited **1** after
+253.62 seconds: **40 successes / 8 failures / 0 incomplete / 5 no-text**.
+All 24 arithmetic and 12 coding cases passed. Tool cases had three exact-output
+mismatches, one response-schema failure and four later admission refusals after
+the lane degraded. The manifest identity remained unchanged. Provider-first-text
+p95 was 8,909 ms across 43/48 observed samples; completion p95 was 12,375 ms
+across 43/48. These measurements do not pass reliability acceptance and do not
+establish comparable installed/Discord latency. The profile remains inactive.
+
+A synthetic direct reproduction of case 43 returned the correct first tool call
+and nonce, followed by a `stop`/`[DONE]` continuation with empty answer content.
+Its reasoning text was neither displayed nor retained. The retained diagnostic
+contains only reasoning character counts and content-free protocol frames plus
+synthetic answers/tool arguments. Rejecting that empty answer is required; no
+parser or fixture change follows from this model-output failure.
+
+A third existing local candidate (`abbey-bonsai2:t0-20261023`, derived from
+`bonsai-2:latest` with temperature 0) failed required text, streaming,
+structured-output and tool checks: exit 1, 191.01 seconds. Gemma vision/OCR
+passed. Its resolved parent/candidate identities remain in the external receipt;
+it was not promoted and no broader workload followed failed required probes.
+
+The documented `gemma4:12b` prerequisite was absent: `gemma4:latest` reported
+8,074,934,862 parameters and is a different model identity. The documented 12B
+model was downloaded separately in 218.07 seconds. Its parent manifest is
+`c7597fc90b86aff6965317f37dd5465402284e26382d9b4bf2dfe3ef1491f4b6`.
+A separate `abbey-gemma4-12b:t0-20261023` profile sets temperature 0, preserving
+the original tag; candidate manifest:
+`0a0bda2c9df30bb61ae2183f5d2414be95af7953b3959e00589d7781f9041915`.
+All six narrow capabilities passed for this same text/vision profile: exit 0,
+85.28 seconds, unchanged model identity and exact saved binary. Its unchanged 48-case
+workload subsequently passed: exit 0, 255.38 seconds, 48 successes, zero failures,
+zero incomplete and zero no-text; model identity remained unchanged. No source, prompt, parser, scoring
+or acceptance change is made by adding a local model artifact.
+
+The qualification-record PR #192 merged as
+`890adf0af9b3c27180dbcd1f14fe56557b6e3951` and its exact-main
+[Gate (macOS)](https://github.com/donaldfilimon/abbey-bot/actions/runs/39898551292)
+completed successfully. The delta from the frozen 6eb5cff source contains only
+README, acceptance/matrix records and task-ledger documentation. Provider
+receipts above continue to name the actual saved 6eb5cff executable hash rather
+than relabeling that artifact as a later build.
+
+
+The qualified 12B profile's initial candidate provider-first-text p95 is
+14,917 ms across 48/48 observations; completion p95 is 15,374 ms across 48/48.
+This is the initial fixed-profile measurement, not evidence of <=10% regression
+against the different 8B/GPT models, and not installed/Discord latency. The
+[committed synthetic receipt](2026-10-23-provider-repair.json) preserves exact
+identities, the successful 48-case report and hashes/summaries of failed runs.
+Independent review found no recipe/capability promotion blocker and required
+these baseline and installation distinctions.
+
+The inactive owner-only `env.pending` now proposes the qualified 12B t0 tag for
+text and vision; only the two previously proposed `gemma4:latest` model values
+were changed. Credentials and other owner choices were preserved. The actual
+managed environment and bot installation remain absent. No bot or speech service
+was installed, started or restarted. Speech qualification, private Discord access,
+transactional installation and all required live/human witnesses remain open.
+The full MLAI release remains **Partial**.

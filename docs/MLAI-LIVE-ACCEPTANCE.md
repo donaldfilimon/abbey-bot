@@ -939,3 +939,26 @@ Gemma probe passes do not qualify release reliability. No scorer or acceptance
 threshold was weakened, no production route was promoted, and no installed/Discord
 latency is claimed. Details and raw-evidence references are in the
 [provider reliability section](verification/2026-10-22-mlai-release-baseline.md#broader-provider-reliability-remains-open).
+
+
+### 2026-10-23 local provider repair — synthetic candidate only
+
+The documented `gemma4:12b` prerequisite was missing; the installed `latest` tag
+was a different 8B identity. The exact gated candidate binary
+`96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9`
+now passes all six capability probes and the unchanged 48-case workload against
+local `abbey-gemma4-12b:t0-20261023`: **48 success / 0 failure / 0 incomplete /
+0 no-text**. Parent and deterministic-profile identities, original failed model
+results and measurement coverage are in the
+[synthetic receipt](verification/2026-10-23-provider-repair.json) and
+[repair record](verification/2026-10-22-mlai-release-baseline.md#2026-10-23-provider-repair-investigation).
+No tests, prompts, parser or scoring were weakened. Provider-first-text p95
+14,917 ms is an initial fixed-profile candidate measurement; it does not prove
+installed/Discord latency or a comparable <=10% regression bound.
+
+Only the inactive private proposal was updated. No managed bot/speech install,
+service start/restart, participant message, human voice capture, moderation
+activation or Portal change occurred. This session exposes no usable Discord
+MCP connector after tool/plugin discovery. Private Discord access, speech,
+installed identity/readiness and all live/human rows remain open. This paragraph
+records synthetic evidence and explicitly supplies no live witness.

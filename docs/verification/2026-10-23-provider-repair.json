@@ -1,0 +1,1733 @@
+{
+  "version": 1,
+  "date": "2026-10-23",
+  "scope": "Synthetic candidate qualification only; no managed installation or Discord delivery.",
+  "tests_prompts_parser_scoring_changed": false,
+  "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+  "qualified_source_sha": "6eb5cff114c22dd7a2d0f78f98c2a1c2df8bf215",
+  "record_only_main_sha": "890adf0af9b3c27180dbcd1f14fe56557b6e3951",
+  "record_only_main_ci": "https://github.com/donaldfilimon/abbey-bot/actions/runs/39898551292",
+  "production_selected": false,
+  "profiles": {
+    "gpt": {
+      "recipe": {
+        "model": "abbey-gptoss20b:t0-20261023",
+        "from": "gpt-oss:20b",
+        "parameters": {
+          "temperature": 0
+        },
+        "stream": false
+      },
+      "production_selected": false,
+      "identity_capture_utc": "2026-10-23T04:23:51.027396+00:00",
+      "identities": {
+        "gpt-oss:20b": {
+          "manifest_digest": "f38aa0c53da5f8c49d08c43a99df24ff53167fe68e24664a7777288e7656fdfe",
+          "modified_at": "2026-10-21T08:54:55.10006069-04:00",
+          "parameters": "temperature                    1",
+          "capabilities": [
+            "completion",
+            "tools",
+            "thinking"
+          ],
+          "remote_host": null,
+          "remote_model": null,
+          "model_info": {
+            "general.architecture": "gpt-oss",
+            "general.file_type": 4,
+            "general.parameter_count": 20914757184
+          }
+        },
+        "abbey-gptoss20b:t0-20261023": {
+          "manifest_digest": "8a541710a0caa203c8eb7d43dbcf6bc6d3e0548ece3adbc794d9b2f1d92e4f07",
+          "modified_at": "2026-10-23T00:20:16.087060644-04:00",
+          "parameters": "temperature                    0",
+          "capabilities": [
+            "completion",
+            "tools",
+            "thinking"
+          ],
+          "remote_host": null,
+          "remote_model": null,
+          "model_info": {
+            "general.architecture": "gpt-oss",
+            "general.file_type": 4,
+            "general.parameter_count": 20914757184
+          }
+        },
+        "gemma4:latest": {
+          "manifest_digest": "eb2177adf7646d15faead94fdad6d3e170dc8015653418a3b7d5d52a6380be5b",
+          "modified_at": "2026-10-20T20:25:23.046467613-04:00",
+          "parameters": "temperature                    1\ntop_k                          64\ntop_p                          0.95",
+          "capabilities": [
+            "completion",
+            "vision",
+            "audio",
+            "tools",
+            "thinking"
+          ],
+          "remote_host": null,
+          "remote_model": null,
+          "model_info": {
+            "general.architecture": "gemma4",
+            "general.parameter_count": 8074934862
+          }
+        }
+      },
+      "reliability_qualified": false,
+      "benchmark": {
+        "exit_code": 1,
+        "attempted": 48,
+        "success": 40,
+        "failure": 8,
+        "incomplete": 0,
+        "no_text": 5,
+        "first_text_p95_ms": 8909,
+        "first_text_observed": 43
+      }
+    },
+    "gemma12b": {
+      "recipe": {
+        "model": "abbey-gemma4-12b:t0-20261023",
+        "from": "gemma4:12b",
+        "parameters": {
+          "temperature": 0
+        },
+        "stream": false
+      },
+      "identities": {
+        "gemma4:12b": {
+          "manifest_digest": "c7597fc90b86aff6965317f37dd5465402284e26382d9b4bf2dfe3ef1491f4b6",
+          "parameters": "top_p                          0.95\ntemperature                    1\ntop_k                          64",
+          "remote_host": null,
+          "remote_model": null,
+          "parameter_count": 12382568756
+        },
+        "abbey-gemma4-12b:t0-20261023": {
+          "manifest_digest": "0a0bda2c9df30bb61ae2183f5d2414be95af7953b3959e00589d7781f9041915",
+          "parameters": "temperature                    0\ntop_k                          64\ntop_p                          0.95",
+          "remote_host": null,
+          "remote_model": null,
+          "parameter_count": 12382568756
+        }
+      },
+      "production_selected": false
+    }
+  },
+  "runs": {
+    "capabilities": {
+      "report_sha256": "1621077b5d498ee3975919d25263978167c915691f8fa840061ce01d65e9a702",
+      "result": {
+        "exit_code": 1,
+        "elapsed_seconds": 57.77,
+        "model_identity_unchanged": true,
+        "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "scope": "candidate only; no managed installation or Discord delivery"
+      },
+      "capabilities": {
+        "text": {
+          "status": "pass"
+        },
+        "streaming": {
+          "status": "pass"
+        },
+        "structured_output": {
+          "status": "fail",
+          "category": "structured_output"
+        },
+        "tools": {
+          "status": "fail",
+          "category": "tool_protocol"
+        },
+        "vision": {
+          "status": "pass"
+        },
+        "ocr": {
+          "status": "pass"
+        }
+      },
+      "summary": null
+    },
+    "gpt-capabilities": {
+      "report_sha256": "4f2c30e79a7fcdb7f6a5d147f6d31876ae98286310740d8b207c5118e078894e",
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 29.93,
+        "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "production_selected": false
+      },
+      "capabilities": {
+        "text": {
+          "status": "pass"
+        },
+        "streaming": {
+          "status": "pass"
+        },
+        "structured_output": {
+          "status": "pass"
+        },
+        "tools": {
+          "status": "pass",
+          "tool_result_marker": "ABBEY_PROVIDER_CONTINUATION_V1"
+        },
+        "vision": {
+          "status": "pass"
+        },
+        "ocr": {
+          "status": "pass"
+        }
+      },
+      "summary": null
+    },
+    "gpt-benchmark": {
+      "report_sha256": "c0bd6bc6cfc96379e6db7def6abccc061772e75f16c32715b223410b374e944f",
+      "result": {
+        "exit_code": 1,
+        "elapsed_seconds": 253.62,
+        "model_manifest_sha256": "8a541710a0caa203c8eb7d43dbcf6bc6d3e0548ece3adbc794d9b2f1d92e4f07",
+        "model_identity_unchanged": true,
+        "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "scope": "candidate only; no managed installation or Discord delivery"
+      },
+      "capabilities": null,
+      "summary": {
+        "counts": {
+          "attempted": 48,
+          "success": 40,
+          "failure": 8,
+          "incomplete": 0,
+          "no_text": 5
+        },
+        "planned": 48,
+        "stages": [
+          {
+            "stage": "queue_wait",
+            "observed": 44,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": 0,
+              "missing": null
+            }
+          },
+          {
+            "stage": "provider_first_text",
+            "observed": 43,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": 8909,
+              "missing": null
+            }
+          },
+          {
+            "stage": "provider_completed",
+            "observed": 43,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": 12375,
+              "missing": null
+            }
+          },
+          {
+            "stage": "first_visible",
+            "observed": 0,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": null,
+              "missing": "no_samples"
+            }
+          },
+          {
+            "stage": "final_delivered",
+            "observed": 0,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": null,
+              "missing": "no_samples"
+            }
+          }
+        ],
+        "small_sample_witness": false
+      }
+    },
+    "bonsai-capabilities": {
+      "report_sha256": "dc04f71d556db8183cc0625b8c9a8da1b8fc3623592d74a4c5380d89c017ee36",
+      "result": {
+        "exit_code": 1,
+        "elapsed_seconds": 191.01,
+        "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "production_selected": false
+      },
+      "capabilities": {
+        "text": {
+          "status": "fail",
+          "category": "semantic_text"
+        },
+        "streaming": {
+          "status": "fail",
+          "category": "stream_protocol"
+        },
+        "structured_output": {
+          "status": "fail",
+          "category": "structured_output"
+        },
+        "tools": {
+          "status": "fail",
+          "category": "tool_protocol"
+        },
+        "vision": {
+          "status": "pass"
+        },
+        "ocr": {
+          "status": "pass"
+        }
+      },
+      "summary": null
+    },
+    "gemma12b-capabilities": {
+      "report_sha256": "9d7581f92498d87a2afb4b27f1ccdc3dbc728f02bc22287e1fdd62e555a11de4",
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 85.28,
+        "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "model_manifest_sha256": "0a0bda2c9df30bb61ae2183f5d2414be95af7953b3959e00589d7781f9041915",
+        "model_identity_unchanged": true,
+        "scope": "candidate only; no managed installation or Discord delivery"
+      },
+      "capabilities": {
+        "text": {
+          "status": "pass"
+        },
+        "streaming": {
+          "status": "pass"
+        },
+        "structured_output": {
+          "status": "pass"
+        },
+        "tools": {
+          "status": "pass",
+          "tool_result_marker": "ABBEY_PROVIDER_CONTINUATION_V1"
+        },
+        "vision": {
+          "status": "pass"
+        },
+        "ocr": {
+          "status": "pass"
+        }
+      },
+      "summary": null
+    },
+    "gemma12b-benchmark": {
+      "report_sha256": "22833f20eb70efb9170cf4c4912ee9a4e39cafaa4910b0a87197efecc241186b",
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 255.38,
+        "binary_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "model_manifest_sha256": "0a0bda2c9df30bb61ae2183f5d2414be95af7953b3959e00589d7781f9041915",
+        "model_identity_unchanged": true,
+        "scope": "candidate only; no managed installation or Discord delivery"
+      },
+      "capabilities": null,
+      "summary": {
+        "counts": {
+          "attempted": 48,
+          "success": 48,
+          "failure": 0,
+          "incomplete": 0,
+          "no_text": 0
+        },
+        "planned": 48,
+        "stages": [
+          {
+            "stage": "queue_wait",
+            "observed": 48,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": 0,
+              "missing": null
+            }
+          },
+          {
+            "stage": "provider_first_text",
+            "observed": 48,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": 14917,
+              "missing": null
+            }
+          },
+          {
+            "stage": "provider_completed",
+            "observed": 48,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": 15374,
+              "missing": null
+            }
+          },
+          {
+            "stage": "first_visible",
+            "observed": 0,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": null,
+              "missing": "no_samples"
+            }
+          },
+          {
+            "stage": "final_delivered",
+            "observed": 0,
+            "denominator": 48,
+            "p95": {
+              "duration_ms": null,
+              "missing": "no_samples"
+            }
+          }
+        ],
+        "small_sample_witness": false
+      }
+    }
+  },
+  "successful_benchmark": {
+    "receipt": {
+      "version": 1,
+      "population": "synthetic_provider48",
+      "measurement_mode": "primary_streaming",
+      "identity": {
+        "artifact_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "declared_installed_sha256": "96ebd720fba80e58db716921c9f9af8d55696ea3824ce9534b442ffac321a9a9",
+        "provider": "primary",
+        "provider_config_sha256": "b1781b14c8d5f4844690bfa3bcda1f7da682e032d529a791bbf337aefb5a767e",
+        "model_sha256": "0a0bda2c9df30bb61ae2183f5d2414be95af7953b3959e00589d7781f9041915",
+        "hardware_sha256": "06ab474bed9693611cb1aca903d9621b071d091cf9965b980b5748afc59114bb",
+        "os_sha256": "203f07507af58a84a297a40775690fc7855f3fab28909d70f9a3ef838740895b",
+        "workload": "abbey-text-benchmark-v2"
+      },
+      "probes": [
+        {
+          "ordinal": 0,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2265,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2265,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 1,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2580,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2580,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 2,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2996,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2996,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 3,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 4396,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4396,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 4,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 3979,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3979,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 5,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 3116,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3116,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 6,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 4568,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4725,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 7,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2440,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2596,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 8,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 4782,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4782,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 9,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2564,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2566,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 10,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 8487,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 8488,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 11,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 30584,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 30585,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 12,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2312,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2315,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 13,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 3058,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3058,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 14,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2793,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2953,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 15,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2623,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2817,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 16,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 4487,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4488,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 17,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2633,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2785,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 18,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2798,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2798,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 19,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2020,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2020,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 20,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2455,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2601,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 21,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 1772,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 1772,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 22,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 2377,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 2377,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 23,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 3192,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3341,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 24,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5860,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 6300,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 25,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 6872,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 7283,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 26,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 14917,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 15374,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 27,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5340,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5801,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 28,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5140,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5576,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 29,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5942,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 6420,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 30,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5140,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5576,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 31,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5689,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 6142,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 32,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5070,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5481,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 33,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 7883,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 8312,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 34,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 16164,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 16654,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 35,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 5528,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5966,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 36,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 456,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5156,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 37,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 448,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3995,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 38,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 465,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4833,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 39,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 436,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3095,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 40,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 451,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3964,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 41,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 459,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4854,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 42,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 471,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4531,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 43,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 470,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4843,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 44,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 461,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 3974,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 45,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 483,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4079,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 46,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 493,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 5846,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        },
+        {
+          "ordinal": 47,
+          "outcome": "success",
+          "failure": null,
+          "no_text": false,
+          "queue_wait": {
+            "duration_ms": 0,
+            "missing": null
+          },
+          "provider_first_text": {
+            "duration_ms": 511,
+            "missing": null
+          },
+          "provider_completed": {
+            "duration_ms": 4795,
+            "missing": null
+          },
+          "first_visible": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          },
+          "final_delivered": {
+            "duration_ms": null,
+            "missing": "not_applicable"
+          }
+        }
+      ]
+    },
+    "summary": {
+      "counts": {
+        "attempted": 48,
+        "success": 48,
+        "failure": 0,
+        "incomplete": 0,
+        "no_text": 0
+      },
+      "planned": 48,
+      "stages": [
+        {
+          "stage": "queue_wait",
+          "observed": 48,
+          "denominator": 48,
+          "p95": {
+            "duration_ms": 0,
+            "missing": null
+          }
+        },
+        {
+          "stage": "provider_first_text",
+          "observed": 48,
+          "denominator": 48,
+          "p95": {
+            "duration_ms": 14917,
+            "missing": null
+          }
+        },
+        {
+          "stage": "provider_completed",
+          "observed": 48,
+          "denominator": 48,
+          "p95": {
+            "duration_ms": 15374,
+            "missing": null
+          }
+        },
+        {
+          "stage": "first_visible",
+          "observed": 0,
+          "denominator": 48,
+          "p95": {
+            "duration_ms": null,
+            "missing": "no_samples"
+          }
+        },
+        {
+          "stage": "final_delivered",
+          "observed": 0,
+          "denominator": 48,
+          "p95": {
+            "duration_ms": null,
+            "missing": "no_samples"
+          }
+        }
+      ],
+      "small_sample_witness": false
+    },
+    "qualification_gaps": [
+      "managed_service_identity_unwitnessed",
+      "model_and_hardware_operator_declared",
+      "discord_delivery_unobserved",
+      "voice_contention_unmeasured",
+      "not_capability_qualification"
+    ],
+    "stage_origins": {
+      "queue_wait": "initial_reservation_to_admission",
+      "provider_first_text": "first_nonempty_delta_since_its_round_adapter_start",
+      "provider_completed": "first_adapter_start_to_validated_conversation_result"
+    }
+  },
+  "open": [
+    "comparable installed and Discord latency",
+    "managed install and readiness",
+    "speech qualification",
+    "required human and live witnesses"
+  ]
+}
