@@ -2479,3 +2479,32 @@ targeted lock updates restore debt-policy and Linux TLS checks without new debt.
 Activity 20/20 passed. Complete repaired source qualification, publication/exact-main
 CI, configured providers, installation and required human/public witnesses remain
 open until their own receipts exist. Full MLAI release is Partial.
+
+
+### 2026-10-22 fixed-main source qualification correction
+
+Published main `6eb5cff114c22dd7a2d0f78f98c2a1c2df8bf215` passed the isolated
+Rust 1.98.0 strict gate with 1,062 unchanged inputs and exact-main macOS CI.
+Rust 2,356 passed/0 failed/8 ignored; transport 2/0; Swift 12+16; release and
+offline startup checks passed. Exact saved candidate bytes passed all six local
+Gemma provider probes. [Receipt](../docs/verification/2026-10-22-mlai-release-baseline.md#final-fixed-main-source-and-candidate-qualification).
+The earlier canonical exit-0 run had Cargo.lock drift and remains unqualified.
+PRs #190/#191 are merged; these later record-only changes do not claim their
+own future exact-head CI. Actual managed configuration/install, speech providers
+and required human/public witnesses remain open. Full MLAI release is Partial.
+
+
+Provider continuation: actual Gemma 48-case workload failed (19 success/29 failure/
+11 no-text); local GPT-OSS alternative failed required streaming/schema/tools.
+Preserve narrow passing capability evidence without promoting reliability.
+Serving/model qualification repair or explicit reviewed acceptance remains required
+before route selection, installation and live/human acceptance. No scoring or
+production policy was changed to hide these results. Whole release remains Partial.
+
+
+### 2026-10-23 release handoff
+
+The October 22 execution records continue into October 23. Stable source/main CI
+qualification is complete for 6eb5cff; provider reliability and installed/live/human
+acceptance remain open. Later record-only changes receive focused documentation
+checks and independent review, without claiming a new complete source fingerprint.

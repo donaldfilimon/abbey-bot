@@ -783,3 +783,24 @@ receipts remain historical; this entry does not close the whole all-plans goal.
 - [ ] Complete text, voice V1–V8, 100-label human learning review, continuity/member journeys, bounded initiative pilot, independent community assessment and public Activity witnesses.
 
 Full release remains Partial; [execution receipt](../docs/verification/2026-10-22-mlai-release-baseline.md) separates each proof layer.
+
+
+### 2026-10-22 fixed-main qualification correction
+
+- [x] Isolate published main 6eb5cff and pass the complete pinned strict gate with 1,062 unchanged inputs; independently review the final dependency delta.
+- [x] Verify exact-main macOS CI success; PRs #190/#191 are merged.
+- [x] Bind all six passing local Gemma capability probes to the identical saved release binary; prepare/verify the source-only Activity package and blank human-review worksheet.
+- [ ] Supply this Mac's private Discord configuration, complete installed identity/readiness and real speech qualification, then required text/voice/member/learning/initiative/community/Activity acceptance.
+
+[Final source/candidate receipt](../docs/verification/2026-10-22-mlai-release-baseline.md#final-fixed-main-source-and-candidate-qualification)
+replaces the earlier pending source rows for this exact snapshot only. Whole release remains Partial.
+
+
+- [x] Run and preserve the real 48-case candidate benchmark and a bounded existing-model alternative qualification; report failures honestly.
+- [ ] Resolve provider reliability: Gemma 19/48 success with 29 failures and 11 no-text; GPT-OSS alternative failed required streaming/schema/tools. Requalify the same fixed workload before accepting a production route.
+
+
+### 2026-10-23 release handoff
+
+- [x] Record the stable source/CI qualification and both failing real-provider evaluations; independently review the final record-only diff.
+- [ ] Resolve the named provider, private configuration, installation and live/human prerequisites before full-release closure.
